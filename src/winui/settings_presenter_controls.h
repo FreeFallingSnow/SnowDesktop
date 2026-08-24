@@ -26,14 +26,15 @@ namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 
 inline constexpr double kSettingControlWidth = 300.0;
+inline constexpr double kSettingMinimumTextWidth = 220.0;
 
 /**
  * Programmatic equivalent of the legacy BeginSettingRow contract.
  *
- * The label/help column stays on the left and a fixed-width editor stays on
- * the right at every supported page width. Compact controls keep their
- * requested right alignment; full-width editors stretch inside the legacy
- * 300-DIP editor column.
+ * On a wide page the label/help column stays on the left and a fixed-width
+ * legacy 300-DIP editor stays on the right. On a narrow page it moves below the
+ * label so translated labels never collide with the control. Compact controls
+ * keep their requested right alignment in both layouts.
  */
 struct SettingRow
 {
@@ -49,6 +50,7 @@ struct SettingRow
     {
         root = muxc::Grid{};
         root.ColumnSpacing(20.0);
+        root.RowSpacing(8.0);
         root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
 
         muxc::ColumnDefinition labelColumn{};
@@ -61,7 +63,10 @@ struct SettingRow
         root.ColumnDefinitions().Append(controlColumn);
         muxc::RowDefinition labelRow{};
         labelRow.Height(mux::GridLengthHelper::Auto());
+        muxc::RowDefinition controlRow{};
+        controlRow.Height(mux::GridLengthHelper::Auto());
         root.RowDefinitions().Append(labelRow);
+        root.RowDefinitions().Append(controlRow);
 
         text = muxc::StackPanel{};
         text.Spacing(3.0);
@@ -86,6 +91,47 @@ struct SettingRow
         muxc::Grid::SetColumn(controlHost, 1);
         root.Children().Append(text);
         root.Children().Append(controlHost);
+
+        // Use weak XAML references rather than capturing this SettingRow.
+        // Rows owned by a dynamically rebuilt page can then leave the visual
+        // tree without a queued SizeChanged callback touching destroyed C++
+        // presenter storage.
+        const auto weakRoot = winrt::make_weak(root);
+        const auto weakText = winrt::make_weak(text);
+        const auto weakControl = winrt::make_weak(controlHost);
+        const double stackedThreshold =
+            controlWidth + 20.0 + kSettingMinimumTextWidth;
+        root.SizeChanged(
+            [weakRoot, weakText, weakControl, controlWidth, stackedThreshold](
+                const auto&, const mux::SizeChangedEventArgs& args) {
+                const auto currentRoot = weakRoot.get();
+                const auto currentText = weakText.get();
+                const auto currentControl = weakControl.get();
+                if (!currentRoot || !currentText || !currentControl)
+                    return;
+
+                const bool stacked =
+                    args.NewSize().Width < stackedThreshold;
+                const auto columns = currentRoot.ColumnDefinitions();
+                columns.GetAt(0).Width(
+                    mux::GridLengthHelper::FromValueAndType(
+                        1.0, mux::GridUnitType::Star));
+                columns.GetAt(1).Width(
+                    mux::GridLengthHelper::FromValueAndType(
+                        stacked ? 0.0 : controlWidth,
+                        mux::GridUnitType::Pixel));
+
+                muxc::Grid::SetColumn(currentText, 0);
+                muxc::Grid::SetColumnSpan(currentText, stacked ? 2 : 1);
+                muxc::Grid::SetRow(currentText, 0);
+                muxc::Grid::SetColumn(currentControl, stacked ? 0 : 1);
+                muxc::Grid::SetColumnSpan(currentControl, stacked ? 2 : 1);
+                muxc::Grid::SetRow(currentControl, stacked ? 1 : 0);
+                currentControl.MaxWidth(controlWidth);
+                currentControl.HorizontalAlignment(
+                    stacked ? mux::HorizontalAlignment::Right
+                            : mux::HorizontalAlignment::Stretch);
+            });
     }
 
     void SetControlAlignment(mux::HorizontalAlignment alignment)

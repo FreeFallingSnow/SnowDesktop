@@ -418,9 +418,15 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             sharedControls.find("void SetControlAlignment(") !=
                 std::string::npos &&
-            sharedControls.find("kStackedSettingThreshold") ==
+            sharedControls.find("kSettingMinimumTextWidth = 220.0") !=
                 std::string::npos &&
-            sharedControls.find("root.SizeChanged(") == std::string::npos &&
+            sharedControls.find(
+                "controlWidth + 20.0 + kSettingMinimumTextWidth") !=
+                std::string::npos &&
+            sharedControls.find("root.SizeChanged(") != std::string::npos &&
+            sharedControls.find(
+                "Grid::SetRow(currentControl, stacked ? 1 : 0)") !=
+                std::string::npos &&
             sharedControls.find("struct ColorFlyoutEditor") !=
                 std::string::npos &&
             sharedControls.find("SettingsUpdateMode::Preview") !=
@@ -448,7 +454,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "setting rows keep the legacy single-line left-right alignment and color swatches transactionally restore unconfirmed sessions");
+        "setting rows use the legacy-width right column when wide, derive a per-control narrow threshold, and color swatches transactionally restore unconfirmed sessions");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");

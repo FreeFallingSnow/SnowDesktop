@@ -5,8 +5,6 @@
 #include <sstream>
 #include <string>
 
-#include "../src/winui/settings_titlebar_policy.h"
-
 namespace
 {
 int failures = 0;
@@ -39,28 +37,6 @@ std::size_t Count(std::string_view text, std::string_view token)
         position += token.size();
     }
     return count;
-}
-
-void TestTitleBarPolicy()
-{
-    using snowdesktop::winui::SettingsTitleBarPolicyInput;
-    using snowdesktop::winui::ShouldUseIntegratedSettingsTitleBar;
-
-    Check(ShouldUseIntegratedSettingsTitleBar(
-              SettingsTitleBarPolicyInput{true, true, false, true}),
-        "Windows 11 uses the integrated title bar only when all safety probes pass");
-    Check(!ShouldUseIntegratedSettingsTitleBar(
-              SettingsTitleBarPolicyInput{false, true, false, true}),
-        "Windows 10 retains the complete native title bar");
-    Check(!ShouldUseIntegratedSettingsTitleBar(
-              SettingsTitleBarPolicyInput{true, false, false, true}),
-        "a failed high-contrast query retains the native title bar");
-    Check(!ShouldUseIntegratedSettingsTitleBar(
-              SettingsTitleBarPolicyInput{true, true, true, true}),
-        "high contrast retains the complete native title bar");
-    Check(!ShouldUseIntegratedSettingsTitleBar(
-              SettingsTitleBarPolicyInput{true, true, false, false}),
-        "unsupported AppWindow customization retains the native title bar");
 }
 
 void TestHostContract(const std::filesystem::path& repository)
@@ -96,25 +72,16 @@ void TestHostContract(const std::filesystem::path& repository)
         "the reusable Win32 top-level HWND delegates only its measured client area to DesktopWindowXamlSource");
     Check(source.find("WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN") !=
                 std::string::npos &&
-            header.find("AppWindowTitleBar extends the client") !=
+            header.find("native non-client title bar") !=
                 std::string::npos &&
-            source.find("Microsoft.UI.Windowing") != std::string::npos &&
-            source.find("GetWindowIdFromWindow(window)") !=
-                std::string::npos &&
-            source.find("AppWindow::GetFromWindowId(windowId)") !=
-                std::string::npos &&
-            source.find("appWindow.AssociateWithDispatcherQueue(dispatcher)") !=
-                std::string::npos &&
-            source.find("AppWindowTitleBar::IsCustomizationSupported()") !=
-                std::string::npos &&
-            source.find("ExtendsContentIntoTitleBar(true)") !=
-                std::string::npos &&
-            source.find("ExtendsContentIntoTitleBar())") !=
+            source.find("Microsoft.UI.Windowing") == std::string::npos &&
+            source.find("AppWindow") == std::string::npos &&
+            source.find("AppWindowTitleBar") == std::string::npos &&
+            source.find("ExtendsContentIntoTitleBar") ==
                 std::string::npos &&
             source.find("WM_NCHITTEST") == std::string::npos &&
             source.find("WM_NCCALCSIZE") == std::string::npos &&
             source.find("SetTitleBar(") == std::string::npos &&
-            source.find("SetDragRectangles") == std::string::npos &&
             runtime.find("SetTitleBar(") == std::string::npos &&
             shellMarkup.find("x:Name=\"MinimizeButton\"") ==
                 std::string::npos &&
@@ -122,50 +89,36 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
-        "AppWindow overlays the system caption buttons and Snap on the client without custom caption hit testing");
-    Check(source.find("const HWND titleBarWindow = window;") !=
+        "WS_OVERLAPPEDWINDOW leaves the native caption, three system buttons, Snap, and accessibility entirely owned by Windows");
+    Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") ==
                 std::string::npos &&
-            source.find("[titleBarWindow](const muw::AppWindow&") !=
+            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") ==
                 std::string::npos &&
-            source.find("[this](const muw::AppWindow&") ==
+            shellMarkup.find("TitleBarLeftInsetColumn") ==
                 std::string::npos &&
-            source.find("PostMessageW(titleBarWindow,") !=
+            shellMarkup.find("TitleBarRightInsetColumn") ==
+                std::string::npos &&
+            shellMarkup.find("IsTitleBarAutoPaddingEnabled") ==
+                std::string::npos &&
+            shellHeader.find("SetIntegratedTitleBar") ==
+                std::string::npos &&
+            shell.find("SetIntegratedTitleBar") == std::string::npos &&
+            shell.find("UpdateIntegratedTitleBar") == std::string::npos &&
+            shell.find("NavigationRoot().PaneTitle(shellTitle)") !=
                 std::string::npos,
-        "AppWindow changes post back to the owner HWND without capturing host lifetime state");
-    Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
+        "the Island starts below the native caption and contains no integrated XAML title-bar row or inset bookkeeping");
+    Check(source.find("constexpr int kMinimumClientWidth = 500;") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
+            source.find("constexpr int kMinimumClientHeight = 350;") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarLeftInsetColumn\"") !=
+            shellMarkup.find("x:Name=\"NarrowState\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarRightInsetColumn\"") !=
+            shellMarkup.find("<AdaptiveTrigger MinWindowWidth=\"0\"") !=
                 std::string::npos &&
-            shellMarkup.find("IsHitTestVisible=\"False\"") !=
-                std::string::npos &&
-            shellMarkup.find("IsTitleBarAutoPaddingEnabled=\"False\"") !=
-                std::string::npos &&
-            shellHeader.find("SetIntegratedTitleBarLayout(") !=
-                std::string::npos &&
-            shell.find("static_cast<double>(heightPixels) / scale") !=
-                std::string::npos &&
-            shell.find("static_cast<double>(leftInsetPixels) / scale") !=
-                std::string::npos &&
-            shell.find("static_cast<double>(rightInsetPixels) / scale") !=
-                std::string::npos &&
-            shell.find("if (foreground)") != std::string::npos &&
-            shell.find("IntegratedTitleBarText().Foreground(foreground)") !=
-                std::string::npos &&
-            shell.find("IntegratedTitleBarText().Foreground(muxm::Brush{nullptr})") ==
+            shellMarkup.find(
+                "Target=\"PageSurface.Margin\" Value=\"16,10,16,32\"") !=
                 std::string::npos,
-        "the non-interactive XAML title row mirrors AppWindow pixel metrics at the XamlRoot scale");
-    Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
-                std::string::npos &&
-            source.find("constexpr int kMinimumClientHeight = 520;") !=
-                std::string::npos &&
-            shellMarkup.find("x:Name=\"NarrowState\"") ==
-                std::string::npos &&
-            shellMarkup.find("AdaptiveTrigger") == std::string::npos,
-        "the host enforces the supported fixed single-line settings layout instead of stacking text and controls");
+        "the host retains the legacy minimum size while the XAML surface adapts margins and typography for narrow windows");
     Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
             source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
                 std::string::npos &&
@@ -195,48 +148,24 @@ void TestHostContract(const std::filesystem::path& repository)
                 "darkTheme = snapshot->values.personalization.contentTheme") ==
                 std::string::npos,
         "the native HWND chrome follows ShellRoot ActualTheme instead of content appearance settings");
-    Check(source.find("case WM_ACTIVATE:") != std::string::npos &&
-            source.find("LOWORD(wParam) != WA_INACTIVE") !=
+    Check(source.find("case WM_ACTIVATE:") == std::string::npos &&
+            source.find("LOWORD(wParam) != WA_INACTIVE") ==
                 std::string::npos &&
-            source.find("UpdateIntegratedTitleBarActivationVisual") !=
+            source.find("UpdateIntegratedTitleBarActivationVisual") ==
                 std::string::npos &&
-            shellHeader.find("SetIntegratedTitleBarWindowActive") !=
+            shellHeader.find("SetIntegratedTitleBarWindowActive") ==
                 std::string::npos &&
-            shell.find("TextFillColorSecondaryBrush") != std::string::npos,
-        "the XAML title text mirrors native active and inactive caption state");
+            shell.find("IntegratedTitleBarText") == std::string::npos,
+        "caption activation visuals remain native instead of being mirrored into XAML");
     Check(source.find("ApplySettingsWindowChrome(window, darkTheme)") !=
                 std::string::npos &&
             source.find("DWMWA_USE_IMMERSIVE_DARK_MODE") !=
                 std::string::npos &&
             source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
-            source.find("IsWindows11OrGreater()") != std::string::npos &&
-            source.find("ShouldUseIntegratedSettingsTitleBar({") !=
-                std::string::npos &&
-            source.find("appWindowTitleBar.PreferredTheme(") !=
-                std::string::npos &&
-            source.find("appWindowTitleBar.ButtonBackgroundColor(transparent)") !=
-                std::string::npos &&
-            source.find("appWindowTitleBar.ButtonInactiveBackgroundColor(transparent)") !=
-                std::string::npos &&
-            source.find("appWindowTitleBar.BackgroundColor(transparent)") ==
-                std::string::npos &&
-            source.find("appWindowTitleBar.InactiveBackgroundColor(transparent)") ==
-                std::string::npos,
-        "theme changes integrate only supported caption-button backgrounds while preserving native hover, pressed, and Close colors");
-    Check(source.find("appWindowTitleBar.ResetToDefault()") !=
-                std::string::npos &&
-            source.find("ReconcileIntegratedTitleBar();") !=
-                std::string::npos &&
-            source.find("case WM_SETTINGCHANGE:") != std::string::npos &&
-            source.find("case WM_THEMECHANGED:") != std::string::npos &&
-            source.find("case WM_DPICHANGED:") != std::string::npos &&
-            source.find("case kRefreshIntegratedTitleBarMessage:") !=
-                std::string::npos &&
-            source.find("ConfigureIntegratedTitleBar();") !=
-                std::string::npos &&
-            source.find("SupportsMicaBackdrop()") != std::string::npos,
-        "title-bar policy, metrics, and safe native fallback reconcile independently from the optional Mica backdrop");
+            source.find("AppWindow") == std::string::npos &&
+            source.find("TitleBarTheme") == std::string::npos,
+        "theme changes may request the native DWM dark caption while Windows retains title-bar layout and high-contrast ownership");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&
@@ -353,7 +282,7 @@ void TestHostContract(const std::filesystem::path& repository)
         ? std::string_view(source).substr(
             shutdownBegin, openBegin - shutdownBegin)
         : std::string_view{};
-    Check(shutdownFunction.find("ResetIntegratedTitleBar()") !=
+    Check(shutdownFunction.find("ResetIntegratedTitleBar()") ==
                 std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") !=
                 std::string_view::npos &&
@@ -367,13 +296,11 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") <
                 shutdownFunction.find("callbacks->alive.store(false)") &&
-            shutdownFunction.find("ResetIntegratedTitleBar()") <
-                shutdownFunction.find("shell->Close()") &&
             shutdownFunction.find("shell->Close()") <
                 shutdownFunction.find("runtime.Detach()") &&
             shutdownFunction.find("runtime.Detach()") <
                 shutdownFunction.find("DestroyWindow("),
-        "the AppWindow title bar and Shell callbacks reset before the XAML Island and native overlapped HWND are destroyed");
+        "the Shell callbacks close before the XAML Island and native overlapped HWND are destroyed, with no AppWindow title-bar state to unwind");
     Check(source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
             source.find("SupportsMicaBackdrop()") != std::string::npos &&
@@ -495,7 +422,6 @@ void TestHostContract(const std::filesystem::path& repository)
 
 int main(int argc, char** argv)
 {
-    TestTitleBarPolicy();
     Check(argc == 2,
         "source root is supplied for the WinUI settings host contract");
     if (argc == 2)

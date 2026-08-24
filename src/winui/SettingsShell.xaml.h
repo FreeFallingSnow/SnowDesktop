@@ -91,14 +91,6 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 
     /** Keep the root transparent only while the Island backdrop is active. */
     void SetSystemBackdropActive(bool active) noexcept;
-    /** Mirror AppWindow title-bar metrics into the non-interactive XAML row. */
-    void SetIntegratedTitleBarLayout(
-        bool active,
-        int heightPixels,
-        int leftInsetPixels,
-        int rightInsetPixels,
-        double rasterizationScale) noexcept;
-    void SetIntegratedTitleBarWindowActive(bool active) noexcept;
     void SetActualThemeChangedCallback(ActualThemeChangedCallback callback);
 
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
@@ -210,7 +202,6 @@ private:
     void HookEvents();
     void UnhookEvents() noexcept;
     void NotifyActualThemeChanged() noexcept;
-    void UpdateIntegratedTitleBarTextAppearance() noexcept;
     void RenderRoute(
         bool forcePageCards = false,
         bool scheduleFocus = true);
@@ -295,8 +286,6 @@ private:
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
-    bool integratedTitleBarActive_ = false;
-    bool integratedTitleBarWindowActive_ = false;
     bool closed_ = false;
 
     winrt::event_token actualThemeChangedToken_{};
