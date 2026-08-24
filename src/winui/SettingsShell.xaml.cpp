@@ -166,6 +166,11 @@ SettingsShell::SettingsShell()
             [this](std::string_view key) { return Localize(key); },
             Resources().Lookup(
                 winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
+    desktopPage_ =
+        std::make_unique<snowdesktop::winui::DesktopPagePresenter>(
+            [this](std::string_view key) { return Localize(key); },
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -198,6 +203,11 @@ void SettingsShell::Close() noexcept
             personalizationPage_->Deactivate();
             personalizationPage_->Close();
         }
+        if (desktopPage_)
+        {
+            desktopPage_->Deactivate();
+            desktopPage_->Close();
+        }
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -210,6 +220,7 @@ void SettingsShell::Close() noexcept
     cancelOperation_ = {};
     generalPage_.reset();
     personalizationPage_.reset();
+    desktopPage_.reset();
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -259,6 +270,8 @@ void SettingsShell::RefreshLocalizedText()
         generalPage_->RefreshLocalizedText();
     if (personalizationPage_)
         personalizationPage_->RefreshLocalizedText();
+    if (desktopPage_)
+        desktopPage_->RefreshLocalizedText();
     RenderRoute(true, false);
     if (!searchResults_.empty())
     {
@@ -300,6 +313,13 @@ void SettingsShell::SetPersonalizationPageActions(
         personalizationPage_->SetActions(std::move(actions));
 }
 
+void SettingsShell::SetDesktopPageActions(
+    snowdesktop::winui::DesktopPageActions actions)
+{
+    if (desktopPage_)
+        desktopPage_->SetActions(std::move(actions));
+}
+
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
     return generalPage_ && generalPage_->IsHotkeyCaptureActive();
@@ -331,6 +351,8 @@ bool SettingsShell::ApplySnapshot(
             generalPage_->ApplySnapshot(snapshot);
         if (personalizationPage_)
             personalizationPage_->ApplySnapshot(snapshot);
+        if (desktopPage_)
+            desktopPage_->ApplySnapshot(snapshot);
         const bool routeChanged = previousRoute != navigation_.Route();
         const bool generationChanged =
             previousGeneration != navigation_.Generation();
@@ -767,6 +789,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::Personalization;
     if (leavingPersonalization && personalizationPage_)
         personalizationPage_->Deactivate();
+    const bool leavingDesktop = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::Desktop &&
+        pageRoute.page != SettingsPage::Desktop;
+    if (leavingDesktop && desktopPage_)
+        desktopPage_->Deactivate();
 
     PageCards().Children().Clear();
     focusTargets_.clear();
@@ -842,12 +869,29 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::Desktop:
-        addPlaceholder("desktop.layout", "settings.desktop.layout",
-            "settings.desktop.layout.description");
-        addPlaceholder("desktop.beautify", "settings.desktop.beautify",
-            "settings.desktop.beautify.description");
-        addPlaceholder("desktop.categories", "settings.desktop.categories",
-            "settings.desktop.categories.description");
+        if (desktopPage_)
+        {
+            PageCards().Children().Append(desktopPage_->Content());
+            for (const std::string_view focusId : {
+                     "desktop.spacing",
+                     "desktop.iconSize",
+                     "desktop.itemFontSize",
+                     "desktop.listFontSize",
+                     "desktop.fontWeight",
+                     "desktop.shortcutArrow",
+                     "desktop.categoryLayout",
+                     "desktop.tabFontSize",
+                     "desktop.categoryCounts",
+                     "desktop.iconBeautify",
+                     "desktop.categories",
+                     "desktop.category.add"})
+            {
+                RegisterFocusTarget(
+                    std::string(focusId),
+                    desktopPage_->FocusTarget(focusId));
+            }
+            desktopPage_->Activate();
+        }
         break;
     case SettingsPage::DockAndTaskbar:
         addPlaceholder("dock.dock", "settings.dock.dock",

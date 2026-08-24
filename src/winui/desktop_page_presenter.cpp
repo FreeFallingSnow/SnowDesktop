@@ -1,0 +1,1644 @@
+#include "pch.h"
+
+#include "desktop_page_presenter.h"
+
+#include "../constants.h"
+#include "../icon_beautify.h"
+
+#include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Windows.System.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <limits>
+#include <utility>
+#include <vector>
+
+namespace snowdesktop::winui
+{
+namespace mux = winrt::Microsoft::UI::Xaml;
+namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
+namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace muxi = winrt::Microsoft::UI::Xaml::Input;
+
+namespace
+{
+
+struct SettingsCard
+{
+    muxc::Border root{nullptr};
+    muxc::StackPanel content{nullptr};
+    muxc::TextBlock title{nullptr};
+};
+
+void InitializeCard(
+    SettingsCard& card,
+    const mux::Style& style,
+    const muxc::StackPanel& page)
+{
+    card.root = muxc::Border{};
+    card.root.Style(style);
+    card.content = muxc::StackPanel{};
+    card.content.Spacing(12.0);
+    card.title = muxc::TextBlock{};
+    card.title.FontWeight(
+        winrt::Windows::UI::Text::FontWeights::SemiBold());
+    card.title.TextWrapping(mux::TextWrapping::Wrap);
+    card.content.Children().Append(card.title);
+    card.root.Child(card.content);
+    page.Children().Append(card.root);
+}
+
+void SetHeader(
+    const muxc::TextBlock& label,
+    const mux::FrameworkElement& control,
+    std::wstring text)
+{
+    label.Text(std::move(text));
+    label.TextWrapping(mux::TextWrapping::Wrap);
+    muxa::AutomationProperties::SetName(control, label.Text());
+}
+
+void SetComboItems(
+    const muxc::ComboBox& combo,
+    const std::vector<std::wstring>& labels,
+    int selection)
+{
+    combo.Items().Clear();
+    for (const auto& label : labels)
+        combo.Items().Append(winrt::box_value(label));
+    combo.SelectedIndex(selection);
+}
+
+std::wstring Trim(std::wstring value)
+{
+    const auto first = value.find_first_not_of(L" \t\r\n");
+    if (first == std::wstring::npos)
+        return {};
+    const auto last = value.find_last_not_of(L" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::uint8_t ColorByte(float value) noexcept
+{
+    return static_cast<std::uint8_t>(std::lround(
+        std::clamp(value, 0.0f, 1.0f) * 255.0f));
+}
+
+float ColorFloat(std::uint8_t value) noexcept
+{
+    return static_cast<float>(value) / 255.0f;
+}
+
+winrt::Windows::UI::Color MakeColor(float red, float green, float blue)
+{
+    winrt::Windows::UI::Color color{};
+    color.A = 255;
+    color.R = ColorByte(red);
+    color.G = ColorByte(green);
+    color.B = ColorByte(blue);
+    return color;
+}
+
+bool SameColor(
+    const winrt::Windows::UI::Color& left,
+    const winrt::Windows::UI::Color& right) noexcept
+{
+    return left.A == right.A && left.R == right.R &&
+        left.G == right.G && left.B == right.B;
+}
+
+constexpr std::array<IconBeautifyPreset, 3> kBeautifyPresets = {
+    IconBeautifyPreset::None,
+    IconBeautifyPreset::DefaultBeautify,
+    IconBeautifyPreset::Custom,
+};
+
+constexpr std::array<IconBeautifyShape, 5> kBeautifyShapes = {
+    IconBeautifyShape::LegacyRounded,
+    IconBeautifyShape::ContinuousRounded,
+    IconBeautifyShape::SoftRounded,
+    IconBeautifyShape::Circle,
+    IconBeautifyShape::Pebble,
+};
+
+template <typename T, std::size_t Size>
+int IndexOf(const std::array<T, Size>& values, T value) noexcept
+{
+    const auto found = std::find(values.begin(), values.end(), value);
+    return found == values.end()
+        ? 0
+        : static_cast<int>(std::distance(values.begin(), found));
+}
+
+struct NumericEditor
+{
+    using ChangedCallback =
+        std::function<void(double value, SettingsUpdateMode mode)>;
+
+    muxc::StackPanel root{nullptr};
+    muxc::TextBlock label{nullptr};
+    muxc::Grid row{nullptr};
+    muxc::Slider slider{nullptr};
+    muxc::NumberBox number{nullptr};
+    ChangedCallback changed;
+    bool updating = false;
+    bool pendingCommit = false;
+    bool closed = false;
+
+    winrt::event_token sliderValueToken{};
+    winrt::event_token numberValueToken{};
+    winrt::event_token sliderPointerToken{};
+    winrt::event_token numberPointerToken{};
+    winrt::event_token sliderLostFocusToken{};
+    winrt::event_token numberLostFocusToken{};
+    winrt::event_token sliderKeyToken{};
+    winrt::event_token numberKeyToken{};
+
+    NumericEditor(
+        double minimum,
+        double maximum,
+        double step,
+        int fractionalDigits,
+        ChangedCallback callback)
+        : changed(std::move(callback))
+    {
+        root = muxc::StackPanel{};
+        root.Spacing(6.0);
+        label = muxc::TextBlock{};
+        label.TextWrapping(mux::TextWrapping::Wrap);
+        root.Children().Append(label);
+
+        row = muxc::Grid{};
+        row.ColumnSpacing(12.0);
+        muxc::ColumnDefinition sliderColumn{};
+        sliderColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition numberColumn{};
+        numberColumn.Width(mux::GridLengthHelper::Auto());
+        row.ColumnDefinitions().Append(sliderColumn);
+        row.ColumnDefinitions().Append(numberColumn);
+
+        slider = muxc::Slider{};
+        slider.Minimum(minimum);
+        slider.Maximum(maximum);
+        slider.StepFrequency(step);
+        slider.SmallChange(step);
+        slider.LargeChange(std::max(step, (maximum - minimum) / 10.0));
+        slider.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        slider.VerticalAlignment(mux::VerticalAlignment::Center);
+
+        number = muxc::NumberBox{};
+        number.Minimum(minimum);
+        number.Maximum(maximum);
+        number.SmallChange(step);
+        number.LargeChange(std::max(step, (maximum - minimum) / 10.0));
+        number.SpinButtonPlacementMode(
+            muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        number.ValidationMode(
+            muxc::NumberBoxValidationMode::InvalidInputOverwritten);
+        number.Width(124.0);
+        if (fractionalDigits == 0)
+            number.AcceptsExpression(false);
+
+        row.Children().Append(slider);
+        muxc::Grid::SetColumn(number, 1);
+        row.Children().Append(number);
+        root.Children().Append(row);
+
+        sliderValueToken = slider.ValueChanged(
+            [this](const auto&, const auto&) {
+                if (updating || closed) return;
+                updating = true;
+                number.Value(slider.Value());
+                updating = false;
+                PublishPreview(slider.Value());
+            });
+        numberValueToken = number.ValueChanged(
+            [this](const auto&, const auto&) {
+                if (updating || closed || std::isnan(number.Value())) return;
+                updating = true;
+                slider.Value(number.Value());
+                updating = false;
+                PublishPreview(number.Value());
+            });
+
+        const auto pointerReleased = [this](const auto&, const auto&) {
+            CommitPending();
+        };
+        const auto lostFocus = [this](const auto&, const auto&) {
+            CommitPending();
+        };
+        const auto keyDown = [this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (args.Key() == winrt::Windows::System::VirtualKey::Enter)
+                CommitPending();
+        };
+        sliderPointerToken = slider.PointerReleased(pointerReleased);
+        numberPointerToken = number.PointerReleased(pointerReleased);
+        sliderLostFocusToken = slider.LostFocus(lostFocus);
+        numberLostFocusToken = number.LostFocus(lostFocus);
+        sliderKeyToken = slider.KeyDown(keyDown);
+        numberKeyToken = number.KeyDown(keyDown);
+    }
+
+    void PublishPreview(double value)
+    {
+        pendingCommit = true;
+        if (changed)
+            changed(value, SettingsUpdateMode::Preview);
+    }
+
+    void CommitPending()
+    {
+        if (!pendingCommit || closed) return;
+        pendingCommit = false;
+        if (changed)
+            changed(slider.Value(), SettingsUpdateMode::PreviewAndCommit);
+    }
+
+    void CancelPending() noexcept
+    {
+        pendingCommit = false;
+    }
+
+    void SetValue(double value)
+    {
+        if (closed) return;
+        value = std::clamp(value, slider.Minimum(), slider.Maximum());
+        const bool wasUpdating = updating;
+        updating = true;
+        slider.Value(value);
+        number.Value(value);
+        updating = wasUpdating;
+    }
+
+    void SetLabel(std::wstring text)
+    {
+        label.Text(std::move(text));
+        muxa::AutomationProperties::SetName(slider, label.Text());
+        muxa::AutomationProperties::SetName(number, label.Text());
+    }
+
+    void SetEnabled(bool enabled)
+    {
+        slider.IsEnabled(enabled);
+        number.IsEnabled(enabled);
+        root.Opacity(enabled ? 1.0 : 0.55);
+    }
+
+    void Close() noexcept
+    {
+        if (closed) return;
+        closed = true;
+        try
+        {
+            slider.ValueChanged(sliderValueToken);
+            number.ValueChanged(numberValueToken);
+            slider.PointerReleased(sliderPointerToken);
+            number.PointerReleased(numberPointerToken);
+            slider.LostFocus(sliderLostFocusToken);
+            number.LostFocus(numberLostFocusToken);
+            slider.KeyDown(sliderKeyToken);
+            number.KeyDown(numberKeyToken);
+        }
+        catch (...)
+        {
+        }
+        changed = {};
+    }
+};
+
+struct ColorEditor
+{
+    using ChangedCallback = std::function<void(
+        const winrt::Windows::UI::Color& color,
+        SettingsUpdateMode mode)>;
+
+    muxc::StackPanel root{nullptr};
+    muxc::TextBlock label{nullptr};
+    muxc::ColorPicker picker{nullptr};
+    ChangedCallback changed;
+    bool updating = false;
+    bool pendingCommit = false;
+    bool closed = false;
+
+    winrt::event_token colorToken{};
+    winrt::event_token pointerToken{};
+    winrt::event_token lostFocusToken{};
+    winrt::event_token keyToken{};
+
+    explicit ColorEditor(ChangedCallback callback)
+        : changed(std::move(callback))
+    {
+        root = muxc::StackPanel{};
+        root.Spacing(6.0);
+        label = muxc::TextBlock{};
+        label.TextWrapping(mux::TextWrapping::Wrap);
+        root.Children().Append(label);
+
+        picker = muxc::ColorPicker{};
+        picker.IsAlphaEnabled(false);
+        picker.IsAlphaSliderVisible(false);
+        picker.IsAlphaTextInputVisible(false);
+        picker.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        picker.MaxWidth(560.0);
+        root.Children().Append(picker);
+
+        colorToken = picker.ColorChanged(
+            [this](const auto&, const auto&) {
+                if (updating || closed) return;
+                pendingCommit = true;
+                if (changed)
+                    changed(picker.Color(), SettingsUpdateMode::Preview);
+            });
+        pointerToken = picker.PointerReleased(
+            [this](const auto&, const auto&) { CommitPending(); });
+        lostFocusToken = picker.LostFocus(
+            [this](const auto&, const auto&) { CommitPending(); });
+        keyToken = picker.KeyDown(
+            [this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+                if (args.Key() == winrt::Windows::System::VirtualKey::Enter)
+                    CommitPending();
+            });
+    }
+
+    void CommitPending()
+    {
+        if (!pendingCommit || closed) return;
+        pendingCommit = false;
+        if (changed)
+            changed(picker.Color(), SettingsUpdateMode::PreviewAndCommit);
+    }
+
+    void CancelPending() noexcept
+    {
+        pendingCommit = false;
+    }
+
+    void SetColor(const winrt::Windows::UI::Color& value)
+    {
+        if (closed || SameColor(picker.Color(), value)) return;
+        const bool wasUpdating = updating;
+        updating = true;
+        picker.Color(value);
+        updating = wasUpdating;
+    }
+
+    void SetLabel(std::wstring text)
+    {
+        label.Text(std::move(text));
+        muxa::AutomationProperties::SetName(picker, label.Text());
+    }
+
+    void SetEnabled(bool enabled)
+    {
+        picker.IsEnabled(enabled);
+        root.Opacity(enabled ? 1.0 : 0.55);
+    }
+
+    void Close() noexcept
+    {
+        if (closed) return;
+        closed = true;
+        try
+        {
+            picker.ColorChanged(colorToken);
+            picker.PointerReleased(pointerToken);
+            picker.LostFocus(lostFocusToken);
+            picker.KeyDown(keyToken);
+        }
+        catch (...)
+        {
+        }
+        changed = {};
+    }
+};
+
+struct RuleRow
+{
+    std::wstring id;
+    muxc::Border root{nullptr};
+    muxc::StackPanel content{nullptr};
+    muxc::TextBox label{nullptr};
+    muxc::TextBox extensions{nullptr};
+    muxc::Button remove{nullptr};
+    winrt::event_token labelToken{};
+    winrt::event_token extensionsToken{};
+    winrt::event_token removeToken{};
+    bool closed = false;
+
+    void Close() noexcept
+    {
+        if (closed) return;
+        closed = true;
+        try
+        {
+            label.TextChanged(labelToken);
+            extensions.TextChanged(extensionsToken);
+            remove.Click(removeToken);
+        }
+        catch (...)
+        {
+        }
+    }
+};
+
+} // namespace
+
+struct DesktopPagePresenter::Impl
+{
+    explicit Impl(LocalizeCallback callback, const mux::Style& style)
+        : localize(std::move(callback)), cardStyle(style)
+    {
+        BuildControls();
+        HookEvents();
+        RefreshLocalizedText();
+    }
+
+    LocalizeCallback localize;
+    DesktopPageActions actions;
+    mux::Style cardStyle{nullptr};
+    muxc::StackPanel root{nullptr};
+
+    SettingsCard displayCard;
+    SettingsCard categoryLayoutCard;
+    SettingsCard beautifyCard;
+    SettingsCard categoryRulesCard;
+
+    std::unique_ptr<NumericEditor> iconSpacing;
+    std::unique_ptr<NumericEditor> iconSize;
+    std::unique_ptr<NumericEditor> itemFontSize;
+    std::unique_ptr<NumericEditor> listFontSize;
+    std::unique_ptr<NumericEditor> itemFontWeight;
+    muxc::TextBlock shortcutArrowLabel{nullptr};
+    muxc::ComboBox shortcutArrow{nullptr};
+
+    std::unique_ptr<NumericEditor> categorizedTabHeight;
+    std::unique_ptr<NumericEditor> tabFontSize;
+    muxc::ToggleSwitch showCategoryTabCounts{nullptr};
+
+    muxc::TextBlock beautifyPresetLabel{nullptr};
+    muxc::ComboBox beautifyPreset{nullptr};
+    muxc::ToggleSwitch beautifyEnabled{nullptr};
+    muxc::StackPanel beautifyAdvanced{nullptr};
+    muxc::TextBlock beautifyModeLabel{nullptr};
+    muxc::ComboBox beautifyMode{nullptr};
+    std::unique_ptr<ColorEditor> backgroundStart;
+    std::unique_ptr<NumericEditor> backgroundOpacity;
+    muxc::ToggleSwitch gradientEnabled{nullptr};
+    std::unique_ptr<ColorEditor> backgroundEnd;
+    muxc::TextBlock gradientDirectionLabel{nullptr};
+    muxc::ComboBox gradientDirection{nullptr};
+    muxc::TextBlock shapeLabel{nullptr};
+    muxc::ComboBox shape{nullptr};
+    std::unique_ptr<NumericEditor> contentScale;
+    std::unique_ptr<NumericEditor> highlightStrength;
+    std::unique_ptr<NumericEditor> highlightSize;
+    std::unique_ptr<NumericEditor> highlightAngle;
+    std::unique_ptr<NumericEditor> shadeStrength;
+    std::unique_ptr<NumericEditor> edgeHighlight;
+    muxc::ToggleSwitch filterEnabled{nullptr};
+    std::unique_ptr<ColorEditor> filterTint;
+    std::unique_ptr<NumericEditor> filterStrength;
+    std::unique_ptr<NumericEditor> shadowStrength;
+    muxc::ToggleSwitch outlineEnabled{nullptr};
+    std::unique_ptr<NumericEditor> outlineWidth;
+    std::unique_ptr<NumericEditor> outlineOpacity;
+    std::unique_ptr<ColorEditor> outlineColor;
+
+    muxc::TextBlock categoryHint{nullptr};
+    muxc::StackPanel categoryRulePanel{nullptr};
+    std::vector<std::unique_ptr<RuleRow>> ruleRows;
+    muxc::TextBox newCategoryLabel{nullptr};
+    muxc::TextBox newCategoryExtensions{nullptr};
+    muxc::Button addCategory{nullptr};
+    muxc::Button applyCategory{nullptr};
+    muxc::Button restoreCategory{nullptr};
+    muxc::TextBlock categoryStatus{nullptr};
+
+    std::uint64_t generation = 0;
+    std::uint64_t desktopRevision = 0;
+    std::uint64_t categoryRevision = 0;
+    std::uint64_t personalizationRevision = 0;
+    bool hasSnapshot = false;
+    bool updatingControls = false;
+    bool active = false;
+    bool closed = false;
+    bool categoryDirty = false;
+
+    winrt::event_token shortcutArrowToken{};
+    winrt::event_token showCountsToken{};
+    winrt::event_token beautifyPresetToken{};
+    winrt::event_token beautifyEnabledToken{};
+    winrt::event_token beautifyModeToken{};
+    winrt::event_token gradientEnabledToken{};
+    winrt::event_token gradientDirectionToken{};
+    winrt::event_token shapeToken{};
+    winrt::event_token filterEnabledToken{};
+    winrt::event_token outlineEnabledToken{};
+    winrt::event_token addCategoryToken{};
+    winrt::event_token applyCategoryToken{};
+    winrt::event_token restoreCategoryToken{};
+
+    [[nodiscard]] std::wstring L(
+        std::string_view key,
+        std::wstring_view fallback = {}) const
+    {
+        std::wstring value = localize ? localize(key) : std::wstring{};
+        if (value.empty() || value == std::wstring(key.begin(), key.end()))
+            value.assign(fallback);
+        return value;
+    }
+
+    std::unique_ptr<NumericEditor> MakeDesktopNumber(
+        double minimum,
+        double maximum,
+        double step,
+        int digits,
+        std::function<void(DesktopDisplaySettings&, double)> edit)
+    {
+        return std::make_unique<NumericEditor>(minimum, maximum, step, digits,
+            [this, edit = std::move(edit)](
+                double value, SettingsUpdateMode mode) {
+                UpdateDesktop(mode,
+                    [edit, value](DesktopDisplaySettings& settings) {
+                        edit(settings, value);
+                    });
+            });
+    }
+
+    std::unique_ptr<NumericEditor> MakeBeautifyNumber(
+        double minimum,
+        double maximum,
+        double step,
+        int digits,
+        std::function<void(IconBeautifySettings&, double)> edit)
+    {
+        return std::make_unique<NumericEditor>(minimum, maximum, step, digits,
+            [this, edit = std::move(edit)](
+                double value, SettingsUpdateMode mode) {
+                UpdateBeautify(mode,
+                    [edit, value](IconBeautifySettings& settings) {
+                        edit(settings, value);
+                    });
+            });
+    }
+
+    std::unique_ptr<ColorEditor> MakeBeautifyColor(
+        std::function<void(
+            IconBeautifySettings&,
+            const winrt::Windows::UI::Color&)> edit)
+    {
+        return std::make_unique<ColorEditor>(
+            [this, edit = std::move(edit)](
+                const winrt::Windows::UI::Color& value,
+                SettingsUpdateMode mode) {
+                UpdateBeautify(mode,
+                    [edit, value](IconBeautifySettings& settings) {
+                        edit(settings, value);
+                    });
+            });
+    }
+
+    void AppendCombo(
+        const SettingsCard& card,
+        muxc::TextBlock& label,
+        muxc::ComboBox& combo)
+    {
+        label = muxc::TextBlock{};
+        label.TextWrapping(mux::TextWrapping::Wrap);
+        combo = muxc::ComboBox{};
+        combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        combo.MaxWidth(560.0);
+        card.content.Children().Append(label);
+        card.content.Children().Append(combo);
+    }
+
+    void AppendAdvancedCombo(
+        muxc::TextBlock& label,
+        muxc::ComboBox& combo)
+    {
+        label = muxc::TextBlock{};
+        label.TextWrapping(mux::TextWrapping::Wrap);
+        combo = muxc::ComboBox{};
+        combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        combo.MaxWidth(560.0);
+        beautifyAdvanced.Children().Append(label);
+        beautifyAdvanced.Children().Append(combo);
+    }
+
+    void BuildControls()
+    {
+        root = muxc::StackPanel{};
+        root.Spacing(8.0);
+
+        InitializeCard(displayCard, cardStyle, root);
+        iconSpacing = MakeDesktopNumber(0.5, 2.0, 0.01, 2,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.iconSpacingScale = static_cast<float>(value);
+            });
+        iconSize = MakeDesktopNumber(
+            kMinimumItemIconSizeScale, kMaximumItemIconSizeScale, 0.01, 2,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.itemIconSizeScale = static_cast<float>(value);
+            });
+        itemFontSize = MakeDesktopNumber(
+            kMinimumItemFontSizeCu, kMaximumItemFontSizeCu, 0.5, 1,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.itemFontSizeCu = static_cast<float>(value);
+            });
+        listFontSize = MakeDesktopNumber(
+            kMinimumItemFontSizeCu, kMaximumItemFontSizeCu, 0.5, 1,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.listItemFontSizeCu = static_cast<float>(value);
+            });
+        itemFontWeight = MakeDesktopNumber(100.0, 900.0, 50.0, 0,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.itemFontWeight = static_cast<int>(std::lround(value));
+            });
+        for (const auto* editor : {iconSpacing.get(), iconSize.get(),
+                 itemFontSize.get(), listFontSize.get(), itemFontWeight.get()})
+        {
+            displayCard.content.Children().Append(editor->root);
+        }
+        AppendCombo(displayCard, shortcutArrowLabel, shortcutArrow);
+
+        InitializeCard(categoryLayoutCard, cardStyle, root);
+        categorizedTabHeight = std::make_unique<NumericEditor>(
+            24.0, 48.0, 1.0, 0,
+            [this](double value, SettingsUpdateMode mode) {
+                UpdatePersonalization(mode,
+                    [value](PersonalizationSettings& settings) {
+                        settings.categorizedTabHeight =
+                            static_cast<float>(value);
+                    });
+            });
+        tabFontSize = std::make_unique<NumericEditor>(
+            10.0, 22.0, 0.5, 1,
+            [this](double value, SettingsUpdateMode) {
+                UpdateCategory(SettingsUpdateMode::Draft,
+                    [value](CategorySettings& settings) {
+                        settings.tabFontSize = static_cast<float>(value);
+                    });
+            });
+        showCategoryTabCounts = muxc::ToggleSwitch{};
+        categoryLayoutCard.content.Children().Append(
+            categorizedTabHeight->root);
+        categoryLayoutCard.content.Children().Append(tabFontSize->root);
+        categoryLayoutCard.content.Children().Append(showCategoryTabCounts);
+
+        InitializeCard(beautifyCard, cardStyle, root);
+        AppendCombo(beautifyCard, beautifyPresetLabel, beautifyPreset);
+        beautifyEnabled = muxc::ToggleSwitch{};
+        beautifyCard.content.Children().Append(beautifyEnabled);
+        beautifyAdvanced = muxc::StackPanel{};
+        beautifyAdvanced.Spacing(12.0);
+        beautifyCard.content.Children().Append(beautifyAdvanced);
+
+        AppendAdvancedCombo(beautifyModeLabel, beautifyMode);
+        backgroundStart = MakeBeautifyColor(
+            [](IconBeautifySettings& settings,
+               const winrt::Windows::UI::Color& color) {
+                settings.backgroundStartR = ColorFloat(color.R);
+                settings.backgroundStartG = ColorFloat(color.G);
+                settings.backgroundStartB = ColorFloat(color.B);
+            });
+        backgroundOpacity = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.backgroundOpacity = static_cast<float>(value);
+            });
+        gradientEnabled = muxc::ToggleSwitch{};
+        backgroundEnd = MakeBeautifyColor(
+            [](IconBeautifySettings& settings,
+               const winrt::Windows::UI::Color& color) {
+                settings.backgroundEndR = ColorFloat(color.R);
+                settings.backgroundEndG = ColorFloat(color.G);
+                settings.backgroundEndB = ColorFloat(color.B);
+            });
+        beautifyAdvanced.Children().Append(backgroundStart->root);
+        beautifyAdvanced.Children().Append(backgroundOpacity->root);
+        beautifyAdvanced.Children().Append(gradientEnabled);
+        beautifyAdvanced.Children().Append(backgroundEnd->root);
+        AppendAdvancedCombo(gradientDirectionLabel, gradientDirection);
+        AppendAdvancedCombo(shapeLabel, shape);
+
+        contentScale = MakeBeautifyNumber(0.50, 0.90, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.contentScale = static_cast<float>(value);
+            });
+        highlightStrength = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.textureHighlightStrength = static_cast<float>(value);
+            });
+        highlightSize = MakeBeautifyNumber(0.10, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.textureHighlightSize = static_cast<float>(value);
+            });
+        highlightAngle = MakeBeautifyNumber(-1.0, 1.0, 0.02, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.textureHighlightAngle = static_cast<float>(value);
+            });
+        shadeStrength = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.textureShadeStrength = static_cast<float>(value);
+            });
+        edgeHighlight = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.textureEdgeHighlight = static_cast<float>(value);
+            });
+        for (const auto* editor : {contentScale.get(), highlightStrength.get(),
+                 highlightSize.get(), highlightAngle.get(),
+                 shadeStrength.get(), edgeHighlight.get()})
+        {
+            beautifyAdvanced.Children().Append(editor->root);
+        }
+
+        filterEnabled = muxc::ToggleSwitch{};
+        filterTint = MakeBeautifyColor(
+            [](IconBeautifySettings& settings,
+               const winrt::Windows::UI::Color& color) {
+                settings.filterTintR = ColorFloat(color.R);
+                settings.filterTintG = ColorFloat(color.G);
+                settings.filterTintB = ColorFloat(color.B);
+            });
+        filterStrength = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.filterStrength = static_cast<float>(value);
+            });
+        shadowStrength = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.shadowStrength = static_cast<float>(value);
+            });
+        outlineEnabled = muxc::ToggleSwitch{};
+        outlineWidth = MakeBeautifyNumber(0.0, 4.0, 0.1, 1,
+            [](IconBeautifySettings& settings, double value) {
+                settings.outlineWidth = static_cast<float>(value);
+            });
+        outlineOpacity = MakeBeautifyNumber(0.0, 1.0, 0.01, 2,
+            [](IconBeautifySettings& settings, double value) {
+                settings.outlineOpacity = static_cast<float>(value);
+            });
+        outlineColor = MakeBeautifyColor(
+            [](IconBeautifySettings& settings,
+               const winrt::Windows::UI::Color& color) {
+                settings.outlineR = ColorFloat(color.R);
+                settings.outlineG = ColorFloat(color.G);
+                settings.outlineB = ColorFloat(color.B);
+            });
+        beautifyAdvanced.Children().Append(filterEnabled);
+        beautifyAdvanced.Children().Append(filterTint->root);
+        beautifyAdvanced.Children().Append(filterStrength->root);
+        beautifyAdvanced.Children().Append(shadowStrength->root);
+        beautifyAdvanced.Children().Append(outlineEnabled);
+        beautifyAdvanced.Children().Append(outlineWidth->root);
+        beautifyAdvanced.Children().Append(outlineOpacity->root);
+        beautifyAdvanced.Children().Append(outlineColor->root);
+
+        InitializeCard(categoryRulesCard, cardStyle, root);
+        categoryHint = muxc::TextBlock{};
+        categoryHint.Opacity(0.72);
+        categoryHint.TextWrapping(mux::TextWrapping::Wrap);
+        categoryRulesCard.content.Children().Append(categoryHint);
+        categoryRulePanel = muxc::StackPanel{};
+        categoryRulePanel.Spacing(10.0);
+        categoryRulesCard.content.Children().Append(categoryRulePanel);
+        newCategoryLabel = muxc::TextBox{};
+        newCategoryExtensions = muxc::TextBox{};
+        addCategory = muxc::Button{};
+        addCategory.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        categoryRulesCard.content.Children().Append(newCategoryLabel);
+        categoryRulesCard.content.Children().Append(newCategoryExtensions);
+        categoryRulesCard.content.Children().Append(addCategory);
+
+        muxc::StackPanel categoryActions{};
+        categoryActions.Orientation(muxc::Orientation::Horizontal);
+        categoryActions.Spacing(8.0);
+        applyCategory = muxc::Button{};
+        restoreCategory = muxc::Button{};
+        categoryActions.Children().Append(applyCategory);
+        categoryActions.Children().Append(restoreCategory);
+        categoryRulesCard.content.Children().Append(categoryActions);
+        categoryStatus = muxc::TextBlock{};
+        categoryStatus.Opacity(0.72);
+        categoryRulesCard.content.Children().Append(categoryStatus);
+    }
+
+    template <typename Edit>
+    void UpdateDesktop(SettingsUpdateMode mode, Edit edit)
+    {
+        if (!closed && active && hasSnapshot && !updatingControls &&
+            actions.updateDesktop)
+        {
+            actions.updateDesktop(generation, mode,
+                DesktopPageActions::DesktopEdit(std::move(edit)));
+        }
+    }
+
+    template <typename Edit>
+    void UpdatePersonalization(SettingsUpdateMode mode, Edit edit)
+    {
+        if (!closed && active && hasSnapshot && !updatingControls &&
+            actions.updatePersonalization)
+        {
+            actions.updatePersonalization(generation, mode,
+                DesktopPageActions::PersonalizationEdit(std::move(edit)));
+        }
+    }
+
+    template <typename Edit>
+    void UpdateCategory(SettingsUpdateMode mode, Edit edit)
+    {
+        if (!closed && active && hasSnapshot && !updatingControls &&
+            actions.updateCategory)
+        {
+            actions.updateCategory(generation, mode,
+                DesktopPageActions::CategoryEdit(std::move(edit)));
+        }
+    }
+
+    template <typename Edit>
+    void UpdateBeautify(SettingsUpdateMode mode, Edit edit)
+    {
+        UpdateDesktop(mode,
+            [edit = std::move(edit)](DesktopDisplaySettings& desktop) mutable {
+                edit(desktop.iconBeautify);
+                desktop.iconBeautify.enabled = true;
+                desktop.iconBeautify.preset = IconBeautifyPreset::Custom;
+            });
+    }
+
+    void HookEvents()
+    {
+        shortcutArrowToken = shortcutArrow.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = shortcutArrow.SelectedIndex();
+                if (selection < 0) return;
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](DesktopDisplaySettings& settings) {
+                        settings.shortcutArrowMode = selection;
+                    });
+            });
+        showCountsToken = showCategoryTabCounts.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = showCategoryTabCounts.IsOn();
+                UpdatePersonalization(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.showCategoryTabCounts = enabled;
+                    });
+            });
+        beautifyPresetToken = beautifyPreset.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = beautifyPreset.SelectedIndex();
+                if (selection < 0 ||
+                    static_cast<std::size_t>(selection) >=
+                        kBeautifyPresets.size())
+                    return;
+                const IconBeautifyPreset preset =
+                    kBeautifyPresets[static_cast<std::size_t>(selection)];
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [preset](DesktopDisplaySettings& desktop) {
+                        if (preset == IconBeautifyPreset::Custom)
+                        {
+                            desktop.iconBeautify.preset = preset;
+                            desktop.iconBeautify.enabled = true;
+                        }
+                        else
+                        {
+                            desktop.iconBeautify =
+                                icon_beautify::MakePreset(preset);
+                        }
+                    });
+                UpdateConditionalStates();
+            });
+        beautifyEnabledToken = beautifyEnabled.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = beautifyEnabled.IsOn();
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](DesktopDisplaySettings& desktop) {
+                        desktop.iconBeautify.enabled = enabled;
+                        desktop.iconBeautify.preset =
+                            IconBeautifyPreset::Custom;
+                    });
+            });
+        beautifyModeToken = beautifyMode.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = beautifyMode.SelectedIndex();
+                if (selection < 0) return;
+                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](IconBeautifySettings& settings) {
+                        settings.mode = selection;
+                    });
+            });
+        gradientEnabledToken = gradientEnabled.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = gradientEnabled.IsOn();
+                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](IconBeautifySettings& settings) {
+                        settings.gradientEnabled = enabled;
+                    });
+                UpdateConditionalStates();
+            });
+        gradientDirectionToken = gradientDirection.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = gradientDirection.SelectedIndex();
+                if (selection < 0) return;
+                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](IconBeautifySettings& settings) {
+                        settings.gradientDirection = selection;
+                    });
+            });
+        shapeToken = shape.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = shape.SelectedIndex();
+                if (selection < 0 ||
+                    static_cast<std::size_t>(selection) >=
+                        kBeautifyShapes.size())
+                    return;
+                const auto value =
+                    kBeautifyShapes[static_cast<std::size_t>(selection)];
+                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
+                    [value](IconBeautifySettings& settings) {
+                        settings.shape = value;
+                    });
+            });
+        filterEnabledToken = filterEnabled.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = filterEnabled.IsOn();
+                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](IconBeautifySettings& settings) {
+                        settings.filterEnabled = enabled;
+                    });
+                UpdateConditionalStates();
+            });
+        outlineEnabledToken = outlineEnabled.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = outlineEnabled.IsOn();
+                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](IconBeautifySettings& settings) {
+                        settings.outlineEnabled = enabled;
+                    });
+                UpdateConditionalStates();
+            });
+        addCategoryToken = addCategory.Click(
+            [this](const auto&, const auto&) { AddCategoryRule(); });
+        applyCategoryToken = applyCategory.Click(
+            [this](const auto&, const auto&) {
+                if (!closed && active && hasSnapshot &&
+                    actions.commitCategory)
+                {
+                    actions.commitCategory(generation);
+                }
+            });
+        restoreCategoryToken = restoreCategory.Click(
+            [this](const auto&, const auto&) {
+                UpdateCategory(SettingsUpdateMode::Draft,
+                    [](CategorySettings& settings) {
+                        settings = CategorySettings::Defaults();
+                    });
+            });
+    }
+
+    std::wstring RuleLabel(const CategoryRule& rule) const
+    {
+        if (!rule.customLabel.empty())
+            return rule.customLabel;
+        if (rule.id == L"videos")
+            return L("widget.categories.default_video", L"Videos");
+        if (rule.id == L"images")
+            return L("widget.categories.default_image", L"Images");
+        if (rule.id == L"documents")
+            return L("widget.categories.default_document", L"Documents");
+        if (rule.id == L"archives")
+            return L("widget.categories.default_archive", L"Archives");
+        if (rule.id == L"audio")
+            return L("widget.categories.default_audio", L"Audio");
+        return L("widget.categories.unnamed", L"Unnamed");
+    }
+
+    void AddCategoryRule()
+    {
+        std::wstring label = Trim(newCategoryLabel.Text().c_str());
+        if (label.empty())
+            label = L("app.settings.new_category", L"New category");
+        const std::wstring extensions = newCategoryExtensions.Text().c_str();
+        static std::atomic<std::uint64_t> nextId{1};
+        const std::wstring id = L"custom-winui-" +
+            std::to_wstring(generation) + L"-" +
+            std::to_wstring(nextId.fetch_add(1));
+        UpdateCategory(SettingsUpdateMode::Draft,
+            [id, label = std::move(label), extensions](
+                CategorySettings& settings) mutable {
+                CategoryRule rule;
+                rule.id = std::move(id);
+                rule.customLabel = std::move(label);
+                rule.extensions = extensions;
+                settings.rules.push_back(std::move(rule));
+            });
+        newCategoryLabel.Text(L"");
+        newCategoryExtensions.Text(L"");
+    }
+
+    void RemoveCategoryRule(std::wstring id)
+    {
+        UpdateCategory(SettingsUpdateMode::Draft,
+            [id = std::move(id)](CategorySettings& settings) {
+                settings.rules.erase(
+                    std::remove_if(
+                        settings.rules.begin(), settings.rules.end(),
+                        [&id](const CategoryRule& rule) {
+                            return rule.id == id;
+                        }),
+                    settings.rules.end());
+            });
+    }
+
+    void EditCategoryLabel(const std::wstring& id, std::wstring label)
+    {
+        UpdateCategory(SettingsUpdateMode::Draft,
+            [id, label = std::move(label)](CategorySettings& settings) {
+                const auto found = std::find_if(
+                    settings.rules.begin(), settings.rules.end(),
+                    [&id](const CategoryRule& rule) {
+                        return rule.id == id;
+                    });
+                if (found != settings.rules.end())
+                    found->customLabel = label;
+            });
+    }
+
+    void EditCategoryExtensions(
+        const std::wstring& id,
+        std::wstring extensions)
+    {
+        UpdateCategory(SettingsUpdateMode::Draft,
+            [id, extensions = std::move(extensions)](
+                CategorySettings& settings) {
+                const auto found = std::find_if(
+                    settings.rules.begin(), settings.rules.end(),
+                    [&id](const CategoryRule& rule) {
+                        return rule.id == id;
+                    });
+                if (found != settings.rules.end())
+                    found->extensions = extensions;
+            });
+    }
+
+    void CloseRuleRows() noexcept
+    {
+        for (auto& row : ruleRows)
+            row->Close();
+        ruleRows.clear();
+    }
+
+    void BuildRuleRows(const CategorySettings& settings)
+    {
+        CloseRuleRows();
+        categoryRulePanel.Children().Clear();
+        ruleRows.reserve(settings.rules.size());
+        for (const CategoryRule& rule : settings.rules)
+        {
+            auto row = std::make_unique<RuleRow>();
+            row->id = rule.id;
+            row->root = muxc::Border{};
+            row->root.Padding(mux::Thickness{12.0});
+            row->root.CornerRadius(mux::CornerRadius{6.0});
+            row->root.BorderThickness(mux::Thickness{1.0});
+            row->root.BorderBrush(
+                winrt::Microsoft::UI::Xaml::Media::SolidColorBrush{
+                    winrt::Windows::UI::ColorHelper::FromArgb(
+                        48, 128, 128, 128)});
+            row->content = muxc::StackPanel{};
+            row->content.Spacing(8.0);
+            row->label = muxc::TextBox{};
+            row->extensions = muxc::TextBox{};
+            row->remove = muxc::Button{};
+            row->remove.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            row->label.Text(RuleLabel(rule));
+            row->extensions.Text(rule.extensions);
+            row->content.Children().Append(row->label);
+            row->content.Children().Append(row->extensions);
+            row->content.Children().Append(row->remove);
+            row->root.Child(row->content);
+            categoryRulePanel.Children().Append(row->root);
+
+            RuleRow* const raw = row.get();
+            row->labelToken = row->label.TextChanged(
+                [this, raw](const auto&, const auto&) {
+                    if (updatingControls || raw->closed) return;
+                    EditCategoryLabel(raw->id, raw->label.Text().c_str());
+                });
+            row->extensionsToken = row->extensions.TextChanged(
+                [this, raw](const auto&, const auto&) {
+                    if (updatingControls || raw->closed) return;
+                    EditCategoryExtensions(
+                        raw->id, raw->extensions.Text().c_str());
+                });
+            row->removeToken = row->remove.Click(
+                [this, raw](const auto&, const auto&) {
+                    if (!raw->closed)
+                        RemoveCategoryRule(raw->id);
+                });
+            ruleRows.push_back(std::move(row));
+        }
+        LocalizeRuleRows();
+    }
+
+    bool RuleTopologyMatches(const CategorySettings& settings) const
+    {
+        if (ruleRows.size() != settings.rules.size())
+            return false;
+        for (std::size_t index = 0; index < ruleRows.size(); ++index)
+            if (ruleRows[index]->id != settings.rules[index].id)
+                return false;
+        return true;
+    }
+
+    void PatchRuleRows(const CategorySettings& settings)
+    {
+        if (!RuleTopologyMatches(settings))
+        {
+            BuildRuleRows(settings);
+            return;
+        }
+        for (std::size_t index = 0; index < ruleRows.size(); ++index)
+        {
+            const CategoryRule& rule = settings.rules[index];
+            RuleRow& row = *ruleRows[index];
+            if (row.label.FocusState() == mux::FocusState::Unfocused)
+                row.label.Text(RuleLabel(rule));
+            if (row.extensions.FocusState() == mux::FocusState::Unfocused)
+                row.extensions.Text(rule.extensions);
+        }
+        LocalizeRuleRows();
+    }
+
+    void LocalizeRuleRows()
+    {
+        for (const auto& row : ruleRows)
+        {
+            row->label.Header(winrt::box_value(
+                L("app.settings.category_name", L"Category name")));
+            row->extensions.Header(winrt::box_value(
+                L("app.settings.category_extensions", L"Extensions")));
+            row->remove.Content(winrt::box_value(
+                L("app.settings.delete", L"Delete")));
+            muxa::AutomationProperties::SetName(row->remove,
+                L("app.settings.delete", L"Delete") + L" " +
+                    row->label.Text());
+        }
+    }
+
+    void UpdateConditionalStates()
+    {
+        const bool custom = beautifyPreset.SelectedIndex() ==
+            IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
+        beautifyAdvanced.Visibility(
+            custom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        backgroundEnd->SetEnabled(gradientEnabled.IsOn());
+        gradientDirection.IsEnabled(gradientEnabled.IsOn());
+        filterTint->SetEnabled(filterEnabled.IsOn());
+        filterStrength->SetEnabled(filterEnabled.IsOn());
+        outlineWidth->SetEnabled(outlineEnabled.IsOn());
+        outlineOpacity->SetEnabled(outlineEnabled.IsOn());
+        outlineColor->SetEnabled(outlineEnabled.IsOn());
+    }
+
+    void PatchDesktop(const DesktopDisplaySettings& settings)
+    {
+        iconSpacing->SetValue(settings.iconSpacingScale);
+        iconSize->SetValue(settings.itemIconSizeScale);
+        itemFontSize->SetValue(settings.itemFontSizeCu);
+        listFontSize->SetValue(settings.listItemFontSizeCu);
+        itemFontWeight->SetValue(settings.itemFontWeight);
+        shortcutArrow.SelectedIndex(
+            std::clamp(settings.shortcutArrowMode, 0, 2));
+
+        const IconBeautifySettings& value = settings.iconBeautify;
+        beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
+        beautifyEnabled.IsOn(value.enabled);
+        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
+        backgroundStart->SetColor(MakeColor(
+            value.backgroundStartR,
+            value.backgroundStartG,
+            value.backgroundStartB));
+        backgroundOpacity->SetValue(value.backgroundOpacity);
+        gradientEnabled.IsOn(value.gradientEnabled);
+        backgroundEnd->SetColor(MakeColor(
+            value.backgroundEndR,
+            value.backgroundEndG,
+            value.backgroundEndB));
+        gradientDirection.SelectedIndex(
+            std::clamp(value.gradientDirection, 0, 3));
+        shape.SelectedIndex(IndexOf(kBeautifyShapes, value.shape));
+        contentScale->SetValue(value.contentScale);
+        highlightStrength->SetValue(value.textureHighlightStrength);
+        highlightSize->SetValue(value.textureHighlightSize);
+        highlightAngle->SetValue(value.textureHighlightAngle);
+        shadeStrength->SetValue(value.textureShadeStrength);
+        edgeHighlight->SetValue(value.textureEdgeHighlight);
+        filterEnabled.IsOn(value.filterEnabled);
+        filterTint->SetColor(MakeColor(
+            value.filterTintR, value.filterTintG, value.filterTintB));
+        filterStrength->SetValue(value.filterStrength);
+        shadowStrength->SetValue(value.shadowStrength);
+        outlineEnabled.IsOn(value.outlineEnabled);
+        outlineWidth->SetValue(value.outlineWidth);
+        outlineOpacity->SetValue(value.outlineOpacity);
+        outlineColor->SetColor(MakeColor(
+            value.outlineR, value.outlineG, value.outlineB));
+    }
+
+    void PatchCategory(const CategorySettings& settings)
+    {
+        tabFontSize->SetValue(settings.tabFontSize);
+        PatchRuleRows(settings);
+    }
+
+    void PatchPersonalization(const PersonalizationSettings& settings)
+    {
+        categorizedTabHeight->SetValue(settings.categorizedTabHeight);
+        showCategoryTabCounts.IsOn(settings.showCategoryTabCounts);
+    }
+
+    std::vector<NumericEditor*> ContinuousNumbers() const
+    {
+        return {
+            iconSpacing.get(), iconSize.get(), itemFontSize.get(),
+            listFontSize.get(), itemFontWeight.get(),
+            categorizedTabHeight.get(),
+            backgroundOpacity.get(), contentScale.get(),
+            highlightStrength.get(), highlightSize.get(),
+            highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(),
+            filterStrength.get(), shadowStrength.get(), outlineWidth.get(),
+            outlineOpacity.get(),
+        };
+    }
+
+    std::vector<ColorEditor*> ContinuousColors() const
+    {
+        return {
+            backgroundStart.get(), backgroundEnd.get(), filterTint.get(),
+            outlineColor.get(),
+        };
+    }
+
+    void CommitContinuousEdits()
+    {
+        for (NumericEditor* editor : ContinuousNumbers())
+            editor->CommitPending();
+        for (ColorEditor* editor : ContinuousColors())
+            editor->CommitPending();
+        // Category tabFontSize is explicitly applied with its draft.
+        tabFontSize->CancelPending();
+    }
+
+    void CancelContinuousEdits() noexcept
+    {
+        for (NumericEditor* editor : ContinuousNumbers())
+            editor->CancelPending();
+        for (ColorEditor* editor : ContinuousColors())
+            editor->CancelPending();
+        tabFontSize->CancelPending();
+    }
+
+    void ApplySnapshot(const SettingsSnapshot& snapshot)
+    {
+        if (closed) return;
+        const bool newGeneration =
+            !hasSnapshot || snapshot.generation != generation;
+        if (newGeneration)
+            CancelContinuousEdits();
+        generation = snapshot.generation;
+        const bool wasUpdating = updatingControls;
+        updatingControls = true;
+
+        if (newGeneration ||
+            snapshot.domainRevisions.desktop != desktopRevision)
+        {
+            PatchDesktop(snapshot.values.desktop);
+            desktopRevision = snapshot.domainRevisions.desktop;
+        }
+        if (newGeneration ||
+            snapshot.domainRevisions.category != categoryRevision)
+        {
+            PatchCategory(snapshot.values.category);
+            categoryRevision = snapshot.domainRevisions.category;
+        }
+        if (newGeneration ||
+            snapshot.domainRevisions.personalization !=
+                personalizationRevision)
+        {
+            PatchPersonalization(snapshot.values.personalization);
+            personalizationRevision =
+                snapshot.domainRevisions.personalization;
+        }
+        categoryDirty = HasSettingsDomain(
+            snapshot.dirtyDomains, SettingsDomain::Category);
+        categoryStatus.Text(categoryDirty
+            ? L("app.settings.save_unsaved", L"Unsaved changes")
+            : L("app.settings.saved", L"Saved"));
+        hasSnapshot = true;
+        UpdateConditionalStates();
+        updatingControls = wasUpdating;
+    }
+
+    void SetCardText(
+        SettingsCard& card,
+        std::string_view key,
+        std::wstring_view fallback)
+    {
+        card.title.Text(L(key, fallback));
+        muxa::AutomationProperties::SetName(card.root, card.title.Text());
+    }
+
+    void RefreshLocalizedText()
+    {
+        if (closed) return;
+        const bool wasUpdating = updatingControls;
+        updatingControls = true;
+
+        SetCardText(displayCard, "app.settings.desktop_display",
+            L"Desktop icon display");
+        SetCardText(categoryLayoutCard, "app.settings.category_settings",
+            L"Category tab layout");
+        SetCardText(beautifyCard, "app.settings.icon_beautify",
+            L"Icon beautification");
+        SetCardText(categoryRulesCard, "app.settings.category_rules",
+            L"Category rules");
+
+        iconSpacing->SetLabel(L(
+            "app.settings.layout_spacing", L"Icon spacing"));
+        iconSize->SetLabel(L("app.settings.icon_size", L"Icon size"));
+        itemFontSize->SetLabel(L(
+            "app.settings.title_font_size", L"Title font size"));
+        listFontSize->SetLabel(L(
+            "app.settings.list_font_size", L"List font size"));
+        itemFontWeight->SetLabel(L(
+            "app.settings.title_font_weight", L"Title font weight"));
+        SetHeader(shortcutArrowLabel, shortcutArrow,
+            L("app.settings.shortcut_arrow", L"Shortcut arrow"));
+        SetComboItems(shortcutArrow, {
+            L("app.settings.arrow_default", L"System default"),
+            L("app.settings.arrow_hide_all", L"Hide all"),
+            L("app.settings.arrow_show_all", L"Show all"),
+        }, std::max(0, shortcutArrow.SelectedIndex()));
+
+        categorizedTabHeight->SetLabel(
+            L("app.settings.tab_height", L"Category tab height"));
+        tabFontSize->SetLabel(
+            L("app.settings.category_font_size", L"Category tab font size"));
+        showCategoryTabCounts.Header(winrt::box_value(L(
+            "app.settings.category_show_count", L"Show item counts")));
+        muxa::AutomationProperties::SetName(showCategoryTabCounts,
+            L("app.settings.category_show_count", L"Show item counts"));
+
+        SetHeader(beautifyPresetLabel, beautifyPreset,
+            L("app.settings.icon_beautify", L"Icon beautification"));
+        SetComboItems(beautifyPreset, {
+            L("app.settings.beautify_preset_none", L"None"),
+            L("app.settings.beautify_preset_default", L"Default"),
+            L("app.settings.custom", L"Custom"),
+        }, std::max(0, beautifyPreset.SelectedIndex()));
+        beautifyEnabled.Header(winrt::box_value(
+            L("app.settings.beautify_enabled", L"Enable beautification")));
+        muxa::AutomationProperties::SetName(beautifyEnabled,
+            L("app.settings.beautify_enabled", L"Enable beautification"));
+        SetHeader(beautifyModeLabel, beautifyMode,
+            L("app.settings.beautify_mode", L"Beautification mode"));
+        SetComboItems(beautifyMode, {
+            L("app.settings.beautify_smart", L"Smart"),
+            L("app.settings.beautify_shrink_bg", L"Shrink background"),
+        }, std::max(0, beautifyMode.SelectedIndex()));
+        backgroundStart->SetLabel(
+            L("app.settings.default_bg", L"Background color"));
+        backgroundOpacity->SetLabel(
+            L("app.settings.bg_opacity_val", L"Background opacity"));
+        gradientEnabled.Header(winrt::box_value(L(
+            "app.settings.enable_gradient_bg", L"Enable gradient")));
+        muxa::AutomationProperties::SetName(gradientEnabled,
+            L("app.settings.enable_gradient_bg", L"Enable gradient"));
+        backgroundEnd->SetLabel(L(
+            "app.settings.gradient_end_color", L"Gradient end color"));
+        SetHeader(gradientDirectionLabel, gradientDirection,
+            L("app.settings.beautify_gradient_dir", L"Gradient direction"));
+        SetComboItems(gradientDirection, {
+            L("app.settings.beautify_gradient_updown", L"Top to bottom"),
+            L("app.settings.beautify_gradient_leftright", L"Left to right"),
+            L("app.settings.beautify_gradient_topleft_bottomright",
+                L"Top-left to bottom-right"),
+            L("app.settings.beautify_gradient_bottomleft_topright",
+                L"Bottom-left to top-right"),
+        }, std::max(0, gradientDirection.SelectedIndex()));
+        SetHeader(shapeLabel, shape,
+            L("app.settings.beautify_shape", L"Shape"));
+        SetComboItems(shape, {
+            L("app.settings.beautify_shape_legacy", L"Rounded"),
+            L("app.settings.beautify_shape_continuous_rounded",
+                L"Continuous rounded"),
+            L("app.settings.beautify_shape_soft_rounded", L"Soft rounded"),
+            L("app.settings.beautify_shape_circle", L"Circle"),
+            L("app.settings.beautify_shape_pebble", L"Pebble"),
+        }, std::max(0, shape.SelectedIndex()));
+        contentScale->SetLabel(L(
+            "app.settings.beautify_content_scale", L"Content scale"));
+        highlightStrength->SetLabel(L(
+            "app.settings.beautify_texture_highlight",
+            L"Texture highlight"));
+        highlightSize->SetLabel(L(
+            "app.settings.beautify_texture_highlight_size",
+            L"Highlight size"));
+        highlightAngle->SetLabel(L(
+            "app.settings.beautify_texture_highlight_angle",
+            L"Highlight angle"));
+        shadeStrength->SetLabel(L(
+            "app.settings.beautify_texture_shade", L"Texture shade"));
+        edgeHighlight->SetLabel(L(
+            "app.settings.beautify_texture_edge", L"Edge highlight"));
+        filterEnabled.Header(winrt::box_value(
+            L("app.settings.beautify_filter", L"Enable color filter")));
+        muxa::AutomationProperties::SetName(filterEnabled,
+            L("app.settings.beautify_filter", L"Enable color filter"));
+        filterTint->SetLabel(L(
+            "app.settings.beautify_filter_color", L"Filter color"));
+        filterStrength->SetLabel(L(
+            "app.settings.beautify_filter_strength", L"Filter strength"));
+        shadowStrength->SetLabel(L(
+            "app.settings.beautify_shadow_strength", L"Shadow strength"));
+        outlineEnabled.Header(winrt::box_value(
+            L("app.settings.beautify_outline", L"Enable outline")));
+        muxa::AutomationProperties::SetName(outlineEnabled,
+            L("app.settings.beautify_outline", L"Enable outline"));
+        outlineWidth->SetLabel(L(
+            "app.settings.beautify_outline_width", L"Outline width"));
+        outlineOpacity->SetLabel(L(
+            "app.settings.beautify_outline_opacity", L"Outline opacity"));
+        outlineColor->SetLabel(L(
+            "app.settings.beautify_outline_color", L"Outline color"));
+
+        categoryHint.Text(L("app.settings.category_hint",
+            L"Changes to category rules are applied explicitly."));
+        newCategoryLabel.Header(winrt::box_value(
+            L("app.settings.category_name", L"Category name")));
+        newCategoryExtensions.Header(winrt::box_value(
+            L("app.settings.category_extensions", L"Extensions")));
+        addCategory.Content(winrt::box_value(
+            L("app.settings.add", L"Add")));
+        applyCategory.Content(winrt::box_value(
+            L("app.settings.apply", L"Apply")));
+        restoreCategory.Content(winrt::box_value(
+            L("app.settings.restore_default", L"Restore defaults")));
+        muxa::AutomationProperties::SetName(addCategory,
+            L("app.settings.add_category", L"Add category"));
+        muxa::AutomationProperties::SetName(applyCategory,
+            L("app.settings.apply", L"Apply"));
+        muxa::AutomationProperties::SetName(restoreCategory,
+            L("app.settings.restore_default", L"Restore defaults"));
+        categoryStatus.Text(categoryDirty
+            ? L("app.settings.save_unsaved", L"Unsaved changes")
+            : L("app.settings.saved", L"Saved"));
+        LocalizeRuleRows();
+        UpdateConditionalStates();
+        updatingControls = wasUpdating;
+    }
+
+    mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
+    {
+        if (id == "desktop.spacing" || id == "desktop.iconSpacing")
+            return iconSpacing->slider;
+        if (id == "desktop.iconSize") return iconSize->slider;
+        if (id == "desktop.itemFontSize") return itemFontSize->number;
+        if (id == "desktop.listFontSize") return listFontSize->number;
+        if (id == "desktop.fontWeight") return itemFontWeight->number;
+        if (id == "desktop.shortcutArrow") return shortcutArrow;
+        if (id == "desktop.categoryLayout" || id == "desktop.tabHeight")
+            return categorizedTabHeight->slider;
+        if (id == "desktop.tabFontSize") return tabFontSize->number;
+        if (id == "desktop.categoryCounts") return showCategoryTabCounts;
+        if (id == "desktop.iconBeautify" ||
+            id == "desktop.iconBeautify.preset")
+            return beautifyPreset;
+        if (id == "desktop.categories" || id == "desktop.categoryRules")
+            return applyCategory;
+        if (id == "desktop.category.add") return newCategoryLabel;
+        return nullptr;
+    }
+
+    void CloseEditors() noexcept
+    {
+        iconSpacing->Close();
+        iconSize->Close();
+        itemFontSize->Close();
+        listFontSize->Close();
+        itemFontWeight->Close();
+        categorizedTabHeight->Close();
+        tabFontSize->Close();
+        backgroundStart->Close();
+        backgroundOpacity->Close();
+        backgroundEnd->Close();
+        contentScale->Close();
+        highlightStrength->Close();
+        highlightSize->Close();
+        highlightAngle->Close();
+        shadeStrength->Close();
+        edgeHighlight->Close();
+        filterTint->Close();
+        filterStrength->Close();
+        shadowStrength->Close();
+        outlineWidth->Close();
+        outlineOpacity->Close();
+        outlineColor->Close();
+    }
+
+    void Close() noexcept
+    {
+        if (closed) return;
+        if (active)
+            CommitContinuousEdits();
+        active = false;
+        closed = true;
+        CloseRuleRows();
+        CloseEditors();
+        try
+        {
+            shortcutArrow.SelectionChanged(shortcutArrowToken);
+            showCategoryTabCounts.Toggled(showCountsToken);
+            beautifyPreset.SelectionChanged(beautifyPresetToken);
+            beautifyEnabled.Toggled(beautifyEnabledToken);
+            beautifyMode.SelectionChanged(beautifyModeToken);
+            gradientEnabled.Toggled(gradientEnabledToken);
+            gradientDirection.SelectionChanged(gradientDirectionToken);
+            shape.SelectionChanged(shapeToken);
+            filterEnabled.Toggled(filterEnabledToken);
+            outlineEnabled.Toggled(outlineEnabledToken);
+            addCategory.Click(addCategoryToken);
+            applyCategory.Click(applyCategoryToken);
+            restoreCategory.Click(restoreCategoryToken);
+        }
+        catch (...)
+        {
+        }
+        actions = {};
+        localize = {};
+    }
+};
+
+DesktopPagePresenter::DesktopPagePresenter(
+    LocalizeCallback localize,
+    const mux::Style& cardStyle)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+{
+}
+
+DesktopPagePresenter::~DesktopPagePresenter()
+{
+    Close();
+}
+
+void DesktopPagePresenter::SetActions(DesktopPageActions actions)
+{
+    if (impl_ && !impl_->closed)
+        impl_->actions = std::move(actions);
+}
+
+mux::FrameworkElement DesktopPagePresenter::Content() const noexcept
+{
+    return impl_ ? impl_->root : nullptr;
+}
+
+void DesktopPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
+{
+    if (impl_) impl_->ApplySnapshot(snapshot);
+}
+
+void DesktopPagePresenter::RefreshLocalizedText()
+{
+    if (impl_) impl_->RefreshLocalizedText();
+}
+
+mux::FrameworkElement DesktopPagePresenter::FocusTarget(
+    std::string_view focusId) const noexcept
+{
+    return impl_ ? impl_->FocusTarget(focusId) : nullptr;
+}
+
+void DesktopPagePresenter::Activate() noexcept
+{
+    if (impl_ && !impl_->closed)
+        impl_->active = true;
+}
+
+void DesktopPagePresenter::Deactivate() noexcept
+{
+    if (!impl_ || impl_->closed || !impl_->active) return;
+    impl_->CommitContinuousEdits();
+    impl_->active = false;
+}
+
+void DesktopPagePresenter::Close() noexcept
+{
+    if (impl_) impl_->Close();
+}
+
+} // namespace snowdesktop::winui

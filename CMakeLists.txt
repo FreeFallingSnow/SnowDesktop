@@ -252,6 +252,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/App.xaml
     src/winui/App.xaml.cpp
     src/winui/App.xaml.h
+    src/winui/desktop_page_presenter.cpp
+    src/winui/desktop_page_presenter.h
     src/winui/SettingsShell.xaml
     src/winui/SettingsShell.xaml.cpp
     src/winui/SettingsShell.xaml.h
@@ -1231,6 +1233,13 @@ if (BUILD_TESTING)
         SOURCES tests/winui_personalization_page_presenter_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract personalization settings ui winui)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiDesktopPagePresenterTests
+        winui_desktop_page_presenter
+        SOURCES tests/winui_desktop_page_presenter_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract desktop personalization settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests
