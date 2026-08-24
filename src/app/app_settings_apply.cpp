@@ -1702,8 +1702,8 @@ void DesktopApp::LoadCategorySettingsAndApply()
 void DesktopApp::ApplyLanguageChange()
 {
     LoadCategorySettingsAndApply();
-    if (settingsWindow_)
-        settingsWindow_->ApplyLanguageChange();
+    const bool widgetRuntimeReloadAllowed = !settingsWindow_ ||
+        settingsWindow_->PrepareLanguageChange();
     PublishSettingsUpdateStatus();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
@@ -1737,9 +1737,15 @@ void DesktopApp::ApplyLanguageChange()
         case DesktopWidgetType::LuaScript:
             if (widgetEngine_ && !widget.packageId.empty())
             {
-                if (!widgetEngine_->ReloadWidget(widget.id))
-                    widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
-                widgetEngine_->NotifyLanguageChanged(widget.id);
+                if (widgetRuntimeReloadAllowed)
+                {
+                    if (!widgetEngine_->ReloadWidget(widget.id))
+                    {
+                        widgetEngine_->EnsureWidgetLoaded(
+                            widget.id, widget.packageId);
+                    }
+                    widgetEngine_->NotifyLanguageChanged(widget.id);
+                }
                 const auto& runtimeWidgets = widgetEngine_->GetWidgets();
                 auto runtime = std::find_if(runtimeWidgets.begin(), runtimeWidgets.end(),
                     [&](const LuaWidget& loaded) {
@@ -1763,6 +1769,12 @@ void DesktopApp::ApplyLanguageChange()
             widget.title = std::move(defaultTitle);
             titleChanged = true;
         }
+    }
+
+    if (settingsWindow_)
+    {
+        settingsWindow_->ApplyLanguageChange(
+            widgetRuntimeReloadAllowed);
     }
 
     if (titleChanged)

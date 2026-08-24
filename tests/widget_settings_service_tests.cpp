@@ -570,6 +570,78 @@ int main()
                 "initial query",
         "appSearch snapshots read the separate persisted searchKey value");
 
+    FakeBackend languageBackend = MakeBackend();
+    languageBackend.ordinary["enabled"] =
+        MakeWidgetSettingBoolean(false);
+    languageBackend.searchQueries["appQuery"] = "localized query";
+    languageBackend.opaque["token"] = {
+        true, true, false, true, "must never escape" };
+    languageBackend.opaque["file"] = {
+        true, false, true, false, "Owned file handle" };
+    languageBackend.opaque["app"] = {
+        true, false, false, true, "Logical app reference" };
+    WidgetSettingsService languageService(languageBackend);
+    const auto languageBefore = languageService.Load(L"widget-1");
+    auto languageGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *languageBefore.snapshot);
+    (void)languageService.StartSearch(
+        languageGuard, "appSearch", "old generation");
+    const std::size_t languageSearchIndex =
+        languageBackend.searches.size() - 1;
+    languageBackend.descriptor.generation = 8;
+    languageBackend.descriptor.widgetName = "Localized widget";
+    languageBackend.descriptor.manifestFields.front().schema.label =
+        "Localized enabled";
+    languageBackend.descriptor.manifestFields.front().schema.description =
+        "Localized description";
+    languageBackend.descriptor.manifestGroups.front().label =
+        "Localized group";
+    languageBackend.descriptor.manifestGroups.front().description =
+        "Localized group description";
+    languageBackend.descriptor.scriptPresets.front().label =
+        "Localized preset";
+    const auto languageAfter = languageService.Reload(L"widget-1");
+    languageBackend.Complete(languageSearchIndex,
+        { { "stale", "Stale", "apps", "application" } });
+    const auto* localizedEnabled = languageAfter.snapshot
+        ? Find(*languageAfter.snapshot, "enabled") : nullptr;
+    const auto* localizedSecret = languageAfter.snapshot
+        ? Find(*languageAfter.snapshot, "token") : nullptr;
+    const auto* localizedFile = languageAfter.snapshot
+        ? Find(*languageAfter.snapshot, "file") : nullptr;
+    const auto* localizedReference = languageAfter.snapshot
+        ? Find(*languageAfter.snapshot, "app") : nullptr;
+    const auto* localizedSearch = languageAfter.snapshot
+        ? Find(*languageAfter.snapshot, "appSearch") : nullptr;
+    Check(languageAfter.Succeeded() && languageAfter.snapshot &&
+            languageAfter.snapshot->generation == 8 &&
+            languageAfter.snapshot->widgetName == "Localized widget" &&
+            localizedEnabled &&
+            localizedEnabled->schema.label == "Localized enabled" &&
+            localizedEnabled->schema.description ==
+                "Localized description" &&
+            !localizedEnabled->currentValue.boolean &&
+            languageAfter.snapshot->groups.front().label ==
+                "Localized group" &&
+            languageAfter.snapshot->groups.front().description ==
+                "Localized group description" &&
+            languageAfter.snapshot->presets.front().label ==
+                "Localized preset" &&
+            localizedSecret && localizedSecret->opaque.configured &&
+            localizedSecret->currentValue.type ==
+                InteractionValue::Type::Null &&
+            localizedSecret->opaque.displayLabel.empty() &&
+            localizedFile && localizedFile->opaque.configured &&
+            localizedFile->currentValue.type ==
+                InteractionValue::Type::Null &&
+            localizedReference && localizedReference->opaque.configured &&
+            localizedReference->currentValue.type ==
+                InteractionValue::Type::Null &&
+            localizedSearch && localizedSearch->searchQuery ==
+                "localized query" &&
+            !languageService.SearchSnapshot(L"widget-1", "appSearch"),
+        "language-generation reload updates labels, groups and presets while preserving values and opaque channels and rejecting old search results");
+
     FakeBackend transientBackend = MakeBackend();
     transientBackend.ordinary["scale"] =
         MakeWidgetSettingNumber(1.0);

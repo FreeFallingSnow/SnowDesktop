@@ -1939,16 +1939,106 @@ struct SettingsWindowHost::Impl
         if (!shell)
             return;
         shell->RefreshLocalizedText();
-        RebuildSearchIndex();
         if (widgetsPageActive && widgetsPageBackend)
             (void)widgetsPageBackend->Refresh();
         if (backupDataPageActive && backupDataPageBackend)
             backupDataPageBackend->Refresh();
+        // Component schemas are supplied by the reloaded runtime. Rebuild
+        // search last so both the current editor and the management snapshot
+        // have observed the new language generation first.
+        RebuildSearchIndex();
         std::wstring title = L("settings.shell.title");
         if (title.empty())
             title = options.windowTitle;
         if (window && IsWindow(window))
             SetWindowTextW(window, title.c_str());
+    }
+
+    [[nodiscard]] bool PrepareLanguageChange()
+    {
+        if (!controller || !shell)
+            return true;
+        const auto current = controller->Snapshot();
+        if (!current || !current->sessionActive ||
+            current->route.page != SettingsPage::WidgetSettings)
+        {
+            return true;
+        }
+
+        const auto flushed = shell->FlushPendingWidgetSettings();
+        if (flushed.Succeeded())
+            return true;
+
+        std::wstring message;
+        if (!flushed.message.empty())
+            message = winrt::to_hstring(flushed.message).c_str();
+        if (message.empty())
+            message = L("settings.widget.saveFailed");
+        ShowActionError(SettingsActionResult::Failure(std::move(message)));
+        return false;
+    }
+
+    void ReloadActiveWidgetSettingsForLanguageChange()
+    {
+        if (!controller || !shell || !widgetSettingsService)
+            return;
+        const auto controllerSnapshot = controller->Snapshot();
+        if (!controllerSnapshot || !controllerSnapshot->sessionActive ||
+            controllerSnapshot->route.page != SettingsPage::WidgetSettings)
+        {
+            return;
+        }
+
+        const std::wstring instanceId =
+            controllerSnapshot->route.widgetInstanceId;
+        const auto disableStaleEditor = [&]() {
+            try
+            {
+                widgetSettingsService->Close(instanceId);
+                const auto currentController = controller->Snapshot();
+                if (currentController && currentController->sessionActive &&
+                    currentController->route ==
+                        controllerSnapshot->route &&
+                    shell->CurrentRoute() == controllerSnapshot->route)
+                {
+                    // The old runtime generation must never remain editable.
+                    // A normal Open resumes interaction and retries the load.
+                    shell->SuspendInteraction();
+                    interactionSuspended = true;
+                }
+            }
+            catch (...)
+            {
+            }
+        };
+
+        try
+        {
+            const auto loaded = widgetSettingsService->Reload(instanceId);
+            const auto current = widgetSettingsService->Snapshot(instanceId);
+            if (!loaded.Succeeded() || !loaded.snapshot || !current ||
+                loaded.snapshot->widgetId != instanceId ||
+                current->widgetId != loaded.snapshot->widgetId ||
+                current->generation != loaded.snapshot->generation ||
+                current->revision != loaded.snapshot->revision ||
+                !shell->ApplyWidgetSettingsSnapshot(*loaded.snapshot))
+            {
+                std::wstring message;
+                if (!loaded.message.empty())
+                    message = winrt::to_hstring(loaded.message).c_str();
+                if (message.empty())
+                    message = L("settings.widget.loadFailed");
+                ShowActionError(
+                    SettingsActionResult::Failure(std::move(message)));
+                disableStaleEditor();
+            }
+        }
+        catch (...)
+        {
+            ShowActionError(SettingsActionResult::Failure(
+                L("settings.widget.loadFailed")));
+            disableStaleEditor();
+        }
     }
 
     void ResumeInteraction()
@@ -2467,10 +2557,21 @@ void SettingsWindowHost::RefreshWidgetsPage()
     impl_->RebuildSearchIndex();
 }
 
-void SettingsWindowHost::ApplyLanguageChange()
+bool SettingsWindowHost::PrepareLanguageChange()
+{
+    if (!impl_->initialized)
+        return true;
+    return impl_->OnOwnerThread() && impl_->PrepareLanguageChange();
+}
+
+void SettingsWindowHost::ApplyLanguageChange(bool widgetRuntimeReloaded)
 {
     if (impl_->initialized && impl_->OnOwnerThread())
+    {
+        if (widgetRuntimeReloaded)
+            impl_->ReloadActiveWidgetSettingsForLanguageChange();
         impl_->RefreshLocalizedPresentation();
+    }
 }
 
 bool SettingsWindowHost::PublishHomeAboutStatus(

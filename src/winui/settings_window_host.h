@@ -111,7 +111,10 @@ public:
     void SetWidgetEngine(WidgetEngine* engine);
     /** Re-capture the component page after an external subscription change. */
     void RefreshWidgetsPage();
-    void ApplyLanguageChange();
+    /** Commit the active component editor before its runtime generation changes. */
+    [[nodiscard]] bool PrepareLanguageChange();
+    /** Rebind localized component schema after the runtime reload completes. */
+    void ApplyLanguageChange(bool widgetRuntimeReloaded);
     [[nodiscard]] bool PublishHomeAboutStatus(
         HomeAboutStatusPatch patch);
 

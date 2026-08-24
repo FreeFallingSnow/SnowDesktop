@@ -187,10 +187,15 @@ void SettingsWindow::RefreshWidgetsPage()
         impl_->host->RefreshWidgetsPage();
 }
 
-void SettingsWindow::ApplyLanguageChange()
+bool SettingsWindow::PrepareLanguageChange()
+{
+    return !impl_->host || impl_->host->PrepareLanguageChange();
+}
+
+void SettingsWindow::ApplyLanguageChange(bool widgetRuntimeReloaded)
 {
     if (impl_->host)
-        impl_->host->ApplyLanguageChange();
+        impl_->host->ApplyLanguageChange(widgetRuntimeReloaded);
 }
 
 bool SettingsWindow::PublishHomeAboutStatus(

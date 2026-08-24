@@ -382,6 +382,34 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ApplyWidgetSettingsSnapshot(") !=
                 std::string::npos,
         "widget settings snapshots, service events, native content, and close flush are wired through the WinUI shell");
+    const std::size_t languagePrepare = source.find(
+        "bool SettingsWindowHost::PrepareLanguageChange()");
+    const std::size_t languageApply = source.find(
+        "void SettingsWindowHost::ApplyLanguageChange(");
+    const std::string_view languageFunctions =
+        languagePrepare != std::string::npos &&
+            languageApply != std::string::npos
+        ? std::string_view(source).substr(languagePrepare)
+        : std::string_view{};
+    Check(header.find("bool PrepareLanguageChange()") !=
+                std::string::npos &&
+            header.find("ApplyLanguageChange(bool widgetRuntimeReloaded)") !=
+                std::string::npos &&
+            languageFunctions.find("shell->FlushPendingWidgetSettings()") !=
+                std::string_view::npos &&
+            languageFunctions.find("widgetSettingsService->Reload(instanceId)") !=
+                std::string_view::npos &&
+            languageFunctions.find("current->generation != loaded.snapshot->generation") !=
+                std::string_view::npos &&
+            languageFunctions.find("ApplyWidgetSettingsSnapshot(") !=
+                std::string_view::npos &&
+            languageFunctions.find("widgetSettingsService->Close(instanceId)") !=
+                std::string_view::npos &&
+            languageFunctions.find("shell->SuspendInteraction()") !=
+                std::string_view::npos &&
+            languageFunctions.find("ReloadActiveWidgetSettingsForLanguageChange()") <
+                languageFunctions.find("RefreshLocalizedPresentation()"),
+        "language changes flush the active editor before runtime replacement and bind the exact localized generation before rebuilding presentation");
     Check(shellHeader.find("ApplyWidgetsPageSnapshot(") !=
                 std::string::npos &&
             shellHeader.find("ApplyBackupDataPageSnapshot(") !=

@@ -267,6 +267,18 @@ int main(int argc, char** argv)
                 std::string::npos &&
             run.find("fieldState.visible") != std::string::npos,
         "settings search evaluates visible v2 fields without mutating live widget-settings sessions");
+    const std::string_view languageChange = Between(source,
+        "void DesktopApp::ApplyLanguageChange()",
+        "void DesktopApp::ToggleDesktopIconsVisibility()");
+    Check(AppearsBefore(languageChange,
+              "settingsWindow_->PrepareLanguageChange()",
+              "widgetEngine_->ReloadWidget(widget.id)") &&
+            AppearsBefore(languageChange,
+              "widgetEngine_->ReloadWidget(widget.id)",
+              "settingsWindow_->ApplyLanguageChange(") &&
+            languageChange.find("widgetRuntimeReloadAllowed") !=
+                std::string_view::npos,
+        "component language changes preserve pending edits, reload runtimes, then rebuild the WinUI schema and search index");
     const std::string_view hotkeyProbe = Between(source,
         "HotkeyProbeResult ProbeHotkeyAvailability(", "DesktopApp& app_");
     const auto reservedPageKey =
