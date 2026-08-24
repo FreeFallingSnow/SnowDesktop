@@ -587,6 +587,7 @@ struct WidgetsPagePresenter::Impl
         }
         body.Children().Append(grid);
         expander.Content(body);
+        StretchExpanderBody(expander, body);
     }
 
     void BuildControls()
@@ -1617,6 +1618,7 @@ struct WidgetsPagePresenter::Impl
         }
 
         row.Content(body);
+        StretchExpanderBody(row, body);
         SetAutomation(row, name.Text(), package.description);
         if (!firstDeveloperOverrideTarget)
             firstDeveloperOverrideTarget = row;
@@ -1728,6 +1730,7 @@ struct WidgetsPagePresenter::Impl
         }
 
         row.Content(body);
+        StretchExpanderBody(row, body);
         SetAutomation(row, name.Text(), diagnostic.lastError);
         if (!firstTarget)
             firstTarget = row;
@@ -2087,6 +2090,7 @@ struct WidgetsPagePresenter::Impl
         }
 
         permissionsExpander.Content(permissionBody);
+        StretchExpanderBody(permissionsExpander, permissionBody);
         SetAutomation(permissionsExpander,
             permissionHeader.Text(), stateText);
         body.Children().Append(permissionsExpander);
@@ -2146,6 +2150,7 @@ struct WidgetsPagePresenter::Impl
             rows.Children().Append(row);
         }
         instancesExpander.Content(rows);
+        StretchExpanderBody(instancesExpander, rows);
         SetAutomation(instancesExpander, header.Text());
         body.Children().Append(instancesExpander);
     }
@@ -2253,6 +2258,7 @@ struct WidgetsPagePresenter::Impl
                 versionRows.Children().Append(restore);
             }
             versions.Content(versionRows);
+            StretchExpanderBody(versions, versionRows);
             actionsPanel.Children().Append(versions);
         }
         if (hasAdvancedAction && package.canPublishDevelopmentPackage)
@@ -2270,6 +2276,7 @@ struct WidgetsPagePresenter::Impl
         }
 
         advanced.Content(actionsPanel);
+        StretchExpanderBody(advanced, actionsPanel);
         SetAutomation(advanced,
             L("app.settings.widgets_advanced", L"Advanced Options"),
             package.name);
@@ -2754,6 +2761,7 @@ struct WidgetsPagePresenter::Impl
         }
 
         expander.Content(body);
+        StretchExpanderBody(expander, body);
         SetAutomation(expander, sourceName, source.status);
         if (!firstSourceTarget)
             firstSourceTarget = expander;

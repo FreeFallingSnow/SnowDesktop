@@ -34,11 +34,10 @@
             IsSettingsVisible="False"
             IsBackButtonVisible="Visible"
             IsBackEnabled="False"
-            PaneDisplayMode="Auto"
-            CompactModeThresholdWidth="640"
-            ExpandedModeThresholdWidth="1000"
+            PaneDisplayMode="Left"
+            IsPaneOpen="True"
             OpenPaneLength="260"
-            IsPaneToggleButtonVisible="True">
+            IsPaneToggleButtonVisible="False">
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="HomeItem"
                                     Tag="home"
@@ -179,33 +178,6 @@
                 </Grid>
             </Grid>
         </NavigationView>
-
-        <VisualStateManager.VisualStateGroups>
-            <VisualStateGroup x:Name="WidthStates">
-                <VisualState x:Name="NarrowState">
-                    <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="0" />
-                    </VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter Target="HeaderHost.Padding" Value="12,10,12,6" />
-                        <Setter Target="StatusInfoBar.Margin" Value="12,0,12,6" />
-                        <Setter Target="PageSurface.Margin" Value="16,10,16,32" />
-                        <Setter Target="PageTitle.FontSize" Value="26" />
-                    </VisualState.Setters>
-                </VisualState>
-                <VisualState x:Name="WideState">
-                    <VisualState.StateTriggers>
-                        <AdaptiveTrigger MinWindowWidth="840" />
-                    </VisualState.StateTriggers>
-                    <VisualState.Setters>
-                        <Setter Target="HeaderHost.Padding" Value="24,14,24,8" />
-                        <Setter Target="StatusInfoBar.Margin" Value="24,0,24,8" />
-                        <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
-                        <Setter Target="PageTitle.FontSize" Value="32" />
-                    </VisualState.Setters>
-                </VisualState>
-            </VisualStateGroup>
-        </VisualStateManager.VisualStateGroups>
 
     </Grid>
 </UserControl>

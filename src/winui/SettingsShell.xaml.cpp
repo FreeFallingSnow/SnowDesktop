@@ -1426,7 +1426,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerDesktopFocus({
                 "desktop.spacing", "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
-                "desktop.fontWeight", "desktop.shortcutArrow",
+                "desktop.fontWeight", "desktop.tabFontSize",
+                "desktop.shortcutArrow",
                 "desktop.iconBeautify",
                 "desktop.iconBeautify.mode",
                 "desktop.iconBeautify.backgroundColor",

@@ -34,8 +34,8 @@ constexpr wchar_t kSettingsWindowClassName[] =
     L"SnowDesktop.WinUI3.SettingsWindow";
 constexpr int kDefaultClientWidth = 1100;
 constexpr int kDefaultClientHeight = 760;
-constexpr int kMinimumClientWidth = 500;
-constexpr int kMinimumClientHeight = 350;
+constexpr int kMinimumClientWidth = 840;
+constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 
@@ -53,17 +53,29 @@ bool QueryHighContrastEnabled(bool& enabled) noexcept
     return true;
 }
 
-bool SupportsMicaBackdrop() noexcept
+DWORD WindowsBuildNumber() noexcept
 {
     using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
     static const auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(
         GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
     if (!rtlGetVersion)
-        return false;
+        return 0;
     OSVERSIONINFOW version{};
     version.dwOSVersionInfoSize = sizeof(version);
-    return rtlGetVersion(&version) == 0 && version.dwMajorVersion >= 10 &&
-        version.dwBuildNumber >= 22000;
+    return rtlGetVersion(&version) == 0 && version.dwMajorVersion >= 10
+        ? version.dwBuildNumber
+        : 0;
+}
+
+bool SupportsMicaBackdrop() noexcept
+{
+    return WindowsBuildNumber() >= 22000;
+}
+
+bool SupportsDwmSystemBackdrop() noexcept
+{
+    // DWMWA_SYSTEMBACKDROP_TYPE is formally supported starting with 22H2.
+    return WindowsBuildNumber() >= 22621;
 }
 
 void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
@@ -78,6 +90,28 @@ void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
     const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
     (void)DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
         &corner, sizeof(corner));
+
+    bool highContrast = false;
+    const bool allowMaterial = QueryHighContrastEnabled(highContrast) &&
+        !highContrast;
+    const bool useMica = SupportsDwmSystemBackdrop() && allowMaterial;
+    const DWM_SYSTEMBACKDROP_TYPE backdrop = useMica
+        ? DWMSBT_MAINWINDOW
+        : DWMSBT_NONE;
+    (void)DwmSetWindowAttribute(window, DWMWA_SYSTEMBACKDROP_TYPE,
+        &backdrop, sizeof(backdrop));
+
+    // Windows 11 21H2 can host Island Mica but lacks the public top-level
+    // system-backdrop attribute. Match its base color so the native caption
+    // and Windows-owned buttons still meet the panel without a bright seam.
+    COLORREF captionColor = DWMWA_COLOR_DEFAULT;
+    if (allowMaterial && SupportsMicaBackdrop() &&
+        !SupportsDwmSystemBackdrop())
+    {
+        captionColor = darkTheme ? RGB(32, 32, 32) : RGB(243, 243, 243);
+    }
+    (void)DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR,
+        &captionColor, sizeof(captionColor));
 }
 
 struct StaticSearchDefinition
@@ -185,6 +219,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "personalization.showCategoryTabCounts",
         "app.settings.category_show_count",
         "settings.personalization.widgets.description"},
+    {SettingsPage::Personalization, "desktop.tabFontSize",
+        "app.settings.category_font_size",
+        "settings.desktop.categoryLayout.description"},
     {SettingsPage::Desktop, "desktop.spacing", "settings.desktop.spacing",
         "settings.desktop.spacing.description"},
     {SettingsPage::Desktop, "desktop.iconSize", "settings.desktop.iconSize",
@@ -270,6 +307,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Desktop, "desktop.categoryLayout",
         "settings.desktop.categoryLayout",
         "settings.desktop.categoryLayout.description"},
+    {SettingsPage::Desktop, "desktop.categoryRules",
+        "app.settings.category_rules",
+        "settings.desktop.categories.description"},
     {SettingsPage::Desktop, "desktop.categories",
         "settings.desktop.categories",
         "settings.desktop.categories.description"},

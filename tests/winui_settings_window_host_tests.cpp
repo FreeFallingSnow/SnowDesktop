@@ -107,18 +107,22 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("NavigationRoot().PaneTitle(shellTitle)") !=
                 std::string::npos,
         "the Island starts below the native caption and contains no integrated XAML title-bar row or inset bookkeeping");
-    Check(source.find("constexpr int kMinimumClientWidth = 500;") !=
+    Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
                 std::string::npos &&
-            source.find("constexpr int kMinimumClientHeight = 350;") !=
+            source.find("constexpr int kMinimumClientHeight = 520;") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"NarrowState\"") !=
+            shellMarkup.find("PaneDisplayMode=\"Left\"") !=
                 std::string::npos &&
-            shellMarkup.find("<AdaptiveTrigger MinWindowWidth=\"0\"") !=
+            shellMarkup.find("IsPaneOpen=\"True\"") !=
                 std::string::npos &&
-            shellMarkup.find(
-                "Target=\"PageSurface.Margin\" Value=\"16,10,16,32\"") !=
+            shellMarkup.find("x:Name=\"NarrowState\"") ==
+                std::string::npos &&
+            shellMarkup.find("AdaptiveTrigger") == std::string::npos &&
+            shellMarkup.find("CompactModeThresholdWidth") ==
+                std::string::npos &&
+            shellMarkup.find("ExpandedModeThresholdWidth") ==
                 std::string::npos,
-        "the host retains the legacy minimum size while the XAML surface adapts margins and typography for narrow windows");
+        "the host enforces the supported fixed-width settings surface and expanded left navigation without a narrow adaptive state");
     Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
             source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
                 std::string::npos &&
@@ -161,11 +165,36 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("DWMWA_USE_IMMERSIVE_DARK_MODE") !=
                 std::string::npos &&
+            source.find("DWMWA_SYSTEMBACKDROP_TYPE") !=
+                std::string::npos &&
+            source.find("DWMSBT_MAINWINDOW") != std::string::npos &&
+            source.find("DWMSBT_NONE") != std::string::npos &&
+            source.find("SupportsDwmSystemBackdrop()") !=
+                std::string::npos &&
+            source.find("version.dwBuildNumber") != std::string::npos &&
+            source.find(">= 22621") != std::string::npos &&
+            source.find("DWMWA_CAPTION_COLOR") != std::string::npos &&
+            source.find("DWMWA_COLOR_DEFAULT") != std::string::npos &&
             source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
             source.find("AppWindow") == std::string::npos &&
             source.find("TitleBarTheme") == std::string::npos,
-        "theme changes may request the native DWM dark caption while Windows retains title-bar layout and high-contrast ownership");
+        "theme and contrast changes coordinate native DWM caption material while Windows retains title-bar layout and ownership");
+
+    Check(source.find("\"desktop.tabFontSize\"") !=
+                std::string::npos &&
+            source.find("\"desktop.categoryRules\"") !=
+                std::string::npos &&
+            source.find("\"app.settings.category_font_size\"") !=
+                std::string::npos &&
+            source.find("\"app.settings.category_rules\"") !=
+                std::string::npos &&
+            shell.find("\"desktop.fontWeight\", "
+                       "\"desktop.tabFontSize\"") !=
+                std::string::npos &&
+            shell.find("\"desktop.categoryRules\"") !=
+                std::string::npos,
+        "visible category font-size and rule controls are both searchable and registered as focus targets");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&
@@ -315,11 +344,13 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             detachFunction.find("xamlSource.SystemBackdrop(") <
                 detachFunction.find("xamlSource.Content(nullptr)") &&
-            source.find("DWMWA_SYSTEMBACKDROP_TYPE") ==
+            source.find("DWMWA_SYSTEMBACKDROP_TYPE") !=
                 std::string::npos &&
+            source.find("DWMSBT_MAINWINDOW") != std::string::npos &&
+            source.find("DWMSBT_NONE") != std::string::npos &&
             source.find("DwmExtendFrameIntoClientArea") ==
                 std::string::npos,
-        "Detach clears the Island backdrop and the HWND does not install a competing client backdrop");
+        "Detach clears the Island material while the untouched native frame uses the matching DWM system backdrop with a contrast fallback");
     const std::size_t shutdownBegin = source.find(
         "void SettingsWindowHost::Shutdown() noexcept");
     const std::size_t openBegin = source.find(

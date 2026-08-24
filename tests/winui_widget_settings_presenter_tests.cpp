@@ -120,13 +120,15 @@ void TestSingleLineFieldRows(
         "widget fields keep full-width editors and validation while compact controls and reset actions align right and group expanders stretch");
     Check(ContainsAll(sharedControls, {
               "kSettingControlWidth = 300.0",
-              "kSettingMinimumTextWidth = 220.0",
-              "controlWidth + 20.0 + kSettingMinimumTextWidth",
+              "muxc::Grid::SetColumn(text, 0)",
               "muxc::Grid::SetColumn(controlHost, 1)",
-              "void SetControlAlignment(",
-              "root.SizeChanged(",
-              "Grid::SetRow(currentControl, stacked ? 1 : 0)"}),
-        "shared setting rows retain the legacy-width editor column when wide and derive a per-editor threshold before stacking below translated text");
+              "void SetControlAlignment("}) &&
+            sharedControls.find("kSettingMinimumTextWidth") ==
+                std::string::npos &&
+            sharedControls.find("controlRow") == std::string::npos &&
+            sharedControls.find("root.SizeChanged(") == std::string::npos &&
+            sharedControls.find("Grid::SetRow(") == std::string::npos,
+        "shared setting rows retain fixed left-text and legacy-width right-editor columns without a SizeChanged stacking path");
 }
 
 void TestPopupColorEditing(

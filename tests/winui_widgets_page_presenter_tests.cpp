@@ -122,6 +122,76 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos,
         "legacy development, rollback, publishing and Workshop actions are capability-gated host seams");
 
+    const auto sourceRegion = [&source](const char* beginMarker,
+                                        const char* endMarker) {
+        const auto begin = source.find(beginMarker);
+        if (begin == std::string::npos)
+            return std::string{};
+        const auto end = source.find(endMarker, begin);
+        return source.substr(begin, end == std::string::npos
+                ? std::string::npos : end - begin);
+    };
+    const auto stretchesAfterContent = [](const std::string& region,
+                                          const char* contentCall,
+                                          const char* stretchCall) {
+        const auto content = region.find(contentCall);
+        if (content == std::string::npos)
+            return false;
+        const auto afterContent = content + std::string(contentCall).size();
+        return region.find(stretchCall, afterContent) != std::string::npos;
+    };
+
+    const std::string iconReferenceRegion = sourceRegion(
+        "void InitializeIconReference(", "void BuildControls()");
+    Check(stretchesAfterContent(iconReferenceRegion,
+            "expander.Content(body)",
+            "StretchExpanderBody(expander, body)"),
+        "icon reference Expander content is stretched after attachment");
+
+    const std::string controlsRegion = sourceRegion(
+        "void BuildControls()", "void HookStaticEvents()");
+    Check(stretchesAfterContent(controlsRegion,
+            "includedExpander.Content(includedRows)",
+            "StretchExpanderBody(includedExpander, includedRows)"),
+        "included components Expander content is stretched after attachment");
+
+    const std::string developmentOverrideRegion = sourceRegion(
+        "void AddDevelopmentOverrideRow(", "void AddDiagnosticRow(");
+    Check(stretchesAfterContent(developmentOverrideRegion,
+            "row.Content(body)", "StretchExpanderBody(row, body)"),
+        "development override Expander content is stretched after attachment");
+
+    const std::string diagnosticRegion = sourceRegion(
+        "void AddDiagnosticRow(", "void RenderDeveloperRows()");
+    Check(stretchesAfterContent(diagnosticRegion,
+            "row.Content(body)", "StretchExpanderBody(row, body)"),
+        "diagnostic Expander content is stretched after attachment");
+
+    const std::string permissionRegion = sourceRegion(
+        "void AddPermissionControls(", "void AddInstanceControls(");
+    Check(stretchesAfterContent(permissionRegion,
+            "permissionsExpander.Content(permissionBody)",
+            "StretchExpanderBody(permissionsExpander, permissionBody)"),
+        "permissions Expander content is stretched after attachment");
+
+    const std::string instanceRegion = sourceRegion(
+        "void AddInstanceControls(", "void AddLegacyPackageActions(");
+    Check(stretchesAfterContent(instanceRegion,
+            "instancesExpander.Content(rows)",
+            "StretchExpanderBody(instancesExpander, rows)"),
+        "widget instance Expander content is stretched after attachment");
+
+    const std::string legacyActionsRegion = sourceRegion(
+        "void AddLegacyPackageActions(", "void AddPackageRow(");
+    Check(stretchesAfterContent(legacyActionsRegion,
+            "versions.Content(versionRows)",
+            "StretchExpanderBody(versions, versionRows)"),
+        "version Expander content is stretched after attachment");
+    Check(stretchesAfterContent(legacyActionsRegion,
+            "advanced.Content(actionsPanel)",
+            "StretchExpanderBody(advanced, actionsPanel)"),
+        "advanced Expander content is stretched after attachment");
+
     const auto packageRowStart = source.find("void AddPackageRow(");
     const auto packageRowEnd = source.find("void RequestUninstall(",
         packageRowStart);
@@ -150,8 +220,9 @@ void TestWidgetsPagePresenterContract(
             packageRowEnd != std::string::npos &&
             packageContentStretch != std::string::npos &&
             packageContentStretch < packageRowEnd &&
-            source.find("StretchExpanderBody(row, body)") !=
-                std::string::npos &&
+            stretchesAfterContent(sourceRegion(
+                    "void AddPackageRow(", "void RequestUninstall("),
+                "row.Content(body)", "StretchExpanderBody(row, body)") &&
             source.find("app.settings.widgets_package_id") !=
                 std::string::npos &&
             source.find("app.settings.widgets_provider_id") !=
@@ -175,6 +246,13 @@ void TestWidgetsPagePresenterContract(
             source.find("failureActions.HorizontalAlignment(") !=
                 std::string::npos,
         "package and nested Expander content stretches across each card while natural-width actions align at the right edge");
+
+    const std::string sourceGroupRegion = sourceRegion(
+        "void AddSourceGroup(", "void RenderSourceRows()");
+    Check(stretchesAfterContent(sourceGroupRegion,
+            "expander.Content(body)",
+            "StretchExpanderBody(expander, body)"),
+        "source and Workshop Expander content is stretched after attachment");
 
     const auto commandRowsStart = source.find("const auto addCommandRow =");
     const auto commandRowsEnd = source.find(

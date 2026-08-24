@@ -395,8 +395,16 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             homeCollapsed < generalItem && dockItem < dockCollapsed &&
             dockCollapsed < widgetsItem &&
             shellXaml.find("NavigationView.FooterMenuItems") ==
+                std::string::npos &&
+            shellXaml.find("PaneDisplayMode=\"Left\"") !=
+                std::string::npos &&
+            shellXaml.find("IsPaneOpen=\"True\"") !=
+                std::string::npos &&
+            shellXaml.find("IsPaneToggleButtonVisible=\"False\"") !=
+                std::string::npos &&
+            shellXaml.find("PaneDisplayMode=\"Auto\"") ==
                 std::string::npos,
-        "the visible navigation declaration retains the legacy ordering while Home and Dock remain compatibility-only items");
+        "the visible navigation declaration retains the legacy one-to-one ordering in a fixed expanded left pane while Home and Dock remain compatibility-only items");
 
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",
@@ -414,19 +422,20 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     Check(sharedControls.find("struct SettingRow") != std::string::npos &&
             sharedControls.find("kSettingControlWidth = 300.0") !=
                 std::string::npos &&
+            sharedControls.find("muxc::Grid::SetColumn(text, 0)") !=
+                std::string::npos &&
             sharedControls.find("muxc::Grid::SetColumn(controlHost, 1)") !=
+                std::string::npos &&
+            sharedControls.find(
+                "root.RowDefinitions().Append(labelRow)") !=
                 std::string::npos &&
             sharedControls.find("void SetControlAlignment(") !=
                 std::string::npos &&
-            sharedControls.find("kSettingMinimumTextWidth = 220.0") !=
+            sharedControls.find("kSettingMinimumTextWidth") ==
                 std::string::npos &&
-            sharedControls.find(
-                "controlWidth + 20.0 + kSettingMinimumTextWidth") !=
-                std::string::npos &&
-            sharedControls.find("root.SizeChanged(") != std::string::npos &&
-            sharedControls.find(
-                "Grid::SetRow(currentControl, stacked ? 1 : 0)") !=
-                std::string::npos &&
+            sharedControls.find("controlRow") == std::string::npos &&
+            sharedControls.find("root.SizeChanged(") == std::string::npos &&
+            sharedControls.find("Grid::SetRow(") == std::string::npos &&
             sharedControls.find("struct ColorFlyoutEditor") !=
                 std::string::npos &&
             sharedControls.find("SettingsUpdateMode::Preview") !=
@@ -454,7 +463,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "setting rows use the legacy-width right column when wide, derive a per-control narrow threshold, and color swatches transactionally restore unconfirmed sessions");
+        "setting rows keep text in the left column and the legacy-width editor in the right column without a SizeChanged stacking path, while color swatches transactionally restore unconfirmed sessions");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");
