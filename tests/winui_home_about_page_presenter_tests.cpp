@@ -33,9 +33,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
         repository / "src/winui/home_about_page_presenter.h");
     const std::string source = ReadText(
         repository / "src/winui/home_about_page_presenter.cpp");
+    const std::string model = ReadText(
+        repository / "src/winui/home_about_page_model.h");
 
-    Check(!header.empty() && !source.empty(),
-        "Home/About presenter sources are readable");
+    Check(!header.empty() && !source.empty() && !model.empty(),
+        "Home/About presenter and native status model are readable");
     Check(header.find("HomeContent()") != std::string::npos &&
             header.find("AboutContent()") != std::string::npos &&
             source.find("muxc::Button") != std::string::npos &&
@@ -43,11 +45,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("muxc::ProgressRing") != std::string::npos,
         "both routes use cached native WinUI controls");
 
-    Check(header.find("HomeAboutStatusPatch") != std::string::npos &&
-            header.find("std::optional<std::size_t> installedWidgetCount") !=
+    Check(model.find("HomeAboutStatusPatch") != std::string::npos &&
+            model.find("std::optional<std::size_t> installedWidgetCount") !=
                 std::string::npos &&
-            header.find("SettingsUpdateState") != std::string::npos &&
-            header.find("SettingsBackupState") != std::string::npos &&
+            model.find("SettingsUpdateState") != std::string::npos &&
+            model.find("SettingsBackupState") != std::string::npos &&
             source.find("patch.generation != generation") !=
                 std::string::npos &&
             source.find("patch.revision <= statusRevision") !=
