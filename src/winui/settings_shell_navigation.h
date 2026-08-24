@@ -61,8 +61,9 @@ public:
     [[nodiscard]] std::optional<SettingsRoute> GoForward();
 
     /**
-     * Updates conditional page gates.  If the active page becomes hidden,
-     * the state moves to Home and returns that replacement route.
+     * Updates conditional page gates. If the active page becomes hidden, the
+     * state returns to that legacy section's stable parent and reports the
+     * replacement route.
      */
     [[nodiscard]] std::optional<SettingsRoute> SetVisibility(
         SettingsShellPageVisibility visibility);

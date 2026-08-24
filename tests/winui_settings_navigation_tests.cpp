@@ -71,16 +71,16 @@ void TestConditionalPages()
         "the existing developer gate does not implicitly unlock Debug");
 
     const auto developerClosed = state.SetVisibility({false, true});
-    Check(developerClosed && developerClosed->page == SettingsPage::General &&
+    Check(developerClosed && developerClosed->page == SettingsPage::Widgets &&
             !state.Navigate(
                 SettingsRoute::ForPage(SettingsPage::DeveloperTools)) &&
             state.Navigate(SettingsRoute::ForPage(SettingsPage::Debug)),
-        "each conditional route requires its own runtime gate");
+        "closing Developer Tools returns to its legacy Widgets parent");
 
     const auto replacement = state.SetVisibility({false, false});
-    Check(replacement && replacement->page == SettingsPage::General &&
+    Check(replacement && replacement->page == SettingsPage::About &&
             !state.CanGoBack(),
-        "closing a conditional gate removes hidden history and returns General");
+        "closing Debug removes hidden history and returns to About");
 }
 
 void TestControllerGenerationGate()

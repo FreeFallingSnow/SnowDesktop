@@ -155,7 +155,12 @@ std::optional<SettingsRoute> SettingsShellNavigationState::SetVisibility(
     visibility_ = visibility;
     if (!IsRouteAvailable(active))
     {
-        history_.assign(1, SettingsRoute::ForPage(SettingsPage::General));
+        SettingsPage fallbackPage = SettingsPage::General;
+        if (active.page == SettingsPage::DeveloperTools)
+            fallbackPage = SettingsPage::Widgets;
+        else if (active.page == SettingsPage::Debug)
+            fallbackPage = SettingsPage::About;
+        history_.assign(1, SettingsRoute::ForPage(fallbackPage));
         historyIndex_ = 0;
         return Route();
     }
