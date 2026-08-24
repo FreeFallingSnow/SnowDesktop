@@ -552,8 +552,8 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)
         SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
-    if (settingsWindow_)
-        settingsWindow_->SyncSoftwareDesktopEnabled(enabled);
+    if (settingsController_)
+        (void)settingsController_->SynchronizeGeneral(generalSettings_);
 
     if (!hwnd_ || !IsWindow(hwnd_))
     {

@@ -396,374 +396,74 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();
 
+    snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
+    settingsHostOptions.windowTitle = _LW("app.settings.title");
+    settingsHostOptions.localize = [](std::string_view key) {
+        const std::string ownedKey(key);
+        return std::wstring(Locale::Instance().TrW(ownedKey.c_str()));
+    };
+    settingsHostOptions.languageCatalog = []() {
+        std::vector<std::pair<std::string, std::wstring>> languages;
+        for (const auto& language :
+            Locale::Instance().GetAvailableLanguages())
+        {
+            languages.emplace_back(language.code,
+                Utf8ToWide(Locale::Instance().GetLocalizedLanguageName(
+                    language.code)));
+        }
+        return languages;
+    };
+    settingsHostOptions.searchInput = []() {
+        snowdesktop::SettingsSearchIndexInput input;
+        input.languageTag = Locale::Instance().GetEffectiveLanguage();
+        return input;
+    };
+    settingsHostOptions.refreshExternalState = [this]() {
+        if (!settingsController_)
+            return;
+        snowdesktop::DesktopDisplaySettings desktop;
+        desktop.dockEnabled = generalSettings_.dockEnabled;
+        desktop.iconSpacingScale = iconSpacingScale_;
+        desktop.itemIconSizeScale = itemIconSizeScale_;
+        desktop.itemFontSizeCu = itemFontSizeCu_;
+        desktop.listItemFontSizeCu = listItemFontSizeCu_;
+        desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
+        desktop.shortcutArrowMode = shortcutArrowMode_;
+        desktop.iconBeautify = iconBeautifySettings_;
+        (void)settingsController_->SynchronizeDesktop(std::move(desktop));
+
+        if (FindWindowW(L"Shell_TrayWnd", nullptr))
+        {
+            auto snapshot = settingsController_->Snapshot();
+            if (snapshot)
+            {
+                DockSettings dock = snapshot->values.dock;
+                dock.systemTaskbarAutoHide =
+                    IsSystemTaskbarAutoHideEnabled();
+                dock.systemTaskbarAlignment =
+                    IsSystemTaskbarAlignmentCentered() ? 1 : 0;
+                (void)settingsController_->SynchronizeDock(std::move(dock));
+            }
+        }
+    };
+    settingsHostOptions.developerToolsVisible = [this]() {
+        return widgetSettingsService_ != nullptr;
+    };
+    settingsHostOptions.debugVisible = []() { return false; };
+
     settingsWindow_ = std::make_unique<SettingsWindow>();
-    if (!settingsWindow_->Init(instance, d3dDevice_.Get()))
-        WriteDiagnosticLogEntry(
-            L"SettingsWindow startup initialization deferred");
-    if (settingsWindow_)
+    if (!settingsController_ ||
+        !settingsWindow_->Init(instance, *settingsController_, nullptr,
+            std::move(settingsHostOptions)))
     {
-        settingsWindow_->SetReloadCallback([this]() {
-            ReloadItems();
-            if (settingsWindow_)
-                settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
-        });
-        settingsWindow_->SetExitCallback([this]() { RequestExit(); });
-        settingsWindow_->SetRestartCallback([this]() { RequestRestart(); });
-        settingsWindow_->SetInvalidateCallback([this]() {
-            ApplyQuickNavigationAppearance();
-            ApplyCollectionPopupAppearance();
-            if (quickNavigationOpen_)
-                InvalidateQuickNavigationWindow();
-            if (dockSettings_.systemTaskbarFollowPersonalization ||
-                dockSettings_.systemTaskbarVisibleWindow.themeMode ==
-                    SystemTaskbarThemeMode::FollowGlobal ||
-                dockSettings_.systemTaskbarMaximizedWindow.themeMode ==
-                    SystemTaskbarThemeMode::FollowGlobal ||
-                dockSettings_.systemTaskbarShellUi.themeMode ==
-                    SystemTaskbarThemeMode::FollowGlobal)
-                RefreshSystemTaskbarAppearance(false);
-            if (hwnd_)
-            {
-                InvalidateAllWidgetSlots();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                UpdateWindow(hwnd_);
-            }
-        });
-        settingsWindow_->SetPersonalizationPreviewChangedCallback(
-            [this](const PersonalizationSettings& settings) {
-                personalizationSettings_ = settings;
-                if (settingsController_)
-                    (void)settingsController_->SynchronizePersonalization(
-                        settings);
-            });
-        settingsWindow_->SetGlassStatusProvider([this]() {
-            return GetGlassBackendStatusText();
-        });
-        settingsWindow_->SetAnimationDiagnosticsToggleCallback(
-            [this](bool enabled) {
-                uiAnimationScheduler_.SetDiagnosticsEnabled(enabled);
-            });
-        settingsWindow_->SetAnimationDiagnosticsProvider([this]() {
-            const auto metrics = uiAnimationScheduler_.Metrics();
-            wchar_t text[768]{};
-            swprintf_s(
-                text,
-                L"Target %.1f Hz | effective %.1f Hz\n"
-                L"frames requested %llu | delivered %llu | skipped %llu\n"
-                L"active animations %zu | timers %zu\n"
-                L"interval p50/p95/p99 %.2f / %.2f / %.2f ms\n"
-                L"UI p50/p95/p99 %.2f / %.2f / %.2f ms\n"
-                L"Commit p50/p95/p99 %.2f / %.2f / %.2f ms",
-                metrics.targetRefreshHz,
-                metrics.effectiveRefreshHz,
-                static_cast<unsigned long long>(
-                    metrics.requestedFrames),
-                static_cast<unsigned long long>(
-                    metrics.deliveredFrames),
-                static_cast<unsigned long long>(
-                    metrics.skippedFrames),
-                metrics.activeAnimations,
-                metrics.activeTimers,
-                metrics.frameIntervalP50Ms,
-                metrics.frameIntervalP95Ms,
-                metrics.frameIntervalP99Ms,
-                metrics.uiWorkP50Ms,
-                metrics.uiWorkP95Ms,
-                metrics.uiWorkP99Ms,
-                metrics.commitP50Ms,
-                metrics.commitP95Ms,
-                metrics.commitP99Ms);
-            return std::wstring(text);
-        });
-        settingsWindow_->SetHotkeyAvailabilityCallback(
-            [this](HotkeySettingTarget target,
-                UINT modifiers, UINT virtualKey) {
-                if (virtualKey == 0)
-                    return false;
-                const UINT normalizedModifiers =
-                    modifiers &
-                    (MOD_CONTROL | MOD_ALT |
-                        MOD_SHIFT | MOD_WIN);
-                const auto matches = [&](
-                    UINT configuredModifiers,
-                    UINT configuredVirtualKey) {
-                    return normalizedModifiers ==
-                            (configuredModifiers &
-                                (MOD_CONTROL | MOD_ALT |
-                                    MOD_SHIFT | MOD_WIN)) &&
-                        virtualKey == configuredVirtualKey;
-                };
-
-                switch (target)
-                {
-                case HotkeySettingTarget::QuickNavigation:
-                    if (navigationSettings_.enabled &&
-                        matches(navigationSettings_.modifiers,
-                            navigationSettings_.virtualKey))
-                        return navigationHotkeyRegistered_;
-                    break;
-                case HotkeySettingTarget::DesktopPassthrough:
-                    if (generalSettings_.
-                            desktopPassthroughHotkeyEnabled &&
-                        customDesktopVisible_ &&
-                        matches(generalSettings_.
-                                desktopPassthroughHotkeyModifiers,
-                            generalSettings_.
-                                desktopPassthroughHotkeyVirtualKey))
-                        return desktopPassthroughHotkeyRegistered_;
-                    break;
-                case HotkeySettingTarget::FloatingDock:
-                    if (generalSettings_.dockEnabled &&
-                        dockSettings_.floatingShortcutMode &&
-                        matches(
-                            dockSettings_.floatingHotkeyModifiers,
-                            dockSettings_.floatingHotkeyVirtualKey))
-                        return floatingDockHotkeyRegistered_;
-                    break;
-                case HotkeySettingTarget::PagePrevious:
-                case HotkeySettingTarget::PageNext:
-                    return true;
-                case HotkeySettingTarget::None:
-                    return false;
-                }
-
-                HWND probeWindow =
-                    controlHwnd_ && IsWindow(controlHwnd_)
-                        ? controlHwnd_
-                        : (inputHwnd_ && IsWindow(inputHwnd_)
-                            ? inputHwnd_ : hwnd_);
-                if (!probeWindow || !IsWindow(probeWindow))
-                    return false;
-                const BOOL registered = RegisterHotKey(
-                    probeWindow, kSettingsHotkeyProbeId,
-                    normalizedModifiers | MOD_NOREPEAT,
-                    virtualKey);
-                if (registered)
-                {
-                    UnregisterHotKey(
-                        probeWindow, kSettingsHotkeyProbeId);
-                    return true;
-                }
-                return false;
-            });
-        settingsWindow_->SetNavigationSettingsChangedCallback(
-            [this](const NavigationSettings& settings) {
-            navigationSettings_ = settings;
-            if (settingsController_)
-                (void)settingsController_->SynchronizeNavigation(settings);
-            ApplyNavigationHotkey();
-        });
-        settingsWindow_->SetGeneralSettingsChangedCallback(
-            [this](const GeneralSettings&) {
-            LoadGeneralSettingsAndApply();
-            if (settingsController_)
-                (void)settingsController_->SynchronizeGeneral(
-                    generalSettings_);
-            if (quickNavigationOpen_)
-                InvalidateQuickNavigationWindow();
-        });
-        settingsWindow_->SetLanguageChangedCallback([this]() {
-            ApplyLanguageChange();
-        });
-        settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
-            if (generalSettings_.dockEnabled == enabled) return;
-            generalSettings_.dockEnabled = enabled;
-            if (settingsController_)
-            {
-                (void)settingsController_->SynchronizeGeneral(
-                    generalSettings_);
-                auto desktop = settingsController_->Snapshot()->values.desktop;
-                desktop.dockEnabled = enabled;
-                (void)settingsController_->SynchronizeDesktop(
-                    std::move(desktop));
-            }
-            ApplyFloatingDockHotkey();
-            UpdateLayoutWorkArea();
-            if (!enabled)
-                RestoreDockEntriesToDesktop();
-            LayoutItems();
-            SaveLayoutSlots();
-            InvalidateDragStaticScene();
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
-        });
-        settingsWindow_->SetDockSettingsPreviewChangedCallback(
-            [this](const DockSettings& settings) {
-                DockSettings normalizedSettings = settings;
-                NormalizeDockSettings(normalizedSettings);
-                std::vector<RECT> previousDockRects;
-                for (const auto& container : containers_)
-                {
-                    if (const auto* dock =
-                            dynamic_cast<DockContainer*>(
-                                container.get()))
-                    {
-                        previousDockRects.push_back(
-                            dock->GetInteractiveBounds());
-                    }
-                }
-                const bool layoutChanged =
-                    normalizedSettings.position != dockSettings_.position ||
-                    normalizedSettings.edgeAttached != dockSettings_.edgeAttached ||
-                    normalizedSettings.floatingShortcutMode !=
-                        dockSettings_.floatingShortcutMode ||
-                    normalizedSettings.monitorScope != dockSettings_.monitorScope ||
-                    normalizedSettings.showWindowsButton !=
-                        dockSettings_.showWindowsButton ||
-                    normalizedSettings.showFrequentItems !=
-                        dockSettings_.showFrequentItems ||
-                    normalizedSettings.frequentItemCount !=
-                        dockSettings_.frequentItemCount ||
-                    std::abs(
-                        normalizedSettings.thicknessScale -
-                        dockSettings_.thicknessScale) > 0.0001f;
-
-                dockSettings_ = normalizedSettings;
-                if (settingsController_)
-                    (void)settingsController_->SynchronizeDock(
-                        dockSettings_);
-                ApplyFloatingDockHotkey();
-                dockSettingsLayoutCommitPending_ =
-                    dockSettingsLayoutCommitPending_ ||
-                    layoutChanged;
-                if (layoutChanged)
-                {
-                    UpdateLayoutWorkArea();
-                    LayoutItems();
-                    InvalidateDragStaticScene();
-                    if (hwnd_)
-                    {
-                        for (const RECT& rect :
-                            previousDockRects)
-                        {
-                            InvalidateRect(
-                                hwnd_, &rect, TRUE);
-                        }
-                        InvalidateDockRects(TRUE);
-                    }
-                }
-            });
-        settingsWindow_->SetDockSettingsChangedCallback(
-            [this](const DockSettings&) {
-            const DockPosition previousPosition = dockSettings_.position;
-            const bool previousEdgeAttached = dockSettings_.edgeAttached;
-            const bool previousFloatingShortcutMode =
-                dockSettings_.floatingShortcutMode;
-            const DockMonitorScope previousMonitorScope = dockSettings_.monitorScope;
-            const bool previousShowWindowsButton = dockSettings_.showWindowsButton;
-            const bool previousShowFrequentItems = dockSettings_.showFrequentItems;
-            const int previousFrequentItemCount = dockSettings_.frequentItemCount;
-            const float previousThicknessScale = dockSettings_.thicknessScale;
-            const bool previousSystemTaskbarAutoHide =
-                dockSettings_.systemTaskbarAutoHide;
-            const int previousSystemTaskbarAlignment =
-                dockSettings_.systemTaskbarAlignment;
-            LoadDockSettingsAndApply();
-            if (settingsController_)
-                (void)settingsController_->SynchronizeDock(dockSettings_);
-            if (dockSettingsLayoutCommitPending_ ||
-                dockSettings_.position != previousPosition ||
-                dockSettings_.edgeAttached != previousEdgeAttached ||
-                dockSettings_.floatingShortcutMode !=
-                    previousFloatingShortcutMode ||
-                dockSettings_.monitorScope != previousMonitorScope ||
-                dockSettings_.showWindowsButton != previousShowWindowsButton ||
-                dockSettings_.showFrequentItems != previousShowFrequentItems ||
-                dockSettings_.frequentItemCount != previousFrequentItemCount ||
-                std::abs(dockSettings_.thicknessScale - previousThicknessScale) > 0.0001f ||
-                dockSettings_.systemTaskbarAutoHide != previousSystemTaskbarAutoHide ||
-                dockSettings_.systemTaskbarAlignment != previousSystemTaskbarAlignment)
-            {
-                UpdateLayoutWorkArea();
-                LayoutItems();
-                SaveLayoutSlots();
-                InvalidateDragStaticScene();
-            }
-            dockSettingsLayoutCommitPending_ = false;
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
-        });
-        settingsWindow_->SetPersonalizationChangedCallback(
-            [this](const PersonalizationSettings& settings) {
-            personalizationSettings_ = settings;
-            if (settingsController_)
-                (void)settingsController_->SynchronizePersonalization(
-                    settings);
-            RefreshSystemTaskbarAppearance(false);
-        });
-        settingsWindow_->SetDisplaySettingsChangedCallback(
-            [this](const snowdesktop::DesktopDisplaySettings& settings) {
-            SetIconSpacing(settings.iconSpacingScale);
-            SetItemIconSize(settings.itemIconSizeScale);
-            SetItemFontSize(settings.itemFontSizeCu);
-            SetListItemFontSize(settings.listItemFontSizeCu);
-            SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
-                settings.itemFontWeight));
-            SetShortcutArrowMode(settings.shortcutArrowMode);
-            if (settingsController_)
-                (void)settingsController_->SynchronizeDesktop(settings);
-        });
-        settingsWindow_->SetLayoutSpacingChangedCallback(
-            [this](float spacingScale, bool commit) {
-                if (commit)
-                    SetIconSpacing(spacingScale);
-                else
-                    PreviewIconSpacing(spacingScale);
-                if (settingsController_)
-                {
-                    auto desktop =
-                        settingsController_->Snapshot()->values.desktop;
-                    desktop.iconSpacingScale = spacingScale;
-                    (void)settingsController_->SynchronizeDesktop(
-                        std::move(desktop));
-                }
-            });
-        settingsWindow_->SetItemIconSizeChangedCallback(
-            [this](float iconSizeScale, bool commit) {
-                if (commit)
-                    SetItemIconSize(iconSizeScale);
-                else
-                    PreviewItemIconSize(iconSizeScale);
-                if (settingsController_)
-                {
-                    auto desktop =
-                        settingsController_->Snapshot()->values.desktop;
-                    desktop.itemIconSizeScale = iconSizeScale;
-                    (void)settingsController_->SynchronizeDesktop(
-                        std::move(desktop));
-                }
-            });
-        settingsWindow_->SetIconBeautifySettingsChangedCallback(
-            [this](const snowdesktop::IconBeautifySettings& settings,
-                snowdesktop::IconBeautifyUpdateKind updateKind) {
-                SetIconBeautifySettings(
-                    settings, updateKind);
-                if (settingsController_)
-                {
-                    auto desktop =
-                        settingsController_->Snapshot()->values.desktop;
-                    desktop.iconBeautify = settings;
-                    (void)settingsController_->SynchronizeDesktop(
-                        std::move(desktop));
-                }
-            });
-        settingsWindow_->SetCategorySettingsChangedCallback(
-            [this](const CategorySettings&) {
-            LoadCategorySettingsAndApply();
-            if (settingsController_)
-                (void)settingsController_->SynchronizeCategory(
-                    categorySettings_);
-        });
-        settingsWindow_->SetAddWidgetToDesktopCallback(
-            [this](const std::wstring& packageId) {
-                const size_t previousCount = widgets_.size();
-                AddLuaWidgetAt(POINT{ -32000, -32000 }, packageId);
-                return widgets_.size() > previousCount;
-            });
-        settingsWindow_->SyncDisplaySettings(iconSpacingScale_,
-            itemIconSizeScale_,
-            itemFontSizeCu_, listItemFontSizeCu_,
-            static_cast<float>(itemFontWeight_), shortcutArrowMode_,
-            iconBeautifySettings_);
-        settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
+        std::wstring message =
+            L"WinUI SettingsWindow startup initialization failed";
+        if (settingsWindow_ && !settingsWindow_->LastError().empty())
+        {
+            message += L": ";
+            message += settingsWindow_->LastError();
+        }
+        WriteDiagnosticLogEntry(message.c_str());
     }
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
@@ -1033,7 +733,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 *widgetSettingsBackend_);
         if (settingsWindow_)
         {
-            settingsWindow_->SetWidgetEngine(widgetEngine_.get());
+            settingsWindow_->SetWidgetSettingsService(
+                widgetSettingsService_.get());
         }
     }
     else
@@ -1167,8 +868,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     [](const MSG& message) {
                         return message.message == WM_MOUSEMOVE;
                     });
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            const bool settingsMessageHandled = settingsWindow_ &&
+                (settingsWindow_->PreTranslateMessage(&msg) ||
+                    settingsWindow_->ProcessTabNavigation(&msg));
+            if (!settingsMessageHandled)
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a
             // panel animation transaction cannot delay this presentation.
@@ -1190,9 +897,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingCompositionCommit();
             FlushPendingQuickNavigationCompositionCommit();
         }
-        if (settingsWindow_ && settingsWindow_->IsVisible() &&
-            settingsWindow_->NeedsRender())
-            settingsWindow_->Render();
     }
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();

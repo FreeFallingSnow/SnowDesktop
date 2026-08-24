@@ -16,9 +16,6 @@ void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
     if (widget.type != DesktopWidgetType::LuaScript) return;
     settingsWindow_->ShowWidgetEditor(widgetIndex, widget.id.c_str(),
         widget.title.c_str(), widget.packageId.c_str());
-    if (settingsController_)
-        (void)settingsController_->Open(
-            snowdesktop::SettingsRoute::ForWidget(widget.id));
 }
 
 /**

@@ -1204,6 +1204,13 @@ if (BUILD_TESTING)
         LABELS core contract settings)
 
     snowdesktop_add_test(
+        SnowDesktopSettingsHostActionsSemanticsTests
+        settings_host_actions_semantics
+        SOURCES tests/settings_host_actions_semantics_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract dock integration settings taskbar)
+
+    snowdesktop_add_test(
         SnowDesktopSettingsSearchIndexTests
         settings_search_index
         SOURCES

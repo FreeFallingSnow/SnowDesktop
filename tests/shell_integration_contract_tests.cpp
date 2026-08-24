@@ -59,12 +59,17 @@ int main(int argc, char** argv)
         root / "src" / "dock_settings.cpp");
     const std::string settingsWindow = ReadFile(
         root / "src" / "settings_window.cpp");
+    const std::string settingsHost = ReadFile(
+        root / "src" / "winui" / "settings_window_host.cpp");
+    const std::string dockPresenter = ReadFile(
+        root / "src" / "winui" / "dock_page_presenter.cpp");
     const std::string messageDispatch = ReadFile(
         root / "src" / "app" / "app_message_dispatch.cpp");
     const std::string controlDispatch = ReadFile(
         root / "src" / "app" / "app_desktop_reload.cpp");
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
             !dockSettings.empty() && !settingsWindow.empty() &&
+            !settingsHost.empty() && !dockPresenter.empty() &&
             !messageDispatch.empty() && !controlDispatch.empty(),
         "shell integration sources are readable");
 
@@ -125,57 +130,33 @@ int main(int argc, char** argv)
                 std::string_view::npos,
         "blocking registry and Shell notification work executes in the worker");
 
-    const std::string_view systemTaskbarPage = FunctionBody(settingsWindow,
-        "void SettingsWindow::DrawSystemTaskbarPage()",
-        "void SettingsWindow::DrawDisplayPage()");
-    Check(systemTaskbarPage.find("RequestWindowsSystemLightThemeEnabled") !=
-            std::string_view::npos &&
-            systemTaskbarPage.find("RequestSystemTaskbarAlignmentCentered") !=
-                std::string_view::npos &&
-            systemTaskbarPage.find("RequestSystemTaskbarAutoHideEnabled") !=
-                std::string_view::npos,
-        "taskbar and Shell panel controls enqueue system changes from the UI");
-    Check(systemTaskbarPage.find("SendMessageTimeoutW") ==
-            std::string_view::npos,
-        "the settings UI does not perform a blocking Shell broadcast");
-
-    const std::size_t taskbarThemeBegin = settingsWindow.find(
-        "int taskbarThemeMode;");
-    const std::size_t systemTaskbarPageCall = settingsWindow.find(
-        "DrawSystemTaskbarPage();", taskbarThemeBegin);
-    const std::string_view taskbarAppearance =
-        taskbarThemeBegin == std::string::npos ||
-            systemTaskbarPageCall == std::string::npos
-        ? std::string_view{}
-        : std::string_view(settingsWindow).substr(
-            taskbarThemeBegin,
-            systemTaskbarPageCall - taskbarThemeBegin);
-    const std::size_t nativeForegroundGuard = taskbarAppearance.find(
-        "if (taskbarThemeMode != 0)");
-    const std::size_t mainForegroundLabel = taskbarAppearance.find(
-        "app.settings.taskbar_foreground_color");
-    Check(nativeForegroundGuard != std::string_view::npos &&
-            mainForegroundLabel != std::string_view::npos &&
-            nativeForegroundGuard < mainForegroundLabel,
-        "Windows-native taskbar mode hides the inactive foreground control");
-    Check(taskbarAppearance.find("app.settings.widget_content_theme") ==
-            std::string_view::npos,
-        "taskbar controls do not reuse the ambiguous widget theme label");
-
-    const std::size_t dynamicRuleBegin = taskbarAppearance.find(
-        "auto drawDynamicTaskbarRule");
-    const std::string_view dynamicRule = dynamicRuleBegin ==
-            std::string_view::npos
-        ? std::string_view{}
-        : taskbarAppearance.substr(dynamicRuleBegin);
-    const std::size_t dynamicNativeGuard = dynamicRule.find(
-        "if (rule.themeMode != SystemTaskbarThemeMode::Native)");
-    const std::size_t dynamicForegroundLabel = dynamicRule.find(
-        "app.settings.taskbar_foreground_color");
-    Check(dynamicNativeGuard != std::string_view::npos &&
-            dynamicForegroundLabel != std::string_view::npos &&
-            dynamicNativeGuard < dynamicForegroundLabel,
-        "Windows-native dynamic rules hide their inactive foreground control");
+    Check(settingsWindow.find("ImGui") == std::string::npos &&
+            settingsWindow.find("ID3D11") == std::string::npos &&
+            settingsWindow.find("IDXGISwapChain") == std::string::npos,
+        "the application settings facade no longer owns a rendering backend");
+    Check(dockPresenter.find("Action::RestartExplorer") !=
+                std::string::npos &&
+            dockPresenter.find("actions.confirm") !=
+                std::string::npos &&
+            dockPresenter.find("RequestSystemTaskbar") ==
+                std::string::npos,
+        "dangerous taskbar work is confirmed and routed through typed host actions");
+    Check(dockPresenter.find("muxc::ToggleSwitch") !=
+                std::string::npos &&
+            dockPresenter.find("muxc::ComboBox") !=
+                std::string::npos &&
+            dockPresenter.find("muxc::ColorPicker") !=
+                std::string::npos &&
+            dockPresenter.find("muxc::Slider") !=
+                std::string::npos,
+        "taskbar appearance and dynamic rules use native WinUI controls");
+    Check(settingsHost.find("controller->InvokeHostAction(request)") !=
+                std::string::npos &&
+            settingsHost.find("ShowConfirmation(") !=
+                std::string::npos &&
+            settingsHost.find("SendMessageTimeoutW") ==
+                std::string::npos,
+        "the WinUI host forwards typed actions without blocking Shell broadcasts");
 
     const std::size_t settingChange = messageDispatch.find(
         "case WM_SETTINGCHANGE:");

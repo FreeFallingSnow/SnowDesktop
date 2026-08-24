@@ -28,8 +28,20 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
+            // Auto-hide and alignment are committed through the Windows Shell
+            // request queue.  Keep their last committed mirrors intact while
+            // previewing the remaining Dock appearance and layout values so
+            // the commit path can detect a requested system-state change.
+            const bool committedTaskbarAutoHide =
+                app_.dockSettings_.systemTaskbarAutoHide;
+            const int committedTaskbarAlignment =
+                app_.dockSettings_.systemTaskbarAlignment;
             app_.dockSettings_ = snapshot.values.dock;
             NormalizeDockSettings(app_.dockSettings_);
+            app_.dockSettings_.systemTaskbarAutoHide =
+                committedTaskbarAutoHide;
+            app_.dockSettings_.systemTaskbarAlignment =
+                committedTaskbarAlignment;
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -54,6 +66,38 @@ public:
         using snowdesktop::HasSettingsDomain;
         using snowdesktop::SettingsDomain;
 
+        DockSettings requestedDockSettings = snapshot.values.dock;
+        NormalizeDockSettings(requestedDockSettings);
+        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        {
+            const bool autoHideChanged =
+                app_.dockSettings_.systemTaskbarAutoHide !=
+                    requestedDockSettings.systemTaskbarAutoHide;
+            const bool alignmentChanged =
+                app_.dockSettings_.systemTaskbarAlignment !=
+                    requestedDockSettings.systemTaskbarAlignment;
+
+            // Queue system-owned changes before mutating the application
+            // mirror.  A rejected request leaves the Dock domain pending so
+            // SettingsController can surface the error and retry safely.
+            if (autoHideChanged &&
+                !RequestSystemTaskbarAutoHideEnabled(
+                    requestedDockSettings.systemTaskbarAutoHide))
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The system taskbar auto-hide change could not be queued.",
+                    SettingsDomain::Dock);
+            }
+            if (alignmentChanged &&
+                !RequestSystemTaskbarAlignmentCentered(
+                    requestedDockSettings.systemTaskbarAlignment == 1))
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The system taskbar alignment change could not be queued.",
+                    SettingsDomain::Dock);
+            }
+        }
+
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
@@ -64,14 +108,12 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
-            app_.dockSettings_ = snapshot.values.dock;
-            NormalizeDockSettings(app_.dockSettings_);
+            app_.dockSettings_ = requestedDockSettings;
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
             app_.SaveLayoutSlots();
             app_.InvalidateDragStaticScene();
-            app_.SyncSystemTaskbarSettingsFromWindows();
             app_.RefreshSystemTaskbarAppearance(true);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Navigation))
@@ -81,6 +123,9 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::General))
         {
+            const bool dockEnabledChanged =
+                app_.generalSettings_.dockEnabled !=
+                    snapshot.values.general.dockEnabled;
             const bool languageChanged = std::strcmp(
                 app_.generalSettings_.language,
                 snapshot.values.general.language) != 0;
@@ -90,6 +135,23 @@ public:
                 app_.generalSettings_.softwareDesktopEnabled, false);
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
+            if (dockEnabledChanged)
+            {
+                if (app_.settingsController_)
+                {
+                    auto desktop = snapshot.values.desktop;
+                    desktop.dockEnabled =
+                        app_.generalSettings_.dockEnabled;
+                    (void)app_.settingsController_->SynchronizeDesktop(
+                        std::move(desktop));
+                }
+                app_.UpdateLayoutWorkArea();
+                if (!app_.generalSettings_.dockEnabled)
+                    app_.RestoreDockEntriesToDesktop();
+                app_.LayoutItems();
+                app_.SaveLayoutSlots();
+                app_.InvalidateDragStaticScene();
+            }
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             if (languageChanged)
@@ -369,26 +431,9 @@ void DesktopApp::TryShowPendingSettingsWindow()
 
     const snowdesktop::SettingsRoute route =
         settingsWindowOpenRequest_.Route();
-    bool shown = false;
-    if (settingsWindow_)
-    {
-        switch (route.page)
-        {
-        case snowdesktop::SettingsPage::DockAndTaskbar:
-            shown = settingsWindow_->ShowDockSettings();
-            break;
-        case snowdesktop::SettingsPage::Personalization:
-            shown = settingsWindow_->ShowAppearanceSettings();
-            break;
-        default:
-            shown = settingsWindow_->Show();
-            break;
-        }
-    }
+    const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {
-        if (settingsController_)
-            (void)settingsController_->Open(route);
         settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
             KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
@@ -708,8 +753,8 @@ void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
     dockSettings_.systemTaskbarAutoHide = autoHide;
     dockSettings_.systemTaskbarAlignment = centered ? 1 : 0;
     SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
-    if (settingsWindow_)
-        settingsWindow_->SyncSystemTaskbarSettings(autoHide, centered);
+    if (settingsController_)
+        (void)settingsController_->SynchronizeDock(dockSettings_);
 }
 
 void DesktopApp::LoadCategorySettingsAndApply()

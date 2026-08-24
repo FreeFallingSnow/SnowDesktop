@@ -113,10 +113,10 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         break;
     case kContextDockDetailedSettings:
         RestoreDesktopWindowLayer();
-        if (settingsWindow_)
+        if (settingsController_)
         {
-            settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
-            settingsWindow_->SyncDockSettings(dockSettings_);
+            (void)settingsController_->SynchronizeGeneral(generalSettings_);
+            (void)settingsController_->SynchronizeDock(dockSettings_);
         }
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
             snowdesktop::SettingsPage::DockAndTaskbar));
@@ -132,8 +132,8 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
     dockSettings_ = updated;
     SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
-    if (settingsWindow_)
-        settingsWindow_->SyncDockSettings(dockSettings_);
+    if (settingsController_)
+        (void)settingsController_->SynchronizeDock(dockSettings_);
     if (layoutChanged)
     {
         UpdateLayoutWorkArea();

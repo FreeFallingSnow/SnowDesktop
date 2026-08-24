@@ -122,8 +122,8 @@ void DesktopApp::SetQuickNavigationDesktopViewMode(
     SaveNavigationSettings(
         GetNavigationSettingsPath().c_str(),
         navigationSettings_);
-    if (settingsWindow_)
-        settingsWindow_->SyncNavigationSettings(
+    if (settingsController_)
+        (void)settingsController_->SynchronizeNavigation(
             navigationSettings_);
     quickNavigationScrollOffset_ = 0;
     quickNavigationInitialJumpOpen_ = false;

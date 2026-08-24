@@ -67,23 +67,41 @@ int main(int argc, char** argv)
     {
         const std::string source = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "settings_window.cpp");
-        const std::size_t newFrame = source.find("ImGui::NewFrame();");
-        const std::size_t physicalCursor = source.find("GetCursorPos(&mp);");
-        const std::size_t correctedMousePos = source.find(
-            "ImGui::GetIO().MousePos = ImVec2((float)mp.x, (float)mp.y);");
-        const std::size_t imguiRender = source.find("ImGui::Render();");
-        const std::size_t iconSizeDispatch = source.find(
-            "DispatchPendingItemIconSizeChange();");
+        const std::string header = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "settings_window.h");
+        const std::string host = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "winui" /
+                "settings_window_host.cpp");
+        const std::string appRun = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_run.cpp");
         Check(!source.empty(), "settings window source is readable");
-        Check(newFrame != std::string::npos &&
-                physicalCursor != std::string::npos &&
-                correctedMousePos != std::string::npos &&
-                newFrame < physicalCursor && physicalCursor < correctedMousePos,
-            "physical cursor correction follows queued ImGui input processing");
-        Check(imguiRender != std::string::npos &&
-                iconSizeDispatch != std::string::npos &&
-                imguiRender < iconSizeDispatch,
-            "icon-size slider previews are coalesced after the ImGui frame");
+        Check(!header.empty() && !host.empty() && !appRun.empty(),
+            "WinUI settings facade, host, and message pump are readable");
+        Check(source.find("ImGui") == std::string::npos &&
+                source.find("ID3D11") == std::string::npos &&
+                source.find("IDXGISwapChain") == std::string::npos &&
+                header.find("Render()") == std::string::npos &&
+                header.find("NeedsRender()") == std::string::npos,
+            "the settings facade owns no ImGui, D3D, swap chain, or frame renderer");
+        Check(source.find("SettingsWindow::Open(") != std::string::npos &&
+                source.find("SettingsPage::Home") != std::string::npos &&
+                source.find("SettingsPage::DockAndTaskbar") !=
+                    std::string::npos &&
+                source.find("SettingsPage::Personalization") !=
+                    std::string::npos &&
+                source.find("SettingsRoute::ForWidget(widgetId)") !=
+                    std::string::npos,
+            "all compatibility entry points resolve to typed settings routes");
+        Check(host.find("controller->CloseSession()") !=
+                    std::string::npos &&
+                appRun.find("settingsWindow_->PreTranslateMessage(&msg)") !=
+                    std::string::npos &&
+                appRun.find("settingsWindow_->ProcessTabNavigation(&msg)") !=
+                    std::string::npos &&
+                appRun.find("settingsWindow_->Render()") ==
+                    std::string::npos,
+            "the reusable WinUI session flushes on close and participates in the native message pump");
 
         const std::string pageGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
