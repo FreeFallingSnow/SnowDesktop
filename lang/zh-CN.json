@@ -1155,6 +1155,8 @@
     "settings.backup.layout": "布局备份",
     "settings.backup.layout.description": "创建和恢复桌面布局备份。",
     "settings.backup.restoreLayout.confirm": "确定恢复此布局备份吗？当前布局会先保存为安全备份，然后桌面将从所选备份重新加载。",
+    "settings.backup.restoreLayout.busy": "桌面正忙。请先完成当前文件操作或拖放操作，然后重试恢复。",
+    "settings.backup.restoreLayout.commitFailed": "无法应用布局备份。当前布局已保留，或已从安全副本恢复。",
     "settings.backup.deleteLayout.confirm": "确定删除此布局备份吗？删除后无法从这里恢复。",
     "settings.backup.full": "完整备份与迁移",
     "settings.backup.full.description": "导出、导入、恢复或迁移全部数据。",

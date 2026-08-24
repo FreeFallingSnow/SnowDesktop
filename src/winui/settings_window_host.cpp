@@ -1232,12 +1232,105 @@ struct SettingsWindowHost::Impl
         controller->UpdateCategory(std::move(value), mode);
     }
 
-    void RequestRoute(const SettingsRoute& route)
+    [[nodiscard]] bool CommitRoute(const SettingsRoute& route,
+        SettingsActionResult* controllerResult = nullptr)
     {
         if (!controller || !route.IsValid() || shuttingDown)
-            return;
-        const SettingsActionResult result = controller->Open(route);
-        if (!result.Succeeded())
+            return false;
+
+        const auto previous = controller->Snapshot();
+        if (previous && previous->sessionActive && shell &&
+            previous->route.page == SettingsPage::WidgetSettings &&
+            (route.page != SettingsPage::WidgetSettings ||
+                route.widgetInstanceId !=
+                    previous->route.widgetInstanceId))
+        {
+            const auto flushed = shell->FlushPendingWidgetSettings();
+            if (!flushed.Succeeded())
+            {
+                std::wstring message;
+                if (!flushed.message.empty())
+                    message = winrt::to_hstring(flushed.message).c_str();
+                if (message.empty())
+                    message = L("settings.widget.saveFailed");
+                ShowActionError(SettingsActionResult::Failure(
+                    std::move(message)));
+                return false;
+            }
+        }
+
+        std::optional<widget_runtime::WidgetSettingsSnapshot>
+            widgetSnapshot;
+        if (route.page == SettingsPage::WidgetSettings)
+        {
+            try
+            {
+                if (!widgetSettingsService ||
+                    (options.ensureWidgetSettingsInstance &&
+                        !options.ensureWidgetSettingsInstance(
+                            route.widgetInstanceId)))
+                {
+                    ShowActionError(SettingsActionResult::Failure(
+                        L("settings.widget.loadFailed")));
+                    return false;
+                }
+
+                const auto loaded = widgetSettingsService->Load(
+                    route.widgetInstanceId);
+                const auto current = widgetSettingsService->Snapshot(
+                    route.widgetInstanceId);
+                if (!loaded.Succeeded() || !loaded.snapshot || !current ||
+                    loaded.snapshot->widgetId != route.widgetInstanceId ||
+                    current->widgetId != loaded.snapshot->widgetId ||
+                    current->generation != loaded.snapshot->generation ||
+                    current->revision != loaded.snapshot->revision)
+                {
+                    std::wstring message;
+                    if (!loaded.message.empty())
+                        message = winrt::to_hstring(loaded.message).c_str();
+                    if (message.empty())
+                        message = L("settings.widget.loadFailed");
+                    ShowActionError(SettingsActionResult::Failure(
+                        std::move(message)));
+                    return false;
+                }
+                widgetSnapshot = *loaded.snapshot;
+            }
+            catch (...)
+            {
+                ShowActionError(SettingsActionResult::Failure(
+                    L("settings.widget.loadFailed")));
+                return false;
+            }
+        }
+
+        const SettingsActionResult opened = controller->Open(route);
+        if (controllerResult)
+            *controllerResult = opened;
+        const auto snapshot = controller->Snapshot();
+        if (!IsUsableControllerSnapshot(snapshot) ||
+            !snapshot->sessionActive || snapshot->route != route)
+        {
+            ShowActionError(opened);
+            return false;
+        }
+
+        ApplySnapshotNow(snapshot);
+        if (widgetSnapshot &&
+            (!shell || !shell->ApplyWidgetSettingsSnapshot(
+                *widgetSnapshot)))
+        {
+            ShowActionError(SettingsActionResult::Failure(
+                L("settings.widget.loadFailed")));
+            return false;
+        }
+        return true;
+    }
+
+    void RequestRoute(const SettingsRoute& route)
+    {
+        SettingsActionResult result;
+        if (CommitRoute(route, &result) && !result.Succeeded())
             ShowActionError(result);
     }
 
@@ -1304,6 +1397,42 @@ struct SettingsWindowHost::Impl
             return;
         shell->SuspendInteraction();
         interactionSuspended = true;
+    }
+
+    [[nodiscard]] bool FlushPendingChanges()
+    {
+        if (!controller || shuttingDown)
+            return false;
+        if (shell)
+        {
+            const auto widgetResult =
+                shell->FlushPendingWidgetSettings();
+            if (!widgetResult.Succeeded())
+            {
+                const auto snapshot = controller->Snapshot();
+                std::wstring message;
+                if (!widgetResult.message.empty())
+                    message = winrt::to_hstring(widgetResult.message).c_str();
+                if (message.empty())
+                    message = L("settings.widget.saveFailed");
+                if (snapshot)
+                {
+                    (void)shell->ShowInfoForGeneration(
+                        snapshot->generation,
+                        shell_impl::SettingsShellInfoSeverity::Error,
+                        L("settings.status.error"), std::move(message));
+                }
+                return false;
+            }
+        }
+
+        const SettingsActionResult result = controller->FlushAll();
+        if (!result.Succeeded())
+        {
+            ShowActionError(result);
+            return false;
+        }
+        return true;
     }
 
     static LRESULT CALLBACK WindowProcedure(
@@ -1433,6 +1562,8 @@ struct SettingsWindowHost::Impl
     [[nodiscard]] bool HideWindow()
     {
         if (!controller || !window || shuttingDown)
+            return false;
+        if (!FlushPendingChanges())
             return false;
         ++viewEpoch;
         SuspendInteraction();
@@ -1583,6 +1714,8 @@ void SettingsWindowHost::Shutdown() noexcept
 {
     if (!impl_ || impl_->shuttingDown)
         return;
+    if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)
+        (void)impl_->FlushPendingChanges();
     impl_->shuttingDown = true;
 
     if (impl_->shell)
@@ -1647,28 +1780,10 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         impl_->RefreshLocalizedPresentation();
     }
 
-    std::optional<widget_runtime::WidgetSettingsLoadResult> widgetLoad;
-    if (route.page == SettingsPage::WidgetSettings &&
-        impl_->widgetSettingsService)
-    {
-        widgetLoad = impl_->widgetSettingsService->Load(
-            route.widgetInstanceId);
-    }
-
-    // This is the single authoritative route-open call for each host Open.
-    const SettingsActionResult openResult = impl_->controller->Open(route);
-    const auto snapshot = impl_->controller->Snapshot();
-    if (!IsUsableControllerSnapshot(snapshot) ||
-        !snapshot->sessionActive || snapshot->route != route)
-    {
-        impl_->ShowActionError(openResult);
+    SettingsActionResult openResult;
+    if (!impl_->CommitRoute(route, &openResult))
         return false;
-    }
-
-    impl_->ApplySnapshotNow(snapshot);
-    if (widgetLoad && widgetLoad->snapshot && impl_->shell)
-        (void)impl_->shell->ApplyWidgetSettingsSnapshot(
-            *widgetLoad->snapshot);
+    const auto snapshot = impl_->controller->Snapshot();
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))
         ShowWindow(impl_->window, SW_RESTORE);
@@ -1681,16 +1796,6 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         impl_->ShowActionError(reloadResult);
     if (!openResult.Succeeded())
         impl_->ShowActionError(openResult);
-    if (widgetLoad && !widgetLoad->Succeeded() && impl_->shell)
-    {
-        std::wstring message(
-            widgetLoad->message.begin(), widgetLoad->message.end());
-        if (message.empty())
-            message = impl_->L("settings.widget.loadFailed");
-        (void)impl_->shell->ShowInfoForGeneration(snapshot->generation,
-            shell_impl::SettingsShellInfoSeverity::Error,
-            impl_->L("settings.status.error"), std::move(message));
-    }
     return true;
 }
 
@@ -1698,6 +1803,12 @@ bool SettingsWindowHost::Hide()
 {
     return impl_->initialized && impl_->OnOwnerThread() &&
         impl_->HideWindow();
+}
+
+bool SettingsWindowHost::FlushPendingChanges()
+{
+    return impl_->initialized && impl_->OnOwnerThread() &&
+        impl_->FlushPendingChanges();
 }
 
 void SettingsWindowHost::SetWidgetSettingsService(

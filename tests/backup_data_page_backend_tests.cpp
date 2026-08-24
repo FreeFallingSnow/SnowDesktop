@@ -104,7 +104,8 @@ void TestExistingStorageFormatsAreReused(const std::string& source)
         "backend does not define a competing complete-backup format");
 }
 
-void TestReplacementNeverFlushesOldMemory(const std::string& source)
+void TestReplacementNeverFlushesOldMemory(const std::string& header,
+    const std::string& source)
 {
     const auto completion = source.find("void CompleteQueuedReplacement");
     const auto discard = source.find(
@@ -130,18 +131,64 @@ void TestReplacementNeverFlushesOldMemory(const std::string& source)
             source.find("Drain before marking closed") !=
                 std::string::npos,
         "a late cancel or page close cannot abandon an already queued replacement");
-
-    Check(source.find("SettingsHostActions::Action::RefreshDesktop") !=
+    Check(source.find("snapshot.replacementPending = true") !=
                 std::string::npos &&
-            source.find("layoutReplacementCommitted") !=
+            source.find("snapshot.replacementPending") !=
+                std::string::npos,
+        "failed restart leaves the backup backend in a terminal state");
+
+    Check(source.find("options.commitLayoutRestore") !=
+                std::string::npos &&
+            source.find("layoutRestore") !=
                 std::string::npos &&
             source.find("layout_storage::ValidateDocument") !=
                 std::string::npos &&
-            source.find("layout_storage::SaveDocument") !=
+            source.find("layout_storage::SaveDocument") ==
                 std::string::npos &&
-            source.find("ApplyDesktopLayout would save the old") !=
+            source.find("atomic_file::WriteAll") ==
                 std::string::npos,
-        "layout restore validates and atomically replaces files before reload");
+        "layout worker validates a payload but never writes live files");
+    Check(header.find("LayoutRestorePayload") != std::string::npos &&
+            header.find("commitLayoutRestore") != std::string::npos,
+        "layout replacement is committed through an application-owned STA seam");
+}
+
+void TestApplicationOwnedLayoutCommit(const std::string& application,
+    const std::string& compositionRoot)
+{
+    const auto transaction = application.find(
+        "DesktopApp::CommitLayoutRestore");
+    const auto flush = application.find(
+        "settingsController_->FlushAll()", transaction);
+    const auto replace = application.find(
+        "layout_storage::SaveDocument", transaction);
+    const auto reload = application.find("ReloadItems(true)", transaction);
+    const auto synchronizeGeneral = application.find(
+        "SynchronizeGeneral", reload);
+    const auto synchronizeDesktop = application.find(
+        "SynchronizeDesktop", synchronizeGeneral);
+    Check(transaction != std::string::npos &&
+            flush != std::string::npos &&
+            replace != std::string::npos &&
+            reload != std::string::npos &&
+            synchronizeGeneral != std::string::npos &&
+            synchronizeDesktop != std::string::npos &&
+            flush < replace && replace < reload &&
+            reload < synchronizeGeneral &&
+            synchronizeGeneral < synchronizeDesktop,
+        "DesktopApp flushes, replaces, reloads and synchronizes in order");
+    Check(application.find("previousLayout", transaction) !=
+                std::string::npos &&
+            application.find("layoutRolledBack", transaction) !=
+                std::string::npos &&
+            application.find("storageRolledBack", transaction) !=
+                std::string::npos,
+        "application layout transaction preserves rollback documents");
+    Check(compositionRoot.find(
+              "backupDataPage.commitLayoutRestore") != std::string::npos &&
+            compositionRoot.find("CommitLayoutRestore(std::move(payload))") !=
+                std::string::npos,
+        "composition root injects the application-owned layout transaction");
 }
 
 void TestBackendContract(const std::filesystem::path& repository)
@@ -150,15 +197,22 @@ void TestBackendContract(const std::filesystem::path& repository)
         repository / "src/winui/backup_data_page_backend.h");
     const std::string source = ReadText(
         repository / "src/winui/backup_data_page_backend.cpp");
-    Check(!header.empty() && !source.empty(),
+    const std::string application = ReadText(
+        repository / "src/app/app_settings_apply.cpp");
+    const std::string compositionRoot = ReadText(
+        repository / "src/app/app_run.cpp");
+    Check(!header.empty() && !source.empty() && !application.empty() &&
+            !compositionRoot.empty(),
         "backup/data backend sources are readable");
-    if (header.empty() || source.empty())
+    if (header.empty() || source.empty() || application.empty() ||
+        compositionRoot.empty())
         return;
 
     TestPresenterAdapterBoundary(header, source);
     TestWorkerAndPickerOwnership(header, source);
     TestExistingStorageFormatsAreReused(source);
-    TestReplacementNeverFlushesOldMemory(source);
+    TestReplacementNeverFlushesOldMemory(header, source);
+    TestApplicationOwnedLayoutCommit(application, compositionRoot);
 }
 } // namespace
 

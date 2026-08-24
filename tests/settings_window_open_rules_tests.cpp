@@ -75,6 +75,9 @@ int main(int argc, char** argv)
         const std::string appRun = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_run.cpp");
+        const std::string tray = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_tray.cpp");
         Check(!source.empty(), "settings window source is readable");
         Check(!header.empty() && !host.empty() && !appRun.empty(),
             "WinUI settings facade, host, and message pump are readable");
@@ -93,6 +96,24 @@ int main(int argc, char** argv)
                 source.find("SettingsRoute::ForWidget(widgetId)") !=
                     std::string::npos,
             "all compatibility entry points resolve to typed settings routes");
+        Check(source.find("bool EnsureInitialized()") !=
+                    std::string::npos &&
+                source.find("auto candidate =") != std::string::npos &&
+                source.find("host = std::move(candidate)") !=
+                    std::string::npos &&
+                source.find("return impl_->EnsureInitialized() &&") !=
+                    std::string::npos,
+            "each failed lazy initialization is retried with a newly constructed WinUI host");
+        Check(appRun.find("ensureWidgetSettingsInstance") !=
+                    std::string::npos &&
+                appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=
+                    std::string::npos,
+            "the application supplies persisted instance loading before widget settings navigation");
+        Check(!tray.empty() &&
+                tray.find("!settingsWindow_->ShowExitConfirm()") !=
+                    std::string::npos &&
+                tray.find("RequestExit();") != std::string::npos,
+            "tray exit falls back safely when the WinUI confirmation cannot be shown");
         Check(host.find("controller->CloseSession()") !=
                     std::string::npos &&
                 appRun.find("settingsWindow_->PreTranslateMessage(&msg)") !=

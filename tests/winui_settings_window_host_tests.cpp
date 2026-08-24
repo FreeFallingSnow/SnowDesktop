@@ -67,22 +67,44 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("Present(") == std::string::npos,
         "the new settings host has no ImGui, D3D, swap-chain, or manual-present path");
 
-    const std::size_t openBegin = source.find(
-        "bool SettingsWindowHost::Open(const SettingsRoute& route)");
-    const std::size_t openEnd = source.find(
-        "bool SettingsWindowHost::Hide()", openBegin);
-    const std::string_view openFunction =
-        openBegin != std::string::npos && openEnd != std::string::npos
-        ? std::string_view(source).substr(openBegin, openEnd - openBegin)
+    const std::size_t commitBegin = source.find(
+        "bool CommitRoute(const SettingsRoute& route");
+    const std::size_t commitEnd = source.find(
+        "void RequestRoute(const SettingsRoute& route)", commitBegin);
+    const std::string_view commitFunction =
+        commitBegin != std::string::npos && commitEnd != std::string::npos
+        ? std::string_view(source).substr(
+            commitBegin, commitEnd - commitBegin)
         : std::string_view{};
-    Check(Count(openFunction, "controller->Open(route)") == 1,
-        "one host Open request performs exactly one authoritative controller Open");
+    Check(Count(commitFunction, "controller->Open(route)") == 1 &&
+            source.find("impl_->CommitRoute(route, &openResult)") !=
+                std::string::npos &&
+            source.find("CommitRoute(route, &result)") !=
+                std::string::npos,
+        "external and in-window routes share one authoritative controller commit");
+    Check(commitFunction.find("ensureWidgetSettingsInstance") !=
+                std::string::npos &&
+            commitFunction.find("widgetSettingsService->Load(") !=
+                std::string::npos &&
+            commitFunction.find(
+                "current->generation != loaded.snapshot->generation") !=
+                std::string::npos &&
+            commitFunction.find("ApplyWidgetSettingsSnapshot(") !=
+                std::string::npos,
+        "widget routes load the instance and validate the exact presenter snapshot before activation");
     Check(source.find("controller->CloseSession()") != std::string::npos &&
+            source.find("FlushPendingChanges()") != std::string::npos &&
+            source.find("shell->FlushPendingWidgetSettings()") !=
+                std::string::npos &&
             source.find("widgetSettingsService->CloseAll()") !=
                 std::string::npos &&
             source.find("ShowWindow(window, SW_HIDE)") !=
                 std::string::npos,
         "closing flushes the controller and widget sessions before hiding");
+    Check(source.find(
+              "if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)") !=
+                std::string::npos,
+        "host shutdown attempts a final component and controller flush");
     Check(source.find("viewEpoch") != std::string::npos &&
             source.find("expectedEpoch") != std::string::npos &&
             source.find("DispatcherQueue") != std::string::npos &&

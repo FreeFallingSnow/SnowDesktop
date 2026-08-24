@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "レイアウトのバックアップ",
   "settings.backup.layout.description": "デスクトップレイアウトのバックアップを作成、復元します。",
   "settings.backup.restoreLayout.confirm": "このレイアウトのバックアップを復元しますか？現在のレイアウトを安全用バックアップとして保存してから、選択したバックアップでデスクトップを再読み込みします。",
+  "settings.backup.restoreLayout.busy": "デスクトップは処理中です。現在のファイル操作またはドラッグ操作を完了してから、もう一度復元してください。",
+  "settings.backup.restoreLayout.commitFailed": "レイアウトのバックアップを適用できませんでした。現在のレイアウトは保持されたか、安全用コピーから復元されました。",
   "settings.backup.deleteLayout.confirm": "このレイアウトのバックアップを削除しますか？削除すると、ここから復元できなくなります。",
   "settings.backup.full": "完全バックアップと移行",
   "settings.backup.full.description": "すべてのデータをエクスポート、インポート、復元、移行します。",

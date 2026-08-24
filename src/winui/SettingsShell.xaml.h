@@ -117,6 +117,10 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
 
+    /** Flush the active declarative component editor before route/close. */
+    [[nodiscard]] snowdesktop::widget_runtime::WidgetSettingMutationResult
+        FlushPendingWidgetSettings();
+
     /** Pause active page input while the reusable top-level HWND is hidden. */
     void SuspendInteraction() noexcept;
     /** Rebind and reactivate the current route after the HWND is shown again. */

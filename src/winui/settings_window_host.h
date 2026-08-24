@@ -43,6 +43,12 @@ struct SettingsWindowHostOptions
     SearchInputProvider searchInput;
     HomeAboutStatusProvider homeAboutStatus;
 
+    /** Ensure a persisted component instance is loaded before its declarative
+     * settings session is created. The application owns the instance-to-
+     * package lookup needed by WidgetEngine::EnsureWidgetLoaded. */
+    std::function<bool(std::wstring_view instanceId)>
+        ensureWidgetSettingsInstance;
+
     /** Application-owned seams used by the page backends. UI ownership,
      * dispatch and snapshot publication are supplied by SettingsWindowHost. */
     WidgetsPageBackendOptions widgetsPage;
@@ -86,6 +92,12 @@ public:
 
     /** Flush all values and close the view session before hiding the HWND. */
     [[nodiscard]] bool Hide();
+
+    /**
+     * Flush both the active declarative component editor and controller
+     * domains without closing the session. Used before exit/restart.
+     */
+    [[nodiscard]] bool FlushPendingChanges();
 
     void SetWidgetSettingsService(
         widget_runtime::WidgetSettingsService* service) noexcept;

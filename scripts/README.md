@@ -12,6 +12,8 @@
 - `release_manager.ps1`：统一发布状态、打包、仓库同步、合并及发布流程；
 - `package_release.ps1`：生成携带版、MSIX、符号包和商店上传包；
 - `package_steam.ps1`：生成 Steam 专属载荷，只允许携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
+- `write_deployment_manifest.ps1`：由 MSBuild 调用，生成确定性的 WinAppSDK 自包含部署清单；
+- `deployment_payload.psm1`：供携带版、MSIX 与 Steam 打包共用的清单校验、复制和 AppX fragment 合并模块；
 - `squash_release_to_main.bat`：只执行本地 squash、提交和标签；
 - `widget_dev.ps1`：组件校验、开发目录同步与监听实现。
 

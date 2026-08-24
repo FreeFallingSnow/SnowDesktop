@@ -24,6 +24,7 @@ $repositoryRoot = [System.IO.Path]::GetFullPath(
 $packagingDirectory = Join-Path $repositoryRoot "packaging"
 $buildOutput = Join-Path $repositoryRoot ".build\Release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
+Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
 
 function Assert-ChildPath {
     param(
@@ -110,6 +111,8 @@ function Copy-Payload {
         (Join-Path $buildOutput "SnowDesktopWallpaperHook.dll"),
         (Join-Path $buildOutput "SnowDesktopWallpaperHook32.dll"),
         (Join-Path $buildOutput "SnowDesktopWallpaperInjector32.exe"),
+        (Join-Path $buildOutput "SnowDesktopWorkshopManager.exe"),
+        (Join-Path $buildOutput "snowwidget.exe"),
         (Join-Path $repositoryRoot "LICENSE"),
         (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"),
         (Join-Path $repositoryRoot "README.md"),
@@ -148,6 +151,23 @@ function Copy-Payload {
     Copy-Directory `
         -Source (Join-Path $repositoryRoot "lang") `
         -Destination (Join-Path $Destination "lang")
+
+    $builtSkillCli = Join-Path $buildOutput `
+        "widgets\snowdesktop-lua-widget\bin\snowwidget.exe"
+    if (-not (Test-Path -LiteralPath $builtSkillCli -PathType Leaf) -or
+        (Get-Sha256 -Path $builtSkillCli) -cne
+            (Get-Sha256 -Path (Join-Path $buildOutput "snowwidget.exe"))) {
+        throw "The built Agent Skill does not contain the current snowwidget.exe."
+    }
+    $skillDestination = Join-Path $Destination `
+        "widgets\snowdesktop-lua-widget\bin"
+    New-Item -ItemType Directory -Path $skillDestination -Force | Out-Null
+    Copy-Item -LiteralPath $builtSkillCli `
+        -Destination (Join-Path $skillDestination "snowwidget.exe") -Force
+
+    $null = Copy-SnowDesktopDeploymentPayload `
+        -BuildOutput $buildOutput `
+        -Destination $Destination
 
     Assert-NoDeveloperAssets -Destination $Destination
 }
@@ -458,6 +478,10 @@ if ($manifest -match "@[A-Z_]+@") {
     (Join-Path $msixStage "AppxManifest.xml"),
     $manifest,
     [System.Text.UTF8Encoding]::new($false))
+Merge-SnowDesktopAppxFragments `
+    -BuildOutput $buildOutput `
+    -PackageRoot $msixStage `
+    -ManifestPath (Join-Path $msixStage "AppxManifest.xml")
 
 $makeAppx = Get-MakeAppxPath
 $makePri = Join-Path (Split-Path -Parent $makeAppx) "makepri.exe"

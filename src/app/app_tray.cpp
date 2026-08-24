@@ -174,7 +174,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         ShowSettingsWindow();
         break;
     case kTrayRestartCommand:
-        RequestRestart();
+        (void)RequestRestart();
         break;
     case kTrayRestartExplorerCommand:
         if (!RestartWindowsExplorer())
@@ -183,9 +183,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
-        if (settingsWindow_)
-            settingsWindow_->ShowExitConfirm();
-        else
+        if (!settingsWindow_ || !settingsWindow_->ShowExitConfirm())
             RequestExit();
         break;
     case kTrayDesktopIconThisPC:

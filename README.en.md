@@ -35,7 +35,11 @@ A Windows desktop organization and personalization tool. SnowDesktop replaces na
 
 ## 🛠️ Build
 
-Requirements: CMake 3.24+, Visual Studio 2022, and the Windows 10 SDK (0x0A00).
+Requirements: CMake 3.24+, Visual Studio 2022 with the Desktop development
+with C++ workload, and Windows 10/11 SDK 10.0.19041.0 or newer. NuGet restores
+the pinned Microsoft Windows App SDK 2.4.0 and
+Microsoft.Windows.CppWinRT 3.0.260818.1 packages. Neither development nor
+target machines need a preinstalled Windows App SDK Runtime.
 
 ```bat
 .\scripts\build.bat
@@ -49,8 +53,9 @@ normally first. To clear the lock automatically, use
 ## 🧱 Technology
 
 - C++20 / MSVC
+- WinUI 3 / Windows App SDK 2.4.0 (settings center in a Win32 XAML Island)
 - Direct2D + Direct3D 11 + DirectComposition
-- Dear ImGui (settings window)
+- Dear ImGui (Workshop Manager only)
 - Lua 5.4 (script engine)
 - Fluent System Icons Regular (modern context-menu and widget-menu icons)
 - Font Awesome 6 Free (backward-compatible widget icons)

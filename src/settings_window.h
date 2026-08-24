@@ -56,6 +56,8 @@ public:
         const wchar_t* widgetName,
         const wchar_t* scriptPath);
     [[nodiscard]] bool ShowExitConfirm();
+    /** Persist active page/controller edits without hiding the window. */
+    [[nodiscard]] bool FlushPendingChanges();
 
     void SetWidgetSettingsService(
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;

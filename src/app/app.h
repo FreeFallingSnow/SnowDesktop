@@ -707,7 +707,7 @@ private:
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
     /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
-    void RequestRestart();
+    [[nodiscard]] bool RequestRestart();
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */
     void EnsureUiAnimationFrame();
     /** @brief 取消所有应用内 UI 动画轨道。 */
@@ -1158,6 +1158,9 @@ private:
     void InitializeSettingsController();
     /** Release settings UI and services while their borrowed owners are alive. */
     void ShutdownSettingsInfrastructure() noexcept;
+    /** Commit a validated layout backup on the application STA. */
+    snowdesktop::SettingsActionResult CommitLayoutRestore(
+        snowdesktop::winui::LayoutRestorePayload payload);
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */

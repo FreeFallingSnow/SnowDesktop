@@ -104,6 +104,27 @@ void TestControllerGenerationGate()
         "a new generation clears history from the closed view session");
 }
 
+void TestControllerCommittedBackNavigation()
+{
+    SettingsShellNavigationState state;
+    Check(state.ApplyControllerUpdate(
+              SettingsRoute::ForPage(SettingsPage::Home), 1, 7) &&
+            state.ApplyControllerUpdate(
+              SettingsRoute::ForPage(SettingsPage::General), 2, 7) &&
+            state.ApplyControllerUpdate(
+              SettingsRoute::ForWidget(L"clock-instance"), 3, 7),
+        "controller publications build route history");
+
+    const auto target = state.PeekBack();
+    Check(target && target->page == SettingsPage::General &&
+            state.Route().page == SettingsPage::WidgetSettings,
+        "back target can be inspected without changing presentation state");
+    Check(target && state.ApplyControllerUpdate(*target, 4, 7) &&
+            state.Route().page == SettingsPage::General &&
+            state.CanGoForward() && state.HistorySize() == 3,
+        "a validated controller back commit moves within existing history");
+}
+
 void TestInvalidRoutes()
 {
     SettingsShellNavigationState state;
@@ -197,6 +218,7 @@ int main(int argc, char** argv)
     TestHistoryAndFocusRoutes();
     TestConditionalPages();
     TestControllerGenerationGate();
+    TestControllerCommittedBackNavigation();
     TestInvalidRoutes();
     Check(argc == 2,
         "source root is supplied for WinUI settings source contracts");

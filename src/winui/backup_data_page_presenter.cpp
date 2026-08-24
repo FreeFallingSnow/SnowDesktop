@@ -197,6 +197,7 @@ struct BackupDataPagePresenter::Impl
     std::wstring fullBackupDirectory;
     std::uint64_t generation = 0;
     std::uint64_t revision = 0;
+    bool replacementPending = false;
     bool hasSnapshot = false;
     bool active = false;
     bool closed = false;
@@ -225,7 +226,8 @@ struct BackupDataPagePresenter::Impl
 
     [[nodiscard]] bool CanInteract() const noexcept
     {
-        return !closed && active && hasSnapshot && !operation.running;
+        return !closed && active && hasSnapshot && !operation.running &&
+            !replacementPending;
     }
 
     void BuildControls()
@@ -913,7 +915,8 @@ struct BackupDataPagePresenter::Impl
             infoBar.IsOpen(false);
         }
 
-        const bool mutationsEnabled = active && hasSnapshot && !running;
+        const bool mutationsEnabled = active && hasSnapshot && !running &&
+            !replacementPending;
         layoutName.IsEnabled(mutationsEnabled);
         createLayoutButton.IsEnabled(mutationsEnabled);
         layoutList.IsEnabled(mutationsEnabled);
@@ -921,8 +924,10 @@ struct BackupDataPagePresenter::Impl
         importFullBackupButton.IsEnabled(mutationsEnabled);
         fullBackupList.IsEnabled(mutationsEnabled);
         migrateButton.IsEnabled(mutationsEnabled);
-        openDataDirectoryButton.IsEnabled(active && hasSnapshot);
-        openFullBackupDirectoryButton.IsEnabled(active && hasSnapshot);
+        openDataDirectoryButton.IsEnabled(
+            active && hasSnapshot && !replacementPending);
+        openFullBackupDirectoryButton.IsEnabled(
+            active && hasSnapshot && !replacementPending);
         noLayoutBackups.Visibility(layoutEntries.empty()
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
@@ -965,6 +970,7 @@ struct BackupDataPagePresenter::Impl
             fullEntries = snapshot.fullBackups;
         dataDirectory = snapshot.dataDirectory;
         fullBackupDirectory = snapshot.fullBackupDirectory;
+        replacementPending = snapshot.replacementPending;
         operation = snapshot.operation;
         notice = snapshot.notice;
         hasSnapshot = true;

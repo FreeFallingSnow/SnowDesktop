@@ -15,6 +15,13 @@
 namespace snowdesktop::winui
 {
 
+/** Validated documents handed back to DesktopApp for an STA-owned commit. */
+struct LayoutRestorePayload
+{
+    std::string layoutDocument;
+    std::optional<std::string> storageDocument;
+};
+
 /**
  * Host services used by BackupDataPageBackend.
  *
@@ -62,6 +69,14 @@ struct BackupDataPageBackendOptions
     std::function<SettingsActionResult(
         HWND owner,
         const std::filesystem::path& path)> openPath;
+
+    /**
+     * Atomically replace the live layout on the application STA, reload the
+     * desktop model and synchronize the SettingsController mirror. The worker
+     * never writes application-owned live files directly.
+     */
+    std::function<SettingsActionResult(LayoutRestorePayload payload)>
+        commitLayoutRestore;
 
     std::function<std::wstring(std::string_view key)> localize;
 };

@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "Backup do layout",
   "settings.backup.layout.description": "Crie e restaure backups do layout da área de trabalho.",
   "settings.backup.restoreLayout.confirm": "Restaurar este backup de layout? O layout atual será salvo primeiro como backup de segurança e, em seguida, a área de trabalho será recarregada a partir do backup selecionado.",
+  "settings.backup.restoreLayout.busy": "A área de trabalho está ocupada. Conclua a operação atual de arquivo ou de arrastar e tente restaurar novamente.",
+  "settings.backup.restoreLayout.commitFailed": "Não foi possível aplicar o backup de layout. O layout atual foi mantido ou restaurado a partir da cópia de segurança.",
   "settings.backup.deleteLayout.confirm": "Excluir este backup de layout? Depois da exclusão, ele não poderá ser restaurado por aqui.",
   "settings.backup.full": "Backup completo e migração",
   "settings.backup.full.description": "Exporte, importe, restaure ou migre todos os dados.",

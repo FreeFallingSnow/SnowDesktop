@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "Sauvegarde de la disposition",
   "settings.backup.layout.description": "Créez et restaurez des sauvegardes de la disposition du bureau.",
   "settings.backup.restoreLayout.confirm": "Restaurer cette sauvegarde de disposition ? La disposition actuelle sera d’abord enregistrée comme sauvegarde de sécurité, puis le bureau sera rechargé depuis la sauvegarde sélectionnée.",
+  "settings.backup.restoreLayout.busy": "Le bureau est occupé. Terminez l’opération de fichier ou de glisser-déposer en cours, puis réessayez la restauration.",
+  "settings.backup.restoreLayout.commitFailed": "La sauvegarde de disposition n’a pas pu être appliquée. La disposition actuelle a été conservée ou restaurée depuis la copie de sécurité.",
   "settings.backup.deleteLayout.confirm": "Supprimer cette sauvegarde de disposition ? Elle ne pourra plus être restaurée depuis cette page après sa suppression.",
   "settings.backup.full": "Sauvegarde complète et migration",
   "settings.backup.full.description": "Exportez, importez, restaurez ou migrez toutes les données.",

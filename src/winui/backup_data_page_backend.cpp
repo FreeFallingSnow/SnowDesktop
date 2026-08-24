@@ -72,7 +72,7 @@ struct WorkResult
     bool ok = false;
     bool cancelled = false;
     bool replacementQueued = false;
-    bool layoutReplacementCommitted = false;
+    std::optional<LayoutRestorePayload> layoutRestore;
     bool hasInventory = false;
     std::string error;
     BackupInventory inventory;
@@ -583,77 +583,21 @@ WorkResult RestoreLayoutBackup(
         replacementStorage = std::move(contents);
     }
 
-    std::string previousLayout;
-    if (!ReadRegularFile(
-            context.paths.layoutFile, previousLayout, result.error) ||
-        !snowdesktop::layout_storage::ValidateDocument(
-            previousLayout, &result.error))
-    {
-        return result;
-    }
-    std::optional<std::string> previousStorage;
-    const DWORD activeStorageAttributes =
-        GetFileAttributesW(context.paths.storageFile.c_str());
-    if (activeStorageAttributes != INVALID_FILE_ATTRIBUTES)
-    {
-        std::string contents;
-        if (!ReadRegularFile(
-                context.paths.storageFile, contents, result.error))
-        {
-            return result;
-        }
-        previousStorage = std::move(contents);
-    }
-
     WorkResult safetyBackup = CreateLayoutBackup(context,
         MakeLayoutTimestampName() + context.beforeRestoreSuffix, stop);
     if (!safetyBackup.ok)
         return safetyBackup;
 
-    // This is the last cancellation point before replacing active layout
-    // files. Once replacement begins, completion is reported and reloaded.
+    // The worker stops at a validated immutable payload. Only DesktopApp's
+    // settings STA may replace live files and reconcile the in-memory model.
     if (stop.stop_requested())
     {
         result.cancelled = true;
         return result;
     }
-
-    if (!snowdesktop::layout_storage::SaveDocument(
-            context.paths.layoutFile, replacementLayout, &result.error))
-    {
-        if (result.error.empty())
-            result.error = "cannot restore the layout backup";
-        return result;
-    }
-
-    if (replacementStorage && !snowdesktop::atomic_file::WriteAll(
-            context.paths.storageFile, *replacementStorage, {},
-            &result.error))
-    {
-        std::string rollbackError;
-        const bool layoutRolledBack =
-            snowdesktop::layout_storage::SaveDocument(
-                context.paths.layoutFile, previousLayout, &rollbackError);
-        bool storageRolledBack = true;
-        if (previousStorage)
-        {
-            storageRolledBack = snowdesktop::atomic_file::WriteAll(
-                context.paths.storageFile, *previousStorage, {},
-                &rollbackError);
-        }
-        if (!layoutRolledBack || !storageRolledBack)
-        {
-            result.error += "; rollback failed: " + rollbackError;
-            // The safety backup remains on disk. Mark the live layout as
-            // touched so Finish() reconciles the in-memory desktop even on a
-            // page close.
-            result.layoutReplacementCommitted = true;
-        }
-        return result;
-    }
-
+    result.layoutRestore = LayoutRestorePayload{
+        std::move(replacementLayout), std::move(replacementStorage)};
     result.ok = true;
-    result.layoutReplacementCommitted = true;
     return result;
 }
 
@@ -1341,7 +1285,8 @@ struct BackupDataPageBackend::State final
         BackupDataActionRequest request)
     {
         DrainAnyCompletion();
-        if (!IsCurrent(generation, revision))
+        if (!IsCurrent(generation, revision) ||
+            snapshot.replacementPending)
             return;
         if (IsOpenCommand(request.command))
         {
@@ -1404,7 +1349,7 @@ struct BackupDataPageBackend::State final
         BackupDataPageActions::ConfirmationCompletion completion)
     {
         if (!completion || !IsCurrent(generation, revision) ||
-            !options.confirm)
+            snapshot.replacementPending || !options.confirm)
         {
             if (completion)
                 completion(false);
@@ -1450,7 +1395,7 @@ struct BackupDataPageBackend::State final
         BackupDataPageActions::PickerCompletion completion)
     {
         if (!completion || !IsCurrent(generation, revision) ||
-            !options.pickPath)
+            snapshot.replacementPending || !options.pickPath)
         {
             if (completion)
                 completion(std::nullopt);
@@ -1507,6 +1452,7 @@ struct BackupDataPageBackend::State final
         snapshot.generation = controller->Generation();
         snapshot.revision = 0;
         snapshot.operation = {};
+        snapshot.replacementPending = true;
         SetNotice(BackupDataNoticeSeverity::Success,
             OperationTitle(completion.context.request.command),
             SuccessMessage(completion.context.request.command));
@@ -1541,24 +1487,28 @@ struct BackupDataPageBackend::State final
             return;
         }
 
-        // A layout replacement that reached the active files must reconcile
-        // DesktopApp even if its page was left or the window is closing. This
-        // branch intentionally precedes active/generation stale-result gates.
-        if (completion.result.layoutReplacementCommitted)
+        // The validated layout payload crosses exactly one application-owned
+        // boundary on the STA. Keep this before page-lifetime gates: once the
+        // worker has completed, closing the page cannot split file commit from
+        // in-memory desktop reconciliation.
+        if (completion.result.layoutRestore && completion.result.ok)
         {
             snapshot.operation = {};
-            SettingsHostActions::Request reload;
-            reload.action = SettingsHostActions::Action::RefreshDesktop;
-            const auto reloadResult = controller->InvokeHostAction(reload);
+            const SettingsActionResult commitResult =
+                options.commitLayoutRestore
+                ? options.commitLayoutRestore(
+                      std::move(*completion.result.layoutRestore))
+                : SettingsActionResult::Failure(
+                      L"The application layout restore service is unavailable.");
             if (!active || closed)
                 return;
-            if (!completion.result.ok || !reloadResult.Succeeded())
+            if (!commitResult.Succeeded())
             {
                 std::wstring message = FailureMessage(
                     completion.context.request.command);
                 AppendError(message, completion.result.error);
-                if (!reloadResult.Succeeded() && !reloadResult.message.empty())
-                    message += L"\n\n" + reloadResult.message;
+                if (!commitResult.message.empty())
+                    message += L"\n\n" + commitResult.message;
                 SetNotice(BackupDataNoticeSeverity::Error,
                     OperationTitle(completion.context.request.command),
                     std::move(message));
@@ -1611,26 +1561,6 @@ struct BackupDataPageBackend::State final
             return;
         }
 
-        if (completion.context.request.completionPolicy ==
-            BackupDataCompletionPolicy::ReloadDesktopLayout)
-        {
-            SettingsHostActions::Request reload;
-            // RefreshDesktop maps to DesktopApp::ReloadItems(), the historical
-            // layout-restore callback. ApplyDesktopLayout would save the old
-            // in-memory layout over the restored files and is intentionally
-            // not used here.
-            reload.action = SettingsHostActions::Action::RefreshDesktop;
-            const auto reloadResult = controller->InvokeHostAction(reload);
-            if (!reloadResult.Succeeded())
-            {
-                SetNotice(BackupDataNoticeSeverity::Error,
-                    OperationTitle(completion.context.request.command),
-                    reloadResult.message);
-                Publish();
-                return;
-            }
-        }
-
         SetNotice(BackupDataNoticeSeverity::Success,
             OperationTitle(completion.context.request.command),
             SuccessMessage(completion.context.request.command));
@@ -1640,7 +1570,8 @@ struct BackupDataPageBackend::State final
     void Refresh()
     {
         DrainAnyCompletion();
-        if (closed || !active || snapshot.operation.running)
+        if (closed || !active || snapshot.operation.running ||
+            snapshot.replacementPending)
             return;
         WorkContext context;
         context.kind = WorkKind::Refresh;

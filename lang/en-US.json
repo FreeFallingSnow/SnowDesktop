@@ -1155,6 +1155,8 @@
     "settings.backup.layout": "Layout backup",
     "settings.backup.layout.description": "Create and restore desktop-layout backups.",
     "settings.backup.restoreLayout.confirm": "Restore this layout backup? The current layout will first be saved as a safety backup, then the desktop will reload from the selected backup.",
+    "settings.backup.restoreLayout.busy": "The desktop is busy. Finish the current file or drag operation, then try restoring again.",
+    "settings.backup.restoreLayout.commitFailed": "The layout backup could not be applied. The current layout was kept or restored from the safety copy.",
     "settings.backup.deleteLayout.confirm": "Delete this layout backup? It cannot be restored from here after deletion.",
     "settings.backup.full": "Full backup and migration",
     "settings.backup.full.description": "Export, import, restore or migrate all data.",

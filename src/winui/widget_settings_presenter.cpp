@@ -44,6 +44,23 @@ std::string ToUtf8(const winrt::hstring& value)
     return winrt::to_string(value);
 }
 
+std::wstring ToWide(std::string_view value)
+{
+    if (value.empty()) return {};
+    const int required = MultiByteToWideChar(CP_UTF8,
+        MB_ERR_INVALID_CHARS, value.data(),
+        static_cast<int>(value.size()), nullptr, 0);
+    if (required <= 0) return {};
+    std::wstring result(static_cast<std::size_t>(required), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            value.data(), static_cast<int>(value.size()),
+            result.data(), required) != required)
+    {
+        return {};
+    }
+    return result;
+}
+
 bool IsEnter(const muxi::KeyRoutedEventArgs& args) noexcept
 {
     return args.Key() == ws::VirtualKey::Enter;
@@ -586,14 +603,14 @@ struct WidgetSettingsPresenter::Impl
             });
         field.lostFocus = field.text.LostFocus(
             [this, &field](const auto&, const auto&) {
-                CommitText(field);
+                (void)CommitText(field);
             });
         field.keyDown = field.text.KeyDown(
             [this, &field](const auto&,
                            const muxi::KeyRoutedEventArgs& args) {
                 if (IsEnter(args))
                 {
-                    CommitText(field);
+                    (void)CommitText(field);
                     args.Handled(true);
                 }
             });
@@ -614,14 +631,14 @@ struct WidgetSettingsPresenter::Impl
             });
         field.lostFocus = field.password.LostFocus(
             [this, &field](const auto&, const auto&) {
-                CommitPassword(field);
+                (void)CommitPassword(field);
             });
         field.keyDown = field.password.KeyDown(
             [this, &field](const auto&,
                            const muxi::KeyRoutedEventArgs& args) {
                 if (IsEnter(args))
                 {
-                    CommitPassword(field);
+                    (void)CommitPassword(field);
                     args.Handled(true);
                 }
             });
@@ -1301,10 +1318,22 @@ struct WidgetSettingsPresenter::Impl
         return result;
     }
 
-    void CommitText(WidgetFieldControl& field)
+    [[nodiscard]] wr::WidgetSettingMutationResult UnchangedResult() const
     {
-        if (!field.textDirty || !CanMutateField(field) || !field.text)
-            return;
+        return {wr::WidgetSettingMutationStatus::Unchanged,
+            generation, revision, {}, {}};
+    }
+
+    [[nodiscard]] wr::WidgetSettingMutationResult CommitText(
+        WidgetFieldControl& field)
+    {
+        if (!field.textDirty)
+            return UnchangedResult();
+        if (!CanMutateField(field) || !field.text)
+        {
+            return {wr::WidgetSettingMutationStatus::Disabled,
+                generation, revision, "editorUnavailable", {}};
+        }
         const std::string key = field.schema.key;
         const std::string value = ToUtf8(field.text.Text());
         field.textDirty = false;
@@ -1314,16 +1343,29 @@ struct WidgetSettingsPresenter::Impl
                     guard, key, wr::MakeWidgetSettingString(value));
             });
         if (!result.Succeeded())
+        {
             if (const auto current = fieldsByKey.find(key);
-                current != fieldsByKey.end())
+                current != fieldsByKey.end() && current->second->text)
+            {
+                current->second->synchronizing = true;
+                current->second->text.Text(ToWide(value));
+                current->second->synchronizing = false;
                 current->second->textDirty = true;
+            }
+        }
+        return result;
     }
 
-    void CommitPassword(WidgetFieldControl& field)
+    [[nodiscard]] wr::WidgetSettingMutationResult CommitPassword(
+        WidgetFieldControl& field)
     {
-        if (!field.passwordDirty || !CanMutateField(field) ||
-            !field.password)
-            return;
+        if (!field.passwordDirty)
+            return UnchangedResult();
+        if (!CanMutateField(field) || !field.password)
+        {
+            return {wr::WidgetSettingMutationStatus::Disabled,
+                generation, revision, "editorUnavailable", {}};
+        }
         const std::string key = field.schema.key;
         std::string plaintext = ToUtf8(field.password.Password());
         field.passwordDirty = false;
@@ -1331,8 +1373,6 @@ struct WidgetSettingsPresenter::Impl
             [this, key, &plaintext](const auto& guard) {
                 return service.SetSecret(guard, key, plaintext);
             });
-        if (!plaintext.empty())
-            SecureZeroMemory(plaintext.data(), plaintext.size());
         if (const auto current = fieldsByKey.find(key);
             current != fieldsByKey.end() && current->second->password)
         {
@@ -1342,11 +1382,23 @@ struct WidgetSettingsPresenter::Impl
                 current->second->password.Password(L"");
                 current->second->synchronizing = false;
             }
-            else if (current->second == &field)
+            else
             {
+                std::wstring restored = ToWide(plaintext);
+                current->second->synchronizing = true;
+                current->second->password.Password(restored);
+                current->second->synchronizing = false;
                 current->second->passwordDirty = true;
+                if (!restored.empty())
+                {
+                    SecureZeroMemory(restored.data(),
+                        restored.size() * sizeof(wchar_t));
+                }
             }
         }
+        if (!plaintext.empty())
+            SecureZeroMemory(plaintext.data(), plaintext.size());
+        return result;
     }
 
     void CommitNumber(WidgetFieldControl& field, double value)
@@ -1623,21 +1675,45 @@ struct WidgetSettingsPresenter::Impl
         }
     }
 
-    void FlushPendingEdits()
+    [[nodiscard]] wr::WidgetSettingMutationResult FlushPendingEdits()
     {
-        if (closed || !active) return;
         std::vector<std::string> keys;
         keys.reserve(fields.size());
         for (const auto& field : fields)
             if (field->textDirty || field->passwordDirty)
                 keys.push_back(field->schema.key);
+        if (keys.empty())
+            return UnchangedResult();
+        if (closed || !active)
+        {
+            return {wr::WidgetSettingMutationStatus::Disabled,
+                generation, revision, "presenterInactive", {}};
+        }
+
+        wr::WidgetSettingMutationResult aggregate = UnchangedResult();
         for (const auto& key : keys)
         {
             const auto found = fieldsByKey.find(key);
             if (found == fieldsByKey.end()) continue;
-            CommitText(*found->second);
-            CommitPassword(*found->second);
+            auto result = CommitText(*found->second);
+            if (!result.Succeeded())
+                return result;
+            if (result.Changed())
+                aggregate = result;
+
+            // Applying the first mutation may refresh the snapshot and its
+            // control map. Re-resolve by stable schema key before touching the
+            // secret editor.
+            const auto current = fieldsByKey.find(key);
+            if (current == fieldsByKey.end())
+                continue;
+            result = CommitPassword(*current->second);
+            if (!result.Succeeded())
+                return result;
+            if (result.Changed())
+                aggregate = result;
         }
+        return aggregate;
     }
 
     void CancelSearches() noexcept
@@ -1745,7 +1821,7 @@ struct WidgetSettingsPresenter::Impl
         if (closed) return;
         try
         {
-            FlushPendingEdits();
+            (void)FlushPendingEdits();
             CancelSearches();
         }
         catch (...)
@@ -1848,7 +1924,9 @@ void WidgetSettingsPresenter::Deactivate() noexcept
     if (!impl_ || impl_->closed) return;
     try
     {
-        impl_->FlushPendingEdits();
+        const auto result = impl_->FlushPendingEdits();
+        if (!result.Succeeded())
+            return;
         impl_->CancelSearches();
     }
     catch (...)
@@ -1857,9 +1935,12 @@ void WidgetSettingsPresenter::Deactivate() noexcept
     impl_->active = false;
 }
 
-void WidgetSettingsPresenter::FlushPendingEdits()
+wr::WidgetSettingMutationResult
+WidgetSettingsPresenter::FlushPendingEdits()
 {
-    if (impl_) impl_->FlushPendingEdits();
+    if (impl_) return impl_->FlushPendingEdits();
+    return {wr::WidgetSettingMutationStatus::Unavailable,
+        0, 0, "presenterUnavailable", {}};
 }
 
 mux::FrameworkElement WidgetSettingsPresenter::FocusTarget(

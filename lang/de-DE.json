@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "Layoutsicherung",
   "settings.backup.layout.description": "Sicherungen des Desktoplayouts erstellen und wiederherstellen.",
   "settings.backup.restoreLayout.confirm": "Diese Layoutsicherung wiederherstellen? Das aktuelle Layout wird zuerst als Sicherheitssicherung gespeichert. Anschließend wird der Desktop aus der ausgewählten Sicherung neu geladen.",
+  "settings.backup.restoreLayout.busy": "Der Desktop ist beschäftigt. Schließen Sie den aktuellen Datei- oder Ziehvorgang ab und versuchen Sie die Wiederherstellung erneut.",
+  "settings.backup.restoreLayout.commitFailed": "Die Layoutsicherung konnte nicht angewendet werden. Das aktuelle Layout wurde beibehalten oder aus der Sicherheitssicherung wiederhergestellt.",
   "settings.backup.deleteLayout.confirm": "Diese Layoutsicherung löschen? Nach dem Löschen kann sie von hier aus nicht wiederhergestellt werden.",
   "settings.backup.full": "Vollständige Sicherung und Migration",
   "settings.backup.full.description": "Alle Daten exportieren, importieren, wiederherstellen oder migrieren.",

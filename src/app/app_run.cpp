@@ -515,6 +515,24 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         return generalSettings_.widgetDeveloperToolsEnabled;
     };
     settingsHostOptions.debugVisible = []() { return false; };
+    settingsHostOptions.ensureWidgetSettingsInstance = [this](
+        std::wstring_view instanceId) {
+        if (!widgetEngine_ || instanceId.empty())
+            return false;
+        const std::size_t index = FindWidgetIndexById(
+            std::wstring(instanceId));
+        if (index >= widgets_.size() ||
+            widgets_[index].type != DesktopWidgetType::LuaScript)
+        {
+            return false;
+        }
+        return widgetEngine_->EnsureWidgetLoaded(
+            widgets_[index].id, widgets_[index].packageId);
+    };
+    settingsHostOptions.backupDataPage.commitLayoutRestore = [this](
+        snowdesktop::winui::LayoutRestorePayload payload) {
+        return CommitLayoutRestore(std::move(payload));
+    };
 
     settingsHostOptions.widgetsPage.locale = []() {
         return Locale::Instance().GetEffectiveLanguage();

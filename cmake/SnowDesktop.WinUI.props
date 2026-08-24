@@ -74,4 +74,56 @@
           BeforeTargets="FixupCLCompileOptions"
           DependsOnTargets="MarkupCompilePass1;CppWinRTMakeProjections;CppWinRTSetXamlLocalAssembly;CppWinRTAddXamlReferences;MarkupCompilePass2"
           Condition="'@(ApplicationDefinition)' != ''" />
+
+  <!-- Capture the exact self-contained payload selected by the restored
+       Windows App SDK targets. Packaging consumes this manifest instead of
+       globbing TargetDir, which also contains test and developer binaries. -->
+  <Target Name="SnowDesktopWriteDeploymentManifest"
+          AfterTargets="Build"
+          DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
+          Condition="'$(WindowsAppSDKSelfContained)' == 'true'">
+    <ItemGroup>
+      <_SnowDesktopDeploymentFile Include="@(MicrosoftWindowsAppSDKFiles)">
+        <DeploymentPath>%(RecursiveDir)%(Filename)%(Extension)</DeploymentPath>
+        <SourcePackage>Microsoft.WindowsAppSDK</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="@(MicrosoftWindowsAppSDKFilesRes)">
+        <DeploymentPath>%(RecursiveDir)%(Filename)%(Extension)</DeploymentPath>
+        <SourcePackage>Microsoft.WindowsAppSDK</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)App.xbf">
+        <DeploymentPath>App.xbf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)SettingsShell.xbf">
+        <DeploymentPath>SettingsShell.xbf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)SnowDesktop.pri">
+        <DeploymentPath>SnowDesktop.pri</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)SnowDesktop.winmd">
+        <DeploymentPath>SnowDesktop.winmd</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+    </ItemGroup>
+    <WriteLinesToFile
+        File="$(IntDir)SnowDesktop.deployment.items"
+        Lines="@(_SnowDesktopDeploymentFile-&gt;'%(DeploymentPath)&#x9;%(SourcePackage)&#x9;%(DeploymentKind)')"
+        Overwrite="true"
+        Encoding="UTF-8" />
+    <WriteLinesToFile
+        File="$(IntDir)SnowDesktop.appxfragments.items"
+        Lines="@(MicrosoftWindowsAppSDKAppxFragmentFiles)"
+        Overwrite="true"
+        Encoding="UTF-8" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot;" />
+  </Target>
 </Project>

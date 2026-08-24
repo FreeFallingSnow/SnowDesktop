@@ -103,9 +103,22 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
     }
     else if (Route() != route)
     {
-        Push(route);
+        if (historyIndex_ > 0 && history_[historyIndex_ - 1] == route)
+            --historyIndex_;
+        else if (historyIndex_ + 1 < history_.size() &&
+            history_[historyIndex_ + 1] == route)
+            ++historyIndex_;
+        else
+            Push(route);
     }
     return true;
+}
+
+std::optional<SettingsRoute> SettingsShellNavigationState::PeekBack() const
+{
+    return CanGoBack()
+        ? std::optional<SettingsRoute>(history_[historyIndex_ - 1])
+        : std::nullopt;
 }
 
 bool SettingsShellNavigationState::Navigate(const SettingsRoute& route)

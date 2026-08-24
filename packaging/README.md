@@ -91,6 +91,16 @@ artifacts\
 - 携带版直接使用程序目录的 `widgets`；
 - MSIX 将内置组件复制到可写的 `LocalState\data\widgets`。
 
+主程序使用 Microsoft Windows App SDK 2.4.0 自包含部署。MSBuild 会在
+`.build\Release\SnowDesktop.deployment.json` 中记录构建实际选择的运行时 DLL、
+PRI、XBF、WinMD、资源文件、哈希及官方 `package.appxfragment`；携带版、MSIX
+和 Steam 包都只按这份清单逐项复制，不会通配复制构建目录。打包会拒绝绝对路径、
+路径穿越、大小写冲突、缺失文件及哈希不一致。MSIX 还会把清单列出的官方
+activatable-class 扩展合并进 `AppxManifest.xml`，因此目标机器无需预装 Windows
+App SDK Runtime。Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
+复制到载荷的 `licenses` 目录。携带版和 MSIX 同时包含创意工坊管理器及
+`snowwidget.exe`，并校验 Agent Skill 内嵌 CLI 与独立 CLI 完全一致。
+
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过
 Windows SDK `makepri.exe` 创建 `resources.pri`。16–48 像素使用简化图标，

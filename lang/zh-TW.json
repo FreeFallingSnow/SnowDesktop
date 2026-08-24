@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "配置備份",
   "settings.backup.layout.description": "建立和還原桌面配置備份。",
   "settings.backup.restoreLayout.confirm": "確定要還原此配置備份嗎？目前配置會先儲存為安全備份，然後桌面將從所選備份重新載入。",
+  "settings.backup.restoreLayout.busy": "桌面正忙碌。請先完成目前的檔案或拖放作業，然後再嘗試還原。",
+  "settings.backup.restoreLayout.commitFailed": "無法套用配置備份。目前配置已保留，或已從安全副本還原。",
   "settings.backup.deleteLayout.confirm": "確定要刪除此配置備份嗎？刪除後無法從此處還原。",
   "settings.backup.full": "完整備份與移轉",
   "settings.backup.full.description": "匯出、匯入、還原或移轉全部資料。",

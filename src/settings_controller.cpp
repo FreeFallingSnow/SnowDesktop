@@ -47,6 +47,18 @@ void MergeResult(
         destination.status = SettingsActionStatus::Busy;
 }
 
+SettingsActionResult ExternalReplacementPendingResult()
+{
+    return SettingsActionResult::Busy(
+        L"An external data replacement is pending application restart.");
+}
+
+bool IsTerminalHostAction(SettingsHostActions::Action action) noexcept
+{
+    return action == SettingsHostActions::Action::RestartApplication ||
+        action == SettingsHostActions::Action::ExitApplication;
+}
+
 } // namespace
 
 SettingsActionResult SettingsActionResult::Success(SettingsDomain completed)
@@ -88,6 +100,8 @@ SettingsController::SettingsController(
 
 SettingsActionResult SettingsController::Initialize()
 {
+    if (externalReplacementPending_)
+        return ExternalReplacementPendingResult();
     if (initialized_)
         return SettingsActionResult::Success();
 
@@ -113,6 +127,8 @@ SettingsActionResult SettingsController::Initialize()
 
 SettingsActionResult SettingsController::Reload(SettingsReloadPolicy policy)
 {
+    if (externalReplacementPending_)
+        return ExternalReplacementPendingResult();
     if (!initialized_)
         return Initialize();
     if (dirtyDomains_ != SettingsDomain::None &&
@@ -148,6 +164,8 @@ SettingsActionResult SettingsController::Open(SettingsRoute route)
         return SettingsActionResult::Failure(
             L"The requested settings route is invalid.");
     }
+    if (externalReplacementPending_)
+        return ExternalReplacementPendingResult();
 
     SettingsActionResult result = SettingsActionResult::Success();
     if (!initialized_)
@@ -176,6 +194,18 @@ SettingsActionResult SettingsController::Open(SettingsRoute route)
 
 SettingsActionResult SettingsController::CloseSession()
 {
+    if (externalReplacementPending_)
+    {
+        if (sessionActive_)
+        {
+            sessionActive_ = false;
+            ++generation_;
+            ++revision_;
+            PublishSnapshot();
+        }
+        return SettingsActionResult::Success();
+    }
+
     SettingsActionResult result = FlushAll();
     if (!result.Succeeded() && HasPendingWork())
         return result;
@@ -224,13 +254,15 @@ std::uint64_t SettingsController::Generation() const noexcept
 bool SettingsController::IsGenerationCurrent(
     std::uint64_t generation) const noexcept
 {
-    return sessionActive_ && generation == generation_;
+    return sessionActive_ && !externalReplacementPending_ &&
+        generation == generation_;
 }
 
 void SettingsController::UpdatePersonalization(
     PersonalizationSettings settings,
     SettingsUpdateMode mode)
 {
+    if (externalReplacementPending_) return;
     values_.personalization = std::move(settings);
     MarkChanged(SettingsDomain::Personalization, mode);
 }
@@ -239,6 +271,7 @@ void SettingsController::UpdateDock(
     DockSettings settings,
     SettingsUpdateMode mode)
 {
+    if (externalReplacementPending_) return;
     NormalizeDockSettings(settings);
     values_.dock = std::move(settings);
     MarkChanged(SettingsDomain::Dock, mode);
@@ -248,6 +281,7 @@ void SettingsController::UpdateNavigation(
     NavigationSettings settings,
     SettingsUpdateMode mode)
 {
+    if (externalReplacementPending_) return;
     values_.navigation = std::move(settings);
     MarkChanged(SettingsDomain::Navigation, mode);
 }
@@ -256,6 +290,7 @@ void SettingsController::UpdateGeneral(
     GeneralSettings settings,
     SettingsUpdateMode mode)
 {
+    if (externalReplacementPending_) return;
     values_.general = std::move(settings);
     MarkChanged(SettingsDomain::General, mode);
 }
@@ -264,6 +299,7 @@ void SettingsController::UpdateCategory(
     CategorySettings settings,
     SettingsUpdateMode mode)
 {
+    if (externalReplacementPending_) return;
     NormalizeCategorySettings(settings);
     values_.category = std::move(settings);
     MarkChanged(SettingsDomain::Category, mode);
@@ -273,12 +309,14 @@ void SettingsController::UpdateDesktop(
     DesktopDisplaySettings settings,
     SettingsUpdateMode mode)
 {
+    if (externalReplacementPending_) return;
     values_.desktop = std::move(settings);
     MarkChanged(SettingsDomain::Desktop, mode);
 }
 
 void SettingsController::RequestCommit(SettingsDomain domains)
 {
+    if (externalReplacementPending_) return;
     const SettingsDomain requested = domains & dirtyDomains_ &
         SettingsDomain::All;
     if (requested == SettingsDomain::None) return;
@@ -292,6 +330,8 @@ void SettingsController::RequestCommit(SettingsDomain domains)
 
 SettingsActionResult SettingsController::FlushPending()
 {
+    if (externalReplacementPending_)
+        return SettingsActionResult::Success();
     if (flushing_)
     {
         return SettingsActionResult::Busy(
@@ -369,6 +409,7 @@ SettingsActionResult SettingsController::FlushPending()
         bool stateChanged = false;
         for (SettingsDomain domain : kPersistedDomains)
         {
+            if (externalReplacementPending_) break;
             if (!HasSettingsDomain(commitDomains, domain) ||
                 !HasSettingsDomain(hostCompleted, domain))
             {
@@ -388,7 +429,8 @@ SettingsActionResult SettingsController::FlushPending()
             MergeResult(result, saveResult);
         }
 
-        if (HasSettingsDomain(commitDomains, SettingsDomain::Desktop) &&
+        if (!externalReplacementPending_ &&
+            HasSettingsDomain(commitDomains, SettingsDomain::Desktop) &&
             HasSettingsDomain(hostCompleted, SettingsDomain::Desktop) &&
             domainRevisions_[DomainIndex(SettingsDomain::Desktop)] ==
                 committedDomainRevisions[
@@ -423,12 +465,15 @@ SettingsActionResult SettingsController::FlushPending()
 
 SettingsActionResult SettingsController::FlushAll()
 {
+    if (externalReplacementPending_)
+        return SettingsActionResult::Success();
     RequestCommit(dirtyDomains_);
     return FlushPending();
 }
 
 bool SettingsController::RetryPending()
 {
+    if (externalReplacementPending_) return false;
     if (!HasPendingWork()) return false;
     retryRequired_ = false;
     lastActionMessage_.clear();
@@ -441,10 +486,13 @@ bool SettingsController::RetryPending()
 
 void SettingsController::PrepareForExternalDataReplacement()
 {
+    if (externalReplacementPending_) return;
+
     dirtyDomains_ = SettingsDomain::None;
     pendingPreviewDomains_ = SettingsDomain::None;
     pendingCommitDomains_ = SettingsDomain::None;
     retryRequired_ = false;
+    externalReplacementPending_ = true;
     lastActionMessage_.clear();
     ++generation_;
     ++revision_;
@@ -455,6 +503,11 @@ void SettingsController::PrepareForExternalDataReplacement()
 SettingsActionResult SettingsController::InvokeHostAction(
     const SettingsHostActions::Request& request)
 {
+    if (externalReplacementPending_ &&
+        !IsTerminalHostAction(request.action))
+    {
+        return ExternalReplacementPendingResult();
+    }
     if (!hostActions_)
     {
         return SettingsActionResult::Failure(
@@ -570,6 +623,7 @@ void SettingsController::PublishSnapshot()
     snapshot->pendingPreviewDomains = pendingPreviewDomains_;
     snapshot->pendingCommitDomains = pendingCommitDomains_;
     snapshot->retryRequired = retryRequired_;
+    snapshot->externalReplacementPending = externalReplacementPending_;
     snapshot->lastActionMessage = lastActionMessage_;
     snapshot_ = std::move(snapshot);
 
@@ -633,6 +687,7 @@ bool SettingsController::SynchronizeDomain(
     SettingsDomain domain,
     const std::function<void()>& assign)
 {
+    if (externalReplacementPending_) return false;
     if (HasSettingsDomain(dirtyDomains_, domain)) return false;
     assign();
     ++revision_;

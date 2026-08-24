@@ -7,6 +7,8 @@ under `steam_bridge/` is licensed under the MIT License.
 
 | Component | Version | License | Copyright / source |
 | --- | --- | --- | --- |
+| Microsoft Windows App SDK | 2.4.0 NuGet package | Microsoft Software License Terms | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/WindowsAppSDK> |
+| Microsoft.Windows.CppWinRT | 3.0.260818.1 NuGet package | MIT | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/cppwinrt> |
 | Dear ImGui | 1.92.5 WIP | MIT | Copyright (c) 2014-2025 Omar Cornut and contributors; <https://github.com/ocornut/imgui> |
 | Lua | 5.4.7 | MIT | Copyright (C) 1994-2024 Lua.org, PUC-Rio; <https://www.lua.org> |
 | Everything SDK client | bundled source | MIT | Copyright (C) 2022 David Carpenter; <https://www.voidtools.com/support/everything/sdk/> |
@@ -27,6 +29,12 @@ System Icons MIT license is retained in
 The complete MinHook BSD 2-Clause license is retained in
 `third_party/minhook/LICENSE.txt` and is copied into release packages alongside
 the Wallpaper Engine capture helpers.
+
+The Microsoft Windows App SDK runtime is redistributed self-contained under
+the license terms and third-party NOTICE installed by the pinned 2.4.0 NuGet
+package. The build records those files in `SnowDesktop.deployment.json`, and all
+release packagers copy them to the payload `licenses` directory. The pinned
+Microsoft.Windows.CppWinRT 3.0.260818.1 MIT license is copied the same way.
 
 ## TranslucentTB-derived portions
 

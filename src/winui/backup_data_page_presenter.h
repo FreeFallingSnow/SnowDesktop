@@ -95,6 +95,7 @@ struct BackupDataPageSnapshot
     std::uint64_t generation = 0;
     std::uint64_t revision = 0;
     bool initialized = false;
+    bool replacementPending = false;
     std::vector<LayoutBackupEntry> layoutBackups;
     std::vector<FullDataBackupEntry> fullBackups;
     std::wstring dataDirectory;

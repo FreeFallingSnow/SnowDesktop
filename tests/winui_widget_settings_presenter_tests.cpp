@@ -171,6 +171,24 @@ void TestDeclarativeBehavior(const std::string& source)
         "dynamic controls remain keyboard-focusable and expose automation text");
 }
 
+void TestPendingEditCommitSafety(const std::string& source)
+{
+    Check(ContainsAll(source, {
+              "WidgetSettingMutationResult FlushPendingEdits()",
+              "if (!result.Succeeded())",
+              "current->second->text.Text(ToWide(value))",
+              "current->second->textDirty = true",
+              "current->second->password.Password(restored)",
+              "current->second->passwordDirty = true",
+              "SecureZeroMemory(restored.data()"}),
+        "failed text and secret commits retain the pending editor value");
+    Check(source.find("const auto result = impl_->FlushPendingEdits()") !=
+                std::string::npos &&
+            source.find("if (!result.Succeeded())\n            return;") !=
+                std::string::npos,
+        "deactivation refuses to discard a failed final commit");
+}
+
 void TestNoLegacyImGuiPath(const std::string& source)
 {
     Check(source.find("ImGui") == std::string::npos &&
@@ -198,6 +216,7 @@ int main(int argc, char** argv)
     TestOpaqueChannels(source);
     TestSnapshotAndAsyncSafety(source);
     TestDeclarativeBehavior(source);
+    TestPendingEditCommitSafety(source);
     TestNoLegacyImGuiPath(source);
 
     if (failures == 0)

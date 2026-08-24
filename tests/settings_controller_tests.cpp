@@ -642,14 +642,119 @@ void TestExternalReplacementDiscardsWithoutStorageIo()
     const auto snapshot = controller.Snapshot();
     Check(store->loadCount == loadsBefore &&
             store->generalSaveCount == 0 &&
+            snapshot->externalReplacementPending &&
             snapshot->dirtyDomains == SettingsDomain::None &&
             snapshot->pendingPreviewDomains == SettingsDomain::None &&
             snapshot->pendingCommitDomains == SettingsDomain::None &&
-            controller.Generation() != generationBefore,
+            controller.Generation() != generationBefore &&
+            !controller.IsGenerationCurrent(controller.Generation()),
         "an external replacement discards dirty state without old-tree IO");
-    Check(controller.CloseSession().Succeeded() &&
+
+    const std::uint64_t terminalRevision = snapshot->revision;
+    const std::uint64_t terminalGeneration = snapshot->generation;
+    controller.PrepareForExternalDataReplacement();
+    Check(controller.Snapshot()->revision == terminalRevision &&
+            controller.Generation() == terminalGeneration,
+        "publishing the external replacement terminal state is idempotent");
+
+    int scheduled = 0;
+    controller.SetPendingWorkCallback([&scheduled]() { ++scheduled; });
+    controller.UpdatePersonalization(
+        snapshot->values.personalization, SettingsUpdateMode::PreviewAndCommit);
+    controller.UpdateDock(
+        snapshot->values.dock, SettingsUpdateMode::PreviewAndCommit);
+    controller.UpdateNavigation(
+        snapshot->values.navigation, SettingsUpdateMode::PreviewAndCommit);
+    controller.UpdateGeneral(
+        snapshot->values.general, SettingsUpdateMode::PreviewAndCommit);
+    controller.UpdateCategory(
+        snapshot->values.category, SettingsUpdateMode::PreviewAndCommit);
+    controller.UpdateDesktop(
+        snapshot->values.desktop, SettingsUpdateMode::PreviewAndCommit);
+    controller.RequestCommit(SettingsDomain::All);
+    Check(controller.Snapshot()->revision == terminalRevision &&
+            controller.Snapshot()->dirtyDomains == SettingsDomain::None &&
+            scheduled == 0 &&
+            !controller.RetryPending(),
+        "ordinary edits and persistence scheduling stop in terminal state");
+
+    Check(!controller.SynchronizeGeneral(snapshot->values.general) &&
+            controller.Snapshot()->revision == terminalRevision,
+        "external application synchronization cannot revive stale values");
+    Check(controller.Reload(
+                SettingsReloadPolicy::DiscardPendingChanges).status ==
+                SettingsActionStatus::Busy &&
+            store->loadCount == loadsBefore,
+        "reload cannot read a partly replaced data tree");
+    const int routesBefore = host.routeCount;
+    Check(controller.Open(SettingsRoute::ForPage(SettingsPage::About)).status ==
+                SettingsActionStatus::Busy &&
+            host.routeCount == routesBefore &&
+            controller.Snapshot()->route.page == SettingsPage::BackupAndData,
+        "open cannot leave the terminal replacement route");
+    Check(controller.Initialize().status == SettingsActionStatus::Busy &&
+            controller.Snapshot()->externalReplacementPending,
+        "reinitializing the same controller cannot clear the terminal marker");
+
+    Check(controller.FlushPending().Succeeded() &&
+            controller.FlushAll().Succeeded() &&
+            host.previewCount == 0 && host.commitCount == 0 &&
             store->generalSaveCount == 0,
+        "flush operations become storage-free no-ops in terminal state");
+
+    SettingsHostActions::Request request;
+    request.action = SettingsHostActions::Action::RefreshDesktop;
+    Check(controller.InvokeHostAction(request).status ==
+                SettingsActionStatus::Busy &&
+            host.invokeCount == 0,
+        "ordinary host actions are rejected after data replacement");
+    request.action = SettingsHostActions::Action::RestartApplication;
+    Check(controller.InvokeHostAction(request).Succeeded() &&
+            host.invokeCount == 1 &&
+            host.lastRequest.action ==
+                SettingsHostActions::Action::RestartApplication,
+        "application restart remains retryable in terminal state");
+    request.action = SettingsHostActions::Action::ExitApplication;
+    Check(controller.InvokeHostAction(request).Succeeded() &&
+            host.invokeCount == 2 &&
+            host.lastRequest.action ==
+                SettingsHostActions::Action::ExitApplication,
+        "application exit remains available in terminal state");
+
+    Check(controller.CloseSession().Succeeded() &&
+            store->generalSaveCount == 0 &&
+            !controller.Snapshot()->sessionActive &&
+            controller.Snapshot()->externalReplacementPending &&
+            controller.Open(SettingsRoute::ForPage(SettingsPage::Home)).status ==
+                SettingsActionStatus::Busy,
         "closing after a queued replacement cannot flush the abandoned value");
+
+    SettingsController freshController(std::make_shared<FakeStore>());
+    Check(freshController.Initialize().Succeeded() &&
+            !freshController.Snapshot()->externalReplacementPending,
+        "a newly initialized process starts without the terminal marker");
+}
+
+void TestExternalReplacementDuringCommitPreventsLateSave()
+{
+    auto store = std::make_shared<FakeStore>();
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    (void)controller.Initialize();
+    (void)controller.Open(SettingsRoute::ForPage(SettingsPage::BackupAndData));
+
+    GeneralSettings changed = controller.Snapshot()->values.general;
+    changed.demoModeEnabled = true;
+    host.duringCommit = [&controller]() {
+        controller.PrepareForExternalDataReplacement();
+    };
+    controller.UpdateGeneral(changed, SettingsUpdateMode::Commit);
+
+    Check(controller.FlushPending().Succeeded() &&
+            controller.Snapshot()->externalReplacementPending &&
+            store->generalSaveCount == 0,
+        "a replacement published by a host commit prevents its captured value "
+        "from being saved afterward");
 }
 
 } // namespace
@@ -669,6 +774,7 @@ int main()
     TestDesktopHostPersistenceBoundary();
     TestReentrantCommitKeepsNewerValuePending();
     TestExternalReplacementDiscardsWithoutStorageIo();
+    TestExternalReplacementDuringCommitPreventsLateSave();
 
     if (failures == 0)
         std::cout << "All settings controller tests passed.\n";

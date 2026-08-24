@@ -632,14 +632,21 @@ add_executable(SnowDesktop WIN32
 # Pin the complete WinUI toolchain on the executable so NuGet restore,
 # C++/WinRT projection generation, XAML compilation, and self-contained
 # deployment all happen in the CMake-generated MSBuild project.
+set(SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION "2.4.0")
+set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 set_property(TARGET SnowDesktop PROPERTY VS_PACKAGE_REFERENCES
-    "Microsoft.WindowsAppSDK_2.4.0;Microsoft.Windows.CppWinRT_3.0.260818.1")
+    "Microsoft.WindowsAppSDK_${SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION};Microsoft.Windows.CppWinRT_${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}")
 set_property(TARGET SnowDesktop PROPERTY VS_USER_PROPS
     "${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.WinUI.props")
 set_property(TARGET SnowDesktop PROPERTY
     VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION "10.0.19041.0")
 set_target_properties(SnowDesktop PROPERTIES
     VS_GLOBAL_ROOTNAMESPACE "SnowDesktop"
+    VS_GLOBAL_SnowDesktopSourceDirectory "${CMAKE_SOURCE_DIR}"
+    VS_GLOBAL_SnowDesktopWindowsAppSdkPackageVersion
+        "${SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION}"
+    VS_GLOBAL_SnowDesktopCppWinRtPackageVersion
+        "${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}"
     VS_GLOBAL_AppContainerApplication "false"
     VS_GLOBAL_AppxPackage "false"
     VS_GLOBAL_CppWinRTOptimized "true"
@@ -1205,6 +1212,23 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract settings)
+
+    snowdesktop_add_test(
+        SnowDesktopDeploymentPackagingContractTests
+        deployment_packaging_contract
+        SOURCES tests/deployment_packaging_contract_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS build contract packaging winui)
+    add_test(
+        NAME deployment_manifest_integration
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/deployment_manifest_integration.ps1"
+            -RepositoryRoot "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(
+        deployment_manifest_integration PROPERTIES
+        TIMEOUT 60
+        LABELS "build;integration;packaging;winui")
 
     snowdesktop_add_test(
         SnowDesktopSettingsControllerTests

@@ -563,6 +563,25 @@ void SettingsShell::CaptureRegisteredHotkey(
         generalPage_->CaptureRegisteredHotkey(modifiers, virtualKey);
 }
 
+snowdesktop::widget_runtime::WidgetSettingMutationResult
+SettingsShell::FlushPendingWidgetSettings()
+{
+    using snowdesktop::widget_runtime::WidgetSettingMutationResult;
+    using snowdesktop::widget_runtime::WidgetSettingMutationStatus;
+    if (closed_)
+    {
+        return {WidgetSettingMutationStatus::Unavailable,
+            navigation_.Generation(), 0, "settingsShellClosed", {}};
+    }
+    if (!widgetSettingsPage_ ||
+        navigation_.Route().page != SettingsPage::WidgetSettings)
+    {
+        return {WidgetSettingMutationStatus::Unchanged,
+            navigation_.Generation(), 0, {}, {}};
+    }
+    return widgetSettingsPage_->FlushPendingEdits();
+}
+
 void SettingsShell::SuspendInteraction() noexcept
 {
     if (closed_)
@@ -652,6 +671,19 @@ bool SettingsShell::Navigate(
         return false;
     try
     {
+        if (notifyHost && routeRequested_)
+        {
+            // The host synchronously validates and commits the route before
+            // the shell renders it. This is essential for component routes:
+            // their instance and declarative settings snapshot must exist
+            // before the presenter becomes active.
+            routeRequested_(route);
+            if (navigation_.Route() == route)
+                return true;
+            RenderRoute();
+            return false;
+        }
+
         const bool changed = navigation_.Navigate(route);
         if (changed)
             RenderRoute();
@@ -661,8 +693,6 @@ bool SettingsShell::Navigate(
         else
             return false;
 
-        if (notifyHost && routeRequested_)
-            routeRequested_(route);
         return true;
     }
     catch (...)
@@ -886,12 +916,8 @@ void SettingsShell::HookEvents()
     backRequestedToken_ = NavigationRoot().BackRequested(
         [this](const muxc::NavigationView&,
                const muxc::NavigationViewBackRequestedEventArgs&) {
-            if (const auto route = navigation_.GoBack())
-            {
-                RenderRoute();
-                if (routeRequested_)
-                    routeRequested_(*route);
-            }
+            if (const auto route = navigation_.PeekBack())
+                RequestRoute(*route);
         });
 
     breadcrumbClickedToken_ = PageBreadcrumb().ItemClicked(

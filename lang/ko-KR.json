@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "레이아웃 백업",
   "settings.backup.layout.description": "바탕 화면 레이아웃 백업을 만들고 복원합니다.",
   "settings.backup.restoreLayout.confirm": "이 레이아웃 백업을 복원하시겠습니까? 현재 레이아웃을 안전 백업으로 먼저 저장한 다음 선택한 백업에서 바탕 화면을 다시 불러옵니다.",
+  "settings.backup.restoreLayout.busy": "바탕 화면이 사용 중입니다. 현재 파일 또는 끌기 작업을 마친 후 복원을 다시 시도하세요.",
+  "settings.backup.restoreLayout.commitFailed": "레이아웃 백업을 적용하지 못했습니다. 현재 레이아웃이 유지되었거나 안전 복사본에서 복원되었습니다.",
   "settings.backup.deleteLayout.confirm": "이 레이아웃 백업을 삭제하시겠습니까? 삭제한 뒤에는 여기에서 복원할 수 없습니다.",
   "settings.backup.full": "전체 백업 및 마이그레이션",
   "settings.backup.full.description": "모든 데이터를 내보내고 가져오고 복원하거나 마이그레이션합니다.",

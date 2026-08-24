@@ -1,7 +1,129 @@
 #include "app.h"
+#include "../atomic_file.h"
 #include "../deployment_context.h"
+#include "../layout_storage.h"
 
 // Settings application, desktop passthrough and retained-surface visibility.
+
+snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
+    snowdesktop::winui::LayoutRestorePayload payload)
+{
+    using snowdesktop::SettingsActionResult;
+
+    if (!settingsController_ || exitRequested_ || reloading_ ||
+        shellFileOperationInFlight_ > 0 || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive())
+    {
+        return SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.busy"));
+    }
+
+    // Capture edits made while the worker validated the backup before the
+    // live-file transaction begins.
+    const SettingsActionResult flushed = settingsController_->FlushAll();
+    if (!flushed.Succeeded())
+        return flushed;
+
+    std::string validationError;
+    if (!snowdesktop::layout_storage::ValidateDocument(
+            payload.layoutDocument, &validationError))
+    {
+        return SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed"));
+    }
+
+    const std::filesystem::path layoutPath = GetLayoutPath();
+    const std::filesystem::path storagePath =
+        GetDataFilePath(L"SnowDesktop.storage.json");
+    std::string previousLayout;
+    if (!snowdesktop::atomic_file::ReadAll(
+            layoutPath, previousLayout, &validationError) ||
+        !snowdesktop::layout_storage::ValidateDocument(
+            previousLayout, &validationError))
+    {
+        return SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed"));
+    }
+
+    std::optional<std::string> previousStorage;
+    const bool storageExisted =
+        GetFileAttributesW(storagePath.c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (storageExisted)
+    {
+        std::string contents;
+        if (!snowdesktop::atomic_file::ReadAll(
+                storagePath, contents, &validationError))
+        {
+            return SettingsActionResult::Failure(
+                _LW("settings.backup.restoreLayout.commitFailed"));
+        }
+        previousStorage = std::move(contents);
+    }
+
+    std::string commitError;
+    if (!snowdesktop::layout_storage::SaveDocument(
+            layoutPath, payload.layoutDocument, &commitError))
+    {
+        return SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed"));
+    }
+
+    if (payload.storageDocument &&
+        !snowdesktop::atomic_file::WriteAll(
+            storagePath, *payload.storageDocument, {}, &commitError))
+    {
+        std::string rollbackError;
+        const bool layoutRolledBack =
+            snowdesktop::layout_storage::SaveDocument(
+                layoutPath, previousLayout, &rollbackError);
+        bool storageRolledBack = true;
+        if (previousStorage)
+        {
+            storageRolledBack = snowdesktop::atomic_file::WriteAll(
+                storagePath, *previousStorage, {}, &rollbackError);
+        }
+        else if (!storageExisted)
+        {
+            std::error_code removeError;
+            std::filesystem::remove(storagePath, removeError);
+            storageRolledBack = !removeError;
+        }
+        if (!layoutRolledBack || !storageRolledBack)
+        {
+            WriteDiagnosticLogEntry(L"Layout restore rollback failed",
+                DiagnosticLogLevel::Error);
+        }
+        return SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed"));
+    }
+
+    // ReloadItems reads both restored documents and writes only the newly
+    // reconstructed model. Synchronizing the mirrors prevents a later close
+    // from persisting the pre-restore desktop values.
+    ReloadItems(true);
+    snowdesktop::DesktopDisplaySettings desktop;
+    desktop.dockEnabled = generalSettings_.dockEnabled;
+    desktop.iconSpacingScale = iconSpacingScale_;
+    desktop.itemIconSizeScale = itemIconSizeScale_;
+    desktop.itemFontSizeCu = itemFontSizeCu_;
+    desktop.listItemFontSizeCu = listItemFontSizeCu_;
+    desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
+    desktop.shortcutArrowMode = shortcutArrowMode_;
+    desktop.iconBeautify = iconBeautifySettings_;
+    const bool generalSynchronized =
+        settingsController_->SynchronizeGeneral(generalSettings_);
+    const bool desktopSynchronized =
+        settingsController_->SynchronizeDesktop(std::move(desktop));
+    if (!generalSynchronized || !desktopSynchronized)
+    {
+        WriteDiagnosticLogEntry(
+            L"Layout restored but settings mirror synchronization failed",
+            DiagnosticLogLevel::Error);
+        return SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed"));
+    }
+    return SettingsActionResult::Success();
+}
 
 class DesktopApp::SettingsHostActionsAdapter final
     : public snowdesktop::SettingsHostActions
@@ -270,7 +392,11 @@ public:
             }
             break;
         case Action::RestartApplication:
-            app_.RequestRestart();
+            if (!app_.RequestRestart())
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    _LW("app.run.restart_failed"));
+            }
             break;
         case Action::ExitApplication:
             app_.RequestExit();

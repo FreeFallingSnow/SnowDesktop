@@ -150,6 +150,12 @@ struct SettingsSnapshot
     SettingsDomain pendingPreviewDomains = SettingsDomain::None;
     SettingsDomain pendingCommitDomains = SettingsDomain::None;
     bool retryRequired = false;
+    /**
+     * A complete data-tree replacement has been committed outside the
+     * controller. The current process must not publish its stale in-memory
+     * values again; only restart and exit host actions remain valid.
+     */
+    bool externalReplacementPending = false;
     std::wstring lastActionMessage;
 };
 
@@ -374,6 +380,7 @@ private:
     bool sessionActive_ = false;
     bool flushing_ = false;
     bool retryRequired_ = false;
+    bool externalReplacementPending_ = false;
     std::wstring lastActionMessage_;
     SnapshotPtr snapshot_;
     SnapshotChangedCallback snapshotChangedCallback_;

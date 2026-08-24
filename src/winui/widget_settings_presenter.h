@@ -92,8 +92,13 @@ public:
     void Activate() noexcept;
     void Deactivate() noexcept;
 
-    /** Commits pending text/password edits before route or window close. */
-    void FlushPendingEdits();
+    /**
+     * Commits pending text/password edits before route or window close.
+     * A persistence failure remains dirty and is returned to the host so the
+     * reusable settings window can stay open for retry.
+     */
+    [[nodiscard]] widget_runtime::WidgetSettingMutationResult
+        FlushPendingEdits();
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusTarget(std::string_view settingKey) const noexcept;

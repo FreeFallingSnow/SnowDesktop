@@ -40,6 +40,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
     for (const char* model : {
              "LayoutBackupEntry", "FullDataBackupEntry",
              "BackupDataPageSnapshot", "BackupDataOperationState",
+             "replacementPending",
              "BackupDataNotice", "BackupDataActionRequest",
              "BackupDataConfirmationRequest", "BackupDataPickerRequest"})
     {

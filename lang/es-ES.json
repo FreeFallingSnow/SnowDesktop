@@ -1155,6 +1155,8 @@
   "settings.backup.layout": "Copia de seguridad del diseño",
   "settings.backup.layout.description": "Crea y restaura copias de seguridad del diseño del escritorio.",
   "settings.backup.restoreLayout.confirm": "¿Restaurar esta copia de seguridad del diseño? El diseño actual se guardará primero como copia de seguridad y después el escritorio se volverá a cargar desde la copia seleccionada.",
+  "settings.backup.restoreLayout.busy": "El escritorio está ocupado. Finaliza la operación de archivo o arrastre actual y vuelve a intentar la restauración.",
+  "settings.backup.restoreLayout.commitFailed": "No se pudo aplicar la copia de seguridad del diseño. El diseño actual se conservó o se restauró desde la copia de seguridad.",
   "settings.backup.deleteLayout.confirm": "¿Eliminar esta copia de seguridad del diseño? No se podrá restaurar desde aquí después de eliminarla.",
   "settings.backup.full": "Copia de seguridad completa y migración",
   "settings.backup.full.description": "Exporta, importa, restaura o migra todos los datos.",

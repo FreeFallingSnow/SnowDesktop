@@ -42,6 +42,7 @@ public:
     [[nodiscard]] bool CanGoBack() const noexcept;
     [[nodiscard]] bool CanGoForward() const noexcept;
     [[nodiscard]] std::size_t HistorySize() const noexcept;
+    [[nodiscard]] std::optional<SettingsRoute> PeekBack() const;
 
     /**
      * Applies a controller publication.  Updates older than the accepted
