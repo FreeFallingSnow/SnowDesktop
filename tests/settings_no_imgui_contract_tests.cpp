@@ -35,10 +35,10 @@ std::string_view CMakeCall(
     const std::size_t begin = source.find(marker);
     if (begin == std::string_view::npos)
         return {};
-    const std::size_t end = source.find("\n)\n", begin);
+    const std::size_t end = source.find(')', begin);
     if (end == std::string_view::npos)
         return {};
-    return source.substr(begin, end + 3 - begin);
+    return source.substr(begin, end + 1 - begin);
 }
 
 void TestSettingsEngineHasNoImGui(
