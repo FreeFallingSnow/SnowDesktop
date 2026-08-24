@@ -581,6 +581,23 @@ static bool SaveStorageFile()
         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
+std::unordered_map<std::string, std::string>&
+WidgetEngine::WidgetSettingsPersistentStorageForBackend() noexcept
+{
+    return g_storage;
+}
+
+const std::unordered_map<std::string, std::string>&
+WidgetEngine::WidgetSettingsPersistentStorageForBackend() const noexcept
+{
+    return g_storage;
+}
+
+bool WidgetEngine::PersistWidgetSettingsStorageForBackend()
+{
+    return SaveStorageFile();
+}
+
 static bool EndsWithLastError(const std::string& key)
 {
     constexpr const char* suffix = ".lastError";

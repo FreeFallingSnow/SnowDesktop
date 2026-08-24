@@ -63,6 +63,7 @@ struct PersonalizationSettings;
 namespace snowdesktop::widget_runtime
 {
 struct PackageImageSource;
+class WidgetEngineSettingsBackend;
 }
 
 extern "C" {
@@ -1653,6 +1654,14 @@ public:
         std::string_view surface = {});
 
 private:
+    friend class snowdesktop::widget_runtime::WidgetEngineSettingsBackend;
+
+    std::unordered_map<std::string, std::string>&
+        WidgetSettingsPersistentStorageForBackend() noexcept;
+    const std::unordered_map<std::string, std::string>&
+        WidgetSettingsPersistentStorageForBackend() const noexcept;
+    bool PersistWidgetSettingsStorageForBackend();
+
     void BeginHostLogicalSlotPointer(
         LuaWidget& widget, int x, int y);
     bool UpdateHostLogicalSlotPointer(
