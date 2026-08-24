@@ -2737,16 +2737,16 @@ struct WidgetSettingsPresenter::Impl
         }
     }
 
-    void CommitOpenColorEditors() noexcept
+    void RollbackOpenColorEditors() noexcept
     {
         try
         {
-            const auto commitAppearance = [](auto& editor) {
+            const auto rollbackAppearance = [](auto& editor) {
                 if (editor && editor->open)
                     editor->Dismiss();
             };
-            commitAppearance(backgroundColorEditor);
-            commitAppearance(borderColorEditor);
+            rollbackAppearance(backgroundColorEditor);
+            rollbackAppearance(borderColorEditor);
             for (auto& field : fields)
             {
                 if (field->colorEditor && field->colorEditor->open)
@@ -2876,7 +2876,7 @@ struct WidgetSettingsPresenter::Impl
         if (closed) return;
         try
         {
-            CommitOpenColorEditors();
+            RollbackOpenColorEditors();
             (void)FlushPendingEdits();
             CancelSearches();
         }
@@ -3037,7 +3037,7 @@ void WidgetSettingsPresenter::Deactivate() noexcept
     if (!impl_ || impl_->closed) return;
     try
     {
-        impl_->CommitOpenColorEditors();
+        impl_->RollbackOpenColorEditors();
         const auto result = impl_->FlushPendingEdits();
         if (!result.Succeeded())
             return;

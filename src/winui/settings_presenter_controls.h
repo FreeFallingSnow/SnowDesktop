@@ -142,6 +142,8 @@ struct ColorFlyoutEditor
     winrt::Windows::UI::Color original{};
     bool updating = false;
     bool open = false;
+    bool accepted = false;
+    bool rollbackApplied = false;
     bool closed = false;
     EditState editState = EditState::Inactive;
 
@@ -198,6 +200,8 @@ struct ColorFlyoutEditor
             if (closed) return;
             original = picker.Color();
             open = true;
+            accepted = false;
+            rollbackApplied = false;
             // The opening value is already authoritative. A later change
             // becomes PendingPreview until one of the continuous-control
             // commit boundaries accepts it.
@@ -222,6 +226,7 @@ struct ColorFlyoutEditor
         applyToken = apply.Click([this](const auto&, const auto&) {
             if (closed || !open) return;
             Commit();
+            accepted = true;
             flyout.Hide();
         });
         cancelToken = cancel.Click([this](const auto&, const auto&) {
@@ -231,9 +236,12 @@ struct ColorFlyoutEditor
         });
         closedToken = flyout.Closed([this](const auto&, const auto&) {
             if (closed) return;
-            // Closed without Apply/Cancel is a light-dismiss. Accept the last
-            // preview synchronously while the owning presenter is active.
-            Commit();
+            // Light-dismiss has the same transactional meaning as Cancel:
+            // only Apply accepts the edit session. Pointer/focus boundaries
+            // may have persisted an intermediate value, so restore and commit
+            // the opening color before deactivating the editor.
+            if (!accepted)
+                Rollback();
             open = false;
             editState = EditState::Inactive;
         });
@@ -287,8 +295,9 @@ struct ColorFlyoutEditor
 
     void Rollback()
     {
-        if (closed || !open || editState == EditState::RolledBack)
+        if (closed || !open || rollbackApplied)
             return;
+        rollbackApplied = true;
         const bool previous = updating;
         updating = true;
         picker.Color(original);
@@ -310,17 +319,19 @@ struct ColorFlyoutEditor
         if (!open || !flyout) return;
         try
         {
-            // Flyout::Hide completes asynchronously. Commit while the owning
+            // Flyout::Hide completes asynchronously. Restore while the owning
             // presenter is still active so navigation/window teardown cannot
-            // strand the last preview after disabling guarded mutations.
-            Commit();
+            // strand an unconfirmed preview after guarded mutations stop.
+            if (!accepted)
+                Rollback();
             flyout.Hide();
         }
         catch (...)
         {
             try
             {
-                Commit();
+                if (!accepted)
+                    Rollback();
             }
             catch (...)
             {
@@ -335,7 +346,8 @@ struct ColorFlyoutEditor
         if (closed) return;
         try
         {
-            Commit();
+            if (open && !accepted)
+                Rollback();
         }
         catch (...)
         {

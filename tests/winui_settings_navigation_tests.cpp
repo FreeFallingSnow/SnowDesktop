@@ -401,7 +401,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",
         dismissStart);
-    const auto dismissCommit = sharedControls.find("Commit();",
+    const auto dismissRollback = sharedControls.find("Rollback();",
         dismissStart);
     const auto dismissHide = sharedControls.find("flyout.Hide();",
         dismissStart);
@@ -431,7 +431,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             sharedControls.find("Rollback()") != std::string::npos &&
             dismissStart != std::string::npos &&
-            dismissCommit < dismissHide && dismissHide < dismissEnd &&
+            dismissRollback < dismissHide && dismissHide < dismissEnd &&
             cancelStart != std::string::npos &&
             cancelRollback < cancelHide && cancelHide < cancelEnd &&
             personalization.find("mux::DispatcherTimer") !=
@@ -450,7 +450,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "settings rows retain single-line alignment while color swatches commit before dismiss and Cancel transactionally restores the opening color");
+        "settings rows retain single-line alignment while color swatches roll back unconfirmed dismissals and Cancel transactionally restores the opening color");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");

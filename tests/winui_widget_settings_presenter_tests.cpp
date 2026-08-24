@@ -137,18 +137,18 @@ void TestPopupColorEditing(
               "SettingsUpdateMode mode",
               "service.SetOrdinary(guard, key,",
               "wr::MakeWidgetSettingInteger(value)",
-              "CommitOpenColorEditors()",
+              "RollbackOpenColorEditors()",
               "field->colorEditor->Dismiss()",
               "field.colorEditor->Close()",
               "if (field.colorEditor) return field.colorEditor->button",
               "backgroundColorEditor",
               "borderColorEditor",
               "RunAppearancePatch",
-              "commitAppearance(backgroundColorEditor)",
-              "commitAppearance(borderColorEditor)",
+              "rollbackAppearance(backgroundColorEditor)",
+              "rollbackAppearance(borderColorEditor)",
               "QueueTransientOrdinary(field.schema.key,",
               "CommitTransientOwner(field.schema.key)"}),
-        "field and host appearance colors preserve guarded coalesced preview and commit before teardown");
+        "field and host appearance colors preserve guarded coalesced preview and roll back unconfirmed edits before teardown");
     Check(ContainsAll(sharedControls, {
               "muxc::Flyout",
               "button.Flyout(flyout)",
@@ -188,17 +188,17 @@ void TestPopupColorEditing(
         "closedToken = flyout.Closed");
     const auto lightDismissEnd = sharedControls.find(
         "UpdateSwatch();", lightDismissStart);
-    const auto lightDismissCommit = sharedControls.find(
-        "Commit();", lightDismissStart);
+    const auto lightDismissRollback = sharedControls.find(
+        "Rollback();", lightDismissStart);
     const auto lightDismissDeactivate = sharedControls.find(
         "open = false;", lightDismissStart);
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find(
         "void Close() noexcept", dismissStart);
-    const auto dismissCommit = sharedControls.find("Commit();", dismissStart);
+    const auto dismissRollback = sharedControls.find("Rollback();", dismissStart);
     const auto dismissHide = sharedControls.find("flyout.Hide();", dismissStart);
     const auto closeStart = dismissEnd;
-    const auto closeCommit = sharedControls.find("Commit();", closeStart);
+    const auto closeRollback = sharedControls.find("Rollback();", closeStart);
     const auto closeDisable = sharedControls.find("closed = true;", closeStart);
     Check(cancelStart != std::string::npos &&
             cancelEnd != std::string::npos &&
@@ -206,13 +206,13 @@ void TestPopupColorEditing(
             applyStart != std::string::npos &&
             applyCommit < applyHide && applyHide < applyEnd &&
             lightDismissStart != std::string::npos &&
-            lightDismissCommit < lightDismissDeactivate &&
+            lightDismissRollback < lightDismissDeactivate &&
             lightDismissDeactivate < lightDismissEnd &&
             dismissStart != std::string::npos &&
-            dismissCommit < dismissHide && dismissHide < dismissEnd &&
+            dismissRollback < dismissHide && dismissHide < dismissEnd &&
             closeStart != std::string::npos &&
-            closeCommit < closeDisable,
-        "Cancel commits the opening color while dismiss and close synchronously commit the final preview before teardown");
+            closeRollback < closeDisable,
+        "Cancel, light-dismiss, navigation, and close restore the opening color before teardown");
     const auto rollbackStart = sharedControls.find("void Rollback()");
     const auto rollbackEnd = sharedControls.find(
         "void UpdateSwatch()", rollbackStart);
@@ -230,9 +230,8 @@ void TestPopupColorEditing(
             rollbackBody.find("EditState::PendingPreview") ==
                 std::string_view::npos,
         "Cancel formally commits the opening color even after an intermediate interaction commit");
-    Check(source.find("RollbackOpenColorEditors") == std::string::npos &&
-            source.find("rollbackApplied") == std::string::npos,
-        "widget teardown no longer converts an accepted color preview into a rollback");
+    Check(source.find("RollbackOpenColorEditors") != std::string::npos,
+        "widget teardown rolls back any color session that was not accepted with Apply");
 }
 
 void TestOpaqueChannels(const std::string& source)

@@ -1953,7 +1953,7 @@ struct DockPagePresenter::Impl
         }
     }
 
-    void CommitOpenColorEditors() noexcept
+    void RollbackOpenColorEditors() noexcept
     {
         for (ColorControl* control : colorControls)
             control->editor.Dismiss();
@@ -2013,7 +2013,7 @@ struct DockPagePresenter::Impl
     {
         if (closed)
             return;
-        CommitOpenColorEditors();
+        RollbackOpenColorEditors();
         CommitContinuousEdits();
         active = false;
         closed = true;
@@ -2121,7 +2121,7 @@ void DockPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed)
         return;
-    impl_->CommitOpenColorEditors();
+    impl_->RollbackOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
 }

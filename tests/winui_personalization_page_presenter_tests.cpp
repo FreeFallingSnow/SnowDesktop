@@ -79,9 +79,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
     Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
             controls.find("muxc::ColorPicker picker") != std::string::npos,
         "personalization colors use the shared native WinUI ColorPicker flyout");
-    Check(source.find("void CommitOpenColorEditors() noexcept") !=
+    Check(source.find("void RollbackOpenColorEditors() noexcept") !=
                 std::string::npos &&
-            source.find("impl_->CommitOpenColorEditors();") !=
+            source.find("impl_->RollbackOpenColorEditors();") !=
                 std::string::npos &&
             controls.find("pointerReleasedToken = picker.PointerReleased") !=
                 std::string::npos &&
@@ -91,7 +91,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             controls.find("changed(original, SettingsUpdateMode::PreviewAndCommit)") !=
                 std::string::npos,
-        "personalization colors commit on interaction and before page teardown while Cancel restores the opening value");
+        "personalization colors commit interaction boundaries and restore unconfirmed sessions on Cancel or page teardown");
     Check(source.find("kAppearancePresetDark") != std::string::npos &&
             source.find("kAppearancePresetLight") != std::string::npos &&
             source.find("kAppearancePresetGlassDark") != std::string::npos &&
