@@ -133,11 +133,31 @@ void TestSnapshotAndAsyncSafety(const std::string& source)
         "service hints cross a shutdown-aware DispatcherQueue bridge");
     Check(ContainsAll(source, {
               "service.SearchSnapshot(",
+              "service.SetSearchQuery(",
+              "field.search.Text(ToText(state.searchQuery))",
               "snapshot.requestId < field.searchRequestId",
               "snapshot->requestId != hint.requestId",
               "service.CancelSearch(",
               "service.CommitSearchResult("}),
         "async search results are request-, generation-, and close-scoped");
+
+    const auto begin = source.find("void BeginSearch(");
+    const auto commit = source.find("void CommitSearchResult(", begin);
+    const std::string_view beginSearch =
+        begin != std::string::npos && commit != std::string::npos
+        ? std::string_view(source).substr(begin, commit - begin)
+        : std::string_view{};
+    const auto applied = beginSearch.find("ApplySnapshot(*current)");
+    const auto resolved = beginSearch.find("fieldsByKey.find(key)");
+    Check(ContainsAll(beginSearch, {
+              "const std::string key = field.schema.key",
+              "const bool queryEmpty = query.empty()",
+              "WidgetFieldControl& currentField = *current->second"}) &&
+            applied != std::string_view::npos &&
+            resolved != std::string_view::npos && applied < resolved,
+        "BeginSearch copies identity and re-resolves its control after a snapshot may rebuild fields");
+    Check(source.find("field.search.MaxLength(") == std::string::npos,
+        "AutoSuggestBox uses service byte validation instead of an unsupported MaxLength API");
 }
 
 void TestDeclarativeBehavior(const std::string& source)

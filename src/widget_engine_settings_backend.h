@@ -6,8 +6,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace snowdesktop::widget_runtime
 {
@@ -145,6 +147,52 @@ inline bool EncodeOrdinaryWrite(
             schema, normalized, encoded.value, error);
 }
 
+struct DecodedSearchQueryStorage
+{
+    bool hasStoredValue = false;
+    std::string value;
+};
+
+inline bool DecodeSearchQueryStorage(
+    std::optional<std::string_view> stored,
+    std::optional<std::string_view> typedMarker,
+    DecodedSearchQueryStorage& decoded, std::string& error)
+{
+    decoded = {};
+    error.clear();
+    if (!stored)
+    {
+        if (typedMarker)
+        {
+            error = "search query has an orphan typed-storage marker";
+            return false;
+        }
+        return true;
+    }
+    if (!typedMarker)
+    {
+        decoded.hasStoredValue = true;
+        decoded.value.assign(stored->data(), stored->size());
+        return true;
+    }
+    if (*typedMarker != TypedStorageMarker)
+    {
+        error = "search query typed-storage marker is invalid";
+        return false;
+    }
+
+    InteractionValue typed;
+    if (!DecodeTypedStorageValue(*stored, typed, error)) return false;
+    if (typed.type != InteractionValue::Type::String)
+    {
+        error = "search query typed storage must contain a string";
+        return false;
+    }
+    decoded.hasStoredValue = true;
+    decoded.value = std::move(typed.string);
+    return true;
+}
+
 inline bool DescriptorMatchesCurrent(
     const WidgetSettingsBackendDescriptor& descriptor,
     std::wstring_view currentWidgetId,
@@ -203,6 +251,9 @@ public:
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingFieldSchema& field,
         bool typedStorage) override;
+    WidgetSettingBackendReadResult ReadSearchQuery(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingFieldSchema& field) override;
     WidgetSettingBackendOpaqueResult ReadOpaque(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingFieldSchema& field) override;

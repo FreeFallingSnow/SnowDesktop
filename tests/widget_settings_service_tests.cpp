@@ -54,6 +54,7 @@ class FakeBackend final : public IWidgetSettingsBackend
 public:
     WidgetSettingsBackendDescriptor descriptor;
     std::map<std::string, InteractionValue, std::less<>> ordinary;
+    std::map<std::string, std::string, std::less<>> searchQueries;
     std::map<std::string, WidgetSettingOpaqueState, std::less<>> opaque;
     std::vector<WidgetSettingOrdinaryWrite> lastWrites;
     std::vector<std::vector<WidgetSettingOrdinaryWrite>> transactions;
@@ -75,6 +76,16 @@ public:
     int secretCalls = 0;
     int handleCalls = 0;
     int referenceCalls = 0;
+
+    const WidgetSettingFieldSchema* FindSchema(
+        std::string_view key) const
+    {
+        for (const auto* fields : { &descriptor.manifestFields,
+                 &descriptor.scriptFields })
+            for (const auto& field : *fields)
+                if (field.schema.key == key) return &field.schema;
+        return nullptr;
+    }
 
     WidgetSettingsBackendResult Describe(std::wstring_view widgetId,
         WidgetSettingsBackendDescriptor& output) override
@@ -99,6 +110,17 @@ public:
         const auto value = ordinary.find(field.key);
         if (value == ordinary.end()) return { Ok(false), false, {} };
         return { Ok(false), true, value->second };
+    }
+
+    WidgetSettingBackendReadResult ReadSearchQuery(
+        const WidgetSettingsBackendDescriptor&,
+        const WidgetSettingFieldSchema& field) override
+    {
+        const auto value = searchQueries.find(field.searchKey);
+        return value == searchQueries.end()
+            ? WidgetSettingBackendReadResult{ Ok(false), false, {} }
+            : WidgetSettingBackendReadResult{ Ok(false), true,
+                MakeWidgetSettingString(value->second) };
     }
 
     WidgetSettingBackendOpaqueResult ReadOpaque(
@@ -127,7 +149,21 @@ public:
         transactions.push_back(writes);
         if (!mutationResult.Succeeded()) return mutationResult;
         for (const auto& write : writes)
+        {
             ordinary.insert_or_assign(write.key, write.value);
+            if (write.searchQuery)
+            {
+                const auto* schema = FindSchema(write.key);
+                if (schema && !schema->searchKey.empty())
+                {
+                    if (write.searchQuery->empty())
+                        searchQueries.erase(schema->searchKey);
+                    else
+                        searchQueries.insert_or_assign(
+                            schema->searchKey, *write.searchQuery);
+                }
+            }
+        }
         return mutationResult;
     }
 
@@ -240,7 +276,7 @@ public:
 
     WidgetSettingsBackendResult CommitSearchResult(
         const WidgetSettingsBackendDescriptor& widget,
-        const WidgetSettingMutationGuard&,
+        const WidgetSettingMutationGuard& guard,
         const WidgetSettingSearchRequest& request,
         std::string_view resultId) override
     {
@@ -248,10 +284,18 @@ public:
         lastOwnerPackage = widget.packageId;
         committedSearch = request;
         committedResult = resultId;
-        if (mutationResult.Succeeded())
-            ordinary[request.settingKey] =
-                MakeWidgetSettingString("safe visible title");
-        return mutationResult;
+        if (widget.preview)
+            return { WidgetSettingsBackendStatus::Unavailable,
+                "previewReadOnly", {} };
+        const auto* schema = FindSchema(request.settingKey);
+        if (!schema || schema->Kind() != WidgetSettingKind::AppSearch)
+            return { WidgetSettingsBackendStatus::SettingNotFound,
+                "settingNotFound", {} };
+        WidgetSettingOrdinaryWrite write;
+        write.key = request.settingKey;
+        write.value = MakeWidgetSettingString("safe visible title");
+        write.searchQuery = request.query;
+        return ApplyOrdinaryTransaction(widget, guard, { std::move(write) });
     }
 
     void Complete(std::size_t index,
@@ -334,6 +378,9 @@ int main()
 
     FakeBackend backend = MakeBackend();
     backend.ordinary["enabled"] = MakeWidgetSettingBoolean(false);
+    backend.ordinary["appSearch"] =
+        MakeWidgetSettingString("Calculator");
+    backend.searchQueries["appQuery"] = "initial query";
     backend.opaque["token"] = {
         true, true, false, true, "must never escape" };
     WidgetSettingsService service(backend);
@@ -385,6 +432,10 @@ int main()
             Find(*loaded.snapshot, "token")->opaque.configured &&
             Find(*loaded.snapshot, "token")->opaque.displayLabel.empty(),
         "password snapshots expose configuration state but no plaintext or label");
+    Check(loaded.snapshot && Find(*loaded.snapshot, "appSearch") &&
+            Find(*loaded.snapshot, "appSearch")->searchQuery ==
+                "initial query",
+        "appSearch snapshots read the separate persisted searchKey value");
 
     WidgetSettingMutationGuard guard =
         WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot);
@@ -453,6 +504,7 @@ int main()
     bool resetHasOpaque = false;
     bool resetTypedRange = false;
     bool resetTypedMulti = false;
+    bool resetSearchQuery = false;
     for (const auto& write : backend.lastWrites)
     {
         resetHasOpaque = resetHasOpaque || write.key == "token" ||
@@ -461,13 +513,41 @@ int main()
             (write.key == "scale" && write.typedStorage);
         resetTypedMulti = resetTypedMulti ||
             (write.key == "feeds" && write.typedStorage);
+        resetSearchQuery = resetSearchQuery ||
+            (write.key == "appSearch" && write.searchQuery &&
+                write.searchQuery->empty());
     }
     Check(reset.status == WidgetSettingMutationStatus::Applied &&
-            !resetHasOpaque && resetTypedRange && resetTypedMulti,
-        "reset is one ordinary transaction and never resets opaque channels as strings");
+            !resetHasOpaque && resetTypedRange && resetTypedMulti &&
+            resetSearchQuery,
+        "reset is one ordinary transaction, clears appSearch searchKey, and never resets opaque channels as strings");
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t transactionsBeforeSearchQuery =
+        backend.transactions.size();
+    WidgetSettingMutationResult queryMutation = service.SetSearchQuery(
+        guard, "appSearch", "cal");
+    snapshot = service.Snapshot(L"widget-1");
+    Check(queryMutation.status == WidgetSettingMutationStatus::Applied &&
+            backend.transactions.size() ==
+                transactionsBeforeSearchQuery + 1 &&
+            backend.lastWrites.size() == 1 &&
+            backend.lastWrites[0].key == "appSearch" &&
+            backend.lastWrites[0].searchQuery ==
+                std::optional<std::string>("cal") &&
+            snapshot &&
+            Find(*snapshot, "appSearch")->searchQuery == "cal" &&
+            Find(*snapshot, "appSearch")->currentValue.string.empty(),
+        "editing appSearch atomically persists searchKey and clears the selected display value");
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t transactionsBeforeSameQuery =
+        backend.transactions.size();
+    Check(service.SetSearchQuery(guard, "appSearch", "cal").status ==
+                WidgetSettingMutationStatus::Unchanged &&
+            backend.transactions.size() == transactionsBeforeSameQuery,
+        "submitting an unchanged appSearch query does not clear or rewrite storage");
+
     WidgetSettingMutationResult firstSearch = service.StartSearch(
         guard, "appSearch", "cal");
     WidgetSettingMutationResult secondSearch = service.StartSearch(
@@ -510,10 +590,19 @@ int main()
         "search commits reject ids absent from the request-scoped result set");
     WidgetSettingMutationResult committed = service.CommitSearchResult(
         guard, "appSearch", searchRequestId, "calculator");
+    const auto committedSnapshot = service.Snapshot(L"widget-1");
     Check(committed.status == WidgetSettingMutationStatus::Applied &&
             backend.committedResult == "calculator" &&
-            backend.committedSearch.requestId == searchRequestId,
-        "search selection commits by opaque result id and request id");
+            backend.committedSearch.requestId == searchRequestId &&
+            backend.lastWrites.size() == 1 &&
+            backend.lastWrites[0].searchQuery ==
+                std::optional<std::string>("calc") &&
+            backend.searchQueries["appQuery"] == "calc" &&
+            committedSnapshot &&
+            Find(*committedSnapshot, "appSearch")->searchQuery == "calc" &&
+            Find(*committedSnapshot, "appSearch")->currentValue.string ==
+                "safe visible title",
+        "direct search selection commits its request query and opaque result id in one transaction");
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
@@ -649,6 +738,216 @@ int main()
     Check(!invalidLoad.Succeeded() &&
             invalidLoad.errorCode == "duplicateSettingKey",
         "service rejects ambiguous manifest and script setting merges");
+
+    FakeBackend invalidSearch = MakeBackend();
+    for (auto& field : invalidSearch.descriptor.manifestFields)
+        if (field.schema.Kind() == WidgetSettingKind::AppSearch)
+            field.schema.searchKey.clear();
+    WidgetSettingsService invalidSearchService(invalidSearch);
+    WidgetSettingsLoadResult invalidSearchLoad =
+        invalidSearchService.Load(L"widget-1");
+    Check(!invalidSearchLoad.Succeeded() &&
+            invalidSearchLoad.errorCode == "invalidSearchKey",
+        "service rejects appSearch declarations without a separate searchKey");
+
+    FakeBackend collidingSearch = MakeBackend();
+    for (auto& field : collidingSearch.descriptor.manifestFields)
+        if (field.schema.Kind() == WidgetSettingKind::AppSearch)
+            field.schema.searchKey = "scale";
+    WidgetSettingsService collidingSearchService(collidingSearch);
+    const WidgetSettingsLoadResult collidingSearchLoad =
+        collidingSearchService.Load(L"widget-1");
+    Check(!collidingSearchLoad.Succeeded() &&
+            collidingSearchLoad.errorCode == "invalidSearchKey",
+        "service rejects an appSearch searchKey that aliases any primary setting key");
+
+    FakeBackend sharedSearch = MakeBackend();
+    auto secondSearchField = Field("secondAppSearch", "appSearch",
+        MakeWidgetSettingString({}));
+    secondSearchField.schema.searchKey = "appQuery";
+    sharedSearch.descriptor.scriptFields.push_back(
+        std::move(secondSearchField));
+    WidgetSettingsService sharedSearchService(sharedSearch);
+    const WidgetSettingsLoadResult sharedSearchLoad =
+        sharedSearchService.Load(L"widget-1");
+    Check(!sharedSearchLoad.Succeeded() &&
+            sharedSearchLoad.errorCode == "invalidSearchKey",
+        "service rejects appSearch declarations that share a companion key");
+
+    FakeBackend reservedSearch = MakeBackend();
+    for (auto& field : reservedSearch.descriptor.manifestFields)
+        if (field.schema.Kind() == WidgetSettingKind::AppSearch)
+            field.schema.searchKey = "__host.typedStorage.scale";
+    WidgetSettingsService reservedSearchService(reservedSearch);
+    const WidgetSettingsLoadResult reservedSearchLoad =
+        reservedSearchService.Load(L"widget-1");
+    Check(!reservedSearchLoad.Succeeded() &&
+            reservedSearchLoad.errorCode == "invalidSearchKey",
+        "service rejects reserved host metadata keys as appSearch companions");
+
+    FakeBackend presetRaceBackend = MakeBackend();
+    WidgetSettingsService presetRaceService(presetRaceBackend);
+    auto presetRaceLoad = presetRaceService.Load(L"widget-1");
+    auto presetRaceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *presetRaceLoad.snapshot);
+    (void)presetRaceService.SetSearchQuery(
+        presetRaceGuard, "appSearch", "paint");
+    auto presetRaceSnapshot = presetRaceService.Snapshot(L"widget-1");
+    presetRaceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *presetRaceSnapshot);
+    (void)presetRaceService.StartSearch(
+        presetRaceGuard, "appSearch", "paint");
+    const std::uint64_t presetRequestId =
+        presetRaceBackend.searches.back().requestId;
+    const std::size_t presetSearchIndex =
+        presetRaceBackend.searches.size() - 1;
+    const auto presetRaceResult = presetRaceService.ApplyPreset(
+        presetRaceGuard, "compact");
+    presetRaceSnapshot = presetRaceService.Snapshot(L"widget-1");
+    presetRaceBackend.Complete(presetSearchIndex,
+        { { "paint", "Paint", "apps", "application" } });
+    const auto presetStaleCommit =
+        presetRaceService.CommitSearchResult(
+            WidgetSettingMutationGuard::FromSnapshot(*presetRaceSnapshot),
+            "appSearch", presetRequestId, "paint");
+    Check(presetRaceResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            presetRaceBackend.cancellations.size() == 1 &&
+            !presetRaceService.SearchSnapshot(
+                L"widget-1", "appSearch") &&
+            presetStaleCommit.status ==
+                WidgetSettingMutationStatus::StaleSnapshot,
+        "preset application cancels searches even when the preset does not contain appSearch");
+
+    FakeBackend schemaRaceBackend = MakeBackend();
+    WidgetSettingsService schemaRaceService(schemaRaceBackend);
+    auto schemaRaceLoad = schemaRaceService.Load(L"widget-1");
+    auto schemaRaceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *schemaRaceLoad.snapshot);
+    (void)schemaRaceService.SetSearchQuery(
+        schemaRaceGuard, "appSearch", "calc");
+    auto schemaRaceSnapshot = schemaRaceService.Snapshot(L"widget-1");
+    schemaRaceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *schemaRaceSnapshot);
+    (void)schemaRaceService.StartSearch(
+        schemaRaceGuard, "appSearch", "calc");
+    const std::size_t schemaSearchIndex =
+        schemaRaceBackend.searches.size() - 1;
+    for (auto& field : schemaRaceBackend.descriptor.manifestFields)
+        if (field.schema.Kind() == WidgetSettingKind::AppSearch)
+            field.schema.noResultsLabel = "Nothing here";
+    const auto schemaReload = schemaRaceService.Reload(L"widget-1");
+    schemaRaceBackend.Complete(schemaSearchIndex,
+        { { "calculator", "Calculator", "apps", "application" } });
+    Check(schemaReload.Succeeded() &&
+            schemaRaceBackend.cancellations.size() == 1 &&
+            !schemaRaceService.SearchSnapshot(L"widget-1", "appSearch"),
+        "same-generation reload cancels a search when its field schema changes");
+
+    FakeBackend resetRaceBackend = MakeBackend();
+    WidgetSettingsService resetRaceService(resetRaceBackend);
+    auto resetRaceLoad = resetRaceService.Load(L"widget-1");
+    auto resetRaceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *resetRaceLoad.snapshot);
+    (void)resetRaceService.SetSearchQuery(
+        resetRaceGuard, "appSearch", "calc");
+    auto resetRaceSnapshot = resetRaceService.Snapshot(L"widget-1");
+    resetRaceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *resetRaceSnapshot);
+    const auto resetSearchStarted = resetRaceService.StartSearch(
+        resetRaceGuard, "appSearch", "calc");
+    const std::uint64_t resetRequestId =
+        resetRaceBackend.searches.back().requestId;
+    const std::size_t resetSearchIndex =
+        resetRaceBackend.searches.size() - 1;
+    const auto resetRaceResult = resetRaceService.Reset(resetRaceGuard);
+    resetRaceSnapshot = resetRaceService.Snapshot(L"widget-1");
+    resetRaceBackend.Complete(resetSearchIndex,
+        { { "calculator", "Calculator", "apps", "application" } });
+    const auto resetStaleCommit = resetRaceService.CommitSearchResult(
+        WidgetSettingMutationGuard::FromSnapshot(*resetRaceSnapshot),
+        "appSearch", resetRequestId, "calculator");
+    Check(resetSearchStarted.status ==
+                WidgetSettingMutationStatus::Started &&
+            resetRaceResult.status == WidgetSettingMutationStatus::Applied &&
+            resetRaceBackend.cancellations.size() == 1 &&
+            !resetRaceBackend.searchQueries.contains("appQuery") &&
+            Find(*resetRaceSnapshot, "appSearch")->searchQuery.empty() &&
+            !resetRaceService.SearchSnapshot(L"widget-1", "appSearch") &&
+            resetStaleCommit.status ==
+                WidgetSettingMutationStatus::StaleSnapshot,
+        "reset cancels the request and prevents delayed results or old result ids from restoring a selection");
+
+    FakeBackend previewBackend = MakeBackend();
+    previewBackend.descriptor.preview = true;
+    WidgetSettingsService previewService(previewBackend);
+    auto previewLoad = previewService.Load(L"widget-1");
+    auto previewGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *previewLoad.snapshot);
+    const std::size_t previewTransactions =
+        previewBackend.transactions.size();
+    const auto previewQuery = previewService.SetSearchQuery(
+        previewGuard, "appSearch", "calc");
+    auto previewSnapshot = previewService.Snapshot(L"widget-1");
+    previewGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *previewSnapshot);
+    const auto previewStarted = previewService.StartSearch(
+        previewGuard, "appSearch", "calc");
+    const std::size_t previewSearchIndex =
+        previewBackend.searches.size() - 1;
+    previewBackend.Complete(previewSearchIndex,
+        { { "calculator", "Calculator", "apps", "application" } });
+    const auto previewSearch = previewService.SearchSnapshot(
+        L"widget-1", "appSearch");
+    const std::uint64_t previewRequestId =
+        previewSearch ? previewSearch->requestId : 0;
+    const auto previewCommit = previewService.CommitSearchResult(
+        previewGuard, "appSearch", previewRequestId, "calculator");
+    previewSnapshot = previewService.Snapshot(L"widget-1");
+    Check(previewQuery.status == WidgetSettingMutationStatus::Applied &&
+            previewStarted.status == WidgetSettingMutationStatus::Started &&
+            previewSearch && previewSearch->completed &&
+            previewCommit.status ==
+                WidgetSettingMutationStatus::Unavailable &&
+            previewCommit.errorCode == "previewReadOnly" &&
+            previewBackend.transactions.size() == previewTransactions &&
+            previewBackend.searchQueries.empty() && previewSnapshot &&
+            Find(*previewSnapshot, "appSearch")->searchQuery == "calc" &&
+            Find(*previewSnapshot, "appSearch")->currentValue.string.empty(),
+        "preview keeps query edits in the session, can search, and cannot commit a result");
+
+    FakeBackend utf8Backend = MakeBackend();
+    WidgetSettingsService utf8Service(utf8Backend);
+    auto utf8Load = utf8Service.Load(L"widget-1");
+    auto utf8Guard = WidgetSettingMutationGuard::FromSnapshot(
+        *utf8Load.snapshot);
+    const std::string maximumUtf8Query =
+        std::string(8190, 'a') + "\xC3\xA9";
+    const auto maximumUtf8Result = utf8Service.SetSearchQuery(
+        utf8Guard, "appSearch", maximumUtf8Query);
+    auto utf8Snapshot = utf8Service.Snapshot(L"widget-1");
+    utf8Guard = WidgetSettingMutationGuard::FromSnapshot(*utf8Snapshot);
+    const std::size_t utf8Transactions = utf8Backend.transactions.size();
+    const std::string oversizedUtf8Query =
+        std::string(8191, 'a') + "\xC3\xA9";
+    const auto oversizedUtf8Result = utf8Service.SetSearchQuery(
+        utf8Guard, "appSearch", oversizedUtf8Query);
+    const std::string invalidUtf8Query("\xC3\x28", 2);
+    const auto invalidUtf8Result = utf8Service.SetSearchQuery(
+        utf8Guard, "appSearch", invalidUtf8Query);
+    Check(maximumUtf8Query.size() == 8192 &&
+            maximumUtf8Result.status ==
+                WidgetSettingMutationStatus::Applied &&
+            Find(*utf8Snapshot, "appSearch")->searchQuery ==
+                maximumUtf8Query &&
+            oversizedUtf8Result.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            oversizedUtf8Result.errorCode == "searchQueryTooLong" &&
+            invalidUtf8Result.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidUtf8Result.errorCode == "invalidSearchQuery" &&
+            utf8Backend.transactions.size() == utf8Transactions,
+        "appSearch query limits count UTF-8 bytes and reject malformed boundary input without writes");
 
     if (failures == 0)
     {

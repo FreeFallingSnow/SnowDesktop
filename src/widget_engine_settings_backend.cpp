@@ -549,6 +549,67 @@ WidgetSettingBackendReadResult WidgetEngineSettingsBackend::ReadOrdinary(
     return { Success(false), true, std::move(value) };
 }
 
+WidgetSettingBackendReadResult
+WidgetEngineSettingsBackend::ReadSearchQuery(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingFieldSchema& field)
+{
+    if (GetCurrentThreadId() != ownerThreadId_)
+        return { WrongThread(), false, {} };
+    const int index = engine_.FindWidget(descriptor.widgetId);
+    if (index < 0)
+        return { BackendResult(WidgetSettingsBackendStatus::WidgetNotFound,
+                     "widgetNotFound"), false, {} };
+    const LuaWidget& widget = engine_.widgets_[index];
+    if (!widget_settings_backend_detail::DescriptorMatchesCurrent(
+            descriptor, widget.widgetId, widget.packageId,
+            widget.runtimeToken))
+        return { BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
+                     "staleSnapshot"), false, {} };
+    const auto* declaration = FindDeclaredSetting(widget, field.key);
+    if (!declaration)
+        return { BackendResult(WidgetSettingsBackendStatus::SettingNotFound,
+                     "settingNotFound"), false, {} };
+    if (!SchemaMatches(*declaration, field))
+        return { BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
+                     "staleSettingSchema"), false, {} };
+    if (declaration->type != "appSearch" || field.searchKey.empty() ||
+        field.searchKey == field.key)
+        return { BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                     "invalidSearchKey"), false, {} };
+
+    const auto& storage = widget.preview
+        ? widget.previewStorage
+        : engine_.WidgetSettingsPersistentStorageForBackend();
+    WidgetStorageTransaction transaction(
+        storage, WideToUtf8(widget.widgetId));
+    std::string error;
+    const auto stored = transaction.Get(field.searchKey, error);
+    if (!error.empty())
+        return { BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                     "invalidSearchKey", std::move(error)), false, {} };
+    const auto marker = transaction.GetHostMetadata(
+        TypedStorageMetadataKey(field.searchKey), error);
+    if (!error.empty())
+        return { BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                     "invalidSearchKey", std::move(error)), false, {} };
+    widget_settings_backend_detail::DecodedSearchQueryStorage decoded;
+    const auto storedView = stored
+        ? std::optional<std::string_view>(*stored) : std::nullopt;
+    const auto markerView = marker
+        ? std::optional<std::string_view>(*marker) : std::nullopt;
+    if (!widget_settings_backend_detail::DecodeSearchQueryStorage(
+            storedView, markerView, decoded, error))
+        return { BackendResult(
+                     WidgetSettingsBackendStatus::PersistenceFailed,
+                     "invalidSearchQueryStorage", std::move(error)),
+            false, {} };
+    return decoded.hasStoredValue
+        ? WidgetSettingBackendReadResult{ Success(false), true,
+            MakeWidgetSettingString(std::move(decoded.value)) }
+        : WidgetSettingBackendReadResult{ Success(false), false, {} };
+}
+
 WidgetSettingBackendOpaqueResult WidgetEngineSettingsBackend::ReadOpaque(
     const WidgetSettingsBackendDescriptor& descriptor,
     const WidgetSettingFieldSchema& field)
@@ -690,10 +751,31 @@ WidgetEngineSettingsBackend::ApplyOrdinaryTransaction(
                 "settingNotFound");
         const auto converted =
             widget_settings_backend_detail::ConvertSetting(*declaration);
+        const bool writesSearchQuery = write.searchQuery.has_value();
+        if (writesSearchQuery)
+        {
+            if (converted.schema.Kind() != WidgetSettingKind::AppSearch ||
+                converted.schema.searchKey.empty() ||
+                converted.schema.searchKey == converted.schema.key ||
+                converted.schema.searchKey == "__host" ||
+                converted.schema.searchKey.starts_with("__host.") ||
+                !keys.emplace(converted.schema.searchKey).second)
+                return BackendResult(
+                    WidgetSettingsBackendStatus::InvalidValue,
+                    "invalidSearchKey");
+            if (write.searchQuery->size() >
+                    WidgetStorageTransaction::kMaximumValueBytes)
+                return BackendResult(
+                    WidgetSettingsBackendStatus::InvalidValue,
+                    "searchQueryTooLong");
+        }
         widget_settings_backend_detail::EncodedOrdinaryWrite encoded;
         std::string error;
+        WidgetSettingFieldSchema writeSchema = converted.schema;
+        if (writesSearchQuery)
+            writeSchema.required = false;
         if (!widget_settings_backend_detail::EncodeOrdinaryWrite(
-                converted.schema, write, encoded, error))
+                writeSchema, write, encoded, error))
             return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
                 error.empty() ? "invalidValue" : error);
         bool changed = false;
@@ -711,6 +793,26 @@ WidgetEngineSettingsBackend::ApplyOrdinaryTransaction(
         if (!metadataOk)
             return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
                 "storageMetadataRejected", std::move(error));
+        if (writesSearchQuery)
+        {
+            bool queryChanged = false;
+            const bool queryOk = write.searchQuery->empty()
+                ? transaction.Remove(converted.schema.searchKey,
+                    queryChanged, error)
+                : transaction.Set(converted.schema.searchKey,
+                    *write.searchQuery, queryChanged, error);
+            if (!queryOk)
+                return BackendResult(
+                    WidgetSettingsBackendStatus::InvalidValue,
+                    "searchQueryWriteRejected", std::move(error));
+            bool queryMetadataChanged = false;
+            if (!transaction.RemoveHostMetadata(
+                    TypedStorageMetadataKey(converted.schema.searchKey),
+                    queryMetadataChanged, error))
+                return BackendResult(
+                    WidgetSettingsBackendStatus::InvalidValue,
+                    "searchQueryMetadataRejected", std::move(error));
+        }
     }
     std::string error;
     if (!transaction.ValidateCommit(error))
@@ -1249,9 +1351,12 @@ WidgetEngineSettingsBackend::CommitSearchResult(
             "previewReadOnly");
     if (setting->type == "appSearch")
     {
-        result = ApplyOrdinaryTransaction(descriptor, guard,
-            { WidgetSettingOrdinaryWrite{ setting->key,
-                MakeWidgetSettingString(selected->title), false } });
+        WidgetSettingOrdinaryWrite write;
+        write.key = setting->key;
+        write.value = MakeWidgetSettingString(selected->title);
+        write.searchQuery = request.query;
+        result = ApplyOrdinaryTransaction(
+            descriptor, guard, { std::move(write) });
     }
     else
     {

@@ -91,6 +91,13 @@ struct WidgetSettingOrdinaryWrite
      */
     bool typedStorage = false;
 
+    /**
+     * appSearch keeps the user's query in its declared searchKey. When this
+     * value is present, the backend must update that companion key in the
+     * same storage transaction as the ordinary setting value.
+     */
+    std::optional<std::string> searchQuery;
+
     bool operator==(const WidgetSettingOrdinaryWrite&) const = default;
 };
 
@@ -139,6 +146,9 @@ public:
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingFieldSchema& field,
         bool typedStorage) = 0;
+    virtual WidgetSettingBackendReadResult ReadSearchQuery(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingFieldSchema& field) = 0;
     virtual WidgetSettingBackendOpaqueResult ReadOpaque(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingFieldSchema& field) = 0;
@@ -272,6 +282,9 @@ public:
     WidgetSettingMutationResult SetOrdinary(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         const InteractionValue& value);
+    WidgetSettingMutationResult SetSearchQuery(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        std::string query);
     WidgetSettingMutationResult SetSecret(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         std::string_view plaintext);

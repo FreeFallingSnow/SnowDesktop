@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 
 namespace
@@ -78,6 +79,47 @@ int main(int argc, char* argv[])
             convertedChoices.defaultValue.array[0].string == "weather",
         "multi-select declarations retain option labels and array defaults");
 
+    LuaWidgetManifest::Setting appSearch;
+    appSearch.key = "selectedApp";
+    appSearch.type = "appSearch";
+    appSearch.searchKey = "appQuery";
+    const auto convertedSearch = detail::ConvertSetting(appSearch);
+    Check(convertedSearch.schema.Kind() == WidgetSettingKind::AppSearch &&
+            convertedSearch.schema.searchKey == "appQuery",
+        "appSearch declarations retain their companion query storage key");
+
+    detail::DecodedSearchQueryStorage decodedQuery;
+    std::string error;
+    Check(detail::DecodeSearchQueryStorage(
+              std::optional<std::string_view>("legacy query"),
+              std::nullopt, decodedQuery, error) &&
+            decodedQuery.hasStoredValue &&
+            decodedQuery.value == "legacy query",
+        "appSearch reads legacy untyped companion strings");
+    std::string typedQuery;
+    Check(EncodeTypedStorageValue(
+              MakeWidgetSettingString("typed query"), typedQuery, error) &&
+            detail::DecodeSearchQueryStorage(
+                std::optional<std::string_view>(typedQuery),
+                std::optional<std::string_view>(TypedStorageMarker),
+                decodedQuery, error) &&
+            decodedQuery.hasStoredValue &&
+            decodedQuery.value == "typed query",
+        "appSearch migrates historical typed string companions when reading");
+    std::string typedNumber;
+    Check(EncodeTypedStorageValue(
+              MakeWidgetSettingNumber(4), typedNumber, error) &&
+            !detail::DecodeSearchQueryStorage(
+                std::optional<std::string_view>(typedNumber),
+                std::optional<std::string_view>(TypedStorageMarker),
+                decodedQuery, error) &&
+            !error.empty() &&
+            !detail::DecodeSearchQueryStorage(
+                std::nullopt,
+                std::optional<std::string_view>(TypedStorageMarker),
+                decodedQuery, error),
+        "appSearch rejects non-string typed companions and orphan markers");
+
     for (const std::string type : { "password", "fileHandle",
             "folderHandle", "appReference", "desktopItemReference",
             "fileReference", "folderReference" })
@@ -97,7 +139,6 @@ int main(int argc, char* argv[])
     WidgetSettingOrdinaryWrite rangeWrite{
         "scale", MakeWidgetSettingNumber(6.24), true };
     detail::EncodedOrdinaryWrite encodedRange;
-    std::string error;
     Check(detail::EncodeOrdinaryWrite(convertedRange.schema,
                 rangeWrite, encodedRange, error) &&
             encodedRange.typedMarker && !encodedRange.value.empty(),
@@ -192,6 +233,18 @@ int main(int argc, char* argv[])
             "backend never routes settings through ordinary runtime writes");
         Check(source.find("WidgetStorageTransaction") != std::string::npos &&
                 source.find("TypedStorageMetadataKey") !=
+                    std::string::npos &&
+                source.find("ReadSearchQuery") != std::string::npos &&
+                source.find("write.searchQuery") != std::string::npos &&
+                source.find("write.searchQuery = request.query") !=
+                    std::string::npos &&
+                source.find("writeSchema.required = false") !=
+                    std::string::npos &&
+                source.find("transaction.Remove(converted.schema.searchKey") !=
+                    std::string::npos &&
+                source.find("TypedStorageMetadataKey(converted.schema.searchKey)") !=
+                    std::string::npos &&
+                source.find("searchQueryMetadataRejected") !=
                     std::string::npos &&
                 source.find("WidgetSecretStore") != std::string::npos &&
                 source.find("filesystemHandleStore_->Grant") !=

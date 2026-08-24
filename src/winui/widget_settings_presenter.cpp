@@ -1228,7 +1228,7 @@ struct WidgetSettingsPresenter::Impl
             if (state.schema.Kind() == wr::WidgetSettingKind::AppReference)
                 field.search.Text(ToText(state.opaque.displayLabel));
             else
-                field.search.Text(ToText(StringValue(state.currentValue)));
+                field.search.Text(ToText(state.searchQuery));
             field.synchronizing = false;
         }
         if (field.opaqueValue)
@@ -1466,20 +1466,59 @@ struct WidgetSettingsPresenter::Impl
     void BeginSearch(WidgetFieldControl& field, std::string query)
     {
         if (!CanMutateField(field)) return;
-        const auto guard = Guard();
+        const std::string key = field.schema.key;
+        const auto kind = field.schema.Kind();
+        const bool queryEmpty = query.empty();
+        wr::WidgetSettingMutationResult queryResult = UnchangedResult();
+        if (kind == wr::WidgetSettingKind::AppSearch)
+        {
+            queryResult = service.SetSearchQuery(
+                Guard(), key, query);
+            if (queryResult.status ==
+                    wr::WidgetSettingMutationStatus::Applied ||
+                queryResult.status ==
+                    wr::WidgetSettingMutationStatus::Unchanged ||
+                queryResult.status ==
+                    wr::WidgetSettingMutationStatus::StaleSnapshot)
+            {
+                if (const auto current = service.Snapshot(widgetId))
+                    (void)ApplySnapshot(*current);
+            }
+            if (!queryResult.Succeeded())
+            {
+                if (callbacks.mutationCompleted)
+                    callbacks.mutationCompleted(key, queryResult);
+                return;
+            }
+        }
+
+        const auto current = fieldsByKey.find(key);
+        if (current == fieldsByKey.end() || !current->second ||
+            !current->second->search || !CanMutateField(*current->second))
+        {
+            if (callbacks.mutationCompleted && queryResult.Changed())
+                callbacks.mutationCompleted(key, queryResult);
+            return;
+        }
+        WidgetFieldControl& currentField = *current->second;
         wr::WidgetSettingMutationResult result;
-        if (query.empty())
-            result = service.CancelSearch(guard, field.schema.key);
+        if (queryEmpty)
+            result = service.CancelSearch(Guard(), key);
         else
             result = service.StartSearch(
-                guard, field.schema.key, std::move(query), 16);
-        if (const auto search = service.SearchSnapshot(
-                widgetId, field.schema.key))
-            PatchSearch(field, *search);
+                Guard(), key, std::move(query), 16);
+        if (queryResult.Changed() &&
+            result.status == wr::WidgetSettingMutationStatus::Unchanged)
+            result = queryResult;
+        if (queryEmpty)
+            ClearSearch(currentField);
+        else if (const auto search = service.SearchSnapshot(
+                     widgetId, key))
+            PatchSearch(currentField, *search);
         else
-            ClearSearch(field);
+            ClearSearch(currentField);
         if (callbacks.mutationCompleted)
-            callbacks.mutationCompleted(field.schema.key, result);
+            callbacks.mutationCompleted(key, result);
     }
 
     void CommitSearchResult(
@@ -1537,8 +1576,15 @@ struct WidgetSettingsPresenter::Impl
         field.searchProgress.Visibility(snapshot.pending
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
-        field.searchError.Text(ToText(snapshot.errorCode));
-        field.searchError.Visibility(snapshot.errorCode.empty()
+        std::wstring searchStatus;
+        if (!snapshot.errorCode.empty())
+            searchStatus = ToText(snapshot.errorCode);
+        else if (snapshot.completed && snapshot.results.empty())
+            searchStatus = field.schema.noResultsLabel.empty()
+                ? L("app.nav.no_results", L"No results found")
+                : std::wstring(ToText(field.schema.noResultsLabel));
+        field.searchError.Text(searchStatus);
+        field.searchError.Visibility(searchStatus.empty()
             ? mux::Visibility::Collapsed
             : mux::Visibility::Visible);
         field.resultValues = snapshot.results;

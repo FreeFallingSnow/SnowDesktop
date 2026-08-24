@@ -64,6 +64,64 @@ WidgetSettingsBackendResult Failed(
     return { status, std::move(errorCode), std::move(message) };
 }
 
+constexpr std::size_t MaximumSearchQueryBytes = 8192;
+
+bool IsValidUtf8(std::string_view value) noexcept
+{
+    std::size_t index = 0;
+    while (index < value.size())
+    {
+        const auto lead = static_cast<unsigned char>(value[index]);
+        std::size_t length = 0;
+        std::uint32_t codePoint = 0;
+        if (lead <= 0x7f)
+        {
+            length = 1;
+            codePoint = lead;
+        }
+        else if (lead >= 0xc2 && lead <= 0xdf)
+        {
+            length = 2;
+            codePoint = lead & 0x1f;
+        }
+        else if (lead >= 0xe0 && lead <= 0xef)
+        {
+            length = 3;
+            codePoint = lead & 0x0f;
+        }
+        else if (lead >= 0xf0 && lead <= 0xf4)
+        {
+            length = 4;
+            codePoint = lead & 0x07;
+        }
+        else
+            return false;
+        if (index + length > value.size()) return false;
+        for (std::size_t offset = 1; offset < length; ++offset)
+        {
+            const auto continuation =
+                static_cast<unsigned char>(value[index + offset]);
+            if ((continuation & 0xc0) != 0x80) return false;
+            codePoint = (codePoint << 6) | (continuation & 0x3f);
+        }
+        if ((length == 2 && codePoint < 0x80) ||
+            (length == 3 && codePoint < 0x800) ||
+            (length == 4 && codePoint < 0x10000) ||
+            codePoint > 0x10ffff ||
+            (codePoint >= 0xd800 && codePoint <= 0xdfff))
+            return false;
+        index += length;
+    }
+    return true;
+}
+
+bool IsValidOrdinarySearchKey(std::string_view key) noexcept
+{
+    return !key.empty() && key.size() <= 128 &&
+        key.find('\0') == std::string_view::npos && IsValidUtf8(key) &&
+        key != "__host" && !key.starts_with("__host.");
+}
+
 InteractionValue EmptyDefault(const WidgetSettingFieldSchema& schema)
 {
     switch (schema.Kind())
@@ -95,6 +153,16 @@ InteractionValue EmptyDefault(const WidgetSettingFieldSchema& schema)
 
 const WidgetSettingFieldState* FindField(
     const WidgetSettingsSnapshot& snapshot, std::string_view key)
+{
+    const auto field = std::find_if(snapshot.fields.begin(),
+        snapshot.fields.end(), [&](const WidgetSettingFieldState& value) {
+            return value.schema.key == key;
+        });
+    return field == snapshot.fields.end() ? nullptr : &*field;
+}
+
+WidgetSettingFieldState* FindField(
+    WidgetSettingsSnapshot& snapshot, std::string_view key)
 {
     const auto field = std::find_if(snapshot.fields.begin(),
         snapshot.fields.end(), [&](const WidgetSettingFieldState& value) {
@@ -158,10 +226,19 @@ WidgetSettingsBackendResult BuildSnapshot(
             return Failed(WidgetSettingsBackendStatus::Failed,
                 "duplicateSettingPreset");
 
+    std::unordered_set<std::string> searchKeys;
     std::vector<WidgetSettingFieldSchema> schemas;
     schemas.reserve(declarations.size());
     for (const auto& declaration : declarations)
+    {
+        if (declaration.schema.Kind() == WidgetSettingKind::AppSearch &&
+            (!IsValidOrdinarySearchKey(declaration.schema.searchKey) ||
+                fieldKeys.contains(declaration.schema.searchKey) ||
+                !searchKeys.emplace(declaration.schema.searchKey).second))
+            return Failed(WidgetSettingsBackendStatus::InvalidValue,
+                "invalidSearchKey");
         schemas.push_back(declaration.schema);
+    }
 
     std::vector<WidgetSettingPresetSchema> normalizedPresets;
     normalizedPresets.reserve(snapshot.presets.size());
@@ -217,6 +294,21 @@ WidgetSettingsBackendResult BuildSnapshot(
             if (!NormalizeWidgetSettingValue(
                     field.schema, current, field.currentValue, error))
                 field.currentValue = std::move(current);
+
+            if (field.schema.Kind() == WidgetSettingKind::AppSearch)
+            {
+                WidgetSettingBackendReadResult query =
+                    backend.ReadSearchQuery(descriptor, field.schema);
+                if (!query.result.Succeeded()) return query.result;
+                if (query.hasStoredValue)
+                {
+                    if (query.value.type != InteractionValue::Type::String)
+                        return Failed(
+                            WidgetSettingsBackendStatus::PersistenceFailed,
+                            "invalidSearchQueryStorage");
+                    field.searchQuery = std::move(query.value.string);
+                }
+            }
         }
         else
         {
@@ -350,6 +442,27 @@ WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
             existing->second.snapshot.generation ==
                 built.snapshot.generation)
         {
+            for (auto search = existing->second.searches.begin();
+                search != existing->second.searches.end();)
+            {
+                const auto* previousField = FindField(
+                    existing->second.snapshot, search->first);
+                const auto* field = FindField(
+                    built.snapshot, search->first);
+                const bool stillValid = previousField && field &&
+                    previousField->schema == field->schema && field->enabled &&
+                    ((field->schema.Kind() == WidgetSettingKind::AppSearch &&
+                         field->searchQuery == search->second.request.query) ||
+                        field->schema.Kind() ==
+                            WidgetSettingKind::AppReference);
+                if (stillValid)
+                {
+                    ++search;
+                    continue;
+                }
+                replacedRequests.push_back(search->second.request);
+                search = existing->second.searches.erase(search);
+            }
             existing->second.descriptor = std::move(built.descriptor);
             existing->second.snapshot = std::move(built.snapshot);
             loaded.snapshot = existing->second.snapshot;
@@ -362,8 +475,7 @@ WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
                     existing->second.searches)
                 {
                     (void)key;
-                    if (search.snapshot.pending)
-                        replacedRequests.push_back(search.request);
+                    replacedRequests.push_back(search.request);
                 }
             }
             State::Session session;
@@ -478,6 +590,39 @@ WidgetSettingMutationResult WithIdentity(
     return result;
 }
 
+void InvalidateSearches(
+    const std::shared_ptr<WidgetSettingsService::State>& state,
+    std::wstring_view widgetId, const std::vector<std::string>& keys)
+{
+    if (keys.empty()) return;
+    std::vector<WidgetSettingSearchRequest> requests;
+    {
+        std::lock_guard lock(state->mutex);
+        const auto session = state->sessions.find(std::wstring(widgetId));
+        if (session == state->sessions.end()) return;
+        for (const auto& key : keys)
+        {
+            const auto search = session->second.searches.find(key);
+            if (search == session->second.searches.end()) continue;
+            requests.push_back(search->second.request);
+            session->second.searches.erase(search);
+        }
+    }
+    for (const auto& request : requests)
+        (void)state->backend.CancelSearch(request);
+}
+
+std::vector<std::string> SearchSettingKeys(
+    const WidgetSettingsSnapshot& snapshot)
+{
+    std::vector<std::string> keys;
+    for (const auto& field : snapshot.fields)
+        if (field.schema.Kind() == WidgetSettingKind::AppSearch ||
+            field.schema.Kind() == WidgetSettingKind::AppReference)
+            keys.push_back(field.schema.key);
+    return keys;
+}
+
 WidgetSettingMutationResult ReloadAfterMutation(
     WidgetSettingsService& service, const SessionCopy& before,
     const WidgetSettingsBackendResult& backendResult)
@@ -546,6 +691,114 @@ WidgetSettingMutationResult WidgetSettingsService::SetOrdinary(
     return ReloadAfterMutation(*this, session,
         state_->backend.ApplyOrdinaryTransaction(
             session.descriptor, guard, writes));
+}
+
+WidgetSettingMutationResult WidgetSettingsService::SetSearchQuery(
+    const WidgetSettingMutationGuard& guard, std::string_view key,
+    std::string query)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    const auto* field = FindField(session.snapshot, key);
+    if (!field)
+        return { WidgetSettingMutationStatus::SettingNotFound,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingNotFound", {} };
+    if (field->schema.Kind() != WidgetSettingKind::AppSearch ||
+        !IsValidOrdinarySearchKey(field->schema.searchKey))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision,
+            "invalidSearchKey", {} };
+    if (!field->enabled)
+        return { WidgetSettingMutationStatus::Disabled,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingDisabled", {} };
+    if (query.size() > MaximumSearchQueryBytes)
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision,
+            "searchQueryTooLong", {} };
+    if (!IsValidUtf8(query))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision,
+            "invalidSearchQuery", {} };
+    if (query == field->searchQuery)
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+
+    const std::string settingKey = field->schema.key;
+    if (session.descriptor.preview)
+    {
+        WidgetSettingMutationResult result;
+        std::vector<WidgetSettingSearchRequest> invalidatedRequests;
+        std::shared_ptr<const State::EventCallbacks> callbacks;
+        WidgetSettingsSnapshotChanged changed;
+        {
+            std::lock_guard lock(state_->mutex);
+            const auto current = state_->sessions.find(guard.widgetId);
+            if (current == state_->sessions.end() ||
+                !guard.Matches(current->second.snapshot))
+                return { WidgetSettingMutationStatus::StaleSnapshot,
+                    session.snapshot.generation, session.snapshot.revision,
+                    "staleSnapshot", {} };
+            auto* currentField = FindField(
+                current->second.snapshot, settingKey);
+            if (!currentField ||
+                currentField->schema.Kind() != WidgetSettingKind::AppSearch)
+                return { WidgetSettingMutationStatus::SettingNotFound,
+                    current->second.snapshot.generation,
+                    current->second.snapshot.revision,
+                    "settingNotFound", {} };
+
+            auto& lastRevision =
+                state_->lastPublishedRevisions[guard.widgetId];
+            lastRevision = std::max(
+                lastRevision, current->second.snapshot.revision);
+            if (lastRevision ==
+                (std::numeric_limits<std::uint64_t>::max)())
+                return { WidgetSettingMutationStatus::Failed,
+                    current->second.snapshot.generation,
+                    current->second.snapshot.revision,
+                    "widgetSettingsRevisionExhausted", {} };
+            currentField->currentValue = MakeWidgetSettingString({});
+            currentField->hasStoredValue = false;
+            currentField->searchQuery = std::move(query);
+            PrepareWidgetSettingsSnapshot(current->second.snapshot);
+            current->second.snapshot.revision = ++lastRevision;
+
+            if (const auto search = current->second.searches.find(settingKey);
+                search != current->second.searches.end())
+            {
+                invalidatedRequests.push_back(search->second.request);
+                current->second.searches.erase(search);
+            }
+            changed = { current->second.snapshot.widgetId,
+                current->second.snapshot.generation,
+                current->second.snapshot.revision };
+            callbacks = state_->callbacks;
+            result = { WidgetSettingMutationStatus::Applied,
+                current->second.snapshot.generation,
+                current->second.snapshot.revision, {}, {} };
+        }
+        for (const auto& request : invalidatedRequests)
+            (void)state_->backend.CancelSearch(request);
+        if (callbacks)
+            NotifyNoexcept(callbacks->snapshotChanged, std::move(changed));
+        return result;
+    }
+
+    WidgetSettingOrdinaryWrite write;
+    write.key = settingKey;
+    write.value = MakeWidgetSettingString({});
+    write.searchQuery = std::move(query);
+    WidgetSettingsBackendResult backendResult =
+        state_->backend.ApplyOrdinaryTransaction(
+            session.descriptor, guard, { std::move(write) });
+    if (backendResult.Succeeded())
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            { settingKey });
+    return ReloadAfterMutation(*this, session, backendResult);
 }
 
 WidgetSettingMutationResult WidgetSettingsService::SetSecret(
@@ -684,6 +937,8 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
             session.snapshot.generation, session.snapshot.revision,
             "presetNotFound", {} };
 
+    std::vector<std::string> invalidatedSearchKeys =
+        SearchSettingKeys(session.snapshot);
     std::vector<WidgetSettingOrdinaryWrite> writes;
     writes.reserve(preset->values.size());
     for (const auto& [key, value] : preset->values)
@@ -694,15 +949,28 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
             return { WidgetSettingMutationStatus::InvalidValue,
                 session.snapshot.generation, session.snapshot.revision,
                 "opaquePresetValue", {} };
-        writes.push_back({ key, value,
-            WidgetSettingUsesTypedStorage(field->schema.Kind()) });
+        WidgetSettingOrdinaryWrite write{ key, value,
+            WidgetSettingUsesTypedStorage(field->schema.Kind()) };
+        if (field->schema.Kind() == WidgetSettingKind::AppSearch)
+        {
+            write.searchQuery = std::string{};
+        }
+        writes.push_back(std::move(write));
     }
     if (writes.empty())
+    {
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            invalidatedSearchKeys);
         return { WidgetSettingMutationStatus::Unchanged,
             session.snapshot.generation, session.snapshot.revision, {}, {} };
-    return ReloadAfterMutation(*this, session,
+    }
+    WidgetSettingsBackendResult backendResult =
         state_->backend.ApplyOrdinaryTransaction(
-            session.descriptor, guard, writes));
+            session.descriptor, guard, writes);
+    if (backendResult.Succeeded())
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            invalidatedSearchKeys);
+    return ReloadAfterMutation(*this, session, backendResult);
 }
 
 WidgetSettingMutationResult WidgetSettingsService::Reset(
@@ -712,17 +980,35 @@ WidgetSettingMutationResult WidgetSettingsService::Reset(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    std::vector<std::string> invalidatedSearchKeys =
+        SearchSettingKeys(session.snapshot);
     std::vector<WidgetSettingOrdinaryWrite> writes;
     for (const auto& field : session.snapshot.fields)
         if (field.schema.Channel() == WidgetSettingValueChannel::Ordinary)
-            writes.push_back({ field.schema.key, field.defaultValue,
-                WidgetSettingUsesTypedStorage(field.schema.Kind()) });
+        {
+            WidgetSettingOrdinaryWrite write{ field.schema.key,
+                field.defaultValue,
+                WidgetSettingUsesTypedStorage(field.schema.Kind()) };
+            if (field.schema.Kind() == WidgetSettingKind::AppSearch)
+            {
+                write.searchQuery = std::string{};
+            }
+            writes.push_back(std::move(write));
+        }
     if (writes.empty())
+    {
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            invalidatedSearchKeys);
         return { WidgetSettingMutationStatus::Unchanged,
             session.snapshot.generation, session.snapshot.revision, {}, {} };
-    return ReloadAfterMutation(*this, session,
+    }
+    WidgetSettingsBackendResult backendResult =
         state_->backend.ApplyOrdinaryTransaction(
-            session.descriptor, guard, writes));
+            session.descriptor, guard, writes);
+    if (backendResult.Succeeded())
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            invalidatedSearchKeys);
+    return ReloadAfterMutation(*this, session, backendResult);
 }
 
 WidgetSettingMutationResult WidgetSettingsService::StartSearch(
@@ -747,6 +1033,14 @@ WidgetSettingMutationResult WidgetSettingsService::StartSearch(
         return { WidgetSettingMutationStatus::Disabled,
             session.snapshot.generation, session.snapshot.revision,
             "settingDisabled", {} };
+    if (query.size() > MaximumSearchQueryBytes)
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision,
+            "searchQueryTooLong", {} };
+    if (!IsValidUtf8(query))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision,
+            "invalidSearchQuery", {} };
     if (maximumResults == 0) maximumResults = 1;
     maximumResults = std::min<std::size_t>(maximumResults, 64);
 
