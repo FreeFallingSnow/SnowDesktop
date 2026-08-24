@@ -184,6 +184,18 @@ SettingsShell::SettingsShell()
             Resources().Lookup(
                 winrt::box_value(L"SettingsShellCardButtonStyle"))
                 .as<mux::Style>());
+    widgetsPage_ =
+        std::make_unique<snowdesktop::winui::WidgetsPagePresenter>(
+            [this](std::string_view key) { return Localize(key); },
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardStyle"))
+                .as<mux::Style>());
+    backupDataPage_ =
+        std::make_unique<snowdesktop::winui::BackupDataPagePresenter>(
+            [this](std::string_view key) { return Localize(key); },
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardStyle"))
+                .as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -238,6 +250,16 @@ void SettingsShell::Close() noexcept
         }
         if (widgetSettingsService_)
             widgetSettingsService_->SetEventCallbacks({}, {});
+        if (widgetsPage_)
+        {
+            widgetsPage_->Deactivate();
+            widgetsPage_->Close();
+        }
+        if (backupDataPage_)
+        {
+            backupDataPage_->Deactivate();
+            backupDataPage_->Close();
+        }
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -255,6 +277,8 @@ void SettingsShell::Close() noexcept
     homeAboutPage_.reset();
     widgetSettingsPage_.reset();
     widgetSettingsService_ = nullptr;
+    widgetsPage_.reset();
+    backupDataPage_.reset();
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -312,6 +336,10 @@ void SettingsShell::RefreshLocalizedText()
         homeAboutPage_->RefreshLocalizedText();
     if (widgetSettingsPage_)
         widgetSettingsPage_->RefreshLocalizedText();
+    if (widgetsPage_)
+        widgetsPage_->RefreshLocalizedText();
+    if (backupDataPage_)
+        backupDataPage_->RefreshLocalizedText();
     RenderRoute(true, false);
     if (!searchResults_.empty())
     {
@@ -488,6 +516,40 @@ bool SettingsShell::ApplyWidgetSettingsSnapshot(
     return true;
 }
 
+void SettingsShell::SetWidgetsPageActions(
+    snowdesktop::winui::WidgetsPageActions actions)
+{
+    if (widgetsPage_)
+        widgetsPage_->SetActions(std::move(actions));
+}
+
+bool SettingsShell::ApplyWidgetsPageSnapshot(
+    const snowdesktop::winui::WidgetsPageSnapshot& snapshot)
+{
+    return !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
+        widgetsPage_ &&
+        navigation_.Route().page == SettingsPage::Widgets &&
+        navigation_.Generation() == snapshot.generation &&
+        widgetsPage_->ApplySnapshot(snapshot);
+}
+
+void SettingsShell::SetBackupDataPageActions(
+    snowdesktop::winui::BackupDataPageActions actions)
+{
+    if (backupDataPage_)
+        backupDataPage_->SetActions(std::move(actions));
+}
+
+bool SettingsShell::ApplyBackupDataPageSnapshot(
+    const snowdesktop::winui::BackupDataPageSnapshot& snapshot)
+{
+    return !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
+        backupDataPage_ &&
+        navigation_.Route().page == SettingsPage::BackupAndData &&
+        navigation_.Generation() == snapshot.generation &&
+        backupDataPage_->ApplySnapshot(snapshot);
+}
+
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
     return generalPage_ && generalPage_->IsHotkeyCaptureActive();
@@ -519,6 +581,10 @@ void SettingsShell::SuspendInteraction() noexcept
             homeAboutPage_->Deactivate();
         if (widgetSettingsPage_)
             widgetSettingsPage_->Deactivate();
+        if (widgetsPage_)
+            widgetsPage_->Deactivate();
+        if (backupDataPage_)
+            backupDataPage_->Deactivate();
     }
     catch (...)
     {
@@ -1022,6 +1088,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::WidgetSettings;
     if (leavingWidgetSettings && widgetSettingsPage_)
         widgetSettingsPage_->Deactivate();
+    const bool leavingWidgets = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::Widgets &&
+        pageRoute.page != SettingsPage::Widgets;
+    if (leavingWidgets && widgetsPage_)
+        widgetsPage_->Deactivate();
+    const bool leavingBackup = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::BackupAndData &&
+        pageRoute.page != SettingsPage::BackupAndData;
+    if (leavingBackup && backupDataPage_)
+        backupDataPage_->Deactivate();
 
     PageCards().Children().Clear();
     focusTargets_.clear();
@@ -1156,12 +1232,18 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::Widgets:
-        addPlaceholder("widgets.installed", "settings.widgets.installed",
-            "settings.widgets.installed.description");
-        addPlaceholder("widgets.sources", "settings.widgets.sources",
-            "settings.widgets.sources.description");
-        addPlaceholder("widgets.permissions", "settings.widgets.permissions",
-            "settings.widgets.permissions.description");
+        if (widgetsPage_)
+        {
+            PageCards().Children().Append(widgetsPage_->Content());
+            widgetsPage_->Activate(navigation_.Generation());
+            for (const std::string_view focusId : {
+                     "widgets.installed", "widgets.sources",
+                     "widgets.permissions"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    widgetsPage_->FocusTarget(focusId));
+            }
+        }
         break;
     case SettingsPage::WidgetSettings:
         if (widgetSettingsPage_ &&
@@ -1191,12 +1273,18 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::BackupAndData:
-        addPlaceholder("backup.layout", "settings.backup.layout",
-            "settings.backup.layout.description");
-        addPlaceholder("backup.full", "settings.backup.full",
-            "settings.backup.full.description");
-        addPlaceholder("backup.directory", "settings.backup.directory",
-            "settings.backup.directory.description");
+        if (backupDataPage_)
+        {
+            PageCards().Children().Append(backupDataPage_->Content());
+            for (const std::string_view focusId : {
+                     "backup.layout", "backup.full", "backup.directory",
+                     "backup.migration"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    backupDataPage_->FocusTarget(focusId));
+            }
+            backupDataPage_->Activate();
+        }
         break;
     case SettingsPage::About:
         if (homeAboutPage_)

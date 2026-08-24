@@ -252,6 +252,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/App.xaml
     src/winui/App.xaml.cpp
     src/winui/App.xaml.h
+    src/winui/backup_data_page_presenter.cpp
+    src/winui/backup_data_page_presenter.h
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
@@ -276,6 +278,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/settings_window_host.h
     src/winui/widget_settings_presenter.cpp
     src/winui/widget_settings_presenter.h
+    src/winui/widgets_page_presenter.cpp
+    src/winui/widgets_page_presenter.h
     src/winui/winui_runtime.cpp
     src/winui/winui_runtime.h
     src/winui/xaml_metadata_provider_bridge.cpp
@@ -1277,6 +1281,20 @@ if (BUILD_TESTING)
         SOURCES tests/winui_widget_settings_presenter_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract lua security settings storage ui widget winui)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiWidgetsPagePresenterTests
+        winui_widgets_page_presenter
+        SOURCES tests/winui_widgets_page_presenter_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract package permission settings steam ui widget winui)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiBackupDataPagePresenterTests
+        winui_backup_data_page_presenter
+        SOURCES tests/winui_backup_data_page_presenter_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS backup contract data migration recovery settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopWinUiSettingsWindowHostTests

@@ -4,6 +4,7 @@
 
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
+#include "backup_data_page_presenter.h"
 #include "desktop_page_presenter.h"
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
@@ -11,6 +12,7 @@
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 #include "widget_settings_presenter.h"
+#include "widgets_page_presenter.h"
 
 #include <cstdint>
 #include <functional>
@@ -103,6 +105,14 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
     [[nodiscard]] bool ApplyWidgetSettingsSnapshot(
         const snowdesktop::widget_runtime::WidgetSettingsSnapshot& snapshot);
+    void SetWidgetsPageActions(
+        snowdesktop::winui::WidgetsPageActions actions);
+    [[nodiscard]] bool ApplyWidgetsPageSnapshot(
+        const snowdesktop::winui::WidgetsPageSnapshot& snapshot);
+    void SetBackupDataPageActions(
+        snowdesktop::winui::BackupDataPageActions actions);
+    [[nodiscard]] bool ApplyBackupDataPageSnapshot(
+        const snowdesktop::winui::BackupDataPageSnapshot& snapshot);
 
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
@@ -220,6 +230,10 @@ private:
         widgetSettingsService_ = nullptr;
     std::unique_ptr<snowdesktop::winui::WidgetSettingsPresenter>
         widgetSettingsPage_;
+    std::unique_ptr<snowdesktop::winui::WidgetsPagePresenter>
+        widgetsPage_;
+    std::unique_ptr<snowdesktop::winui::BackupDataPagePresenter>
+        backupDataPage_;
 
     snowdesktop::winui::SettingsShellNavigationState navigation_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;

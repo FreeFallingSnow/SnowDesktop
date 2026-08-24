@@ -115,6 +115,19 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ApplyWidgetSettingsSnapshot(") !=
                 std::string::npos,
         "widget settings snapshots, service events, native content, and close flush are wired through the WinUI shell");
+    Check(shellHeader.find("ApplyWidgetsPageSnapshot(") !=
+                std::string::npos &&
+            shellHeader.find("ApplyBackupDataPageSnapshot(") !=
+                std::string::npos &&
+            shell.find("widgetsPage_->Content()") !=
+                std::string::npos &&
+            shell.find("backupDataPage_->Content()") !=
+                std::string::npos &&
+            shell.find("widgetsPage_->Activate(") !=
+                std::string::npos &&
+            shell.find("backupDataPage_->Activate()") !=
+                std::string::npos,
+        "widget management and backup routes render cached native WinUI presenters driven by immutable snapshots");
 }
 } // namespace
 
