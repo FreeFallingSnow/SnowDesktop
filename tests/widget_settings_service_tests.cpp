@@ -4,6 +4,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -336,6 +337,30 @@ int main()
     backend.opaque["token"] = {
         true, true, false, true, "must never escape" };
     WidgetSettingsService service(backend);
+    std::vector<WidgetSettingsSnapshotChanged> snapshotEvents;
+    std::vector<WidgetSettingSearchCompleted> searchEvents;
+    bool snapshotCallbackReentered = false;
+    bool searchCallbackReentered = false;
+    const auto installRecordingCallbacks = [&]() {
+        service.SetEventCallbacks(
+            [&](WidgetSettingsSnapshotChanged event) {
+                const auto current = service.Snapshot(event.widgetId);
+                snapshotCallbackReentered = current &&
+                    current->generation == event.generation &&
+                    current->revision == event.revision;
+                snapshotEvents.push_back(std::move(event));
+            },
+            [&](WidgetSettingSearchCompleted event) {
+                const auto current = service.SearchSnapshot(
+                    event.widgetId, event.settingKey);
+                searchCallbackReentered = current &&
+                    current->generation == event.generation &&
+                    current->requestId == event.requestId &&
+                    !current->pending;
+                searchEvents.push_back(std::move(event));
+            });
+    };
+    installRecordingCallbacks();
     WidgetSettingsLoadResult loaded = service.Load(L"widget-1");
     Check(loaded.Succeeded() && loaded.snapshot &&
             loaded.snapshot->fields.size() == 7 &&
@@ -344,6 +369,12 @@ int main()
             loaded.snapshot->groups.size() == 2 &&
             loaded.snapshot->presets.size() == 1,
         "manifest and script fields, groups, and presets merge in source order");
+    Check(snapshotEvents.size() == 1 && snapshotCallbackReentered &&
+            snapshotEvents.front().widgetId == L"widget-1" &&
+            snapshotEvents.front().generation ==
+                loaded.snapshot->generation &&
+            snapshotEvents.front().revision == loaded.snapshot->revision,
+        "snapshot events run after publication and may reenter Snapshot without deadlock");
     Check(loaded.snapshot && Find(*loaded.snapshot, "enabled") &&
             !Find(*loaded.snapshot, "enabled")->currentValue.boolean &&
             Find(*loaded.snapshot, "enabled")->hasStoredValue,
@@ -441,6 +472,8 @@ int main()
         guard, "appSearch", "cal");
     WidgetSettingMutationResult secondSearch = service.StartSearch(
         guard, "appSearch", "calc");
+    const std::size_t searchEventsBeforeCompletion =
+        searchEvents.size();
     Check(firstSearch.status == WidgetSettingMutationStatus::Started &&
             secondSearch.status == WidgetSettingMutationStatus::Started &&
             backend.searches.size() == 2 &&
@@ -450,7 +483,8 @@ int main()
     auto searchSnapshot = service.SearchSnapshot(
         L"widget-1", "appSearch");
     Check(searchSnapshot && searchSnapshot->pending &&
-            searchSnapshot->results.empty(),
+            searchSnapshot->results.empty() &&
+            searchEvents.size() == searchEventsBeforeCompletion,
         "a superseded search completion is discarded by request id");
     backend.Complete(1, {
         { "calculator", "Calculator", "apps", "application" } });
@@ -458,8 +492,17 @@ int main()
     Check(searchSnapshot && !searchSnapshot->pending &&
             searchSnapshot->completed &&
             searchSnapshot->results.size() == 1 &&
-            searchSnapshot->results[0].id == "calculator",
+            searchSnapshot->results[0].id == "calculator" &&
+            searchEvents.size() == searchEventsBeforeCompletion + 1 &&
+            searchCallbackReentered &&
+            searchEvents.back().requestId == searchSnapshot->requestId,
         "the current request publishes a path-free search snapshot");
+    backend.Complete(1, {
+        { "duplicate", "Duplicate", "apps", "application" } });
+    Check(searchEvents.size() == searchEventsBeforeCompletion + 1 &&
+            service.SearchSnapshot(L"widget-1", "appSearch") ==
+                searchSnapshot,
+        "a duplicate completion for a non-pending request is ignored");
     const std::uint64_t searchRequestId = searchSnapshot->requestId;
     Check(service.CommitSearchResult(guard, "appSearch",
                 searchRequestId, "missing").status ==
@@ -474,17 +517,111 @@ int main()
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t searchEventsBeforeFailure = searchEvents.size();
+    (void)service.StartSearch(guard, "appSearch", "unavailable");
+    const std::size_t failedSearchIndex = backend.searches.size() - 1;
+    backend.Complete(failedSearchIndex, {}, {
+        WidgetSettingsBackendStatus::Failed, "catalogFailed", {} });
+    auto failedSearch = service.SearchSnapshot(
+        L"widget-1", "appSearch");
+    Check(failedSearch && !failedSearch->pending &&
+            !failedSearch->completed &&
+            failedSearch->errorCode == "catalogFailed" &&
+            searchEvents.size() == searchEventsBeforeFailure + 1 &&
+            searchEvents.back().requestId == failedSearch->requestId,
+        "an accepted failed completion publishes one reentrant search hint");
+
     (void)service.StartSearch(guard, "appSearch", "paint");
     const std::size_t staleIndex = backend.searches.size() - 1;
     backend.descriptor.generation = 8;
     WidgetSettingsLoadResult generationReload = service.Reload(L"widget-1");
+    const std::size_t searchEventsBeforeStaleGeneration =
+        searchEvents.size();
     backend.Complete(staleIndex,
         { { "paint", "Paint", "apps", "application" } });
     Check(generationReload.Succeeded() && generationReload.snapshot &&
             generationReload.snapshot->generation == 8 &&
             !service.SearchSnapshot(L"widget-1", "appSearch") &&
-            backend.cancellations.size() == 2,
+            backend.cancellations.size() == 2 &&
+            searchEvents.size() == searchEventsBeforeStaleGeneration,
         "widget reload cancels replaced work and drops old-generation async results");
+
+    snapshot = service.Snapshot(L"widget-1");
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const WidgetSettingMutationGuard guardBeforeClose = guard;
+    const std::uint64_t revisionBeforeClose = snapshot->revision;
+    (void)service.StartSearch(guard, "appSearch", "close-race");
+    const std::size_t closedSearchIndex = backend.searches.size() - 1;
+    const std::size_t searchEventsBeforeClose = searchEvents.size();
+    service.Close(L"widget-1");
+    backend.Complete(closedSearchIndex,
+        { { "closed", "Closed", "apps", "application" } });
+    Check(!service.Snapshot(L"widget-1") &&
+            !service.SearchSnapshot(L"widget-1", "appSearch") &&
+            searchEvents.size() == searchEventsBeforeClose,
+        "closing removes the session before cancellation and drops delayed completions");
+
+    WidgetSettingsLoadResult reopened = service.Load(L"widget-1");
+    Check(reopened.Succeeded() && reopened.snapshot &&
+            reopened.snapshot->generation == guardBeforeClose.generation &&
+            reopened.snapshot->revision > revisionBeforeClose &&
+            service.SetOrdinary(guardBeforeClose, "enabled",
+                MakeWidgetSettingBoolean(true)).status ==
+                WidgetSettingMutationStatus::StaleSnapshot,
+        "Close and Load preserve monotonic per-widget revisions and reject an old guard");
+
+    service.SetEventCallbacks(
+        [](WidgetSettingsSnapshotChanged) {
+            throw std::runtime_error("snapshot observer failure");
+        },
+        [](WidgetSettingSearchCompleted) {
+            throw std::runtime_error("search observer failure");
+        });
+    WidgetSettingsLoadResult throwingReload = service.Reload(L"widget-1");
+    snapshot = service.Snapshot(L"widget-1");
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    (void)service.StartSearch(guard, "appSearch", "throwing-observer");
+    const std::size_t throwingSearchIndex = backend.searches.size() - 1;
+    bool observerEscaped = false;
+    try
+    {
+        backend.Complete(throwingSearchIndex,
+            { { "safe", "Safe", "apps", "application" } });
+    }
+    catch (...)
+    {
+        observerEscaped = true;
+    }
+    const auto throwingSearch = service.SearchSnapshot(
+        L"widget-1", "appSearch");
+    Check(throwingReload.Succeeded() && !observerEscaped &&
+            throwingSearch && throwingSearch->completed,
+        "observer exceptions cannot escape snapshot publication or a backend completion");
+
+    installRecordingCallbacks();
+    snapshot = service.Snapshot(L"widget-1");
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t searchEventsBeforeRecovery = searchEvents.size();
+    (void)service.StartSearch(guard, "appSearch", "observer-recovery");
+    const std::size_t recoverySearchIndex = backend.searches.size() - 1;
+    backend.Complete(recoverySearchIndex,
+        { { "recovered", "Recovered", "apps", "application" } });
+    Check(searchEvents.size() == searchEventsBeforeRecovery + 1 &&
+            searchCallbackReentered,
+        "a later observer still receives completions after an earlier observer threw");
+
+    service.SetEventCallbacks({}, {});
+    const std::size_t snapshotEventsBeforeClear = snapshotEvents.size();
+    const std::size_t searchEventsBeforeClear = searchEvents.size();
+    WidgetSettingsLoadResult silentReload = service.Reload(L"widget-1");
+    guard = WidgetSettingMutationGuard::FromSnapshot(*silentReload.snapshot);
+    (void)service.StartSearch(guard, "appSearch", "detached-observer");
+    const std::size_t detachedSearchIndex = backend.searches.size() - 1;
+    backend.Complete(detachedSearchIndex,
+        { { "detached", "Detached", "apps", "application" } });
+    Check(snapshotEvents.size() == snapshotEventsBeforeClear &&
+            searchEvents.size() == searchEventsBeforeClear,
+        "atomically clearing callbacks suppresses later snapshot and search hints");
 
     FakeBackend unavailable = MakeBackend();
     unavailable.mutationResult = {

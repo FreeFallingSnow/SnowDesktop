@@ -235,6 +235,21 @@ WidgetSettingsBackendResult BuildSnapshot(
     built.snapshot = std::move(snapshot);
     return { WidgetSettingsBackendStatus::Succeeded, {}, {} };
 }
+
+template<typename Callback, typename Hint>
+void NotifyNoexcept(const Callback& callback, Hint hint) noexcept
+{
+    if (!callback) return;
+    try
+    {
+        callback(std::move(hint));
+    }
+    catch (...)
+    {
+        // Observers must never alter service results or terminate a backend
+        // worker which delivered an asynchronous completion.
+    }
+}
 }
 
 struct WidgetSettingsService::State
@@ -249,8 +264,13 @@ struct WidgetSettingsService::State
     {
         WidgetSettingsBackendDescriptor descriptor;
         WidgetSettingsSnapshot snapshot;
-        std::unique_ptr<WidgetSettingsRevisionSource> revisions;
         std::unordered_map<std::string, SearchState> searches;
+    };
+
+    struct EventCallbacks
+    {
+        SnapshotChangedCallback snapshotChanged;
+        SearchCompletedCallback searchCompleted;
     };
 
     explicit State(IWidgetSettingsBackend& value) : backend(value) {}
@@ -258,6 +278,11 @@ struct WidgetSettingsService::State
     IWidgetSettingsBackend& backend;
     mutable std::mutex mutex;
     std::unordered_map<std::wstring, Session> sessions;
+    // Kept after Close/CloseAll so an old guard can never become valid again
+    // when the same runtime generation is opened in a new view session.
+    std::unordered_map<std::wstring, std::uint64_t>
+        lastPublishedRevisions;
+    std::shared_ptr<const EventCallbacks> callbacks;
     std::uint64_t nextSearchRequestId = 0;
 };
 
@@ -268,7 +293,27 @@ WidgetSettingsService::WidgetSettingsService(IWidgetSettingsBackend& backend)
 
 WidgetSettingsService::~WidgetSettingsService()
 {
+    {
+        std::lock_guard lock(state_->mutex);
+        state_->callbacks.reset();
+    }
     CloseAll();
+}
+
+void WidgetSettingsService::SetEventCallbacks(
+    SnapshotChangedCallback snapshotChanged,
+    SearchCompletedCallback searchCompleted)
+{
+    std::shared_ptr<const State::EventCallbacks> callbacks;
+    if (snapshotChanged || searchCompleted)
+    {
+        auto value = std::make_shared<State::EventCallbacks>();
+        value->snapshotChanged = std::move(snapshotChanged);
+        value->searchCompleted = std::move(searchCompleted);
+        callbacks = std::move(value);
+    }
+    std::lock_guard lock(state_->mutex);
+    state_->callbacks = std::move(callbacks);
 }
 
 WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
@@ -286,15 +331,26 @@ WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
     WidgetSettingsLoadResult loaded;
     loaded.status = WidgetSettingMutationStatus::Applied;
     std::vector<WidgetSettingSearchRequest> replacedRequests;
+    std::shared_ptr<const State::EventCallbacks> callbacks;
+    WidgetSettingsSnapshotChanged changed;
     {
         std::lock_guard lock(state_->mutex);
+        auto& lastRevision =
+            state_->lastPublishedRevisions[widgetId];
+        if (lastRevision ==
+            (std::numeric_limits<std::uint64_t>::max)())
+        {
+            return LoadResultFor(Failed(
+                WidgetSettingsBackendStatus::Failed,
+                "widgetSettingsRevisionExhausted"));
+        }
+        built.snapshot.revision = ++lastRevision;
         auto existing = state_->sessions.find(widgetId);
         if (existing != state_->sessions.end() &&
             existing->second.snapshot.generation ==
                 built.snapshot.generation)
         {
             existing->second.descriptor = std::move(built.descriptor);
-            (void)existing->second.revisions->Publish(built.snapshot);
             existing->second.snapshot = std::move(built.snapshot);
             loaded.snapshot = existing->second.snapshot;
         }
@@ -312,18 +368,19 @@ WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
             }
             State::Session session;
             session.descriptor = std::move(built.descriptor);
-            session.revisions =
-                std::make_unique<WidgetSettingsRevisionSource>(
-                    built.snapshot.widgetId, built.snapshot.generation);
-            (void)session.revisions->Publish(built.snapshot);
             session.snapshot = std::move(built.snapshot);
             loaded.snapshot = session.snapshot;
             state_->sessions.insert_or_assign(
                 widgetId, std::move(session));
         }
+        changed = { loaded.snapshot->widgetId,
+            loaded.snapshot->generation, loaded.snapshot->revision };
+        callbacks = state_->callbacks;
     }
     for (const auto& request : replacedRequests)
         (void)state_->backend.CancelSearch(request);
+    if (callbacks)
+        NotifyNoexcept(callbacks->snapshotChanged, std::move(changed));
     return loaded;
 }
 
@@ -729,33 +786,72 @@ WidgetSettingMutationResult WidgetSettingsService::StartSearch(
 
     const std::weak_ptr<State> weak = state_;
     WidgetSettingsBackendResult started = state_->backend.StartSearch(
-        request, [weak](WidgetSettingSearchCompletion completion) {
-            const auto state = weak.lock();
-            if (!state) return;
-            std::lock_guard lock(state->mutex);
-            const auto session = state->sessions.find(completion.widgetId);
-            if (session == state->sessions.end() ||
-                session->second.snapshot.generation !=
-                    completion.generation)
-                return;
-            const auto search = session->second.searches.find(
-                completion.settingKey);
-            if (search == session->second.searches.end() ||
-                search->second.request.requestId != completion.requestId)
-                return;
-            search->second.snapshot.pending = false;
-            search->second.snapshot.completed =
-                completion.result.Succeeded();
-            search->second.snapshot.errorCode =
-                completion.result.Succeeded()
-                ? std::string{} : completion.result.errorCode;
-            search->second.snapshot.results = completion.result.Succeeded()
-                ? std::move(completion.results)
-                : std::vector<WidgetSettingSearchResult>{};
-            if (search->second.snapshot.results.size() >
-                search->second.request.maximumResults)
-                search->second.snapshot.results.resize(
-                    search->second.request.maximumResults);
+        request, [weak](WidgetSettingSearchCompletion completion) noexcept {
+            try
+            {
+                const auto state = weak.lock();
+                if (!state) return;
+                std::shared_ptr<const State::EventCallbacks> callbacks;
+                WidgetSettingSearchCompleted completed;
+                {
+                    std::lock_guard lock(state->mutex);
+                    const auto session = state->sessions.find(
+                        completion.widgetId);
+                    if (session == state->sessions.end() ||
+                        session->second.snapshot.generation !=
+                            completion.generation)
+                        return;
+                    const auto search = session->second.searches.find(
+                        completion.settingKey);
+                    if (search == session->second.searches.end() ||
+                        !search->second.snapshot.pending ||
+                        search->second.request.widgetId !=
+                            completion.widgetId ||
+                        search->second.request.settingKey !=
+                            completion.settingKey ||
+                        search->second.request.generation !=
+                            completion.generation ||
+                        search->second.request.requestId !=
+                            completion.requestId)
+                        return;
+
+                    const bool succeeded =
+                        completion.result.Succeeded();
+                    if (succeeded)
+                    {
+                        if (completion.results.size() >
+                            search->second.request.maximumResults)
+                        {
+                            completion.results.resize(
+                                search->second.request.maximumResults);
+                        }
+                        search->second.snapshot.errorCode.clear();
+                        search->second.snapshot.results =
+                            std::move(completion.results);
+                    }
+                    else
+                    {
+                        search->second.snapshot.errorCode =
+                            std::move(completion.result.errorCode);
+                        search->second.snapshot.results.clear();
+                    }
+                    search->second.snapshot.completed = succeeded;
+                    search->second.snapshot.pending = false;
+                    completed = { search->second.request.widgetId,
+                        search->second.request.settingKey,
+                        search->second.request.generation,
+                        search->second.request.requestId };
+                    callbacks = state->callbacks;
+                }
+                if (callbacks)
+                    NotifyNoexcept(callbacks->searchCompleted,
+                        std::move(completed));
+            }
+            catch (...)
+            {
+                // Backend completion threads must remain alive even if a
+                // notification or snapshot publication cannot be allocated.
+            }
         });
     if (!started.Succeeded())
     {

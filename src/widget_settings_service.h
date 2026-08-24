@@ -206,6 +206,34 @@ struct WidgetSettingsLoadResult
 };
 
 /**
+ * Immutable value hint published after a widget settings snapshot changes.
+ * Consumers must read Snapshot() again after crossing a thread boundary;
+ * the hint deliberately does not own or expose mutable session state.
+ */
+struct WidgetSettingsSnapshotChanged
+{
+    std::wstring widgetId;
+    std::uint64_t generation = 0;
+    std::uint64_t revision = 0;
+
+    bool operator==(const WidgetSettingsSnapshotChanged&) const = default;
+};
+
+/**
+ * Immutable value hint for one accepted asynchronous search completion.
+ * Consumers must read SearchSnapshot() after dispatching to their UI thread.
+ */
+struct WidgetSettingSearchCompleted
+{
+    std::wstring widgetId;
+    std::string settingKey;
+    std::uint64_t generation = 0;
+    std::uint64_t requestId = 0;
+
+    bool operator==(const WidgetSettingSearchCompleted&) const = default;
+};
+
+/**
  * Owns immutable snapshots and guards all mutations by instance, generation,
  * and monotonically increasing revision. Public methods may be called from the
  * UI thread; search completions may arrive from any thread.
@@ -214,12 +242,25 @@ class WidgetSettingsService
 {
 public:
     struct State;
+    using SnapshotChangedCallback =
+        std::function<void(WidgetSettingsSnapshotChanged)>;
+    using SearchCompletedCallback =
+        std::function<void(WidgetSettingSearchCompleted)>;
 
     explicit WidgetSettingsService(IWidgetSettingsBackend& backend);
     ~WidgetSettingsService();
 
     WidgetSettingsService(const WidgetSettingsService&) = delete;
     WidgetSettingsService& operator=(const WidgetSettingsService&) = delete;
+
+    /**
+     * Atomically replaces both event callbacks. Passing two empty callbacks
+     * detaches the observer. Callbacks are hints, may run on different
+     * threads, and are always invoked after the service mutex is released.
+     */
+    void SetEventCallbacks(
+        SnapshotChangedCallback snapshotChanged,
+        SearchCompletedCallback searchCompleted);
 
     WidgetSettingsLoadResult Load(std::wstring widgetId);
     WidgetSettingsLoadResult Reload(std::wstring_view widgetId);
