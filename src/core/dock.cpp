@@ -1619,12 +1619,10 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (!context) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
     PersonalizationSettings p = PersonalizationSettings::DarkPreset();
-    if (app_ && app_->settingsWindow_)
-        p = app_->settingsWindow_->GetPersonalization();
-    else if (app_ && app_->renderingFloatingDock_)
+    if (app_ && app_->renderingFloatingDock_)
         p = app_->floatingDockPersonalization_;
-    else
-        LoadPersonalization(GetPersonalizationPath().c_str(), p);
+    else if (app_)
+        p = app_->CurrentPersonalization();
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);

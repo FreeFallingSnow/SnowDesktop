@@ -36,8 +36,12 @@ DesktopApp::~DesktopApp()
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
     widgetAccessibilityProvider_.reset();
-    widgetEngine_.reset();
     settingsWindow_.reset();
+    if (settingsController_)
+        (void)settingsController_->CloseSession();
+    settingsController_.reset();
+    settingsHostActions_.reset();
+    widgetEngine_.reset();
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
     {
         if (!app.iconBitmap) continue;

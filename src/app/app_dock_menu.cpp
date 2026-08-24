@@ -117,11 +117,9 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         {
             settingsWindow_->SyncDockEnabled(generalSettings_.dockEnabled);
             settingsWindow_->SyncDockSettings(dockSettings_);
-            if (!settingsWindow_->ShowDockSettings())
-                ShowSettingsWindow();
         }
-        else
-            ShowSettingsWindow();
+        ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::DockAndTaskbar));
         return;
     default:
         RestoreDesktopWindowLayer();

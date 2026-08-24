@@ -2,9 +2,274 @@
 
 // Settings application, desktop passthrough and retained-surface visibility.
 
-void DesktopApp::ShowSettingsWindow()
+class DesktopApp::SettingsHostActionsAdapter final
+    : public snowdesktop::SettingsHostActions
 {
-    settingsWindowOpenRequest_.Request();
+public:
+    explicit SettingsHostActionsAdapter(DesktopApp& app) : app_(app) {}
+
+    snowdesktop::SettingsActionResult OnSettingsPreview(
+        const snowdesktop::SettingsSnapshot& snapshot,
+        snowdesktop::SettingsDomain domains) override
+    {
+        using snowdesktop::HasSettingsDomain;
+        using snowdesktop::SettingsDomain;
+
+        if (HasSettingsDomain(domains, SettingsDomain::Personalization))
+        {
+            app_.personalizationSettings_ = snapshot.values.personalization;
+            app_.ApplyQuickNavigationAppearance();
+            app_.ApplyCollectionPopupAppearance();
+            if (app_.dockSettings_.systemTaskbarFollowPersonalization)
+                app_.RefreshSystemTaskbarAppearance(false);
+            app_.InvalidateAllWidgetSlots();
+            if (app_.hwnd_)
+                InvalidateRect(app_.hwnd_, nullptr, FALSE);
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        {
+            app_.dockSettings_ = snapshot.values.dock;
+            NormalizeDockSettings(app_.dockSettings_);
+            app_.ApplyFloatingDockHotkey();
+            app_.UpdateLayoutWorkArea();
+            app_.LayoutItems();
+            app_.InvalidateDragStaticScene();
+            if (app_.hwnd_)
+                InvalidateRect(app_.hwnd_, nullptr, TRUE);
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::Desktop))
+        {
+            app_.PreviewIconSpacing(
+                snapshot.values.desktop.iconSpacingScale);
+            app_.PreviewItemIconSize(
+                snapshot.values.desktop.itemIconSizeScale);
+        }
+        return snowdesktop::SettingsActionResult::Success(domains);
+    }
+
+    snowdesktop::SettingsActionResult OnSettingsCommitted(
+        const snowdesktop::SettingsSnapshot& snapshot,
+        snowdesktop::SettingsDomain domains) override
+    {
+        using snowdesktop::HasSettingsDomain;
+        using snowdesktop::SettingsDomain;
+
+        if (HasSettingsDomain(domains, SettingsDomain::Personalization))
+        {
+            app_.personalizationSettings_ = snapshot.values.personalization;
+            app_.ApplyQuickNavigationAppearance();
+            app_.ApplyCollectionPopupAppearance();
+            app_.RefreshSystemTaskbarAppearance(false);
+            app_.InvalidateAllWidgetSlots();
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        {
+            app_.dockSettings_ = snapshot.values.dock;
+            NormalizeDockSettings(app_.dockSettings_);
+            app_.ApplyFloatingDockHotkey();
+            app_.UpdateLayoutWorkArea();
+            app_.LayoutItems();
+            app_.SaveLayoutSlots();
+            app_.InvalidateDragStaticScene();
+            app_.SyncSystemTaskbarSettingsFromWindows();
+            app_.RefreshSystemTaskbarAppearance(true);
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::Navigation))
+        {
+            app_.navigationSettings_ = snapshot.values.navigation;
+            app_.ApplyNavigationHotkey();
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::General))
+        {
+            const bool languageChanged = std::strcmp(
+                app_.generalSettings_.language,
+                snapshot.values.general.language) != 0;
+            app_.generalSettings_ = snapshot.values.general;
+            Locale::Instance().SetLanguage(app_.generalSettings_.language);
+            app_.SetSoftwareDesktopEnabled(
+                app_.generalSettings_.softwareDesktopEnabled, false);
+            app_.ApplyDesktopPassthroughHotkey();
+            app_.ApplyFloatingDockHotkey();
+            app_.ApplyQuickNavigationAppearance();
+            app_.ApplyCollectionPopupAppearance();
+            if (languageChanged)
+                app_.ApplyLanguageChange();
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::Category))
+        {
+            app_.categorySettings_ = snapshot.values.category;
+            NormalizeCategorySettings(app_.categorySettings_);
+            for (auto& container : app_.containers_)
+            {
+                if (auto* categories =
+                        dynamic_cast<FileCategories*>(container.get()))
+                    categories->InvalidateCategoryCache();
+                else if (auto* mapping =
+                             dynamic_cast<FolderMapping*>(container.get()))
+                    mapping->InvalidateFilterCache();
+                else if (auto* group =
+                             dynamic_cast<FileGroup*>(container.get()))
+                    group->InvalidateHostedView();
+            }
+        }
+        if (HasSettingsDomain(domains, SettingsDomain::Desktop))
+        {
+            const auto& desktop = snapshot.values.desktop;
+            app_.SetIconSpacing(desktop.iconSpacingScale);
+            app_.SetItemIconSize(desktop.itemIconSizeScale);
+            app_.SetItemFontSize(desktop.itemFontSizeCu);
+            app_.SetListItemFontSize(desktop.listItemFontSizeCu);
+            app_.SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
+                desktop.itemFontWeight));
+            app_.SetShortcutArrowMode(desktop.shortcutArrowMode);
+            app_.SetIconBeautifySettings(
+                desktop.iconBeautify,
+                snowdesktop::IconBeautifyUpdateKind::Commit);
+        }
+        if (app_.hwnd_)
+            InvalidateRect(app_.hwnd_, nullptr, TRUE);
+        return snowdesktop::SettingsActionResult::Success(domains);
+    }
+
+    snowdesktop::SettingsActionResult OnSettingsRouteChanged(
+        const snowdesktop::SettingsRoute&) override
+    {
+        return snowdesktop::SettingsActionResult::Success();
+    }
+
+    snowdesktop::SettingsActionResult Invoke(
+        const Request& request) override
+    {
+        switch (request.action)
+        {
+        case Action::ApplyLanguage:
+            app_.ApplyLanguageChange();
+            break;
+        case Action::RegisterHotkeys:
+            app_.ApplyNavigationHotkey();
+            app_.ApplyDesktopPassthroughHotkey();
+            app_.ApplyFloatingDockHotkey();
+            break;
+        case Action::ApplyDock:
+            app_.ApplyFloatingDockHotkey();
+            app_.UpdateLayoutWorkArea();
+            app_.LayoutItems();
+            break;
+        case Action::ApplyTaskbar:
+            app_.RefreshSystemTaskbarAppearance(true);
+            break;
+        case Action::ApplyDesktopLayout:
+            app_.UpdateLayoutWorkArea();
+            app_.LayoutItems();
+            app_.SaveLayoutSlots();
+            break;
+        case Action::ApplyCategories:
+            if (app_.hwnd_)
+                InvalidateRect(app_.hwnd_, nullptr, FALSE);
+            break;
+        case Action::RefreshDesktop:
+            app_.ReloadItems();
+            break;
+        case Action::RefreshWidgets:
+            if (app_.widgetEngine_)
+            {
+                for (const auto& widget : app_.widgets_)
+                {
+                    if (widget.type == DesktopWidgetType::LuaScript)
+                        app_.widgetEngine_->ReloadWidget(widget.id);
+                }
+            }
+            break;
+        case Action::AddWidgetToDesktop:
+        {
+            const size_t previousCount = app_.widgets_.size();
+            app_.AddLuaWidgetAt(POINT{ -32000, -32000 }, request.value);
+            if (app_.widgets_.size() == previousCount)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The widget could not be added to the desktop.");
+            }
+            break;
+        }
+        case Action::ReloadWidgetInstance:
+            if (!app_.widgetEngine_ ||
+                !app_.widgetEngine_->ReloadWidget(request.widgetInstanceId))
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The widget instance could not be reloaded.");
+            }
+            break;
+        case Action::RestartExplorer:
+            if (!RestartWindowsExplorer())
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"Windows Explorer could not be restarted.");
+            }
+            break;
+        case Action::RestartApplication:
+            app_.RequestRestart();
+            break;
+        case Action::ExitApplication:
+            app_.RequestExit();
+            break;
+        case Action::OpenDataDirectory:
+        {
+            const std::wstring path = GetDataDirectoryPath();
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    app_.controlHwnd_, L"open", path.c_str(),
+                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The data directory could not be opened.");
+            }
+            break;
+        }
+        case Action::ProbeHotkeyAvailability:
+            return snowdesktop::SettingsActionResult::Failure(
+                L"Hotkey probes require a typed capture target.");
+        }
+        return snowdesktop::SettingsActionResult::Success();
+    }
+
+private:
+    DesktopApp& app_;
+};
+
+void DesktopApp::InitializeSettingsController()
+{
+    settingsHostActions_ =
+        std::make_unique<SettingsHostActionsAdapter>(*this);
+    settingsController_ = std::make_unique<snowdesktop::SettingsController>(
+        snowdesktop::CreateNativeSettingsStore(),
+        settingsHostActions_.get());
+
+    const snowdesktop::SettingsActionResult result =
+        settingsController_->Initialize();
+    const auto snapshot = settingsController_->Snapshot();
+    if (snapshot && snapshot->initialized)
+    {
+        personalizationSettings_ = snapshot->values.personalization;
+        dockSettings_ = snapshot->values.dock;
+        navigationSettings_ = snapshot->values.navigation;
+        generalSettings_ = snapshot->values.general;
+        categorySettings_ = snapshot->values.category;
+    }
+    if (!result.Succeeded())
+    {
+        std::wstring message =
+            L"SettingsController initialized with recoverable load errors";
+        if (!result.message.empty())
+        {
+            message += L": ";
+            message += result.message;
+        }
+        WriteDiagnosticLogEntry(message.c_str());
+    }
+}
+
+void DesktopApp::ShowSettingsWindow(snowdesktop::SettingsRoute route)
+{
+    settingsWindowOpenRequest_.Request(std::move(route));
     TryShowPendingSettingsWindow();
 }
 
@@ -14,8 +279,28 @@ void DesktopApp::TryShowPendingSettingsWindow()
         !startupInitializationComplete_)
         return;
 
-    if (settingsWindow_ && settingsWindow_->Show())
+    const snowdesktop::SettingsRoute route =
+        settingsWindowOpenRequest_.Route();
+    bool shown = false;
+    if (settingsWindow_)
     {
+        switch (route.page)
+        {
+        case snowdesktop::SettingsPage::DockAndTaskbar:
+            shown = settingsWindow_->ShowDockSettings();
+            break;
+        case snowdesktop::SettingsPage::Personalization:
+            shown = settingsWindow_->ShowAppearanceSettings();
+            break;
+        default:
+            shown = settingsWindow_->Show();
+            break;
+        }
+    }
+    if (shown)
+    {
+        if (settingsController_)
+            (void)settingsController_->Open(route);
         settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
             KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
@@ -255,16 +540,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
 
 void DesktopApp::ApplyQuickNavigationAppearance()
 {
-    PersonalizationSettings globalAppearance;
-    if (settingsWindow_)
-    {
-        globalAppearance = settingsWindow_->GetPersonalization();
-    }
-    else
-    {
-        globalAppearance = PersonalizationSettings::DarkPreset();
-        LoadPersonalization(GetPersonalizationPath().c_str(), globalAppearance);
-    }
+    const PersonalizationSettings globalAppearance = CurrentPersonalization();
     const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
         ? AppearancePresetFromFourThemeSelection(
             generalSettings_.quickNavTheme)
@@ -286,17 +562,7 @@ void DesktopApp::ApplyQuickNavigationAppearance()
 
 void DesktopApp::ApplyCollectionPopupAppearance()
 {
-    PersonalizationSettings globalAppearance;
-    if (settingsWindow_)
-    {
-        globalAppearance = settingsWindow_->GetPersonalization();
-    }
-    else
-    {
-        globalAppearance = PersonalizationSettings::DarkPreset();
-        LoadPersonalization(
-            GetPersonalizationPath().c_str(), globalAppearance);
-    }
+    const PersonalizationSettings globalAppearance = CurrentPersonalization();
 
     const int selection =
         globalAppearance.backgroundPreset == kAppearancePresetCustom

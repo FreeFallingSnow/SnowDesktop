@@ -160,25 +160,21 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         ? GetRenderPointer() : app_->lastMousePoint_;
     const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
-    int globalContentTheme = 0;
-    if (app_->settingsWindow_)
-        globalContentTheme = app_->settingsWindow_->GetPersonalization().contentTheme;
+    const int globalContentTheme =
+        app_->CurrentPersonalization().contentTheme;
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
     float cornerRadiusCu = 12.0f;
-    PersonalizationSettings effectSettings = PersonalizationSettings::DarkPreset();
-    if (app_->settingsWindow_)
-    {
-        effectSettings = app_->settingsWindow_->GetPersonalization();
-        fillColor = D2D1::ColorF(effectSettings.widgetBgR, effectSettings.widgetBgG,
-            effectSettings.widgetBgB, effectSettings.widgetAlpha);
-        borderColor = D2D1::ColorF(effectSettings.widgetBorderR, effectSettings.widgetBorderG,
-            effectSettings.widgetBorderB, effectSettings.widgetBorderAlpha);
-        gradientEndA = effectSettings.gradientEndA;
-        cornerRadiusCu = effectSettings.cornerRadius;
-    }
+    PersonalizationSettings effectSettings =
+        app_->CurrentPersonalization();
+    fillColor = D2D1::ColorF(effectSettings.widgetBgR, effectSettings.widgetBgG,
+        effectSettings.widgetBgB, effectSettings.widgetAlpha);
+    borderColor = D2D1::ColorF(effectSettings.widgetBorderR, effectSettings.widgetBorderG,
+        effectSettings.widgetBorderB, effectSettings.widgetBorderAlpha);
+    gradientEndA = effectSettings.gradientEndA;
+    cornerRadiusCu = effectSettings.cornerRadius;
 
     bool customStyle = false;
     bool widgetOk = false;
@@ -220,7 +216,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         // 所有面板共享原生模糊半径；Lua 仅保留实例级毛玻璃开关。
         // 自定义风格组件保留文字颜色设置：优先组件级存储，其次使用全局值
-        if (customStyle && app_->settingsWindow_)
+        if (customStyle)
         {
             int ct = globalContentTheme;
             std::string stored = engine->RuntimeGetStorageValue(data_->id, "__contentTheme");
@@ -228,11 +224,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 ct = std::clamp(std::stoi(stored), 0, 1);
             effectSettings.contentTheme = ct;
         }
-        if (app_->settingsWindow_)
-        {
-            const auto& global = app_->settingsWindow_->GetPersonalization();
-            effectSettings.glassBlurRadius = global.glassBlurRadius;
-        }
+        effectSettings.glassBlurRadius =
+            app_->CurrentPersonalization().glassBlurRadius;
 
         if (widgetOk)
         {

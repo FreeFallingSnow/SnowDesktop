@@ -100,13 +100,7 @@ PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
     switch (rule.themeMode)
     {
     case SystemTaskbarThemeMode::FollowGlobal:
-        if (settingsWindow_)
-            result = settingsWindow_->GetPersonalization();
-        else
-        {
-            result = PersonalizationSettings::DarkPreset();
-            LoadPersonalization(GetPersonalizationPath().c_str(), result);
-        }
+        result = CurrentPersonalization();
         break;
     case SystemTaskbarThemeMode::Dark:
         result = MakeAppearancePreset(kAppearancePresetDark);

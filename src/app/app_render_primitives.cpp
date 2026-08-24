@@ -60,9 +60,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
 
     PersonalizationSettings p = effectSettings
         ? *effectSettings
-        : (settingsWindow_
-            ? settingsWindow_->GetPersonalization()
-            : PersonalizationSettings::DarkPreset());
+        : CurrentPersonalization();
     radius = std::max(0.0f, radius);
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {

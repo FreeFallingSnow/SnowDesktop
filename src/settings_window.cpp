@@ -883,7 +883,7 @@ void SettingsWindow::Shutdown()
         dockSettingsPreviewDirty_ = false;
         dockSettingsSaveRequested_ = false;
         if (dockSettingsChangedCallback_)
-            dockSettingsChangedCallback_();
+            dockSettingsChangedCallback_(dockSettings_);
     }
     layoutSpacingPreviewPending_ = false;
     layoutSpacingCommitPending_ = false;
@@ -897,7 +897,7 @@ void SettingsWindow::Shutdown()
         categorySettingsSaveRequested_ = false;
         categorySettingsSavedTick_ = GetTickCount();
         if (categorySettingsChangedCallback_)
-            categorySettingsChangedCallback_();
+            categorySettingsChangedCallback_(categorySettings_);
     }
     if (g_settingsWindow == this)
         g_settingsWindow = nullptr;
@@ -1152,6 +1152,8 @@ void SettingsWindow::Render()
     if (personalizationPreviewDirty_)
     {
         personalizationPreviewDirty_ = false;
+        if (personalizationPreviewChangedCallback_)
+            personalizationPreviewChangedCallback_(personalization_);
         if (invalidateCallback_)
             invalidateCallback_();
     }
@@ -1162,7 +1164,7 @@ void SettingsWindow::Render()
         personalizationDirty_ = false;
         personalizationSaveRequested_ = false;
         if (personalizationChangedCallback_)
-            personalizationChangedCallback_();
+            personalizationChangedCallback_(personalization_);
     }
 
     if (dockSettingsPreviewDirty_)
@@ -1178,7 +1180,7 @@ void SettingsWindow::Render()
         dockSettingsDirty_ = false;
         dockSettingsSaveRequested_ = false;
         if (dockSettingsChangedCallback_)
-            dockSettingsChangedCallback_();
+            dockSettingsChangedCallback_(dockSettings_);
     }
 
     if (navigationSettingsDirty_)
@@ -1186,7 +1188,7 @@ void SettingsWindow::Render()
         SaveNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
         navigationSettingsDirty_ = false;
         if (navigationSettingsChangedCallback_)
-            navigationSettingsChangedCallback_();
+            navigationSettingsChangedCallback_(navigationSettings_);
     }
 
     if (generalSettingsDirty_)
@@ -1194,7 +1196,7 @@ void SettingsWindow::Render()
         SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
         generalSettingsDirty_ = false;
         if (generalSettingsChangedCallback_)
-            generalSettingsChangedCallback_();
+            generalSettingsChangedCallback_(generalSettings_);
     }
 
     if (categorySettingsSaveRequested_ && categorySettingsDirty_)
@@ -1205,7 +1207,7 @@ void SettingsWindow::Render()
         categorySettingsSaveRequested_ = false;
         categorySettingsSavedTick_ = GetTickCount();
         if (categorySettingsChangedCallback_)
-            categorySettingsChangedCallback_();
+            categorySettingsChangedCallback_(categorySettings_);
     }
 
     // Exit confirmation modal
@@ -2596,12 +2598,13 @@ void SettingsWindow::DrawDisplayPage()
 
     auto markChanged = [&]() {
         if (displaySettingsChangedCallback_)
-            displaySettingsChangedCallback_();
+            displaySettingsChangedCallback_(GetDesktopDisplaySettings());
     };
 
     auto notifyIconBeautify = [&](snowdesktop::IconBeautifyUpdateKind updateKind) {
         if (iconBeautifySettingsChangedCallback_)
-            iconBeautifySettingsChangedCallback_(updateKind);
+            iconBeautifySettingsChangedCallback_(
+                iconBeautifySettings_, updateKind);
     };
     auto previewIconBeautify = [&]() {
         const auto action = snowdesktop::icon_beautify::

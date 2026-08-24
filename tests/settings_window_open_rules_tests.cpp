@@ -37,6 +37,8 @@ int main(int argc, char** argv)
     state.Request();
     Check(state.Pending() && state.RetryCount() == 0,
         "request becomes pending and resets retry count");
+    Check(state.Route().page == snowdesktop::SettingsPage::Home,
+        "default request targets the settings home page");
     Check(state.RecordFailure(3) && state.RetryCount() == 1,
         "first failure schedules a retry");
     Check(state.RecordFailure(3) && state.RetryCount() == 2,
@@ -46,9 +48,14 @@ int main(int argc, char** argv)
     Check(!state.RecordFailure(3) && state.Pending(),
         "retry exhaustion preserves the pending request");
 
-    state.Request();
+    snowdesktop::SettingsRoute widgetRoute;
+    widgetRoute.page = snowdesktop::SettingsPage::WidgetSettings;
+    widgetRoute.widgetInstanceId = L"widget-1";
+    state.Request(widgetRoute);
     Check(state.Pending() && state.RetryCount() == 0,
         "a new user request restores the retry budget");
+    Check(state.Route() == widgetRoute,
+        "a replacement request retains its typed route across retries");
     state.MarkShown();
     Check(!state.Pending() && state.RetryCount() == 0,
         "successful display clears pending state and retries");

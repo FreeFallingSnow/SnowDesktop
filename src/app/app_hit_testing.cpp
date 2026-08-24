@@ -123,9 +123,7 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     const float cellScale = GetWidgetCellScale(widget);
-    const auto personalization = settingsWindow_
-        ? settingsWindow_->GetPersonalization()
-        : PersonalizationSettings{};
+    const auto& personalization = CurrentPersonalization();
     const float barHeight = personalization.barHeight;
     const int handleHeight = ScaleWidgetCu(barHeight, cellScale);
     const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
@@ -153,7 +151,7 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
-    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
+    const float barHeight = CurrentPersonalization().barHeight;
     const int handleWidth = ScaleWidgetCu(barHeight, GetWidgetCellScale(widget));
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),

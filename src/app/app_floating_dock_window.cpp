@@ -351,11 +351,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 floatingDockSourceRect_);
     const int radius = std::max(1,
         static_cast<int>(std::round(
-            settingsWindow_
-                ? settingsWindow_->GetPersonalization().
-                    cornerRadius
-                : floatingDockPersonalization_.
-                    cornerRadius)));
+            floatingDockVisible_
+                ? floatingDockPersonalization_.cornerRadius
+                : CurrentPersonalization().cornerRadius)));
     constexpr int borderOverdraw = 2;
     HRGN windowRegion = CreateRoundRectRgn(
         dockLocal.left, dockLocal.top,

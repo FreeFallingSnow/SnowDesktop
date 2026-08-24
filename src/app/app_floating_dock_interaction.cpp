@@ -69,13 +69,7 @@ void DesktopApp::ShowFloatingDock(
                 lastMousePoint_);
     floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
-    if (settingsWindow_)
-        floatingDockPersonalization_ =
-            settingsWindow_->GetPersonalization();
-    else
-        LoadPersonalization(
-            GetPersonalizationPath().c_str(),
-            floatingDockPersonalization_);
+    floatingDockPersonalization_ = CurrentPersonalization();
     floatingDockVisible_ = true;
     floatingDockDesktopCopySuppressed_ = false;
     floatingDockLastPointerPresentTick_ = 0;

@@ -28,6 +28,7 @@
 #include "owned_transient_drag_target.h"
 #include "settings_window.h"
 #include "settings_window_open_rules.h"
+#include "settings_controller.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "display_topology_refresh.h"
@@ -1129,7 +1130,12 @@ private:
     void NormalizeDockRecycleBinPosition();
     size_t FindWidgetIndexById(const std::wstring& id) const;
     /** @brief 显示设置窗口。 */
-    void ShowSettingsWindow();
+    void ShowSettingsWindow(
+        snowdesktop::SettingsRoute route =
+            snowdesktop::SettingsRoute::ForPage(
+                snowdesktop::SettingsPage::Home));
+    /** Initialize the application-lifetime settings state owner. */
+    void InitializeSettingsController();
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
@@ -1164,8 +1170,8 @@ private:
     PersonalizationSettings ResolveSystemTaskbarAppearance(
         const DockSettings& settings) const
     {
-        PersonalizationSettings result = settings.systemTaskbarFollowPersonalization && settingsWindow_
-            ? settingsWindow_->GetPersonalization()
+        PersonalizationSettings result = settings.systemTaskbarFollowPersonalization
+            ? CurrentPersonalization()
             : settings.systemTaskbarAppearance;
         if (settings.systemTaskbarContentTheme >= 0)
             result.contentTheme = settings.systemTaskbarContentTheme;
@@ -1180,9 +1186,7 @@ private:
     /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */
     bool IsLightContentTheme() const
     {
-        if (settingsWindow_)
-            return settingsWindow_->GetPersonalization().contentTheme == 1;
-        return false;
+        return CurrentPersonalization().contentTheme == 1;
     }
     /** @brief 加载分类设置并刷新分类组件。 */
     void LoadCategorySettingsAndApply();
@@ -1193,13 +1197,13 @@ private:
     /** @brief 获取三类滚动分类组件共用的分类标签条高度。 */
     float GetCategorizedWidgetTabHeight() const
     {
-        return settingsWindow_
-            ? std::clamp(
-                settingsWindow_->GetPersonalization().
-                    categorizedTabHeight,
-                24.0f, 48.0f)
-            : 34.0f;
+        return std::clamp(
+            CurrentPersonalization().categorizedTabHeight,
+            24.0f, 48.0f);
     }
+    /** Application-owned appearance mirror, independent of settings UI. */
+    const PersonalizationSettings& CurrentPersonalization() const noexcept
+    { return personalizationSettings_; }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
     /** @brief 判断隐藏桌面时该点是否位于保留元素（组件/Dock）上。 */
@@ -2862,6 +2866,9 @@ private:
             snowdesktop::MenuQuickIcon::FontGlyph;
     };
     std::vector<std::unique_ptr<MenuIconEntry>> menuIconPool_;
+    class SettingsHostActionsAdapter;
+    std::unique_ptr<snowdesktop::SettingsHostActions> settingsHostActions_;
+    std::unique_ptr<snowdesktop::SettingsController> settingsController_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
@@ -2892,6 +2899,8 @@ private:
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;
+    PersonalizationSettings personalizationSettings_ =
+        PersonalizationSettings::DarkPreset();
     bool dockSettingsLayoutCommitPending_ = false;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
     bool quickNavLightTheme_ = false;

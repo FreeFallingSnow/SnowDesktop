@@ -26,6 +26,7 @@
 #include "../layout_spacing_rules.h"
 #include "icon_beautify.h"
 #include "constants.h"
+#include "desktop_display_settings.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -184,16 +185,21 @@ public:
      * @brief 设置导航设置变更回调
      * @param callback 无参回调，在导航设置被修改后触发
      */
-    void SetNavigationSettingsChangedCallback(std::function<void()> callback) { navigationSettingsChangedCallback_ = std::move(callback); }
+    void SetNavigationSettingsChangedCallback(
+        std::function<void(const NavigationSettings&)> callback)
+    { navigationSettingsChangedCallback_ = std::move(callback); }
 
-    void SetGeneralSettingsChangedCallback(std::function<void()> callback) { generalSettingsChangedCallback_ = std::move(callback); }
+    void SetGeneralSettingsChangedCallback(
+        std::function<void(const GeneralSettings&)> callback)
+    { generalSettingsChangedCallback_ = std::move(callback); }
 
     void SetLanguageChangedCallback(std::function<void()> callback) { languageChangedCallback_ = std::move(callback); }
 
     void SetDockEnabledChangedCallback(std::function<void(bool)> callback)
     { dockEnabledChangedCallback_ = std::move(callback); }
 
-    void SetDockSettingsChangedCallback(std::function<void()> callback)
+    void SetDockSettingsChangedCallback(
+        std::function<void(const DockSettings&)> callback)
     { dockSettingsChangedCallback_ = std::move(callback); }
 
     /**
@@ -215,8 +221,12 @@ public:
             std::move(callback);
     }
 
-    void SetPersonalizationChangedCallback(std::function<void()> callback)
+    void SetPersonalizationChangedCallback(
+        std::function<void(const PersonalizationSettings&)> callback)
     { personalizationChangedCallback_ = std::move(callback); }
+    void SetPersonalizationPreviewChangedCallback(
+        std::function<void(const PersonalizationSettings&)> callback)
+    { personalizationPreviewChangedCallback_ = std::move(callback); }
 
     void SyncDockEnabled(bool enabled) { dockEnabled_ = enabled; }
     void SyncSoftwareDesktopEnabled(bool enabled)
@@ -234,7 +244,9 @@ public:
     void SyncNavigationSettings(const NavigationSettings& settings)
     { navigationSettings_ = settings; }
 
-    void SetDisplaySettingsChangedCallback(std::function<void()> callback) { displaySettingsChangedCallback_ = std::move(callback); }
+    void SetDisplaySettingsChangedCallback(
+        std::function<void(const snowdesktop::DesktopDisplaySettings&)> callback)
+    { displaySettingsChangedCallback_ = std::move(callback); }
     void SetLayoutSpacingChangedCallback(
         std::function<void(float, bool)> callback)
     {
@@ -246,10 +258,13 @@ public:
         itemIconSizeChangedCallback_ = std::move(callback);
     }
     void SetIconBeautifySettingsChangedCallback(
-        std::function<void(snowdesktop::IconBeautifyUpdateKind)> callback)
+        std::function<void(const snowdesktop::IconBeautifySettings&,
+            snowdesktop::IconBeautifyUpdateKind)> callback)
     { iconBeautifySettingsChangedCallback_ = std::move(callback); }
 
-    void SetCategorySettingsChangedCallback(std::function<void()> callback) { categorySettingsChangedCallback_ = std::move(callback); }
+    void SetCategorySettingsChangedCallback(
+        std::function<void(const CategorySettings&)> callback)
+    { categorySettingsChangedCallback_ = std::move(callback); }
 
     /** @brief 设置从组件库向桌面添加 Lua 组件的回调。 */
     void SetAddWidgetToDesktopCallback(
@@ -345,6 +360,19 @@ public:
     int GetShortcutArrowMode() const { return shortcutArrowMode_; }
     const snowdesktop::IconBeautifySettings& GetIconBeautifySettings() const
     { return iconBeautifySettings_; }
+    snowdesktop::DesktopDisplaySettings GetDesktopDisplaySettings() const
+    {
+        snowdesktop::DesktopDisplaySettings settings;
+        settings.dockEnabled = dockEnabled_;
+        settings.iconSpacingScale = iconSpacingScale_;
+        settings.itemIconSizeScale = itemIconSizeScale_;
+        settings.itemFontSizeCu = itemFontSizeCu_;
+        settings.listItemFontSizeCu = listItemFontSizeCu_;
+        settings.itemFontWeight = static_cast<int>(itemFontWeight_);
+        settings.shortcutArrowMode = shortcutArrowMode_;
+        settings.iconBeautify = iconBeautifySettings_;
+        return settings;
+    }
 
     /** @} */
 
@@ -711,16 +739,19 @@ private:
     std::function<void(bool)> animationDiagnosticsToggleCallback_;
 
     /// 导航设置变更回调
-    std::function<void()> navigationSettingsChangedCallback_;
+    std::function<void(const NavigationSettings&)>
+        navigationSettingsChangedCallback_;
 
     /// 通用设置变更回调
-    std::function<void()> generalSettingsChangedCallback_;
+    std::function<void(const GeneralSettings&)>
+        generalSettingsChangedCallback_;
 
     std::function<void()> languageChangedCallback_;
 
     std::function<void(bool)> dockEnabledChangedCallback_;
 
-    std::function<void()> dockSettingsChangedCallback_;
+    std::function<void(const DockSettings&)>
+        dockSettingsChangedCallback_;
 
     /// 使用实际 RegisterHotKey 状态探测系统级占用。
     std::function<bool(HotkeySettingTarget, UINT, UINT)>
@@ -729,18 +760,24 @@ private:
     std::function<void(const DockSettings&)>
         dockSettingsPreviewChangedCallback_;
 
-    std::function<void()> personalizationChangedCallback_;
+    std::function<void(const PersonalizationSettings&)>
+        personalizationChangedCallback_;
+    std::function<void(const PersonalizationSettings&)>
+        personalizationPreviewChangedCallback_;
 
     /// 显示设置变更回调
-    std::function<void()> displaySettingsChangedCallback_;
+    std::function<void(const snowdesktop::DesktopDisplaySettings&)>
+        displaySettingsChangedCallback_;
     std::function<void(float, bool)> layoutSpacingChangedCallback_;
     std::function<void(float, bool)> itemIconSizeChangedCallback_;
     /// 图标美化预览/提交回调；false 仅刷新，true 持久化。
-    std::function<void(snowdesktop::IconBeautifyUpdateKind)>
+    std::function<void(const snowdesktop::IconBeautifySettings&,
+        snowdesktop::IconBeautifyUpdateKind)>
         iconBeautifySettingsChangedCallback_;
 
     /// 分类设置变更回调
-    std::function<void()> categorySettingsChangedCallback_;
+    std::function<void(const CategorySettings&)>
+        categorySettingsChangedCallback_;
 
     /// 从组件库卡片把指定包添加到桌面。
     std::function<bool(const std::wstring&)> addWidgetToDesktopCallback_;

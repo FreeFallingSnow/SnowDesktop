@@ -594,9 +594,7 @@ DesktopApp::RenderWidgetMenuPreview(
     std::unique_ptr<Widget> widget = CreateWidget(data, this);
     if (!widget) return {};
 
-    const PersonalizationSettings globalAppearance = settingsWindow_
-        ? settingsWindow_->GetPersonalization()
-        : PersonalizationSettings::DarkPreset();
+    const PersonalizationSettings globalAppearance = CurrentPersonalization();
     PersonalizationSettings stageAppearance = globalAppearance;
     bool customStyle = false;
     if (previewEngine)
@@ -736,9 +734,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         }
     }
 
-    const PersonalizationSettings appearance = settingsWindow_
-        ? settingsWindow_->GetPersonalization()
-        : PersonalizationSettings::DarkPreset();
+    const PersonalizationSettings appearance = CurrentPersonalization();
     const std::wstring appearanceKey =
         std::to_wstring(menuIconDpi_) + L":" +
         std::to_wstring(menuLightTheme_) + L":" +
@@ -1977,9 +1973,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
         case kContextDisplayAppearanceMore:
             needsDesktopFocus = false;
-            if (!settingsWindow_ ||
-                !settingsWindow_->ShowAppearanceSettings())
-                ShowSettingsWindow();
+            ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+                snowdesktop::SettingsPage::Personalization));
             break;
         case kContextPagePrev: NavigatePageOffset(-1); break;
         case kContextPageNext: NavigatePageOffset(1); break;

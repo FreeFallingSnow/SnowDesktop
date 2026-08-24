@@ -318,12 +318,7 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     }
 
     menuIconDpi_ = dpi;
-    PersonalizationSettings appearance;
-    if (settingsWindow_)
-        appearance = settingsWindow_->GetPersonalization();
-    else
-        LoadPersonalization(
-            GetPersonalizationPath().c_str(), appearance);
+    const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
         appearance.contextMenuStyle, 0, 4);
     switch (menuAppearanceStyle_)

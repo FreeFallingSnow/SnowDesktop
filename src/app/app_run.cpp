@@ -122,6 +122,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         Locale::Instance().Init(langDir.c_str());
     }
 
+    InitializeSettingsController();
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
@@ -181,6 +183,20 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     LoadDockSettingsAndApply();
     LoadDockUsageStats();
     LoadLayoutSlots();
+    if (settingsController_)
+    {
+        snowdesktop::DesktopDisplaySettings desktopSettings;
+        desktopSettings.dockEnabled = generalSettings_.dockEnabled;
+        desktopSettings.iconSpacingScale = iconSpacingScale_;
+        desktopSettings.itemIconSizeScale = itemIconSizeScale_;
+        desktopSettings.itemFontSizeCu = itemFontSizeCu_;
+        desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
+        desktopSettings.itemFontWeight = static_cast<int>(itemFontWeight_);
+        desktopSettings.shortcutArrowMode = shortcutArrowMode_;
+        desktopSettings.iconBeautify = iconBeautifySettings_;
+        (void)settingsController_->SynchronizeDesktop(
+            std::move(desktopSettings));
+    }
     UpdateLayoutWorkArea();
     displayTopologySignature_ = CaptureDisplayTopologySignature();
 
@@ -411,6 +427,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 UpdateWindow(hwnd_);
             }
         });
+        settingsWindow_->SetPersonalizationPreviewChangedCallback(
+            [this](const PersonalizationSettings& settings) {
+                personalizationSettings_ = settings;
+                if (settingsController_)
+                    (void)settingsController_->SynchronizePersonalization(
+                        settings);
+            });
         settingsWindow_->SetGlassStatusProvider([this]() {
             return GetGlassBackendStatusText();
         });
@@ -521,11 +544,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 }
                 return false;
             });
-        settingsWindow_->SetNavigationSettingsChangedCallback([this]() {
-            LoadNavigationSettingsAndApply();
+        settingsWindow_->SetNavigationSettingsChangedCallback(
+            [this](const NavigationSettings& settings) {
+            navigationSettings_ = settings;
+            if (settingsController_)
+                (void)settingsController_->SynchronizeNavigation(settings);
+            ApplyNavigationHotkey();
         });
-        settingsWindow_->SetGeneralSettingsChangedCallback([this]() {
+        settingsWindow_->SetGeneralSettingsChangedCallback(
+            [this](const GeneralSettings&) {
             LoadGeneralSettingsAndApply();
+            if (settingsController_)
+                (void)settingsController_->SynchronizeGeneral(
+                    generalSettings_);
             if (quickNavigationOpen_)
                 InvalidateQuickNavigationWindow();
         });
@@ -535,6 +566,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         settingsWindow_->SetDockEnabledChangedCallback([this](bool enabled) {
             if (generalSettings_.dockEnabled == enabled) return;
             generalSettings_.dockEnabled = enabled;
+            if (settingsController_)
+            {
+                (void)settingsController_->SynchronizeGeneral(
+                    generalSettings_);
+                auto desktop = settingsController_->Snapshot()->values.desktop;
+                desktop.dockEnabled = enabled;
+                (void)settingsController_->SynchronizeDesktop(
+                    std::move(desktop));
+            }
             ApplyFloatingDockHotkey();
             UpdateLayoutWorkArea();
             if (!enabled)
@@ -576,6 +616,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         dockSettings_.thicknessScale) > 0.0001f;
 
                 dockSettings_ = normalizedSettings;
+                if (settingsController_)
+                    (void)settingsController_->SynchronizeDock(
+                        dockSettings_);
                 ApplyFloatingDockHotkey();
                 dockSettingsLayoutCommitPending_ =
                     dockSettingsLayoutCommitPending_ ||
@@ -597,7 +640,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     }
                 }
             });
-        settingsWindow_->SetDockSettingsChangedCallback([this]() {
+        settingsWindow_->SetDockSettingsChangedCallback(
+            [this](const DockSettings&) {
             const DockPosition previousPosition = dockSettings_.position;
             const bool previousEdgeAttached = dockSettings_.edgeAttached;
             const bool previousFloatingShortcutMode =
@@ -612,6 +656,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const int previousSystemTaskbarAlignment =
                 dockSettings_.systemTaskbarAlignment;
             LoadDockSettingsAndApply();
+            if (settingsController_)
+                (void)settingsController_->SynchronizeDock(dockSettings_);
             if (dockSettingsLayoutCommitPending_ ||
                 dockSettings_.position != previousPosition ||
                 dockSettings_.edgeAttached != previousEdgeAttached ||
@@ -633,17 +679,25 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             dockSettingsLayoutCommitPending_ = false;
             if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
         });
-        settingsWindow_->SetPersonalizationChangedCallback([this]() {
+        settingsWindow_->SetPersonalizationChangedCallback(
+            [this](const PersonalizationSettings& settings) {
+            personalizationSettings_ = settings;
+            if (settingsController_)
+                (void)settingsController_->SynchronizePersonalization(
+                    settings);
             RefreshSystemTaskbarAppearance(false);
         });
-        settingsWindow_->SetDisplaySettingsChangedCallback([this]() {
-            SetIconSpacing(settingsWindow_->GetIconSpacingScale());
-            SetItemIconSize(settingsWindow_->GetItemIconSizeScale());
-            SetItemFontSize(settingsWindow_->GetItemFontSizeCu());
-            SetListItemFontSize(
-                settingsWindow_->GetListItemFontSizeCu());
-            SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(settingsWindow_->GetItemFontWeightD())));
-            SetShortcutArrowMode(settingsWindow_->GetShortcutArrowMode());
+        settingsWindow_->SetDisplaySettingsChangedCallback(
+            [this](const snowdesktop::DesktopDisplaySettings& settings) {
+            SetIconSpacing(settings.iconSpacingScale);
+            SetItemIconSize(settings.itemIconSizeScale);
+            SetItemFontSize(settings.itemFontSizeCu);
+            SetListItemFontSize(settings.listItemFontSizeCu);
+            SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
+                settings.itemFontWeight));
+            SetShortcutArrowMode(settings.shortcutArrowMode);
+            if (settingsController_)
+                (void)settingsController_->SynchronizeDesktop(settings);
         });
         settingsWindow_->SetLayoutSpacingChangedCallback(
             [this](float spacingScale, bool commit) {
@@ -651,6 +705,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     SetIconSpacing(spacingScale);
                 else
                     PreviewIconSpacing(spacingScale);
+                if (settingsController_)
+                {
+                    auto desktop =
+                        settingsController_->Snapshot()->values.desktop;
+                    desktop.iconSpacingScale = spacingScale;
+                    (void)settingsController_->SynchronizeDesktop(
+                        std::move(desktop));
+                }
             });
         settingsWindow_->SetItemIconSizeChangedCallback(
             [this](float iconSizeScale, bool commit) {
@@ -658,14 +720,35 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     SetItemIconSize(iconSizeScale);
                 else
                     PreviewItemIconSize(iconSizeScale);
+                if (settingsController_)
+                {
+                    auto desktop =
+                        settingsController_->Snapshot()->values.desktop;
+                    desktop.itemIconSizeScale = iconSizeScale;
+                    (void)settingsController_->SynchronizeDesktop(
+                        std::move(desktop));
+                }
             });
         settingsWindow_->SetIconBeautifySettingsChangedCallback(
-            [this](snowdesktop::IconBeautifyUpdateKind updateKind) {
+            [this](const snowdesktop::IconBeautifySettings& settings,
+                snowdesktop::IconBeautifyUpdateKind updateKind) {
                 SetIconBeautifySettings(
-                    settingsWindow_->GetIconBeautifySettings(), updateKind);
+                    settings, updateKind);
+                if (settingsController_)
+                {
+                    auto desktop =
+                        settingsController_->Snapshot()->values.desktop;
+                    desktop.iconBeautify = settings;
+                    (void)settingsController_->SynchronizeDesktop(
+                        std::move(desktop));
+                }
             });
-        settingsWindow_->SetCategorySettingsChangedCallback([this]() {
+        settingsWindow_->SetCategorySettingsChangedCallback(
+            [this](const CategorySettings&) {
             LoadCategorySettingsAndApply();
+            if (settingsController_)
+                (void)settingsController_->SynchronizeCategory(
+                    categorySettings_);
         });
         settingsWindow_->SetAddWidgetToDesktopCallback(
             [this](const std::wstring& packageId) {

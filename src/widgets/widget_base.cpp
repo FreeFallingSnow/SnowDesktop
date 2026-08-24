@@ -129,8 +129,8 @@ int Widget::Cu(float value) const
 
 float Widget::GetBarHeight() const
 {
-    if (app_ && app_->settingsWindow_)
-        return app_->settingsWindow_->GetPersonalization().barHeight;
+    if (app_)
+        return app_->CurrentPersonalization().barHeight;
     return 24.0f;
 }
 
@@ -354,8 +354,8 @@ RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
     const int handleHeight = Cu(GetBarHeight());
-    const float cornerRadius = app_ && app_->settingsWindow_
-        ? app_->settingsWindow_->GetPersonalization().cornerRadius
+    const float cornerRadius = app_
+        ? app_->CurrentPersonalization().cornerRadius
         : 12.0f;
     const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
         Cu(cornerRadius), handleHeight, Cu(4.0f), Cu(2.0f));
@@ -778,9 +778,8 @@ float ScrollingItemWidget::
 bool ScrollingItemWidget::
     ShowCategoryTabItemCounts() const
 {
-    if (app_ && app_->settingsWindow_)
-        return app_->settingsWindow_->GetPersonalization().
-            showCategoryTabCounts;
+    if (app_)
+        return app_->CurrentPersonalization().showCategoryTabCounts;
     return true;
 }
 
@@ -2417,9 +2416,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         gradientEndA = guideAppearance.gradientEndA;
         cornerRadiusCu = guideAppearance.cornerRadius;
     }
-    else if (app_->settingsWindow_)
+    else if (app_)
     {
-        const auto& p = app_->settingsWindow_->GetPersonalization();
+        const auto& p = app_->CurrentPersonalization();
         fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
         borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
         gradientEndA = p.gradientEndA;
