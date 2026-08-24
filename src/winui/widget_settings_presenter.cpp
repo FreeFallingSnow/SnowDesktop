@@ -528,7 +528,7 @@ struct WidgetSettingsPresenter::Impl
         control.editors.Orientation(muxc::Orientation::Horizontal);
         control.editors.Spacing(12.0);
         control.editors.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
+            mux::HorizontalAlignment::Stretch);
         control.slider = muxc::Slider{};
         control.slider.Minimum(0.0);
         control.slider.Maximum(1.0);
@@ -631,6 +631,7 @@ struct WidgetSettingsPresenter::Impl
         followGlobal = muxc::ToggleSwitch{};
         followGlobal.HorizontalAlignment(mux::HorizontalAlignment::Right);
         followGlobalRow.Initialize(followGlobal);
+        followGlobalRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         appearanceCard.content.Children().Append(followGlobalRow.root);
 
         appearanceTheme = muxc::ComboBox{};
@@ -698,11 +699,13 @@ struct WidgetSettingsPresenter::Impl
         glassEnabled = muxc::ToggleSwitch{};
         glassEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         glassRow.Initialize(glassEnabled);
+        glassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         customAppearanceHost.Children().Append(glassRow.root);
 
         acrylicEnabled = muxc::ToggleSwitch{};
         acrylicEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         acrylicRow.Initialize(acrylicEnabled);
+        acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         customAppearanceHost.Children().Append(acrylicRow.root);
 
         contentTheme = muxc::ComboBox{};
@@ -723,7 +726,11 @@ struct WidgetSettingsPresenter::Impl
         restoreScriptDefault = muxc::Button{};
         restoreScriptDefault.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
+        restoreScriptDefault.VerticalAlignment(
+            mux::VerticalAlignment::Center);
         restoreScriptDefaultRow.Initialize(restoreScriptDefault);
+        restoreScriptDefaultRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         stylePreviewCard.content.Children().Append(
             restoreScriptDefaultRow.root);
         root.Children().Append(stylePreviewCard.root);
@@ -738,7 +745,9 @@ struct WidgetSettingsPresenter::Impl
         InitializeCard(resetCard);
         reset = muxc::Button{};
         reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        reset.VerticalAlignment(mux::VerticalAlignment::Center);
         resetRow.Initialize(reset);
+        resetRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         resetCard.content.Children().Append(resetRow.root);
         root.Children().Append(resetCard.root);
 
@@ -909,6 +918,10 @@ struct WidgetSettingsPresenter::Impl
             if (schema.collapsible)
             {
                 group.expander = muxc::Expander{};
+                group.expander.HorizontalAlignment(
+                    mux::HorizontalAlignment::Stretch);
+                group.expander.HorizontalContentAlignment(
+                    mux::HorizontalAlignment::Stretch);
                 muxc::StackPanel header;
                 header.Spacing(2.0);
                 muxc::TextBlock title;
@@ -1117,7 +1130,7 @@ struct WidgetSettingsPresenter::Impl
         field.numericEditors.Orientation(muxc::Orientation::Horizontal);
         field.numericEditors.Spacing(12.0);
         field.numericEditors.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
+            mux::HorizontalAlignment::Stretch);
         field.slider = muxc::Slider{};
         field.slider.Minimum(minimum);
         field.slider.Maximum(maximum);

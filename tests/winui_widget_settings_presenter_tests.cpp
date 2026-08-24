@@ -97,7 +97,7 @@ void TestNativeControlMapping(
     }
 }
 
-void TestResponsiveFieldRows(
+void TestSingleLineFieldRows(
     const std::string& source,
     const std::string& sharedControls)
 {
@@ -109,16 +109,23 @@ void TestResponsiveFieldRows(
               "field.editorHost.Children().Append(",
               "field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right)",
               "field.opaqueActions.HorizontalAlignment(",
+              "field.numericEditors.HorizontalAlignment(",
+              "mux::HorizontalAlignment::Stretch);",
+              "followGlobalRow.SetControlAlignment(",
+              "restoreScriptDefault.VerticalAlignment(",
+              "reset.VerticalAlignment(mux::VerticalAlignment::Center)",
+              "group.expander.HorizontalContentAlignment(",
               "field.content.Children().Append(field.validation)",
               "field.content.Children().Append(field.diagnostic)"}),
-        "widget fields use the shared left-description/right-editor row and keep validation below it");
+        "widget fields keep full-width editors and validation while compact controls and reset actions align right and group expanders stretch");
     Check(ContainsAll(sharedControls, {
               "kSettingControlWidth = 520.0",
-              "kStackedSettingThreshold = 760.0",
-              "muxc::Grid::SetColumn(currentControl, 1)",
-              "muxc::Grid::SetRow(currentControl, 1)",
-              "args.NewSize().Width < kStackedSettingThreshold"}),
-        "shared setting rows retain wide two-column and narrow stacked layouts");
+              "muxc::Grid::SetColumn(controlHost, 1)",
+              "void SetControlAlignment("}) &&
+            sharedControls.find("kStackedSettingThreshold") ==
+                std::string::npos &&
+            sharedControls.find("root.SizeChanged(") == std::string::npos,
+        "shared setting rows permanently retain a single-line two-column layout");
 }
 
 void TestPopupColorEditing(
@@ -377,7 +384,7 @@ int main(int argc, char** argv)
         "widget settings presenter sources are readable");
     TestPublicContract(header);
     TestNativeControlMapping(source, sharedControls);
-    TestResponsiveFieldRows(source, sharedControls);
+    TestSingleLineFieldRows(source, sharedControls);
     TestPopupColorEditing(source, sharedControls);
     TestOpaqueChannels(source);
     TestSnapshotAndAsyncSafety(source);

@@ -471,8 +471,9 @@ struct DockPagePresenter::Impl
 
         InitializeCard(enableCard, cardStyle, dockEnableRoot);
         dockEnabledToggle = muxc::ToggleSwitch{};
-        dockEnabledToggle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        dockEnabledToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         dockEnabledRow.Initialize(dockEnabledToggle);
+        dockEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         enableCard.content.Children().Append(dockEnabledRow.root);
 
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
@@ -504,13 +505,19 @@ struct DockPagePresenter::Impl
                  showFrequentItemsToggle,
                  keepWhenDesktopHiddenToggle})
         {
-            toggle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         }
         floatingShortcutHint = NewHint();
         floatingEdgeSwipeHint = NewHint();
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         showFrequentItemsRow.Initialize(showFrequentItemsToggle);
+        floatingEdgeSwipeRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        showWindowsButtonRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        showFrequentItemsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         InitializeContinuousControl(frequentItemCount,
             ContinuousField::FrequentItemCount, 1.0, 8.0, 1.0);
         // Floating shortcut mode/hotkey is rendered once by General.
@@ -524,21 +531,29 @@ struct DockPagePresenter::Impl
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
         taskbarAutoHideToggle = muxc::ToggleSwitch{};
         taskbarAutoHideToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         taskbarAlignmentCombo = NewCombo();
         windowsSystemThemeCombo = NewCombo();
         taskbarAutoHideRow.Initialize(taskbarAutoHideToggle);
+        taskbarAutoHideRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         taskbarAlignmentRow.Initialize(taskbarAlignmentCombo);
         restartExplorerHint = NewHint();
         restartExplorerButton = muxc::Button{};
         restartExplorerButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
+        restartExplorerButton.VerticalAlignment(
+            mux::VerticalAlignment::Center);
         muxc::StackPanel systemThemeActions{};
         systemThemeActions.Orientation(muxc::Orientation::Horizontal);
+        systemThemeActions.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
         systemThemeActions.Spacing(8.0);
         systemThemeActions.Children().Append(windowsSystemThemeCombo);
         systemThemeActions.Children().Append(restartExplorerButton);
         windowsSystemThemeRow.Initialize(systemThemeActions);
+        windowsSystemThemeRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarAutoHideRow.root);
         taskbarCard.content.Children().Append(taskbarAlignmentRow.root);
         taskbarCard.content.Children().Append(windowsSystemThemeRow.root);
@@ -569,8 +584,13 @@ struct DockPagePresenter::Impl
             ContinuousField::TaskbarBlurRadius, 4.0, 48.0, 1.0);
         taskbarGlassToggle = muxc::ToggleSwitch{};
         taskbarAcrylicToggle = muxc::ToggleSwitch{};
+        taskbarGlassToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        taskbarAcrylicToggle.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
         taskbarGlassRow.Initialize(taskbarGlassToggle);
         taskbarAcrylicRow.Initialize(taskbarAcrylicToggle);
+        taskbarGlassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        taskbarAcrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCustomCard.content.Children().Append(taskbarBackgroundColor.root);
         taskbarCustomCard.content.Children().Append(taskbarBorderColor.root);
         taskbarCustomCard.content.Children().Append(taskbarBackgroundAlpha.root);
@@ -625,6 +645,7 @@ struct DockPagePresenter::Impl
         control.slider.Minimum(minimum);
         control.slider.Maximum(maximum);
         control.slider.StepFrequency(step);
+        control.slider.VerticalAlignment(mux::VerticalAlignment::Center);
         control.slider.Width(
             std::isfinite(defaultValue) ? 220.0
             : field == ContinuousField::FrequentItemCount ? 280.0
@@ -650,6 +671,7 @@ struct DockPagePresenter::Impl
         if (std::isfinite(defaultValue))
         {
             control.reset = muxc::Button{};
+            control.reset.VerticalAlignment(mux::VerticalAlignment::Center);
             control.editors.Children().Append(control.reset);
         }
         control.row.Initialize(control.editors);
@@ -704,11 +726,12 @@ struct DockPagePresenter::Impl
     {
         InitializeCard(control.card, cardStyle, taskbarRoot);
         control.enabled = muxc::ToggleSwitch{};
-        control.enabled.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        control.enabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         control.theme = NewCombo();
         control.contentTheme = NewCombo();
         control.member = member;
         control.enabledRow.Initialize(control.enabled);
+        control.enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         control.details = muxc::StackPanel{};
         control.details.Spacing(12.0);
         control.themeRow.Initialize(control.theme);
@@ -729,12 +752,16 @@ struct DockPagePresenter::Impl
             ContinuousField::TaskbarBorderAlpha,
             0.0, 100.0, 1.0, member);
         control.glass = muxc::ToggleSwitch{};
+        control.glass.HorizontalAlignment(mux::HorizontalAlignment::Right);
         control.glassRow.Initialize(control.glass);
+        control.glassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         InitializeContinuousControl(control.blurRadius,
             ContinuousField::TaskbarBlurRadius,
             4.0, 48.0, 1.0, member);
         control.acrylic = muxc::ToggleSwitch{};
+        control.acrylic.HorizontalAlignment(mux::HorizontalAlignment::Right);
         control.acrylicRow.Initialize(control.acrylic);
+        control.acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         control.customAppearance.Children().Append(
             control.backgroundColor.root);
         control.customAppearance.Children().Append(control.borderColor.root);

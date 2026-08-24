@@ -66,6 +66,7 @@ struct HotkeySettingRow
         recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         reset = muxc::Button{};
         reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        reset.VerticalAlignment(mux::VerticalAlignment::Center);
         muxc::Grid::SetColumn(reset, 1);
         actions.Children().Append(recorder.Root());
         actions.Children().Append(reset);
@@ -184,16 +185,19 @@ struct GeneralPagePresenter::Impl
         InitializeCard(startupCard, cardStyle, root);
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         softwareDesktopToggle = muxc::ToggleSwitch{};
         softwareDesktopToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         doubleClickHideToggle = muxc::ToggleSwitch{};
         doubleClickHideToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         autoStartRow.Initialize(autoStartToggle);
         softwareDesktopRow.Initialize(softwareDesktopToggle);
         doubleClickHideRow.Initialize(doubleClickHideToggle);
+        autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        softwareDesktopRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        doubleClickHideRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         startupCard.content.Children().Append(autoStartRow.root);
         portableStartupConflict = muxc::InfoBar{};
         portableStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
@@ -221,8 +225,10 @@ struct GeneralPagePresenter::Impl
         InitializeCard(quickNavigationCard, cardStyle, root);
         quickNavigationToggle = muxc::ToggleSwitch{};
         quickNavigationToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         quickNavigationToggleRow.Initialize(quickNavigationToggle);
+        quickNavigationToggleRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         quickNavigationCard.content.Children().Append(
             quickNavigationToggleRow.root);
         quickNavigationHotkeyLabel = muxc::TextBlock{};
@@ -233,8 +239,10 @@ struct GeneralPagePresenter::Impl
         InitializeCard(pageNavigationCard, cardStyle, root);
         pageNavigationToggle = muxc::ToggleSwitch{};
         pageNavigationToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         pageNavigationToggleRow.Initialize(pageNavigationToggle);
+        pageNavigationToggleRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         pageNavigationCard.content.Children().Append(
             pageNavigationToggleRow.root);
         previousPageHotkeyLabel = muxc::TextBlock{};
@@ -249,11 +257,13 @@ struct GeneralPagePresenter::Impl
         InitializeCard(desktopPassthroughCard, cardStyle, root);
         desktopPassthroughToggle = muxc::ToggleSwitch{};
         desktopPassthroughToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         desktopPassthroughHint = muxc::TextBlock{};
         desktopPassthroughHint.Opacity(0.72);
         desktopPassthroughHint.TextWrapping(mux::TextWrapping::Wrap);
         desktopPassthroughToggleRow.Initialize(desktopPassthroughToggle);
+        desktopPassthroughToggleRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         desktopPassthroughCard.content.Children().Append(
             desktopPassthroughToggleRow.root);
         desktopPassthroughHotkeyLabel = muxc::TextBlock{};
@@ -266,11 +276,13 @@ struct GeneralPagePresenter::Impl
         InitializeCard(floatingDockCard, cardStyle, dockShortcutRoot);
         floatingDockToggle = muxc::ToggleSwitch{};
         floatingDockToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         floatingDockHint = muxc::TextBlock{};
         floatingDockHint.Opacity(0.72);
         floatingDockHint.TextWrapping(mux::TextWrapping::Wrap);
         floatingDockToggleRow.Initialize(floatingDockToggle);
+        floatingDockToggleRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         floatingDockCard.content.Children().Append(floatingDockToggleRow.root);
         floatingDockHotkeyLabel = muxc::TextBlock{};
         floatingDockHotkeyRow.Initialize(floatingDockHotkey);

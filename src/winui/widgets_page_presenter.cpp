@@ -534,6 +534,7 @@ struct WidgetsPagePresenter::Impl
     {
         expander = muxc::Expander{};
         expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         muxc::StackPanel header;
         header.Spacing(3.0);
         muxc::TextBlock title;
@@ -583,23 +584,24 @@ struct WidgetsPagePresenter::Impl
         managementActions.Orientation(muxc::Orientation::Horizontal);
         managementActions.Spacing(8.0);
         managementActions.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
 
         installFileButton = muxc::Button{};
-        installFileButton.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        installFileButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         installFileButton.UseSystemFocusVisuals(true);
         managementActions.Children().Append(installFileButton);
 
         workshopButton = muxc::Button{};
-        workshopButton.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        workshopButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         workshopButton.UseSystemFocusVisuals(true);
         managementActions.Children().Append(workshopButton);
 
         selfDevelopButton = muxcp::ToggleButton{};
-        selfDevelopButton.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        selfDevelopButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         selfDevelopButton.UseSystemFocusVisuals(true);
         managementActions.Children().Append(selfDevelopButton);
         managementRow.Initialize(managementActions);
+        managementRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         searchCard.content.Children().Append(managementRow.root);
 
         workshopHint = MakeSecondaryText(L"");
@@ -616,7 +618,7 @@ struct WidgetsPagePresenter::Impl
         filterActions = muxc::StackPanel{};
         filterActions.Orientation(muxc::Orientation::Horizontal);
         filterActions.Spacing(8.0);
-        filterActions.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        filterActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         allFilterButton = muxcp::ToggleButton{};
         installedFilterButton = muxcp::ToggleButton{};
         developmentFilterButton = muxcp::ToggleButton{};
@@ -624,7 +626,7 @@ struct WidgetsPagePresenter::Impl
                  installedFilterButton, developmentFilterButton})
         {
             button.UseSystemFocusVisuals(true);
-            button.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            button.HorizontalAlignment(mux::HorizontalAlignment::Right);
             filterActions.Children().Append(button);
         }
         searchCard.content.Children().Append(filterActions);
@@ -643,7 +645,7 @@ struct WidgetsPagePresenter::Impl
         taskStatus = muxc::TextBlock{};
         taskStatus.TextWrapping(mux::TextWrapping::Wrap);
         cancelTaskButton = muxc::Button{};
-        cancelTaskButton.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        cancelTaskButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         cancelTaskButton.UseSystemFocusVisuals(true);
         taskPanel.Children().Append(taskRing);
         taskPanel.Children().Append(taskProgress);
@@ -684,7 +686,7 @@ struct WidgetsPagePresenter::Impl
         agentSkillActions.Orientation(muxc::Orientation::Horizontal);
         agentSkillActions.Spacing(8.0);
         agentSkillActions.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         agentSkillApplyButton = muxc::Button{};
         agentSkillApplyButton.UseSystemFocusVisuals(true);
         ApplyAccentButtonStyle(agentSkillApplyButton);
@@ -693,6 +695,8 @@ struct WidgetsPagePresenter::Impl
         agentSkillActions.Children().Append(agentSkillApplyButton);
         agentSkillActions.Children().Append(agentSkillRefreshButton);
         agentSkillActionsRow.Initialize(agentSkillActions);
+        agentSkillActionsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         developerOverridesCard.content.Children().Append(
             agentSkillActionsRow.root);
         agentSkillRows = muxc::StackPanel{};
@@ -711,8 +715,10 @@ struct WidgetsPagePresenter::Impl
         openDevelopmentFolderButton = muxc::Button{};
         openDevelopmentFolderButton.UseSystemFocusVisuals(true);
         openDevelopmentFolderButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         developmentWorkspaceRow.Initialize(openDevelopmentFolderButton);
+        developmentWorkspaceRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         developerWorkspaceCard.content.Children().Append(
             developmentWorkspaceRow.root);
         developmentWorkspacePath = MakeSecondaryText(L"");
@@ -730,7 +736,7 @@ struct WidgetsPagePresenter::Impl
         publishWorkspaceButton.UseSystemFocusVisuals(true);
         ApplyAccentButtonStyle(publishWorkspaceButton);
         publishWorkspaceButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         developerPublishCard.content.Children().Append(
             publishWorkspaceButton);
 
@@ -767,7 +773,7 @@ struct WidgetsPagePresenter::Impl
         developerErrorActions.Orientation(muxc::Orientation::Horizontal);
         developerErrorActions.Spacing(8.0);
         developerErrorActions.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         copyAllErrorsButton = muxc::Button{};
         copyAllErrorsButton.UseSystemFocusVisuals(true);
         clearAllErrorsButton = muxc::Button{};
@@ -775,6 +781,8 @@ struct WidgetsPagePresenter::Impl
         developerErrorActions.Children().Append(copyAllErrorsButton);
         developerErrorActions.Children().Append(clearAllErrorsButton);
         developerErrorActionsRow.Initialize(developerErrorActions);
+        developerErrorActionsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         developerToolsCard.content.Children().Append(
             developerErrorActionsRow.root);
         developerErrorRows = muxc::StackPanel{};
@@ -793,13 +801,15 @@ struct WidgetsPagePresenter::Impl
         copyDiagnosticsButton = muxc::Button{};
         copyDiagnosticsButton.UseSystemFocusVisuals(true);
         copyDiagnosticsButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         developerDiagnosticActionsRow.Initialize(copyDiagnosticsButton);
+        developerDiagnosticActionsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         developerToolsCard.content.Children().Append(
             developerDiagnosticActionsRow.root);
         developerRefreshButton = muxc::Button{};
         developerRefreshButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         developerRefreshButton.UseSystemFocusVisuals(true);
         developerDiagnosticRows = muxc::StackPanel{};
         developerDiagnosticRows.Spacing(8.0);
@@ -827,7 +837,7 @@ struct WidgetsPagePresenter::Impl
         debugRuntimeCard.root.UseSystemFocusVisuals(true);
         debugRefreshButton = muxc::Button{};
         debugRefreshButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
+            mux::HorizontalAlignment::Right);
         debugRefreshButton.UseSystemFocusVisuals(true);
         debugRuntimeCard.content.Children().Append(debugRefreshButton);
         debugDiagnosticRows = muxc::StackPanel{};
@@ -1343,7 +1353,8 @@ struct WidgetsPagePresenter::Impl
     {
         muxc::Button button;
         button.Content(winrt::box_value(text));
-        button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        button.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        button.VerticalAlignment(mux::VerticalAlignment::Center);
         button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         button.UseSystemFocusVisuals(true);
         SetAutomation(button, text, help);
@@ -1492,6 +1503,7 @@ struct WidgetsPagePresenter::Impl
     {
         muxc::Expander row;
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         row.IsExpanded(true);
         muxc::StackPanel header;
         header.Spacing(3.0);
@@ -1519,7 +1531,7 @@ struct WidgetsPagePresenter::Impl
             muxc::ToggleSwitch development;
             development.IsOn(package.developmentOverrideActive);
             development.HorizontalAlignment(
-                mux::HorizontalAlignment::Stretch);
+                mux::HorizontalAlignment::Right);
             development.UseSystemFocusVisuals(true);
             SetAutomation(development,
                 L("app.settings.widgets_development",
@@ -1542,6 +1554,8 @@ struct WidgetsPagePresenter::Impl
                 developerRevokers);
             presenter_controls::SettingRow developmentRow;
             developmentRow.Initialize(development, 180.0);
+            developmentRow.SetControlAlignment(
+                mux::HorizontalAlignment::Right);
             developmentRow.SetText(L(
                     "app.settings.widgets_development",
                     L"Development version"),
@@ -1578,6 +1592,7 @@ struct WidgetsPagePresenter::Impl
     {
         muxc::Expander row;
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         muxc::StackPanel header;
         header.Spacing(3.0);
         muxc::TextBlock name;
@@ -1651,7 +1666,7 @@ struct WidgetsPagePresenter::Impl
             muxc::Button reload = MakeActionButton(
                 L("app.settings.reload", L"Reload"),
                 diagnostic.instanceId);
-            reload.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            reload.HorizontalAlignment(mux::HorizontalAlignment::Right);
             reload.Width(96.0);
             reload.IsEnabled(static_cast<bool>(
                 actions.reloadWidgetInstance));
@@ -1733,6 +1748,7 @@ struct WidgetsPagePresenter::Impl
             muxc::CheckBox selected;
             selected.IsChecked(skill.selected);
             selected.IsEnabled(static_cast<bool>(actions.invoke));
+            selected.HorizontalAlignment(mux::HorizontalAlignment::Right);
             selected.UseSystemFocusVisuals(true);
             const std::wstring label = AgentSkillTargetLabel(skill.kind);
             const std::wstring stateAndPath = JoinMetadata(
@@ -1759,6 +1775,7 @@ struct WidgetsPagePresenter::Impl
                 developerRevokers);
             presenter_controls::SettingRow row;
             row.Initialize(selected, 180.0);
+            row.SetControlAlignment(mux::HorizontalAlignment::Right);
             row.SetText(label, stateAndPath);
             agentSkillRows.Children().Append(row.root);
             if (!firstDeveloperOverrideTarget)
@@ -1799,7 +1816,7 @@ struct WidgetsPagePresenter::Impl
             value.UseSystemFocusVisuals(true);
             muxc::Button copy = MakeActionButton(L(
                 "app.settings.widgets_copy_command", L"Copy"));
-            copy.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            copy.HorizontalAlignment(mux::HorizontalAlignment::Right);
             muxc::StackPanel controls;
             controls.Orientation(muxc::Orientation::Horizontal);
             controls.Spacing(8.0);
@@ -1943,6 +1960,8 @@ struct WidgetsPagePresenter::Impl
         muxc::Expander permissionsExpander;
         permissionsExpander.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        permissionsExpander.HorizontalContentAlignment(
+            mux::HorizontalAlignment::Stretch);
         muxc::TextBlock permissionHeader;
         const std::wstring permissionState =
             PermissionStateText(package.permissionState);
@@ -2037,6 +2056,8 @@ struct WidgetsPagePresenter::Impl
         muxc::Expander instancesExpander;
         instancesExpander.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        instancesExpander.HorizontalContentAlignment(
+            mux::HorizontalAlignment::Stretch);
         muxc::TextBlock header;
         header.Text(L("settings.widget.fields", L"Widget settings"));
         header.FontWeight(
@@ -2045,10 +2066,12 @@ struct WidgetsPagePresenter::Impl
 
         muxc::StackPanel rows;
         rows.Spacing(7.0);
+        rows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         for (const WidgetInstanceSnapshot& instance : package.instances)
         {
             muxc::StackPanel row;
             row.Spacing(4.0);
+            row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             muxc::TextBlock name;
             name.Text(instance.displayName.empty()
                     ? instance.instanceId
@@ -2097,6 +2120,7 @@ struct WidgetsPagePresenter::Impl
 
         muxc::Expander advanced;
         advanced.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        advanced.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         advanced.Header(winrt::box_value(L(
             "app.settings.widgets_advanced", L"Advanced Options")));
         muxc::StackPanel actionsPanel;
@@ -2147,11 +2171,15 @@ struct WidgetsPagePresenter::Impl
         {
             muxc::Expander versions;
             versions.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            versions.HorizontalContentAlignment(
+                mux::HorizontalAlignment::Stretch);
             versions.Header(winrt::box_value(L(
                 "app.settings.widgets_old_versions",
                 L"Restorable Older Versions")));
             muxc::StackPanel versionRows;
             versionRows.Spacing(6.0);
+            versionRows.HorizontalAlignment(
+                mux::HorizontalAlignment::Stretch);
             for (const auto& restorable : package.restorableVersions)
             {
                 muxc::Button restore = makeCommand(
@@ -2194,6 +2222,7 @@ struct WidgetsPagePresenter::Impl
     {
         muxc::Expander row;
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         row.IsExpanded(true);
 
         muxc::StackPanel header;
@@ -2258,6 +2287,8 @@ struct WidgetsPagePresenter::Impl
                 body.Children().Append(MakeSecondaryText(failure.error));
             muxc::StackPanel failureActions;
             failureActions.Orientation(muxc::Orientation::Horizontal);
+            failureActions.HorizontalAlignment(
+                mux::HorizontalAlignment::Right);
             failureActions.Spacing(8.0);
             muxc::Button retry = MakeActionButton(L(
                 "app.settings.widgets_retry_install", L"Retry install"));
@@ -2324,6 +2355,7 @@ struct WidgetsPagePresenter::Impl
                 installedRevokers);
             presenter_controls::SettingRow enabledRow;
             enabledRow.Initialize(enabledAction, 180.0);
+            enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
             enabledRow.SetText(
                 L("app.settings.widgets_enabled", L"Enabled"),
                 PackageStateText(package));
@@ -2377,6 +2409,8 @@ struct WidgetsPagePresenter::Impl
                 installedRevokers);
             presenter_controls::SettingRow developmentRow;
             developmentRow.Initialize(developmentAction, 300.0);
+            developmentRow.SetControlAlignment(
+                mux::HorizontalAlignment::Right);
             developmentRow.SetText(L(
                     "app.settings.widgets_development",
                     L"Development version"),
@@ -2561,6 +2595,7 @@ struct WidgetsPagePresenter::Impl
     {
         muxc::Expander expander;
         expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         muxc::StackPanel header;
         header.Spacing(3.0);
         muxc::TextBlock name;

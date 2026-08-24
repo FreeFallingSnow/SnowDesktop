@@ -159,8 +159,18 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("controls::SettingRow migrationActionRow") !=
                 std::string::npos &&
             source.find("row.settingRow.Initialize(buttons)") !=
+                std::string::npos &&
+            source.find("migrationActionRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("row.settingRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find(
+              "button.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
-        "wide backup rows align descriptions left and controls right while the shared row stacks them when narrow");
+        "backup rows remain single-line description/control layouts with compact actions right-aligned and vertically centered");
     Check(source.find("app.settings.save_current_layout") !=
                 std::string::npos &&
             source.find("layoutActions.Children().Append(layoutName)") !=
@@ -175,6 +185,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("layoutName.Text(L\"\")") != std::string::npos,
         "layout backup section reproduces the legacy label, input/save/open row, compact list and successful-name reset");
     Check(source.find("muxc::Grid fullActions") !=
+                std::string::npos &&
+            source.find(
+              "fullActions.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find("column.Width(mux::GridLengthHelper::Auto())") !=
                 std::string::npos &&
             source.find("fullActions.ColumnDefinitions().Append(column)") !=
                 std::string::npos &&

@@ -300,17 +300,20 @@ struct PersonalizationPagePresenter::Impl
         customCard.content.Children().Append(borderAlpha.row.root);
 
         gradientToggle = muxc::ToggleSwitch{};
-        gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         gradientToggleRow.Initialize(gradientToggle);
+        gradientToggleRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         customCard.content.Children().Append(gradientToggleRow.root);
         customCard.content.Children().Append(gradientEndAlpha.row.root);
 
         glassToggle = muxc::ToggleSwitch{};
-        glassToggle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        glassToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         acrylicToggle = muxc::ToggleSwitch{};
-        acrylicToggle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        acrylicToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         glassRow.Initialize(glassToggle);
         acrylicRow.Initialize(acrylicToggle);
+        glassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         customCard.content.Children().Append(glassRow.root);
         customCard.content.Children().Append(blurRadius.row.root);
         customCard.content.Children().Append(acrylicRow.root);
@@ -348,8 +351,10 @@ struct PersonalizationPagePresenter::Impl
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         showCategoryTabCountsToggle = muxc::ToggleSwitch{};
         showCategoryTabCountsToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
+            mux::HorizontalAlignment::Right);
         showCategoryCountsRow.Initialize(showCategoryTabCountsToggle);
+        showCategoryCountsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         layoutCard.content.Children().Append(showCategoryCountsRow.root);
     }
 
@@ -417,6 +422,7 @@ struct PersonalizationPagePresenter::Impl
         if (std::isfinite(defaultValue))
         {
             control.reset = muxc::Button{};
+            control.reset.VerticalAlignment(mux::VerticalAlignment::Center);
             control.editors.Children().Append(control.reset);
         }
         control.row.Initialize(control.editors);

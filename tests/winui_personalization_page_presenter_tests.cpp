@@ -89,6 +89,22 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("kAppearancePresetCustom") != std::string::npos,
         "all seven global appearance presets remain selectable");
+    Check(source.find(
+              "gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "glassToggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find("glassRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("acrylicRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("showCategoryCountsRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find(
+              "control.reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos,
+        "compact personalization toggles align right and every inline default reset is vertically centered");
     Check(source.find("control.editor.Close()") != std::string::npos &&
             controls.find("picker.ColorChanged(colorToken)") !=
                 std::string::npos &&

@@ -155,6 +155,28 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("SelectionChanged(control.themeToken)") !=
                 std::string::npos,
         "Close revokes custom appearance, continuous, and dynamic rule events");
+    Check(source.find(
+              "dockEnabledToggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "toggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find("taskbarAutoHideRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("taskbarGlassRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("control.enabledRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("control.glassRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("control.acrylicRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("systemThemeActions.HorizontalAlignment(") !=
+                std::string::npos &&
+            source.find(
+              "control.reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos,
+        "Dock toggles and compact action groups align right while every inline default reset is vertically centered");
 }
 } // namespace
 

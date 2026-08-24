@@ -75,7 +75,8 @@ void InitializeCard(
 muxc::Button NewButton()
 {
     muxc::Button button{};
-    button.HorizontalAlignment(mux::HorizontalAlignment::Left);
+    button.HorizontalAlignment(mux::HorizontalAlignment::Right);
+    button.VerticalAlignment(mux::VerticalAlignment::Center);
     button.UseSystemFocusVisuals(true);
     muxc::TextBlock label{};
     label.TextAlignment(mux::TextAlignment::Center);
@@ -347,28 +348,24 @@ struct BackupDataPagePresenter::Impl
         fullBackupCard.description.Visibility(mux::Visibility::Collapsed);
         muxc::Grid fullActions{};
         fullActions.ColumnSpacing(8.0);
+        fullActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         for (int index = 0; index < 3; ++index)
         {
             muxc::ColumnDefinition column{};
-            column.Width(mux::GridLengthHelper::FromValueAndType(
-                1.0, mux::GridUnitType::Star));
+            column.Width(mux::GridLengthHelper::Auto());
             fullActions.ColumnDefinitions().Append(column);
         }
         createFullBackupButton = NewButton();
         importFullBackupButton = NewButton();
         openFullBackupDirectoryButton = NewButton();
-        createFullBackupButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
-        importFullBackupButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
-        openFullBackupDirectoryButton.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
         muxc::Grid::SetColumn(importFullBackupButton, 1);
         muxc::Grid::SetColumn(openFullBackupDirectoryButton, 2);
         fullActions.Children().Append(createFullBackupButton);
         fullActions.Children().Append(importFullBackupButton);
         fullActions.Children().Append(openFullBackupDirectoryButton);
         fullBackupActionsRow.Initialize(fullActions);
+        fullBackupActionsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         noFullBackups = NewEmptyMessage();
         noFullBackups.MinHeight(48.0);
         noFullBackups.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -385,6 +382,8 @@ struct BackupDataPagePresenter::Impl
         migrationCard.description.Visibility(mux::Visibility::Collapsed);
         migrateButton = NewButton();
         migrationActionRow.Initialize(migrateButton);
+        migrationActionRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         migrationCard.content.Children().Append(migrationActionRow.root);
     }
 
@@ -596,12 +595,15 @@ struct BackupDataPagePresenter::Impl
 
             muxc::StackPanel buttons{};
             buttons.Orientation(muxc::Orientation::Horizontal);
+            buttons.HorizontalAlignment(mux::HorizontalAlignment::Right);
             buttons.Spacing(8.0);
             row.restore = NewButton();
             row.remove = NewButton();
             buttons.Children().Append(row.restore);
             buttons.Children().Append(row.remove);
             row.settingRow.Initialize(buttons);
+            row.settingRow.SetControlAlignment(
+                mux::HorizontalAlignment::Right);
             row.item.Content(row.settingRow.root);
 
             const std::wstring id = row.entry.id;
@@ -657,6 +659,7 @@ struct BackupDataPagePresenter::Impl
 
             muxc::StackPanel buttons{};
             buttons.Orientation(muxc::Orientation::Horizontal);
+            buttons.HorizontalAlignment(mux::HorizontalAlignment::Right);
             buttons.Spacing(8.0);
             row.restore = NewButton();
             row.exportArchive = NewButton();
@@ -667,6 +670,8 @@ struct BackupDataPagePresenter::Impl
             buttons.Children().Append(row.open);
             buttons.Children().Append(row.remove);
             row.settingRow.Initialize(buttons);
+            row.settingRow.SetControlAlignment(
+                mux::HorizontalAlignment::Right);
             row.item.Content(row.settingRow.root);
 
             const std::wstring id = row.entry.id;

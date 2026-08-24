@@ -91,6 +91,18 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     /** Keep the root transparent only while the Island backdrop is active. */
     void SetSystemBackdropActive(bool active) noexcept;
 
+    /**
+     * Reserve the system AppWindow title-bar metrics inside the XAML Island.
+     * AppWindow reports physical pixels; rasterizationScale converts them to
+     * the device-independent units consumed by XAML.
+     */
+    void SetIntegratedTitleBarLayout(
+        bool active,
+        int heightPixels,
+        int leftInsetPixels,
+        int rightInsetPixels,
+        double rasterizationScale) noexcept;
+
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
     void SetCancelOperationCallback(CancelOperationCallback callback);
@@ -282,6 +294,7 @@ private:
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
+    bool integratedTitleBarActive_ = false;
     bool closed_ = false;
 
     winrt::event_token selectionChangedToken_{};

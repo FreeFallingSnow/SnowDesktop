@@ -364,7 +364,16 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto dismissHide = sharedControls.find("flyout.Hide();",
         dismissStart);
     Check(sharedControls.find("struct SettingRow") != std::string::npos &&
-            sharedControls.find("kStackedSettingThreshold") !=
+            sharedControls.find("kSettingControlWidth = 520.0") !=
+                std::string::npos &&
+            sharedControls.find("muxc::Grid::SetColumn(controlHost, 1)") !=
+                std::string::npos &&
+            sharedControls.find("void SetControlAlignment(") !=
+                std::string::npos &&
+            sharedControls.find("kStackedSettingThreshold") ==
+                std::string::npos &&
+            sharedControls.find("root.SizeChanged(") == std::string::npos &&
+            sharedControls.find("Grid::SetRow(currentControl, 1)") ==
                 std::string::npos &&
             sharedControls.find("struct ColorFlyoutEditor") !=
                 std::string::npos &&
@@ -391,7 +400,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "settings rows adapt between two-column and stacked layouts and every color focus target is a compact transactional swatch that rolls back before asynchronous dismissal");
+        "settings rows remain single-line left-description/right-editor layouts and every color focus target is a compact transactional swatch that rolls back before asynchronous dismissal");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");
@@ -416,6 +425,20 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find("floatingHotkeyVirtualKey = 'D'") !=
                 std::string::npos &&
             presenter.find("actions.Children().Append(reset)") !=
+                std::string::npos &&
+            presenter.find(
+              "reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            presenter.find(
+              "autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            presenter.find("quickNavigationToggleRow.SetControlAlignment(") !=
+                std::string::npos &&
+            presenter.find("pageNavigationToggleRow.SetControlAlignment(") !=
+                std::string::npos &&
+            presenter.find("desktopPassthroughToggleRow.SetControlAlignment(") !=
+                std::string::npos &&
+            presenter.find("floatingDockToggleRow.SetControlAlignment(") !=
                 std::string::npos &&
             recorderRules.find(
               "virtualKey == KeyBack || virtualKey == KeyDelete") !=

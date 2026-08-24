@@ -238,6 +238,7 @@ struct NumericEditor
         if (std::isfinite(defaultValue))
         {
             reset = muxc::Button{};
+            reset.VerticalAlignment(mux::VerticalAlignment::Center);
             muxc::Grid::SetColumn(reset, 2);
             editors.Children().Append(reset);
         }
@@ -749,6 +750,8 @@ struct DesktopPagePresenter::Impl
         categorizedTabHeight->SetUnit(L"cu");
         tabFontSize->SetUnit(L"cu");
         showCategoryTabCounts = muxc::ToggleSwitch{};
+        showCategoryTabCounts.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
         categoryLayoutCard.content.Children().Append(
             categorizedTabHeight->root);
         categoryLayoutCard.content.Children().Append(tabFontSize->root);
@@ -757,6 +760,7 @@ struct DesktopPagePresenter::Impl
         InitializeCard(beautifyCard, cardStyle, appearanceRoot);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         beautifyEnabled = muxc::ToggleSwitch{};
+        beautifyEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         beautifyAdvanced = muxc::StackPanel{};
         beautifyAdvanced.Spacing(12.0);
         beautifyCard.content.Children().Append(beautifyAdvanced);
@@ -776,7 +780,10 @@ struct DesktopPagePresenter::Impl
             });
         backgroundOpacity->SetUnit(L"%");
         gradientEnabled = muxc::ToggleSwitch{};
+        gradientEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         gradientEnabledRow.Initialize(gradientEnabled);
+        gradientEnabledRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         backgroundEnd = MakeBeautifyColor(
             [](IconBeautifySettings& settings,
                const winrt::Windows::UI::Color& color) {
@@ -834,7 +841,9 @@ struct DesktopPagePresenter::Impl
         }
 
         filterEnabled = muxc::ToggleSwitch{};
+        filterEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         filterEnabledRow.Initialize(filterEnabled);
+        filterEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         filterDetails = muxc::StackPanel{};
         filterDetails.Spacing(12.0);
         filterTint = MakeBeautifyColor(
@@ -855,7 +864,9 @@ struct DesktopPagePresenter::Impl
                     static_cast<float>(value / 100.0);
             });
         outlineEnabled = muxc::ToggleSwitch{};
+        outlineEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         outlineEnabledRow.Initialize(outlineEnabled);
+        outlineEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         outlineDetails = muxc::StackPanel{};
         outlineDetails.Spacing(12.0);
         outlineWidth = MakeBeautifyNumber(0.0, 4.0, 0.1, 1,
@@ -932,12 +943,17 @@ struct DesktopPagePresenter::Impl
 
         muxc::StackPanel categoryActions{};
         categoryActions.Orientation(muxc::Orientation::Horizontal);
+        categoryActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         categoryActions.Spacing(8.0);
         applyCategory = muxc::Button{};
         restoreCategory = muxc::Button{};
+        applyCategory.VerticalAlignment(mux::VerticalAlignment::Center);
+        restoreCategory.VerticalAlignment(mux::VerticalAlignment::Center);
         categoryActions.Children().Append(applyCategory);
         categoryActions.Children().Append(restoreCategory);
         categoryActionsRow.Initialize(categoryActions);
+        categoryActionsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         categoryRulesCard.content.Children().Append(saveCategoryHeading);
         categoryRulesCard.content.Children().Append(categoryActionsRow.root);
         categoryStatus = muxc::TextBlock{};

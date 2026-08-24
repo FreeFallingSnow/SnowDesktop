@@ -124,6 +124,27 @@ void TestPresenterContract(const std::filesystem::path& root)
             source.find("categoryActionsRow.Initialize(categoryActions)") !=
                 std::string::npos,
         "category name/delete, add, and save actions retain legacy row alignment");
+    Check(source.find(
+              "gradientEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "filterEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "outlineEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            source.find(
+              "categoryActions.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "restoreCategory.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            source.find("categoryActionsRow.SetControlAlignment(") !=
+                std::string::npos,
+        "desktop toggles and action groups align right while inline restore buttons remain vertically centered");
 }
 }
 

@@ -122,6 +122,11 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos,
         "legacy development, rollback, publishing and Workshop actions are capability-gated host seams");
 
+    const auto packageRowStart = source.find("void AddPackageRow(");
+    const auto packageRowEnd = source.find("void RequestUninstall(",
+        packageRowStart);
+    const auto packageContentStretch = source.find(
+        "row.HorizontalContentAlignment(", packageRowStart);
     Check(source.find("presenter_controls::SettingRow managementRow") !=
                 std::string::npos &&
             source.find("presenter_controls::SettingRow enabledRow") !=
@@ -134,8 +139,35 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             source.find("developmentFilterButton.Visibility") !=
                 std::string::npos &&
-            source.find("PackageFilter::BuiltIn") == std::string::npos,
-        "legacy My Components toolbar, filter tags, included group and responsive setting rows are retained");
+            source.find("PackageFilter::BuiltIn") == std::string::npos &&
+            source.find("managementRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("enabledRow.SetControlAlignment(") !=
+                std::string::npos,
+        "legacy My Components toolbar, filter tags, included group and single-line right-aligned setting rows are retained");
+    Check(packageRowStart != std::string::npos &&
+            packageRowEnd != std::string::npos &&
+            packageContentStretch != std::string::npos &&
+            packageContentStretch < packageRowEnd &&
+            source.find("permissionsExpander.HorizontalContentAlignment(") !=
+                std::string::npos &&
+            source.find("instancesExpander.HorizontalContentAlignment(") !=
+                std::string::npos &&
+            source.find("advanced.HorizontalContentAlignment(") !=
+                std::string::npos &&
+            source.find("versions.HorizontalContentAlignment(") !=
+                std::string::npos &&
+            source.find("expander.HorizontalContentAlignment(") !=
+                std::string::npos &&
+            source.find(
+              "button.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            source.find("failureActions.HorizontalAlignment(") !=
+                std::string::npos,
+        "package and nested Expander content stretches across each card while natural-width actions align at the right edge");
 
     Check(header.find("WidgetsPageRequest request)> invoke") !=
                 std::string::npos &&

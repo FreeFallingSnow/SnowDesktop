@@ -325,7 +325,11 @@ void SettingsShell::RefreshLocalizedText()
     if (closed_)
         return;
 
-    NavigationRoot().PaneTitle(Localize("settings.shell.title"));
+    const std::wstring shellTitle = Localize("settings.shell.title");
+    IntegratedTitleBarText().Text(shellTitle);
+    NavigationRoot().PaneTitle(
+        integratedTitleBarActive_ ? winrt::hstring{}
+                                  : winrt::hstring{shellTitle});
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     PersonalizationItem().Content(
@@ -345,6 +349,8 @@ void SettingsShell::RefreshLocalizedText()
 
     muxa::AutomationProperties::SetName(
         NavigationRoot(), Localize("settings.shell.title"));
+    muxa::AutomationProperties::SetName(
+        IntegratedTitleBarHost(), shellTitle);
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
     muxa::AutomationProperties::SetName(
@@ -417,6 +423,66 @@ void SettingsShell::SetSystemBackdropActive(bool active) noexcept
         try
         {
             ShellRoot().Background(solidFallbackBackground_);
+        }
+        catch (...)
+        {
+        }
+    }
+}
+
+void SettingsShell::SetIntegratedTitleBarLayout(
+    bool active,
+    int heightPixels,
+    int leftInsetPixels,
+    int rightInsetPixels,
+    double rasterizationScale) noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    try
+    {
+        integratedTitleBarActive_ = active;
+        if (!active)
+        {
+            IntegratedTitleBarHost().Visibility(mux::Visibility::Collapsed);
+            IntegratedTitleBarHost().Height(0.0);
+            TitleBarLeftInsetColumn().Width(
+                mux::GridLengthHelper::FromPixels(0.0));
+            TitleBarRightInsetColumn().Width(
+                mux::GridLengthHelper::FromPixels(0.0));
+            NavigationRoot().PaneTitle(Localize("settings.shell.title"));
+            return;
+        }
+
+        const double scale = rasterizationScale > 0.0
+            ? rasterizationScale
+            : 1.0;
+        const double height =
+            std::max(1.0, static_cast<double>(heightPixels) / scale);
+        const double leftInset = std::max(
+            0.0, static_cast<double>(leftInsetPixels) / scale);
+        const double rightInset = std::max(
+            0.0, static_cast<double>(rightInsetPixels) / scale);
+
+        IntegratedTitleBarHost().Height(height);
+        TitleBarLeftInsetColumn().Width(
+            mux::GridLengthHelper::FromPixels(leftInset));
+        TitleBarRightInsetColumn().Width(
+            mux::GridLengthHelper::FromPixels(rightInset));
+        IntegratedTitleBarHost().Visibility(mux::Visibility::Visible);
+        NavigationRoot().PaneTitle(winrt::hstring{});
+    }
+    catch (...)
+    {
+        // A decoration failure must not prevent the settings surface from
+        // using the native title-bar fallback.
+        integratedTitleBarActive_ = false;
+        try
+        {
+            IntegratedTitleBarHost().Visibility(mux::Visibility::Collapsed);
+            IntegratedTitleBarHost().Height(0.0);
+            NavigationRoot().PaneTitle(Localize("settings.shell.title"));
         }
         catch (...)
         {
