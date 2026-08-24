@@ -170,6 +170,23 @@ public:
         const WidgetHostAppearancePatch& appearance,
         const std::vector<WidgetSettingOrdinaryWrite>& writes) = 0;
 
+    /**
+     * Applies a transient transaction to the live runtime without writing the
+     * persistent storage file. Successive previews for the same guarded
+     * widget are accumulated until CommitPreview or RevertPreview.
+     */
+    virtual WidgetSettingsBackendResult PreviewHostAppearanceTransaction(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& appearance,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes) = 0;
+    virtual WidgetSettingsBackendResult CommitPreview(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard) = 0;
+    virtual WidgetSettingsBackendResult RevertPreview(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard) = 0;
+
     virtual WidgetSettingsBackendResult SetSecret(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,
@@ -294,6 +311,9 @@ public:
     WidgetSettingMutationResult SetOrdinary(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         const InteractionValue& value);
+    WidgetSettingMutationResult PreviewOrdinary(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        const InteractionValue& value);
     WidgetSettingMutationResult SetSearchQuery(
         const WidgetSettingMutationGuard& guard, std::string_view key,
         std::string query);
@@ -313,6 +333,13 @@ public:
     WidgetSettingMutationResult UpdateHostAppearance(
         const WidgetSettingMutationGuard& guard,
         const WidgetHostAppearancePatch& patch);
+    WidgetSettingMutationResult PreviewHostAppearance(
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& patch);
+    WidgetSettingMutationResult CommitPreview(
+        const WidgetSettingMutationGuard& guard);
+    WidgetSettingMutationResult RevertPreview(
+        const WidgetSettingMutationGuard& guard);
     WidgetSettingMutationResult Reset(
         const WidgetSettingMutationGuard& guard);
 

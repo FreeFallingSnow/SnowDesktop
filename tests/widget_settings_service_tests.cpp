@@ -55,6 +55,8 @@ public:
     WidgetSettingsBackendDescriptor descriptor;
     std::map<std::string, InteractionValue, std::less<>> ordinary;
     std::map<std::string, std::string, std::less<>> searchQueries;
+    std::map<std::string, InteractionValue, std::less<>> persistedOrdinary;
+    std::map<std::string, std::string, std::less<>> persistedSearchQueries;
     std::map<std::string, WidgetSettingOpaqueState, std::less<>> opaque;
     std::vector<WidgetSettingOrdinaryWrite> lastWrites;
     std::vector<std::vector<WidgetSettingOrdinaryWrite>> transactions;
@@ -78,6 +80,16 @@ public:
     int secretCalls = 0;
     int handleCalls = 0;
     int referenceCalls = 0;
+    int previewCalls = 0;
+    int persistCalls = 0;
+    int revertCalls = 0;
+    bool previewActive = false;
+    bool applyingPreview = false;
+    std::map<std::string, InteractionValue, std::less<>> previewOrdinary;
+    std::map<std::string, std::string, std::less<>> previewSearchQueries;
+    WidgetHostAppearanceState previewAppearance;
+    WidgetHostAppearanceState persistedAppearance;
+    std::vector<std::string> mutationOrder;
 
     const WidgetSettingFieldSchema* FindSchema(
         std::string_view key) const
@@ -205,7 +217,86 @@ public:
                 }
             }
         }
+        if (!applyingPreview && mutationResult.Succeeded())
+        {
+            ++persistCalls;
+            persistedOrdinary = ordinary;
+            persistedSearchQueries = searchQueries;
+            persistedAppearance = descriptor.hostAppearance;
+            mutationOrder.push_back("persist");
+        }
         return mutationResult;
+    }
+
+    WidgetSettingsBackendResult PreviewHostAppearanceTransaction(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& appearance,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes) override
+    {
+        if (guard.widgetId != descriptor.widgetId ||
+            guard.generation != descriptor.generation ||
+            widget.widgetId != descriptor.widgetId ||
+            widget.packageId != descriptor.packageId ||
+            widget.generation != descriptor.generation)
+            return { WidgetSettingsBackendStatus::StaleSnapshot,
+                "staleSnapshot", {} };
+        if (!previewActive)
+        {
+            previewOrdinary = ordinary;
+            previewSearchQueries = searchQueries;
+            previewAppearance = descriptor.hostAppearance;
+            previewActive = true;
+        }
+        ++previewCalls;
+        mutationOrder.push_back("preview");
+        applyingPreview = true;
+        const auto result = ApplyHostAppearanceTransaction(
+            widget, guard, appearance, writes);
+        applyingPreview = false;
+        return result;
+    }
+
+    WidgetSettingsBackendResult CommitPreview(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard) override
+    {
+        if (guard.widgetId != descriptor.widgetId ||
+            guard.generation != descriptor.generation ||
+            widget.widgetId != descriptor.widgetId ||
+            widget.packageId != descriptor.packageId ||
+            widget.generation != descriptor.generation)
+            return { WidgetSettingsBackendStatus::StaleSnapshot,
+                "staleSnapshot", {} };
+        if (!previewActive) return Ok(false);
+        ++persistCalls;
+        persistedOrdinary = ordinary;
+        persistedSearchQueries = searchQueries;
+        persistedAppearance = descriptor.hostAppearance;
+        previewActive = false;
+        mutationOrder.push_back("commitPreview");
+        return Ok();
+    }
+
+    WidgetSettingsBackendResult RevertPreview(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard) override
+    {
+        if (guard.widgetId != descriptor.widgetId ||
+            guard.generation != descriptor.generation ||
+            widget.widgetId != descriptor.widgetId ||
+            widget.packageId != descriptor.packageId ||
+            widget.generation != descriptor.generation)
+            return { WidgetSettingsBackendStatus::StaleSnapshot,
+                "staleSnapshot", {} };
+        if (!previewActive) return Ok(false);
+        ordinary = previewOrdinary;
+        searchQueries = previewSearchQueries;
+        descriptor.hostAppearance = previewAppearance;
+        previewActive = false;
+        ++revertCalls;
+        mutationOrder.push_back("revertPreview");
+        return Ok();
     }
 
     WidgetSettingsBackendResult SetSecret(
@@ -478,6 +569,81 @@ int main()
             Find(*loaded.snapshot, "appSearch")->searchQuery ==
                 "initial query",
         "appSearch snapshots read the separate persisted searchKey value");
+
+    FakeBackend transientBackend = MakeBackend();
+    transientBackend.ordinary["scale"] =
+        MakeWidgetSettingNumber(1.0);
+    transientBackend.persistedOrdinary = transientBackend.ordinary;
+    transientBackend.descriptor.customStyle = true;
+    transientBackend.persistedAppearance =
+        transientBackend.descriptor.hostAppearance;
+    WidgetSettingsService transientService(transientBackend);
+    auto transientLoad = transientService.Load(L"widget-1");
+    const auto originalTransientGuard =
+        WidgetSettingMutationGuard::FromSnapshot(*transientLoad.snapshot);
+    const auto transientPreview = transientService.PreviewOrdinary(
+        originalTransientGuard, "scale", MakeWidgetSettingNumber(1.5));
+    auto transientSnapshot = transientService.Snapshot(L"widget-1");
+    Check(transientPreview.status == WidgetSettingMutationStatus::Applied &&
+            transientSnapshot &&
+            Find(*transientSnapshot, "scale")->currentValue.number == 1.5 &&
+            transientBackend.ordinary["scale"].number == 1.5 &&
+            transientBackend.persistedOrdinary["scale"].number == 1.0 &&
+            transientBackend.persistCalls == 0 &&
+            transientBackend.previewActive,
+        "numeric preview is visible in the live snapshot without persisting storage");
+    const auto stalePreviewDecision = transientService.RevertPreview(
+        originalTransientGuard);
+    Check(stalePreviewDecision.status ==
+                WidgetSettingMutationStatus::StaleSnapshot &&
+            transientBackend.previewActive &&
+            transientBackend.ordinary["scale"].number == 1.5,
+        "an old preview guard cannot commit or revert a newer revision");
+    auto transientGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *transientSnapshot);
+    const auto transientCommit =
+        transientService.CommitPreview(transientGuard);
+    Check(transientCommit.status == WidgetSettingMutationStatus::Applied &&
+            !transientBackend.previewActive &&
+            transientBackend.persistCalls == 1 &&
+            transientBackend.persistedOrdinary["scale"].number == 1.5 &&
+            transientBackend.mutationOrder ==
+                std::vector<std::string>{"preview", "commitPreview"},
+        "preview commit atomically persists the live value after preview publication");
+
+    transientSnapshot = transientService.Snapshot(L"widget-1");
+    transientGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *transientSnapshot);
+    WidgetHostAppearancePatch transientAppearance;
+    transientAppearance.backgroundColor = 0x123456;
+    const auto appearancePreview =
+        transientService.PreviewHostAppearance(
+            transientGuard, transientAppearance);
+    transientSnapshot = transientService.Snapshot(L"widget-1");
+    transientGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *transientSnapshot);
+    const auto appearanceRevert =
+        transientService.RevertPreview(transientGuard);
+    transientSnapshot = transientService.Snapshot(L"widget-1");
+    Check(appearancePreview.status == WidgetSettingMutationStatus::Applied &&
+            appearanceRevert.status == WidgetSettingMutationStatus::Applied &&
+            transientSnapshot &&
+            transientSnapshot->hostAppearance.backgroundColor ==
+                transientBackend.persistedAppearance.backgroundColor &&
+            transientBackend.persistCalls == 1 &&
+            transientBackend.revertCalls == 1,
+        "appearance preview can be reverted without a persistent write");
+
+    transientGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *transientSnapshot);
+    (void)transientService.PreviewOrdinary(transientGuard, "scale",
+        MakeWidgetSettingNumber(0.5));
+    transientService.Close(L"widget-1");
+    Check(!transientBackend.previewActive &&
+            transientBackend.ordinary["scale"].number == 1.5 &&
+            transientBackend.persistedOrdinary["scale"].number == 1.5 &&
+            transientBackend.mutationOrder.back() == "revertPreview",
+        "closing an unflushed service session reverts its transient preview");
 
     WidgetSettingMutationGuard guard =
         WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot);

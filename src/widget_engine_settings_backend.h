@@ -266,6 +266,17 @@ public:
         const WidgetSettingMutationGuard& guard,
         const WidgetHostAppearancePatch& appearance,
         const std::vector<WidgetSettingOrdinaryWrite>& writes) override;
+    WidgetSettingsBackendResult PreviewHostAppearanceTransaction(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& appearance,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes) override;
+    WidgetSettingsBackendResult CommitPreview(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard) override;
+    WidgetSettingsBackendResult RevertPreview(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard) override;
     WidgetSettingsBackendResult SetSecret(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,
@@ -304,10 +315,20 @@ public:
 
 private:
     struct SearchState;
+    struct PreviewState;
+
+    WidgetSettingsBackendResult ApplyHostAppearanceTransactionImpl(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& appearance,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes,
+        bool persist);
+    void RestorePreviewNoexcept() noexcept;
 
     WidgetEngine& engine_;
     std::uint32_t ownerThreadId_ = 0;
     std::shared_ptr<SearchState> searches_;
+    std::unique_ptr<PreviewState> preview_;
 };
 
 std::unique_ptr<IWidgetSettingsBackend>

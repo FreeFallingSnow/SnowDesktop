@@ -267,6 +267,23 @@ int main(int argc, char* argv[])
                 source.find("RuntimeBindHostLogicalSlot") !=
                     std::string::npos,
             "source keeps host appearance transactional and typed, secret, handle, and reference channels distinct");
+        Check(source.find(
+                  "PreviewHostAppearanceTransaction") !=
+                    std::string::npos &&
+                source.find("if (!persist)") != std::string::npos &&
+                source.find("preview_->originals.try_emplace") !=
+                    std::string::npos &&
+                source.find("CommitPreview(") != std::string::npos &&
+                source.find("RevertPreview(") != std::string::npos &&
+                source.find(
+                    "PersistWidgetSettingsStorageForBackend()") !=
+                    std::string::npos &&
+                source.find("storage.insert_or_assign(key, *value)") !=
+                    std::string::npos &&
+                source.find("storage.erase(key)") != std::string::npos &&
+                source.find("previewCommitRequired") !=
+                    std::string::npos,
+            "transient previews touch live storage without saving, then commit or restore only guarded touched keys");
     }
 
     if (failures == 0)

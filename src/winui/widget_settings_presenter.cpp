@@ -248,6 +248,12 @@ struct WidgetFieldControl
     winrt::event_token toggled{};
     winrt::event_token sliderChanged{};
     winrt::event_token numberChanged{};
+    winrt::event_token sliderPointerReleased{};
+    winrt::event_token numberPointerReleased{};
+    winrt::event_token sliderLostFocus{};
+    winrt::event_token numberLostFocus{};
+    winrt::event_token sliderKeyDown{};
+    winrt::event_token numberKeyDown{};
     winrt::event_token selectionChanged{};
     winrt::event_token dateChanged{};
     winrt::event_token timeChanged{};
@@ -256,13 +262,17 @@ struct WidgetFieldControl
     winrt::event_token searchSelectionChanged{};
     winrt::event_token chooseClicked{};
     winrt::event_token clearClicked{};
+    winrt::event_token idleCommitTick{};
 
     bool visible = true;
     bool enabled = true;
     bool textDirty = false;
     bool passwordDirty = false;
+    bool continuousDirty = false;
     bool synchronizing = false;
     std::uint64_t searchRequestId = 0;
+    mux::DispatcherTimer idleCommitTimer{nullptr};
+    std::string draftError;
 };
 
 struct WidgetGroupControl
@@ -281,7 +291,31 @@ struct AppearanceScalarControl
     muxc::NumberBox number{nullptr};
     winrt::event_token sliderChanged{};
     winrt::event_token numberChanged{};
+    winrt::event_token sliderPointerReleased{};
+    winrt::event_token numberPointerReleased{};
+    winrt::event_token sliderLostFocus{};
+    winrt::event_token numberLostFocus{};
+    winrt::event_token sliderKeyDown{};
+    winrt::event_token numberKeyDown{};
+    winrt::event_token idleCommitTick{};
     bool synchronizing = false;
+    bool continuousDirty = false;
+    mux::DispatcherTimer idleCommitTimer{nullptr};
+    std::string previewOwner;
+    std::function<void(wr::WidgetHostAppearancePatch&, float)> assign;
+};
+
+struct PendingTransientPreview
+{
+    std::uint64_t requestId = 0;
+    std::optional<wr::InteractionValue> ordinary;
+    wr::WidgetHostAppearancePatch appearance;
+};
+
+struct TransientPreviewHint
+{
+    std::string owner;
+    std::uint64_t requestId = 0;
 };
 
 enum class AppearanceThemeKind
@@ -307,6 +341,7 @@ struct WidgetSettingsDispatchBridge
     std::uint64_t epoch = 1;
     std::function<void(wr::WidgetSettingsSnapshotChanged)> snapshot;
     std::function<void(wr::WidgetSettingSearchCompleted)> search;
+    std::function<void(TransientPreviewHint)> transientPreview;
 };
 
 template <typename Hint, typename HandlerSelector>
@@ -360,6 +395,9 @@ struct WidgetSettingsPresenter::Impl
         dispatch->search = [this](wr::WidgetSettingSearchCompleted hint) {
             ApplySearchHint(std::move(hint));
         };
+        dispatch->transientPreview = [this](TransientPreviewHint hint) {
+            PublishQueuedPreview(std::move(hint));
+        };
         BuildStaticControls();
         HookStaticEvents();
         RefreshLocalizedText();
@@ -411,6 +449,8 @@ struct WidgetSettingsPresenter::Impl
     std::unordered_map<std::string, WidgetFieldControl*> fieldsByKey;
     std::unordered_map<std::string, muxc::StackPanel> groupPanels;
     std::unordered_map<std::string, bool> rememberedGroupExpansion;
+    std::unordered_map<std::string, PendingTransientPreview>
+        pendingTransientPreviews;
 
     std::vector<wr::WidgetSettingFieldSchema> cachedSchemas;
     std::vector<wr::WidgetSettingGroupSchema> cachedGroups;
@@ -422,6 +462,9 @@ struct WidgetSettingsPresenter::Impl
     std::string widgetName;
     std::uint64_t generation = 0;
     std::uint64_t revision = 0;
+    std::uint64_t nextTransientPreviewRequestId = 0;
+    std::string transientPreviewOwner;
+    bool transientPreviewActive = false;
     bool cachedCustomStyle = false;
     bool hasSnapshot = false;
     bool active = false;
@@ -516,22 +559,30 @@ struct WidgetSettingsPresenter::Impl
 
     void HookAppearanceScalar(
         AppearanceScalarControl& control,
+        std::string previewOwner,
         std::function<void(wr::WidgetHostAppearancePatch&, float)> assign)
     {
+        control.previewOwner = std::move(previewOwner);
+        control.assign = std::move(assign);
+        control.idleCommitTimer = mux::DispatcherTimer{};
+        control.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+        control.idleCommitTick = control.idleCommitTimer.Tick(
+            [this, &control](const auto&, const auto&) {
+                control.idleCommitTimer.Stop();
+                (void)CommitAppearanceScalar(control);
+            });
         control.sliderChanged = control.slider.ValueChanged(
-            [this, &control, assign](const auto&, const auto&) {
+            [this, &control](const auto&, const auto&) {
                 if (!CanMutate() || control.synchronizing) return;
                 const float value = static_cast<float>(
                     std::clamp(control.slider.Value(), 0.0, 1.0));
                 control.synchronizing = true;
                 control.number.Value(value);
                 control.synchronizing = false;
-                wr::WidgetHostAppearancePatch patch;
-                assign(patch, value);
-                RunAppearancePatch(std::move(patch));
+                QueueAppearancePreview(control, value);
             });
         control.numberChanged = control.number.ValueChanged(
-            [this, &control, assign](const auto&, const auto&) {
+            [this, &control](const auto&, const auto&) {
                 if (!CanMutate() || control.synchronizing ||
                     std::isnan(control.number.Value()))
                     return;
@@ -540,10 +591,24 @@ struct WidgetSettingsPresenter::Impl
                 control.synchronizing = true;
                 control.slider.Value(value);
                 control.synchronizing = false;
-                wr::WidgetHostAppearancePatch patch;
-                assign(patch, value);
-                RunAppearancePatch(std::move(patch));
+                QueueAppearancePreview(control, value);
             });
+        const auto released = [this, &control](const auto&, const auto&) {
+            (void)CommitAppearanceScalar(control);
+        };
+        const auto lost = [this, &control](const auto&, const auto&) {
+            (void)CommitAppearanceScalar(control);
+        };
+        const auto key = [this, &control](
+            const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (IsEnter(args)) (void)CommitAppearanceScalar(control);
+        };
+        control.sliderPointerReleased = control.slider.PointerReleased(released);
+        control.numberPointerReleased = control.number.PointerReleased(released);
+        control.sliderLostFocus = control.slider.LostFocus(lost);
+        control.numberLostFocus = control.number.LostFocus(lost);
+        control.sliderKeyDown = control.slider.KeyDown(key);
+        control.numberKeyDown = control.number.KeyDown(key);
     }
 
     void BuildStaticControls()
@@ -582,11 +647,21 @@ struct WidgetSettingsPresenter::Impl
         backgroundColorEditor =
             std::make_unique<presenter_controls::ColorFlyoutEditor>();
         backgroundColorEditor->Initialize(
-            [this](const wui::Color& color, SettingsUpdateMode) {
+            [this](const wui::Color& color, SettingsUpdateMode mode) {
                 if (!CanMutate()) return;
+                constexpr std::string_view owner =
+                    "__appearance.backgroundColor";
+                if (mode == SettingsUpdateMode::Preview &&
+                    backgroundColorEditor->rollbackApplied)
+                {
+                    (void)CancelTransientOwner(owner);
+                    return;
+                }
                 wr::WidgetHostAppearancePatch patch;
                 patch.backgroundColor = static_cast<int>(FromColor(color));
-                RunAppearancePatch(std::move(patch));
+                QueueTransientAppearance(owner, std::move(patch));
+                if (mode == SettingsUpdateMode::PreviewAndCommit)
+                    (void)CommitTransientOwner(owner);
             });
         customAppearanceHost.Children().Append(
             backgroundColorEditor->row.root);
@@ -597,11 +672,21 @@ struct WidgetSettingsPresenter::Impl
         borderColorEditor =
             std::make_unique<presenter_controls::ColorFlyoutEditor>();
         borderColorEditor->Initialize(
-            [this](const wui::Color& color, SettingsUpdateMode) {
+            [this](const wui::Color& color, SettingsUpdateMode mode) {
                 if (!CanMutate()) return;
+                constexpr std::string_view owner =
+                    "__appearance.borderColor";
+                if (mode == SettingsUpdateMode::Preview &&
+                    borderColorEditor->rollbackApplied)
+                {
+                    (void)CancelTransientOwner(owner);
+                    return;
+                }
                 wr::WidgetHostAppearancePatch patch;
                 patch.borderColor = static_cast<int>(FromColor(color));
-                RunAppearancePatch(std::move(patch));
+                QueueTransientAppearance(owner, std::move(patch));
+                if (mode == SettingsUpdateMode::PreviewAndCommit)
+                    (void)CommitTransientOwner(owner);
             });
         customAppearanceHost.Children().Append(borderColorEditor->row.root);
 
@@ -722,14 +807,17 @@ struct WidgetSettingsPresenter::Impl
                 RunAppearancePatch(std::move(patch));
             });
         HookAppearanceScalar(backgroundOpacity,
+            "__appearance.backgroundOpacity",
             [](auto& patch, float value) {
                 patch.backgroundOpacity = value;
             });
         HookAppearanceScalar(borderOpacity,
+            "__appearance.borderOpacity",
             [](auto& patch, float value) {
                 patch.borderOpacity = value;
             });
         HookAppearanceScalar(gradientEndOpacity,
+            "__appearance.gradientEndOpacity",
             [](auto& patch, float value) {
                 patch.gradientEndOpacity = value;
             });
@@ -919,9 +1007,21 @@ struct WidgetSettingsPresenter::Impl
     {
         field.text = muxc::TextBox{};
         field.text.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        field.idleCommitTimer = mux::DispatcherTimer{};
+        field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+        field.idleCommitTick = field.idleCommitTimer.Tick(
+            [this, &field](const auto&, const auto&) {
+                field.idleCommitTimer.Stop();
+                (void)CommitText(field);
+            });
         field.textChanged = field.text.TextChanged(
-            [&field](const auto&, const auto&) {
-                if (!field.synchronizing) field.textDirty = true;
+            [this, &field](const auto&, const auto&) {
+                if (field.synchronizing) return;
+                field.textDirty = true;
+                field.draftError.clear();
+                RefreshFieldValidation(field);
+                field.idleCommitTimer.Stop();
+                field.idleCommitTimer.Start();
             });
         field.lostFocus = field.text.LostFocus(
             [this, &field](const auto&, const auto&) {
@@ -946,9 +1046,21 @@ struct WidgetSettingsPresenter::Impl
             mux::HorizontalAlignment::Stretch);
         field.password.PasswordRevealMode(
             muxc::PasswordRevealMode::Peek);
+        field.idleCommitTimer = mux::DispatcherTimer{};
+        field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+        field.idleCommitTick = field.idleCommitTimer.Tick(
+            [this, &field](const auto&, const auto&) {
+                field.idleCommitTimer.Stop();
+                (void)CommitPassword(field);
+            });
         field.passwordChanged = field.password.PasswordChanged(
-            [&field](const auto&, const auto&) {
-                if (!field.synchronizing) field.passwordDirty = true;
+            [this, &field](const auto&, const auto&) {
+                if (field.synchronizing) return;
+                field.passwordDirty = true;
+                field.draftError.clear();
+                RefreshFieldValidation(field);
+                field.idleCommitTimer.Stop();
+                field.idleCommitTimer.Start();
             });
         field.lostFocus = field.password.LostFocus(
             [this, &field](const auto&, const auto&) {
@@ -1026,6 +1138,14 @@ struct WidgetSettingsPresenter::Impl
         field.numericEditors.Children().Append(field.number);
         field.editorHost.Children().Append(field.numericEditors);
 
+        field.idleCommitTimer = mux::DispatcherTimer{};
+        field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+        field.idleCommitTick = field.idleCommitTimer.Tick(
+            [this, &field](const auto&, const auto&) {
+                field.idleCommitTimer.Stop();
+                (void)CommitNumber(field);
+            });
+
         field.sliderChanged = field.slider.ValueChanged(
             [this, &field](const auto&, const auto&) {
                 if (field.synchronizing || updatingControls) return;
@@ -1033,7 +1153,7 @@ struct WidgetSettingsPresenter::Impl
                 field.synchronizing = true;
                 field.number.Value(value);
                 field.synchronizing = false;
-                CommitNumber(field, value);
+                QueueNumberPreview(field, value);
             });
         field.numberChanged = field.number.ValueChanged(
             [this, &field](const auto&, const auto&) {
@@ -1043,8 +1163,24 @@ struct WidgetSettingsPresenter::Impl
                 field.synchronizing = true;
                 field.slider.Value(value);
                 field.synchronizing = false;
-                CommitNumber(field, value);
+                QueueNumberPreview(field, value);
             });
+        const auto released = [this, &field](const auto&, const auto&) {
+            (void)CommitNumber(field);
+        };
+        const auto lost = [this, &field](const auto&, const auto&) {
+            (void)CommitNumber(field);
+        };
+        const auto key = [this, &field](
+            const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (IsEnter(args)) (void)CommitNumber(field);
+        };
+        field.sliderPointerReleased = field.slider.PointerReleased(released);
+        field.numberPointerReleased = field.number.PointerReleased(released);
+        field.sliderLostFocus = field.slider.LostFocus(lost);
+        field.numberLostFocus = field.number.LostFocus(lost);
+        field.sliderKeyDown = field.slider.KeyDown(key);
+        field.numberKeyDown = field.number.KeyDown(key);
     }
 
     void BuildColorEditor(WidgetFieldControl& field)
@@ -1055,18 +1191,18 @@ struct WidgetSettingsPresenter::Impl
             [this, &field](
                 const wui::Color& color,
                 SettingsUpdateMode mode) {
-                // WidgetSettingsService intentionally has no transient
-                // preview channel: both picker drag and final acceptance are
-                // persisted. ColorFlyoutEditor writes the opening value back
-                // through this same typed path on cancel/light-dismiss.
-                (void)mode;
                 if (!CanMutateField(field)) return;
+                if (mode == SettingsUpdateMode::Preview &&
+                    field.colorEditor->rollbackApplied)
+                {
+                    (void)CancelTransientOwner(field.schema.key);
+                    return;
+                }
                 const long long value = FromColor(color);
-                RunMutation(field.schema.key,
-                    [this, key = field.schema.key, value](const auto& guard) {
-                        return service.SetOrdinary(guard, key,
-                            wr::MakeWidgetSettingInteger(value));
-                    });
+                QueueTransientOrdinary(field.schema.key,
+                    wr::MakeWidgetSettingInteger(value));
+                if (mode == SettingsUpdateMode::PreviewAndCommit)
+                    (void)CommitTransientOwner(field.schema.key);
             });
         // ColorFlyoutEditor normally owns a complete SettingRow. This
         // presenter already supplies the common field row, so move only its
@@ -1480,6 +1616,20 @@ struct WidgetSettingsPresenter::Impl
             snapshot.widgetId != widgetId ||
             snapshot.generation != generation;
         const bool rebuild = newIdentity || SchemaChanged(snapshot);
+        if (rebuild)
+        {
+            pendingTransientPreviews.clear();
+            transientPreviewActive = false;
+            transientPreviewOwner.clear();
+            for (AppearanceScalarControl* control : {
+                    &backgroundOpacity, &borderOpacity,
+                    &gradientEndOpacity })
+            {
+                if (control->idleCommitTimer)
+                    control->idleCommitTimer.Stop();
+                control->continuousDirty = false;
+            }
+        }
         const bool oldUpdating = updatingControls;
         updatingControls = true;
         widgetId = snapshot.widgetId;
@@ -1724,13 +1874,6 @@ struct WidgetSettingsPresenter::Impl
         if (field.clear)
             field.clear.IsEnabled(state.enabled && state.opaque.canClear);
 
-        const std::string validation = state.schema.validationMessage.empty()
-            ? state.validationError
-            : state.schema.validationMessage;
-        field.validation.Text(ToText(validation));
-        field.validation.Visibility(!state.valid && !validation.empty()
-            ? mux::Visibility::Visible
-            : mux::Visibility::Collapsed);
         field.diagnostic.Text(state.diagnosticCode.empty()
             ? winrt::hstring{}
             : winrt::hstring(L("app.settings.widget.unknown_type",
@@ -1738,11 +1881,58 @@ struct WidgetSettingsPresenter::Impl
         field.diagnostic.Visibility(state.diagnosticCode.empty()
             ? mux::Visibility::Collapsed
             : mux::Visibility::Visible);
+        RefreshFieldValidation(field, &state);
+    }
 
-        const std::wstring status = !state.valid
+    void RefreshFieldValidation(WidgetFieldControl& field,
+        const wr::WidgetSettingFieldState* supplied = nullptr)
+    {
+        const wr::WidgetSettingFieldState* state = supplied;
+        std::optional<wr::WidgetSettingsSnapshot> snapshot;
+        if (!state && hasSnapshot)
+        {
+            snapshot = service.Snapshot(widgetId);
+            if (snapshot)
+            {
+                const auto found = std::find_if(snapshot->fields.begin(),
+                    snapshot->fields.end(), [&](const auto& candidate) {
+                        return candidate.schema.key == field.schema.key;
+                    });
+                if (found != snapshot->fields.end()) state = &*found;
+            }
+        }
+        std::string validation = field.draftError;
+        if (validation.empty() && state && !state->valid)
+        {
+            validation = state->schema.validationMessage.empty()
+                ? state->validationError
+                : state->schema.validationMessage;
+        }
+        field.validation.Text(ToText(validation));
+        field.validation.Visibility(validation.empty()
+            ? mux::Visibility::Collapsed
+            : mux::Visibility::Visible);
+        const std::wstring status = !validation.empty()
             ? std::wstring(field.validation.Text())
             : std::wstring(field.diagnostic.Text());
         muxa::AutomationProperties::SetItemStatus(field.root, status);
+    }
+
+    void SetDraftError(WidgetFieldControl& field,
+        const wr::WidgetSettingMutationResult& result)
+    {
+        if (result.status == wr::WidgetSettingMutationStatus::InvalidValue)
+        {
+            field.draftError = !field.schema.validationMessage.empty()
+                ? field.schema.validationMessage
+                : (!result.message.empty() ? result.message
+                                           : result.errorCode);
+        }
+        else if (result.Succeeded())
+        {
+            field.draftError.clear();
+        }
+        RefreshFieldValidation(field);
     }
 
     void SetFieldEnabled(WidgetFieldControl& field, bool enabled)
@@ -1771,6 +1961,216 @@ struct WidgetSettingsPresenter::Impl
             !field.synchronizing;
     }
 
+    [[nodiscard]] std::string MutationCallbackKey(
+        std::string_view owner) const
+    {
+        return owner.starts_with("__appearance.")
+            ? std::string("__appearance")
+            : std::string(owner);
+    }
+
+    void NotifyMutation(std::string_view owner,
+        const wr::WidgetSettingMutationResult& result)
+    {
+        if (callbacks.mutationCompleted)
+            callbacks.mutationCompleted(MutationCallbackKey(owner), result);
+    }
+
+    void ApplyCurrentSnapshot()
+    {
+        if (const auto current = service.Snapshot(widgetId))
+            (void)ApplySnapshot(*current);
+    }
+
+    void ClearContinuousDirty(std::string_view owner)
+    {
+        const auto clearAppearance = [&](AppearanceScalarControl& control) {
+            if (control.previewOwner != owner) return false;
+            if (control.idleCommitTimer) control.idleCommitTimer.Stop();
+            control.continuousDirty = false;
+            return true;
+        };
+        if (clearAppearance(backgroundOpacity) ||
+            clearAppearance(borderOpacity) ||
+            clearAppearance(gradientEndOpacity))
+            return;
+        const auto field = fieldsByKey.find(std::string(owner));
+        if (field != fieldsByKey.end())
+        {
+            if (field->second->idleCommitTimer)
+                field->second->idleCommitTimer.Stop();
+            field->second->continuousDirty = false;
+        }
+    }
+
+    void ScheduleTransientPreview(
+        std::string owner, PendingTransientPreview preview)
+    {
+        preview.requestId = ++nextTransientPreviewRequestId;
+        const std::uint64_t requestId = preview.requestId;
+        pendingTransientPreviews.insert_or_assign(owner, std::move(preview));
+        QueueServiceHint(dispatch,
+            TransientPreviewHint{std::move(owner), requestId},
+            [](WidgetSettingsDispatchBridge& value) -> auto& {
+                return value.transientPreview;
+            });
+    }
+
+    void QueueTransientOrdinary(
+        std::string_view owner, wr::InteractionValue value)
+    {
+        PendingTransientPreview preview;
+        preview.ordinary = std::move(value);
+        ScheduleTransientPreview(std::string(owner), std::move(preview));
+    }
+
+    void QueueTransientAppearance(
+        std::string_view owner, wr::WidgetHostAppearancePatch patch)
+    {
+        PendingTransientPreview preview;
+        preview.appearance = std::move(patch);
+        ScheduleTransientPreview(std::string(owner), std::move(preview));
+    }
+
+    void QueueNumberPreview(WidgetFieldControl& field, double value)
+    {
+        if (!CanMutateField(field) || !std::isfinite(value)) return;
+        field.continuousDirty = true;
+        field.draftError.clear();
+        RefreshFieldValidation(field);
+        field.idleCommitTimer.Stop();
+        field.idleCommitTimer.Start();
+        wr::InteractionValue encoded =
+            field.schema.Kind() == wr::WidgetSettingKind::Integer
+            ? wr::MakeWidgetSettingInteger(
+                static_cast<long long>(std::llround(value)))
+            : wr::MakeWidgetSettingNumber(value);
+        QueueTransientOrdinary(field.schema.key, std::move(encoded));
+    }
+
+    void QueueAppearancePreview(
+        AppearanceScalarControl& control, float value)
+    {
+        control.continuousDirty = true;
+        control.idleCommitTimer.Stop();
+        control.idleCommitTimer.Start();
+        wr::WidgetHostAppearancePatch patch;
+        control.assign(patch, value);
+        QueueTransientAppearance(control.previewOwner, std::move(patch));
+    }
+
+    wr::WidgetSettingMutationResult CommitActiveTransient()
+    {
+        if (!transientPreviewActive) return UnchangedResult();
+        const std::string owner = transientPreviewOwner;
+        const auto result = service.CommitPreview(Guard());
+        if (result.Succeeded())
+        {
+            transientPreviewActive = false;
+            transientPreviewOwner.clear();
+            ClearContinuousDirty(owner);
+            ApplyCurrentSnapshot();
+        }
+        NotifyMutation(owner, result);
+        return result;
+    }
+
+    wr::WidgetSettingMutationResult PublishTransientPreview(
+        const std::string& owner, const PendingTransientPreview& preview)
+    {
+        if (!CanMutate())
+            return {wr::WidgetSettingMutationStatus::Disabled,
+                generation, revision, "presenterInactive", {}};
+        if (transientPreviewActive && transientPreviewOwner != owner)
+        {
+            const auto committed = CommitActiveTransient();
+            if (!committed.Succeeded()) return committed;
+        }
+
+        wr::WidgetSettingMutationResult result;
+        if (preview.ordinary)
+            result = service.PreviewOrdinary(
+                Guard(), owner, *preview.ordinary);
+        else
+            result = service.PreviewHostAppearance(
+                Guard(), preview.appearance);
+        if (result.Succeeded() ||
+            result.status == wr::WidgetSettingMutationStatus::StaleSnapshot)
+            ApplyCurrentSnapshot();
+        if (result.Changed())
+        {
+            transientPreviewActive = true;
+            transientPreviewOwner = owner;
+        }
+        if (const auto field = fieldsByKey.find(owner);
+            field != fieldsByKey.end())
+            SetDraftError(*field->second, result);
+        NotifyMutation(owner, result);
+        return result;
+    }
+
+    wr::WidgetSettingMutationResult FlushScheduledPreview(
+        std::string_view owner)
+    {
+        const auto found = pendingTransientPreviews.find(std::string(owner));
+        if (found == pendingTransientPreviews.end())
+            return UnchangedResult();
+        PendingTransientPreview preview = std::move(found->second);
+        const std::string stableOwner = found->first;
+        pendingTransientPreviews.erase(found);
+        return PublishTransientPreview(stableOwner, preview);
+    }
+
+    void PublishQueuedPreview(TransientPreviewHint hint)
+    {
+        const auto found = pendingTransientPreviews.find(hint.owner);
+        if (found == pendingTransientPreviews.end() ||
+            found->second.requestId != hint.requestId)
+            return;
+        (void)FlushScheduledPreview(hint.owner);
+    }
+
+    wr::WidgetSettingMutationResult CommitTransientOwner(
+        std::string_view owner)
+    {
+        const auto previewed = FlushScheduledPreview(owner);
+        if (!previewed.Succeeded()) return previewed;
+        if (transientPreviewActive && transientPreviewOwner == owner)
+            return CommitActiveTransient();
+        ClearContinuousDirty(owner);
+        return previewed;
+    }
+
+    wr::WidgetSettingMutationResult CancelTransientOwner(
+        std::string_view owner)
+    {
+        pendingTransientPreviews.erase(std::string(owner));
+        ClearContinuousDirty(owner);
+        if (!transientPreviewActive || transientPreviewOwner != owner)
+            return UnchangedResult();
+        const auto result = service.RevertPreview(Guard());
+        if (result.Succeeded())
+        {
+            transientPreviewActive = false;
+            transientPreviewOwner.clear();
+            ApplyCurrentSnapshot();
+        }
+        NotifyMutation(owner, result);
+        return result;
+    }
+
+    wr::WidgetSettingMutationResult CommitAllTransient()
+    {
+        while (!pendingTransientPreviews.empty())
+        {
+            const std::string owner =
+                pendingTransientPreviews.begin()->first;
+            const auto result = CommitTransientOwner(owner);
+            if (!result.Succeeded()) return result;
+        }
+        return CommitActiveTransient();
+    }
+
     template <typename Mutation>
     wr::WidgetSettingMutationResult RunMutation(
         std::string key,
@@ -1779,6 +2179,8 @@ struct WidgetSettingsPresenter::Impl
         if (!CanMutate())
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "presenterInactive", {}};
+        const auto previewCommit = CommitAllTransient();
+        if (!previewCommit.Succeeded()) return previewCommit;
         const wr::WidgetSettingMutationGuard guard = Guard();
         wr::WidgetSettingMutationResult result = mutation(guard);
         if (result.status == wr::WidgetSettingMutationStatus::Applied ||
@@ -1788,8 +2190,11 @@ struct WidgetSettingsPresenter::Impl
             if (const auto current = service.Snapshot(widgetId))
                 (void)ApplySnapshot(*current);
         }
+        if (const auto field = fieldsByKey.find(key);
+            field != fieldsByKey.end())
+            SetDraftError(*field->second, result);
         if (callbacks.mutationCompleted)
-            callbacks.mutationCompleted(key, result);
+            callbacks.mutationCompleted(std::move(key), result);
         return result;
     }
 
@@ -1802,6 +2207,7 @@ struct WidgetSettingsPresenter::Impl
     [[nodiscard]] wr::WidgetSettingMutationResult CommitText(
         WidgetFieldControl& field)
     {
+        if (field.idleCommitTimer) field.idleCommitTimer.Stop();
         if (!field.textDirty)
             return UnchangedResult();
         if (!CanMutateField(field) || !field.text)
@@ -1834,6 +2240,7 @@ struct WidgetSettingsPresenter::Impl
     [[nodiscard]] wr::WidgetSettingMutationResult CommitPassword(
         WidgetFieldControl& field)
     {
+        if (field.idleCommitTimer) field.idleCommitTimer.Stop();
         if (!field.passwordDirty)
             return UnchangedResult();
         if (!CanMutateField(field) || !field.password)
@@ -1876,20 +2283,20 @@ struct WidgetSettingsPresenter::Impl
         return result;
     }
 
-    void CommitNumber(WidgetFieldControl& field, double value)
+    [[nodiscard]] wr::WidgetSettingMutationResult CommitNumber(
+        WidgetFieldControl& field)
     {
-        if (!CanMutateField(field) || !std::isfinite(value)) return;
-        wr::InteractionValue encoded;
-        if (field.schema.Kind() == wr::WidgetSettingKind::Integer)
-            encoded = wr::MakeWidgetSettingInteger(
-                static_cast<long long>(std::llround(value)));
-        else
-            encoded = wr::MakeWidgetSettingNumber(value);
-        RunMutation(field.schema.key,
-            [this, key = field.schema.key,
-             value = std::move(encoded)](const auto& guard) {
-                return service.SetOrdinary(guard, key, value);
-            });
+        if (field.idleCommitTimer) field.idleCommitTimer.Stop();
+        if (!field.continuousDirty) return UnchangedResult();
+        return CommitTransientOwner(field.schema.key);
+    }
+
+    [[nodiscard]] wr::WidgetSettingMutationResult CommitAppearanceScalar(
+        AppearanceScalarControl& control)
+    {
+        if (control.idleCommitTimer) control.idleCommitTimer.Stop();
+        if (!control.continuousDirty) return UnchangedResult();
+        return CommitTransientOwner(control.previewOwner);
     }
 
     void CommitMultiSelect(WidgetFieldControl& field)
@@ -2302,15 +2709,14 @@ struct WidgetSettingsPresenter::Impl
         for (const auto& field : fields)
             if (field->textDirty || field->passwordDirty)
                 keys.push_back(field->schema.key);
-        if (keys.empty())
-            return UnchangedResult();
         if (closed || !active)
         {
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "presenterInactive", {}};
         }
 
-        wr::WidgetSettingMutationResult aggregate = UnchangedResult();
+        wr::WidgetSettingMutationResult aggregate = CommitAllTransient();
+        if (!aggregate.Succeeded()) return aggregate;
         for (const auto& key : keys)
         {
             const auto found = fieldsByKey.find(key);
@@ -2403,6 +2809,12 @@ struct WidgetSettingsPresenter::Impl
         }
         try
         {
+            if (field.idleCommitTimer)
+            {
+                field.idleCommitTimer.Stop();
+                if (HasToken(field.idleCommitTick))
+                    field.idleCommitTimer.Tick(field.idleCommitTick);
+            }
             if (field.text && HasToken(field.textChanged))
                 field.text.TextChanged(field.textChanged);
             if (field.password && HasToken(field.passwordChanged))
@@ -2421,6 +2833,18 @@ struct WidgetSettingsPresenter::Impl
                 field.slider.ValueChanged(field.sliderChanged);
             if (field.number && HasToken(field.numberChanged))
                 field.number.ValueChanged(field.numberChanged);
+            if (field.slider && HasToken(field.sliderPointerReleased))
+                field.slider.PointerReleased(field.sliderPointerReleased);
+            if (field.number && HasToken(field.numberPointerReleased))
+                field.number.PointerReleased(field.numberPointerReleased);
+            if (field.slider && HasToken(field.sliderLostFocus))
+                field.slider.LostFocus(field.sliderLostFocus);
+            if (field.number && HasToken(field.numberLostFocus))
+                field.number.LostFocus(field.numberLostFocus);
+            if (field.slider && HasToken(field.sliderKeyDown))
+                field.slider.KeyDown(field.sliderKeyDown);
+            if (field.number && HasToken(field.numberKeyDown))
+                field.number.KeyDown(field.numberKeyDown);
             if (field.select && HasToken(field.selectionChanged))
                 field.select.SelectionChanged(field.selectionChanged);
             for (auto& option : field.multiOptions)
@@ -2499,6 +2923,7 @@ struct WidgetSettingsPresenter::Impl
             ++dispatch->epoch;
             dispatch->snapshot = {};
             dispatch->search = {};
+            dispatch->transientPreview = {};
             dispatch->dispatcher = nullptr;
         }
         try
@@ -2521,10 +2946,32 @@ struct WidgetSettingsPresenter::Impl
             if (reset && HasToken(resetClicked))
                 reset.Click(resetClicked);
             const auto unhookScalar = [](AppearanceScalarControl& scalar) {
+                if (scalar.idleCommitTimer)
+                {
+                    scalar.idleCommitTimer.Stop();
+                    if (HasToken(scalar.idleCommitTick))
+                        scalar.idleCommitTimer.Tick(scalar.idleCommitTick);
+                }
                 if (scalar.slider && HasToken(scalar.sliderChanged))
                     scalar.slider.ValueChanged(scalar.sliderChanged);
                 if (scalar.number && HasToken(scalar.numberChanged))
                     scalar.number.ValueChanged(scalar.numberChanged);
+                if (scalar.slider &&
+                    HasToken(scalar.sliderPointerReleased))
+                    scalar.slider.PointerReleased(
+                        scalar.sliderPointerReleased);
+                if (scalar.number &&
+                    HasToken(scalar.numberPointerReleased))
+                    scalar.number.PointerReleased(
+                        scalar.numberPointerReleased);
+                if (scalar.slider && HasToken(scalar.sliderLostFocus))
+                    scalar.slider.LostFocus(scalar.sliderLostFocus);
+                if (scalar.number && HasToken(scalar.numberLostFocus))
+                    scalar.number.LostFocus(scalar.numberLostFocus);
+                if (scalar.slider && HasToken(scalar.sliderKeyDown))
+                    scalar.slider.KeyDown(scalar.sliderKeyDown);
+                if (scalar.number && HasToken(scalar.numberKeyDown))
+                    scalar.number.KeyDown(scalar.numberKeyDown);
             };
             unhookScalar(backgroundOpacity);
             unhookScalar(borderOpacity);

@@ -360,6 +360,7 @@ struct WidgetSettingsService::State
         WidgetSettingsBackendDescriptor descriptor;
         WidgetSettingsSnapshot snapshot;
         std::unordered_map<std::string, SearchState> searches;
+        bool previewActive = false;
     };
 
     struct EventCallbacks
@@ -518,6 +519,8 @@ std::optional<WidgetSettingsSnapshot> WidgetSettingsService::Snapshot(
 void WidgetSettingsService::Close(std::wstring_view widgetId)
 {
     std::vector<WidgetSettingSearchRequest> requests;
+    std::optional<std::pair<WidgetSettingsBackendDescriptor,
+        WidgetSettingMutationGuard>> preview;
     {
         std::lock_guard lock(state_->mutex);
         const auto found = state_->sessions.find(std::wstring(widgetId));
@@ -527,8 +530,15 @@ void WidgetSettingsService::Close(std::wstring_view widgetId)
             (void)key;
             if (search.snapshot.pending) requests.push_back(search.request);
         }
+        if (found->second.previewActive)
+            preview.emplace(found->second.descriptor,
+                WidgetSettingMutationGuard::FromSnapshot(
+                    found->second.snapshot));
         state_->sessions.erase(found);
     }
+    if (preview)
+        (void)state_->backend.RevertPreview(
+            preview->first, preview->second);
     for (const auto& request : requests)
         (void)state_->backend.CancelSearch(request);
 }
@@ -536,6 +546,8 @@ void WidgetSettingsService::Close(std::wstring_view widgetId)
 void WidgetSettingsService::CloseAll()
 {
     std::vector<WidgetSettingSearchRequest> requests;
+    std::vector<std::pair<WidgetSettingsBackendDescriptor,
+        WidgetSettingMutationGuard>> previews;
     {
         std::lock_guard lock(state_->mutex);
         for (const auto& [widgetId, session] : state_->sessions)
@@ -547,9 +559,15 @@ void WidgetSettingsService::CloseAll()
                 if (search.snapshot.pending)
                     requests.push_back(search.request);
             }
+            if (session.previewActive)
+                previews.emplace_back(session.descriptor,
+                    WidgetSettingMutationGuard::FromSnapshot(
+                        session.snapshot));
         }
         state_->sessions.clear();
     }
+    for (const auto& [descriptor, guard] : previews)
+        (void)state_->backend.RevertPreview(descriptor, guard);
     for (const auto& request : requests)
         (void)state_->backend.CancelSearch(request);
 }
@@ -560,6 +578,7 @@ struct SessionCopy
 {
     WidgetSettingsBackendDescriptor descriptor;
     WidgetSettingsSnapshot snapshot;
+    bool previewActive = false;
 };
 
 WidgetSettingMutationResult GuardSession(
@@ -580,6 +599,7 @@ WidgetSettingMutationResult GuardSession(
             found->second.snapshot.revision, "staleSnapshot", {} };
     copy.descriptor = found->second.descriptor;
     copy.snapshot = found->second.snapshot;
+    copy.previewActive = found->second.previewActive;
     return { WidgetSettingMutationStatus::Unchanged,
         copy.snapshot.generation, copy.snapshot.revision, {}, {} };
 }
@@ -736,6 +756,56 @@ WidgetSettingMutationResult ReloadAfterMutation(
     result.revision = reloaded.snapshot->revision;
     return result;
 }
+
+bool SetPreviewActive(
+    const std::shared_ptr<WidgetSettingsService::State>& state,
+    const SessionCopy& before, bool active)
+{
+    std::lock_guard lock(state->mutex);
+    const auto found = state->sessions.find(before.snapshot.widgetId);
+    if (found == state->sessions.end() ||
+        found->second.snapshot.generation != before.snapshot.generation ||
+        found->second.snapshot.revision != before.snapshot.revision)
+        return false;
+    found->second.previewActive = active;
+    return true;
+}
+
+WidgetSettingMutationResult ReloadAfterPreview(
+    WidgetSettingsService& service,
+    const std::shared_ptr<WidgetSettingsService::State>& state,
+    const SessionCopy& before,
+    const WidgetSettingMutationGuard& guard,
+    const WidgetSettingsBackendResult& backendResult)
+{
+    WidgetSettingMutationResult result = MutationResultFor(backendResult);
+    if (!backendResult.Succeeded())
+        return WithIdentity(std::move(result), before.snapshot);
+    if (backendResult.status == WidgetSettingsBackendStatus::Unchanged)
+        return WithIdentity(std::move(result), before.snapshot);
+    if (!SetPreviewActive(state, before, true))
+    {
+        (void)state->backend.RevertPreview(before.descriptor, guard);
+        return { WidgetSettingMutationStatus::StaleSnapshot,
+            before.snapshot.generation, before.snapshot.revision,
+            "staleSnapshot", {} };
+    }
+    WidgetSettingsLoadResult reloaded =
+        service.Reload(before.snapshot.widgetId);
+    if (!reloaded.Succeeded() || !reloaded.snapshot)
+    {
+        (void)state->backend.RevertPreview(before.descriptor, guard);
+        (void)SetPreviewActive(state, before, false);
+        service.Close(before.snapshot.widgetId);
+        result.status = reloaded.status;
+        result.errorCode = std::move(reloaded.errorCode);
+        result.message = std::move(reloaded.message);
+        return WithIdentity(std::move(result), before.snapshot);
+    }
+    result.generation = reloaded.snapshot->generation;
+    result.revision = reloaded.snapshot->revision;
+    return result;
+}
 }
 
 WidgetSettingMutationResult WidgetSettingsService::SetOrdinary(
@@ -778,6 +848,48 @@ WidgetSettingMutationResult WidgetSettingsService::SetOrdinary(
     return ReloadAfterMutation(*this, session,
         state_->backend.ApplyOrdinaryTransaction(
             session.descriptor, guard, writes));
+}
+
+WidgetSettingMutationResult WidgetSettingsService::PreviewOrdinary(
+    const WidgetSettingMutationGuard& guard, std::string_view key,
+    const InteractionValue& value)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    const auto* field = FindField(session.snapshot, key);
+    if (!field)
+        return { WidgetSettingMutationStatus::SettingNotFound,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingNotFound", {} };
+    if (field->schema.Channel() != WidgetSettingValueChannel::Ordinary)
+        return { WidgetSettingMutationStatus::WrongValueChannel,
+            session.snapshot.generation, session.snapshot.revision,
+            "wrongValueChannel", {} };
+    if (!field->enabled)
+        return { WidgetSettingMutationStatus::Disabled,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingDisabled", {} };
+
+    InteractionValue normalized;
+    std::string error;
+    if (!NormalizeWidgetSettingValue(
+            field->schema, value, normalized, error))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision,
+            std::move(error), {} };
+    if (normalized == field->currentValue)
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+
+    const std::vector<WidgetSettingOrdinaryWrite> writes = {
+        { field->schema.key, std::move(normalized),
+            WidgetSettingUsesTypedStorage(field->schema.Kind()) }
+    };
+    return ReloadAfterPreview(*this, state_, session, guard,
+        state_->backend.PreviewHostAppearanceTransaction(
+            session.descriptor, guard, {}, writes));
 }
 
 WidgetSettingMutationResult WidgetSettingsService::SetSearchQuery(
@@ -1105,6 +1217,79 @@ WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
     return ReloadAfterMutation(*this, session,
         state_->backend.ApplyHostAppearanceTransaction(
             session.descriptor, guard, patch, {}));
+}
+
+WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
+    const WidgetSettingMutationGuard& guard,
+    const WidgetHostAppearancePatch& patch)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    if (patch.Empty())
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+    if (!session.snapshot.customStyle)
+        return { WidgetSettingMutationStatus::Unavailable,
+            session.snapshot.generation, session.snapshot.revision,
+            "customStyleUnavailable", {} };
+    return ReloadAfterPreview(*this, state_, session, guard,
+        state_->backend.PreviewHostAppearanceTransaction(
+            session.descriptor, guard, patch, {}));
+}
+
+WidgetSettingMutationResult WidgetSettingsService::CommitPreview(
+    const WidgetSettingMutationGuard& guard)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    if (!session.previewActive)
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+    WidgetSettingMutationResult result = MutationResultFor(
+        state_->backend.CommitPreview(session.descriptor, guard));
+    if (!result.Succeeded())
+        return WithIdentity(std::move(result), session.snapshot);
+    if (!SetPreviewActive(state_, session, false))
+        return { WidgetSettingMutationStatus::StaleSnapshot,
+            session.snapshot.generation, session.snapshot.revision,
+            "staleSnapshot", {} };
+    return WithIdentity(std::move(result), session.snapshot);
+}
+
+WidgetSettingMutationResult WidgetSettingsService::RevertPreview(
+    const WidgetSettingMutationGuard& guard)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    if (!session.previewActive)
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+    WidgetSettingMutationResult result = MutationResultFor(
+        state_->backend.RevertPreview(session.descriptor, guard));
+    if (!result.Succeeded())
+        return WithIdentity(std::move(result), session.snapshot);
+    if (!SetPreviewActive(state_, session, false))
+        return { WidgetSettingMutationStatus::StaleSnapshot,
+            session.snapshot.generation, session.snapshot.revision,
+            "staleSnapshot", {} };
+    WidgetSettingsLoadResult reloaded = Reload(session.snapshot.widgetId);
+    if (!reloaded.Succeeded() || !reloaded.snapshot)
+    {
+        Close(session.snapshot.widgetId);
+        result.status = reloaded.status;
+        result.errorCode = std::move(reloaded.errorCode);
+        result.message = std::move(reloaded.message);
+        return WithIdentity(std::move(result), session.snapshot);
+    }
+    result.generation = reloaded.snapshot->generation;
+    result.revision = reloaded.snapshot->revision;
+    return result;
 }
 
 WidgetSettingMutationResult WidgetSettingsService::Reset(

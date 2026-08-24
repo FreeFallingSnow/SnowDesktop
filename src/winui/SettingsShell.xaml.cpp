@@ -517,7 +517,9 @@ void SettingsShell::SetWidgetSettingsService(
             [this](std::string,
                    snowdesktop::widget_runtime::WidgetSettingMutationResult
                        result) {
-                if (closed_ || result.Succeeded())
+                if (closed_ || result.Succeeded() ||
+                    result.status == snowdesktop::widget_runtime::
+                        WidgetSettingMutationStatus::InvalidValue)
                     return;
                 std::wstring message;
                 if (!result.message.empty())

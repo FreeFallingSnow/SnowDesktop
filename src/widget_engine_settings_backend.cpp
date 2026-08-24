@@ -435,6 +435,12 @@ struct WidgetEngineSettingsBackend::SearchState final
     }
 };
 
+struct WidgetEngineSettingsBackend::PreviewState
+{
+    WidgetSettingsBackendDescriptor descriptor;
+    std::unordered_map<std::string, std::optional<std::string>> originals;
+};
+
 WidgetEngineSettingsBackend::WidgetEngineSettingsBackend(
     WidgetEngine& engine)
     : engine_(engine), ownerThreadId_(GetCurrentThreadId()),
@@ -444,6 +450,7 @@ WidgetEngineSettingsBackend::WidgetEngineSettingsBackend(
 
 WidgetEngineSettingsBackend::~WidgetEngineSettingsBackend()
 {
+    RestorePreviewNoexcept();
     if (searches_) searches_->Shutdown();
 }
 
@@ -458,6 +465,16 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
         return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound,
             "widgetNotFound");
     const LuaWidget& widget = engine_.widgets_[index];
+    if (preview_ && preview_->descriptor.widgetId == widget.widgetId &&
+        !widget_settings_backend_detail::DescriptorMatchesCurrent(
+            preview_->descriptor, widget.widgetId, widget.packageId,
+            widget.runtimeToken))
+    {
+        // A runtime reload invalidates every guard which could commit or
+        // cancel the old preview. Restore only its touched keys before the
+        // new generation is described.
+        RestorePreviewNoexcept();
+    }
     if (!widget.valid || widget.runtimeToken == 0 ||
         widget.packageId.empty())
         return BackendResult(WidgetSettingsBackendStatus::Unavailable,
@@ -841,6 +858,29 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransaction(
     const WidgetHostAppearancePatch& appearance,
     const std::vector<WidgetSettingOrdinaryWrite>& writes)
 {
+    return ApplyHostAppearanceTransactionImpl(
+        descriptor, guard, appearance, writes, true);
+}
+
+WidgetSettingsBackendResult
+WidgetEngineSettingsBackend::PreviewHostAppearanceTransaction(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard,
+    const WidgetHostAppearancePatch& appearance,
+    const std::vector<WidgetSettingOrdinaryWrite>& writes)
+{
+    return ApplyHostAppearanceTransactionImpl(
+        descriptor, guard, appearance, writes, false);
+}
+
+WidgetSettingsBackendResult
+WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard,
+    const WidgetHostAppearancePatch& appearance,
+    const std::vector<WidgetSettingOrdinaryWrite>& writes,
+    bool persist)
+{
     if (GetCurrentThreadId() != ownerThreadId_) return WrongThread();
     const int index = engine_.FindWidget(descriptor.widgetId);
     if (index < 0)
@@ -855,6 +895,19 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransaction(
     if (widget.preview || HasStorageOverlay())
         return BackendResult(WidgetSettingsBackendStatus::Unavailable,
             "persistentStorageUnavailable");
+    if (preview_)
+    {
+        const bool sameIdentity =
+            preview_->descriptor.widgetId == descriptor.widgetId &&
+            preview_->descriptor.packageId == descriptor.packageId &&
+            preview_->descriptor.generation == descriptor.generation;
+        if (!sameIdentity)
+            return BackendResult(WidgetSettingsBackendStatus::Unavailable,
+                "previewAlreadyActive");
+        if (persist)
+            return BackendResult(WidgetSettingsBackendStatus::Unavailable,
+                "previewCommitRequired");
+    }
     if (writes.empty() && appearance.Empty()) return Success(false);
     if (appearance.contentTheme && appearance.clearContentTheme)
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
@@ -1026,17 +1079,121 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransaction(
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "storageQuotaExceeded", std::move(error));
     if (!transaction.Changed()) return Success(false);
-    auto previous = transaction.TakeCandidate();
-    storage.swap(previous);
+    auto candidate = transaction.TakeCandidate();
+    if (!persist)
+    {
+        if (!preview_)
+        {
+            preview_ = std::make_unique<PreviewState>();
+            preview_->descriptor = descriptor;
+        }
+        const std::string prefix = WideToUtf8(widget.widgetId) + ".";
+        for (const auto& [key, value] : storage)
+        {
+            if (!key.starts_with(prefix)) continue;
+            const auto next = candidate.find(key);
+            if (next == candidate.end() || next->second != value)
+                preview_->originals.try_emplace(key, value);
+        }
+        for (const auto& [key, value] : candidate)
+        {
+            (void)value;
+            if (!key.starts_with(prefix) || storage.contains(key))
+                continue;
+            preview_->originals.try_emplace(key, std::nullopt);
+        }
+        storage.swap(candidate);
+        engine_.RuntimeInvalidateHost(widget.widgetId);
+        return Success();
+    }
+
+    storage.swap(candidate);
     if (!engine_.PersistWidgetSettingsStorageForBackend())
     {
-        storage.swap(previous);
+        storage.swap(candidate);
         return BackendResult(
             WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
     }
     engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success();
+}
+
+WidgetSettingsBackendResult WidgetEngineSettingsBackend::CommitPreview(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard)
+{
+    if (GetCurrentThreadId() != ownerThreadId_) return WrongThread();
+    const int index = engine_.FindWidget(descriptor.widgetId);
+    if (index < 0)
+        return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound,
+            "widgetNotFound");
+    const LuaWidget& widget = engine_.widgets_[index];
+    if (!widget_settings_backend_detail::MutationIdentityMatches(
+            descriptor, guard, widget.widgetId, widget.packageId,
+            widget.runtimeToken))
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
+            "staleSnapshot");
+    if (!preview_) return Success(false);
+    if (preview_->descriptor.widgetId != descriptor.widgetId ||
+        preview_->descriptor.packageId != descriptor.packageId ||
+        preview_->descriptor.generation != descriptor.generation)
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
+            "stalePreview");
+    if (!engine_.PersistWidgetSettingsStorageForBackend())
+        return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
+            "storagePersistenceFailed");
+    preview_.reset();
+    engine_.RuntimeInvalidateHost(widget.widgetId);
+    return Success();
+}
+
+WidgetSettingsBackendResult WidgetEngineSettingsBackend::RevertPreview(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard)
+{
+    if (GetCurrentThreadId() != ownerThreadId_) return WrongThread();
+    const int index = engine_.FindWidget(descriptor.widgetId);
+    if (index < 0)
+        return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound,
+            "widgetNotFound");
+    const LuaWidget& widget = engine_.widgets_[index];
+    if (!widget_settings_backend_detail::MutationIdentityMatches(
+            descriptor, guard, widget.widgetId, widget.packageId,
+            widget.runtimeToken))
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
+            "staleSnapshot");
+    if (!preview_) return Success(false);
+    if (preview_->descriptor.widgetId != descriptor.widgetId ||
+        preview_->descriptor.packageId != descriptor.packageId ||
+        preview_->descriptor.generation != descriptor.generation)
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
+            "stalePreview");
+    RestorePreviewNoexcept();
+    return Success();
+}
+
+void WidgetEngineSettingsBackend::RestorePreviewNoexcept() noexcept
+{
+    if (!preview_) return;
+    try
+    {
+        auto& storage = engine_.WidgetSettingsPersistentStorageForBackend();
+        for (const auto& [key, value] : preview_->originals)
+        {
+            if (value)
+                storage.insert_or_assign(key, *value);
+            else
+                storage.erase(key);
+        }
+        const std::wstring widgetId = preview_->descriptor.widgetId;
+        preview_.reset();
+        if (!widgetId.empty()) engine_.RuntimeInvalidateHost(widgetId);
+    }
+    catch (...)
+    {
+        preview_.reset();
+    }
 }
 
 WidgetSettingsBackendResult WidgetEngineSettingsBackend::SetSecret(

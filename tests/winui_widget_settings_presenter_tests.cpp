@@ -228,8 +228,8 @@ void TestDeclarativeBehavior(const std::string& source)
               "rememberedGroupExpansion",
               "state.visible",
               "state.enabled",
-              "state.valid",
-              "state.validationError"}),
+              "state->valid",
+              "state->validationError"}),
         "groups, dependency visibility/enabled state, and validation come from the snapshot");
     Check(ContainsAll(source, {
               "service.ApplyPreset(",
@@ -315,6 +315,39 @@ void TestPendingEditCommitSafety(const std::string& source)
         "deactivation refuses to discard a failed final commit");
 }
 
+void TestTransientPreviewAndDraftValidation(
+    const std::string& source, const std::string& shell)
+{
+    Check(ContainsAll(source, {
+              "std::chrono::milliseconds(650)",
+              "mux::DispatcherTimer",
+              "QueueServiceHint(dispatch",
+              "pendingTransientPreviews.insert_or_assign",
+              "service.PreviewOrdinary(",
+              "service.PreviewHostAppearance(",
+              "service.CommitPreview(Guard())",
+              "service.RevertPreview(Guard())",
+              "PointerReleased(",
+              "LostFocus(",
+              "if (IsEnter(args))",
+              "CommitAllTransient()"}),
+        "numeric and color changes coalesce on the dispatcher, preview live, and commit on release, focus, Enter, idle, or final flush");
+    Check(ContainsAll(source, {
+              "field.textDirty = true",
+              "field.passwordDirty = true",
+              "field.idleCommitTimer.Start()",
+              "field.draftError",
+              "result.errorCode",
+              "field.schema.validationMessage",
+              "RefreshFieldValidation(field)",
+              "AutomationProperties::SetItemStatus"}),
+        "text and secret idle commits retain drafts while row-scoped custom validation and error codes remain visible");
+    Check(shell.find(
+              "WidgetSettingMutationStatus::InvalidValue") !=
+                std::string::npos,
+        "the shell leaves invalid widget drafts to their SettingRow instead of replacing them with a generic InfoBar");
+}
+
 void TestNoLegacyImGuiPath(const std::string& source)
 {
     Check(source.find("ImGui") == std::string::npos &&
@@ -336,8 +369,11 @@ int main(int argc, char** argv)
         repository / "src/winui/widget_settings_presenter.cpp");
     const std::string sharedControls = ReadText(
         repository / "src/winui/settings_presenter_controls.h");
+    const std::string shell = ReadText(
+        repository / "src/winui/SettingsShell.xaml.cpp");
 
-    Check(!header.empty() && !source.empty() && !sharedControls.empty(),
+    Check(!header.empty() && !source.empty() && !sharedControls.empty() &&
+            !shell.empty(),
         "widget settings presenter sources are readable");
     TestPublicContract(header);
     TestNativeControlMapping(source, sharedControls);
@@ -347,6 +383,7 @@ int main(int argc, char** argv)
     TestSnapshotAndAsyncSafety(source);
     TestDeclarativeBehavior(source);
     TestPendingEditCommitSafety(source);
+    TestTransientPreviewAndDraftValidation(source, shell);
     TestNoLegacyImGuiPath(source);
 
     if (failures == 0)
