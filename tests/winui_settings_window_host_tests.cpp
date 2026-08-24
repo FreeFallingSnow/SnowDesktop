@@ -195,6 +195,30 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("++impl_->viewEpoch;") != std::string::npos,
         "controller pending work survives a visible-window Open that advances only the rendered-view epoch");
 
+    const std::size_t snapshotQueueBegin = source.find(
+        "void QueueSnapshot(SettingsController::SnapshotPtr snapshot)");
+    const std::size_t snapshotQueueEnd = source.find(
+        "void ApplySnapshotNow", snapshotQueueBegin);
+    const std::string_view snapshotQueueFunction =
+        snapshotQueueBegin != std::string::npos &&
+            snapshotQueueEnd != std::string::npos
+        ? std::string_view(source).substr(
+            snapshotQueueBegin, snapshotQueueEnd - snapshotQueueBegin)
+        : std::string_view{};
+    Check(snapshotQueueFunction.find("snapshotQueued.exchange(true)") !=
+                std::string_view::npos &&
+            snapshotQueueFunction.find("latestSnapshot") !=
+                std::string_view::npos &&
+            snapshotQueueFunction.find("ApplySnapshotNow") !=
+                std::string_view::npos &&
+            snapshotQueueFunction.find("expectedEpoch") ==
+                std::string_view::npos &&
+            snapshotQueueFunction.find("viewEpoch") ==
+                std::string_view::npos &&
+            source.find("impl_->ApplySnapshotNow(snapshot);") !=
+                std::string::npos,
+        "immutable revisioned snapshots coalesce independently of view epochs and Open applies the authoritative route immediately");
+
     const std::size_t commitBegin = source.find(
         "bool CommitRoute(const SettingsRoute& route");
     const std::size_t commitEnd = source.find(
@@ -237,7 +261,7 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("expectedEpoch") != std::string::npos &&
             source.find("DispatcherQueue") != std::string::npos &&
             source.find("latestSnapshot") != std::string::npos,
-        "snapshot and async work are coalesced on the DispatcherQueue and gated by view epoch");
+        "snapshot and view-scoped async work are coalesced on the DispatcherQueue with their respective stale-result gates");
 
     Check(runtime.find("GetAncestor(target, GA_ROOTOWNER)") !=
                 std::string::npos &&

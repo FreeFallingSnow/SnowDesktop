@@ -815,21 +815,21 @@ struct SettingsWindowHost::Impl
         if (callbacks->snapshotQueued.exchange(true))
             return;
 
-        const std::uint64_t expectedEpoch = viewEpoch;
         const std::weak_ptr<CallbackState> weak = callbacks;
         try
         {
             if (!callbacks->dispatcher.TryEnqueue(
-                    [weak, expectedEpoch]() {
+                    [weak]() {
                         const auto state = weak.lock();
                         if (!state)
                             return;
                         state->snapshotQueued.store(false);
-                        if (!state->alive.load() || !state->owner ||
-                            state->owner->viewEpoch != expectedEpoch)
-                        {
+                        // The immutable snapshot carries generation/revision
+                        // stale-result protection. Keeping this queue bound to
+                        // one rendered-view epoch could discard a newer
+                        // coalesced snapshot after a visible-window Open.
+                        if (!state->alive.load() || !state->owner)
                             return;
-                        }
                         SettingsController::SnapshotPtr latest;
                         {
                             std::lock_guard lock(state->snapshotMutex);
@@ -2399,6 +2399,7 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     if (!impl_->CommitRoute(route, &openResult))
         return false;
     const auto snapshot = impl_->controller->Snapshot();
+    impl_->ApplySnapshotNow(snapshot);
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))
         ShowWindow(impl_->window, SW_RESTORE);
