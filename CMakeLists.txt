@@ -260,6 +260,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/hotkey_recorder.cpp
     src/winui/hotkey_recorder.h
     src/winui/hotkey_recorder_rules.h
+    src/winui/personalization_page_presenter.cpp
+    src/winui/personalization_page_presenter.h
     src/winui/pch.h
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
@@ -1222,6 +1224,13 @@ if (BUILD_TESTING)
         SOURCES tests/hotkey_recorder_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract hotkey input settings ui winui)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiPersonalizationPagePresenterTests
+        winui_personalization_page_presenter
+        SOURCES tests/winui_personalization_page_presenter_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract personalization settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests

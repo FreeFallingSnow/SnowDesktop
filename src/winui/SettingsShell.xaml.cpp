@@ -161,6 +161,11 @@ SettingsShell::SettingsShell()
             [this](std::string_view key) { return Localize(key); },
             Resources().Lookup(
                 winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
+    personalizationPage_ = std::make_unique<
+        snowdesktop::winui::PersonalizationPagePresenter>(
+            [this](std::string_view key) { return Localize(key); },
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -188,6 +193,11 @@ void SettingsShell::Close() noexcept
             generalPage_->Deactivate();
             generalPage_->Close();
         }
+        if (personalizationPage_)
+        {
+            personalizationPage_->Deactivate();
+            personalizationPage_->Close();
+        }
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -199,6 +209,7 @@ void SettingsShell::Close() noexcept
     searchRequested_ = {};
     cancelOperation_ = {};
     generalPage_.reset();
+    personalizationPage_.reset();
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -246,6 +257,8 @@ void SettingsShell::RefreshLocalizedText()
 
     if (generalPage_)
         generalPage_->RefreshLocalizedText();
+    if (personalizationPage_)
+        personalizationPage_->RefreshLocalizedText();
     RenderRoute(true, false);
     if (!searchResults_.empty())
     {
@@ -280,6 +293,13 @@ void SettingsShell::SetGeneralPageActions(
         generalPage_->SetActions(std::move(actions));
 }
 
+void SettingsShell::SetPersonalizationPageActions(
+    snowdesktop::winui::PersonalizationPageActions actions)
+{
+    if (personalizationPage_)
+        personalizationPage_->SetActions(std::move(actions));
+}
+
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
     return generalPage_ && generalPage_->IsHotkeyCaptureActive();
@@ -309,6 +329,8 @@ bool SettingsShell::ApplySnapshot(
         }
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
+        if (personalizationPage_)
+            personalizationPage_->ApplySnapshot(snapshot);
         const bool routeChanged = previousRoute != navigation_.Route();
         const bool generationChanged =
             previousGeneration != navigation_.Generation();
@@ -740,6 +762,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::General;
     if (leavingGeneral && generalPage_)
         generalPage_->Deactivate();
+    const bool leavingPersonalization = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::Personalization &&
+        pageRoute.page != SettingsPage::Personalization;
+    if (leavingPersonalization && personalizationPage_)
+        personalizationPage_->Deactivate();
 
     PageCards().Children().Clear();
     focusTargets_.clear();
@@ -786,18 +813,33 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::Personalization:
-        addPlaceholder("personalization.theme",
-            "settings.personalization.theme",
-            "settings.personalization.theme.description");
-        addPlaceholder("personalization.colors",
-            "settings.personalization.colors",
-            "settings.personalization.colors.description");
-        addPlaceholder("personalization.menu",
-            "settings.personalization.menu",
-            "settings.personalization.menu.description");
-        addPlaceholder("personalization.widgets",
-            "settings.personalization.widgets",
-            "settings.personalization.widgets.description");
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(personalizationPage_->Content());
+            for (const std::string_view focusId : {
+                     "personalization.theme",
+                     "personalization.globalTheme",
+                     "personalization.backgroundColor",
+                     "personalization.borderColor",
+                     "personalization.widgetAlpha",
+                     "personalization.borderAlpha",
+                     "personalization.gradientEndAlpha",
+                     "personalization.glass",
+                     "personalization.blurRadius",
+                     "personalization.acrylic",
+                     "personalization.contentTheme",
+                     "personalization.contextMenu",
+                     "personalization.cornerRadius",
+                     "personalization.barHeight",
+                     "personalization.tabHeight",
+                     "personalization.showCategoryTabCounts"})
+            {
+                RegisterFocusTarget(
+                    std::string(focusId),
+                    personalizationPage_->FocusTarget(focusId));
+            }
+            personalizationPage_->Activate();
+        }
         break;
     case SettingsPage::Desktop:
         addPlaceholder("desktop.layout", "settings.desktop.layout",

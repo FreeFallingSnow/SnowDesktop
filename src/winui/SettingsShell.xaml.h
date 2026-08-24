@@ -5,6 +5,7 @@
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
 #include "general_page_presenter.h"
+#include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 
 #include <cstdint>
@@ -84,6 +85,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetCancelOperationCallback(CancelOperationCallback callback);
     void SetGeneralPageActions(
         snowdesktop::winui::GeneralPageActions actions);
+    void SetPersonalizationPageActions(
+        snowdesktop::winui::PersonalizationPageActions actions);
 
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
@@ -191,6 +194,8 @@ private:
     CancelOperationCallback cancelOperation_;
 
     std::unique_ptr<snowdesktop::winui::GeneralPagePresenter> generalPage_;
+    std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
+        personalizationPage_;
 
     snowdesktop::winui::SettingsShellNavigationState navigation_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;
