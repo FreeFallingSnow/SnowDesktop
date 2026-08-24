@@ -184,7 +184,7 @@ struct NumericEditor
         : changed(std::move(callback)), defaultValue(resetValue)
     {
         editors = muxc::Grid{};
-        editors.ColumnSpacing(12.0);
+        editors.ColumnSpacing(8.0);
         muxc::ColumnDefinition sliderColumn{};
         sliderColumn.Width(mux::GridLengthHelper::FromValueAndType(
             1.0, mux::GridUnitType::Star));
@@ -217,7 +217,7 @@ struct NumericEditor
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
         number.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        number.Width(124.0);
+        number.Width(92.0);
         if (fractionalDigits == 0)
             number.AcceptsExpression(false);
 
@@ -239,6 +239,10 @@ struct NumericEditor
         {
             reset = muxc::Button{};
             reset.VerticalAlignment(mux::VerticalAlignment::Center);
+            reset.VerticalContentAlignment(mux::VerticalAlignment::Center);
+            reset.HorizontalContentAlignment(
+                mux::HorizontalAlignment::Center);
+            reset.MinHeight(32.0);
             muxc::Grid::SetColumn(reset, 2);
             editors.Children().Append(reset);
         }
@@ -516,8 +520,6 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock beautifyPresetLabel{nullptr};
     muxc::ComboBox beautifyPreset{nullptr};
     SettingRow beautifyPresetRow;
-    muxc::ToggleSwitch beautifyEnabled{nullptr};
-    SettingRow beautifyEnabledRow;
     muxc::StackPanel beautifyAdvanced{nullptr};
     muxc::TextBlock beautifyModeLabel{nullptr};
     muxc::ComboBox beautifyMode{nullptr};
@@ -585,7 +587,6 @@ struct DesktopPagePresenter::Impl
     winrt::event_token shortcutArrowToken{};
     winrt::event_token showCountsToken{};
     winrt::event_token beautifyPresetToken{};
-    winrt::event_token beautifyEnabledToken{};
     winrt::event_token beautifyModeToken{};
     winrt::event_token gradientEnabledToken{};
     winrt::event_token gradientDirectionToken{};
@@ -765,12 +766,6 @@ struct DesktopPagePresenter::Impl
 
         InitializeCard(beautifyCard, cardStyle, appearanceRoot);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
-        beautifyEnabled = muxc::ToggleSwitch{};
-        beautifyEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        beautifyEnabledRow.Initialize(beautifyEnabled);
-        beautifyEnabledRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
-        beautifyCard.content.Children().Append(beautifyEnabledRow.root);
         beautifyAdvanced = muxc::StackPanel{};
         beautifyAdvanced.Spacing(12.0);
         beautifyCard.content.Children().Append(beautifyAdvanced);
@@ -959,6 +954,11 @@ struct DesktopPagePresenter::Impl
         restoreCategory = muxc::Button{};
         applyCategory.VerticalAlignment(mux::VerticalAlignment::Center);
         restoreCategory.VerticalAlignment(mux::VerticalAlignment::Center);
+        applyCategory.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        restoreCategory.VerticalContentAlignment(
+            mux::VerticalAlignment::Center);
+        applyCategory.MinHeight(32.0);
+        restoreCategory.MinHeight(32.0);
         categoryActions.Children().Append(applyCategory);
         categoryActions.Children().Append(restoreCategory);
         categoryActionsRow.Initialize(categoryActions);
@@ -1059,16 +1059,6 @@ struct DesktopPagePresenter::Impl
                         }
                     });
                 UpdateConditionalStates();
-            });
-        beautifyEnabledToken = beautifyEnabled.Toggled(
-            [this](const auto&, const auto&) {
-                const bool enabled = beautifyEnabled.IsOn();
-                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
-                    [enabled](DesktopDisplaySettings& desktop) {
-                        desktop.iconBeautify.enabled = enabled;
-                        desktop.iconBeautify.preset =
-                            IconBeautifyPreset::Custom;
-                    });
             });
         beautifyModeToken = beautifyMode.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -1383,7 +1373,6 @@ struct DesktopPagePresenter::Impl
 
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
-        beautifyEnabled.IsOn(value.enabled);
         beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
         backgroundStart->SetColor(MakeColor(
             value.backgroundStartR,
@@ -1604,10 +1593,6 @@ struct DesktopPagePresenter::Impl
             L("app.settings.beautify_preset_default", L"Default"),
             L("app.settings.custom", L"Custom"),
         }, std::max(0, beautifyPreset.SelectedIndex()));
-        beautifyEnabledRow.SetText(L(
-            "app.settings.beautify_enabled", L"Enable beautification"));
-        muxa::AutomationProperties::SetName(
-            beautifyEnabled, beautifyEnabledRow.label.Text());
         beautifyModeRow.SetText(
             L("app.settings.beautify_mode", L"Beautification mode"));
         muxa::AutomationProperties::SetName(
@@ -1844,7 +1829,6 @@ struct DesktopPagePresenter::Impl
             shortcutArrow.SelectionChanged(shortcutArrowToken);
             showCategoryTabCounts.Toggled(showCountsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);
-            beautifyEnabled.Toggled(beautifyEnabledToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
             gradientEnabled.Toggled(gradientEnabledToken);
             gradientDirection.SelectionChanged(gradientDirectionToken);

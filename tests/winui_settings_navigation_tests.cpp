@@ -412,18 +412,15 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto cancelRollback = sharedControls.find("Rollback();", cancelStart);
     const auto cancelHide = sharedControls.find("flyout.Hide();", cancelStart);
     Check(sharedControls.find("struct SettingRow") != std::string::npos &&
-            sharedControls.find("kSettingControlWidth = 520.0") !=
+            sharedControls.find("kSettingControlWidth = 300.0") !=
                 std::string::npos &&
             sharedControls.find("muxc::Grid::SetColumn(controlHost, 1)") !=
                 std::string::npos &&
             sharedControls.find("void SetControlAlignment(") !=
                 std::string::npos &&
-            sharedControls.find("kStackedSettingThreshold = 760.0") !=
+            sharedControls.find("kStackedSettingThreshold") ==
                 std::string::npos &&
-            sharedControls.find("root.SizeChanged(") != std::string::npos &&
-            sharedControls.find(
-                "Grid::SetRow(currentControl, stacked ? 1 : 0)") !=
-                std::string::npos &&
+            sharedControls.find("root.SizeChanged(") == std::string::npos &&
             sharedControls.find("struct ColorFlyoutEditor") !=
                 std::string::npos &&
             sharedControls.find("SettingsUpdateMode::Preview") !=
@@ -451,7 +448,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "setting rows keep wide left-right alignment, stack below the threshold, and color swatches transactionally restore unconfirmed sessions");
+        "setting rows keep the legacy single-line left-right alignment and color swatches transactionally restore unconfirmed sessions");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");

@@ -119,13 +119,13 @@ void TestSingleLineFieldRows(
               "field.content.Children().Append(field.diagnostic)"}),
         "widget fields keep full-width editors and validation while compact controls and reset actions align right and group expanders stretch");
     Check(ContainsAll(sharedControls, {
-              "kSettingControlWidth = 520.0",
-              "kStackedSettingThreshold = 760.0",
+              "kSettingControlWidth = 300.0",
               "muxc::Grid::SetColumn(controlHost, 1)",
-              "void SetControlAlignment(",
-              "root.SizeChanged(",
-              "Grid::SetRow(currentControl, stacked ? 1 : 0)"}),
-        "shared setting rows retain two columns when wide and stack the editor below translated text when narrow");
+              "void SetControlAlignment("}) &&
+            sharedControls.find("kStackedSettingThreshold") ==
+                std::string::npos &&
+            sharedControls.find("root.SizeChanged(") == std::string::npos,
+        "shared setting rows retain a fixed legacy-width editor column and never stack it below translated text");
 }
 
 void TestPopupColorEditing(

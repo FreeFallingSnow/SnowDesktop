@@ -143,8 +143,6 @@ void TestPresenterContract(const std::filesystem::path& root)
         "category name/delete, add, and save actions retain legacy row alignment");
     const auto beautifyPresetRow = source.find(
         "AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset)");
-    const auto beautifyEnabledRow = source.find(
-        "beautifyCard.content.Children().Append(beautifyEnabledRow.root)");
     const auto beautifyAdvanced = source.find(
         "beautifyCard.content.Children().Append(beautifyAdvanced)");
     Check(source.find(
@@ -156,17 +154,11 @@ void TestPresenterContract(const std::filesystem::path& root)
                 std::string::npos &&
             source.find("showCategoryTabCounts.Header(") ==
                 std::string::npos &&
-            source.find("beautifyEnabledRow.Initialize(beautifyEnabled)") !=
+            source.find("beautifyEnabled") == std::string::npos &&
+            source.find("desktop.iconBeautify.enabled = true") !=
                 std::string::npos &&
-            source.find("beautifyEnabledRow.SetControlAlignment(") !=
-                std::string::npos &&
-            source.find("beautifyEnabledRow.SetText(L(") !=
-                std::string::npos &&
-            source.find("app.settings.beautify_enabled") !=
-                std::string::npos &&
-            beautifyPresetRow < beautifyEnabledRow &&
-            beautifyEnabledRow < beautifyAdvanced,
-        "category counts and beautification enablement use localized two-column rows in visible legacy order");
+            beautifyPresetRow < beautifyAdvanced,
+        "category counts use a right-aligned row while the legacy None, Default, and Custom preset remains the only beautification enablement UI");
     Check(source.find(
               "gradientEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&
@@ -180,6 +172,9 @@ void TestPresenterContract(const std::filesystem::path& root)
               "reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos &&
             source.find(
+              "reset.VerticalContentAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            source.find(
               "categoryActions.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&
             source.find(
@@ -187,7 +182,7 @@ void TestPresenterContract(const std::filesystem::path& root)
                 std::string::npos &&
             source.find("categoryActionsRow.SetControlAlignment(") !=
                 std::string::npos,
-        "desktop toggles and action groups align right while inline restore buttons remain vertically centered");
+        "desktop toggles and action groups align right while inline restore buttons center both their frame and content vertically");
 }
 }
 

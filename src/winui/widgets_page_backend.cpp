@@ -1362,8 +1362,10 @@ struct WidgetsPageBackend::Impl final
             !group.invalidManaged.empty();
         // Adding a component creates a persisted desktop instance. Invalid
         // packages remain recoverable management rows, but are not launchable.
-        snapshot.canAddToDesktop = display &&
+        snapshot.showAddToDesktop = display &&
             static_cast<bool>(options.addPackageToDesktop);
+        snapshot.canAddToDesktop = snapshot.showAddToDesktop &&
+            display->active && display->enabled;
         snapshot.canUseDevelopmentOverride = display &&
             group.development != nullptr;
         snapshot.developmentOverrideActive = display && group.development &&
@@ -3688,7 +3690,11 @@ struct WidgetsPageBackend::Impl final
     {
         if (BusyForMutation()) return ReportBusy();
         const auto* package = FindSnapshotPackage(request.packageId);
+        const auto* activePackage =
+            FindDisplayPackage(WideToUtf8(request.packageId));
         if (!package || !package->canAddToDesktop ||
+            !activePackage || !activePackage->active ||
+            !activePackage->enabled ||
             !options.addPackageToDesktop)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,

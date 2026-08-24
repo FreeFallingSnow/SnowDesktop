@@ -167,12 +167,15 @@ void TestLegacyPackageManagementParity(const std::string& header,
                 std::string::npos,
         "development, managed snapshot, publishing, and rollback capabilities are advertised from real package state");
 
-    Check(source.find("snapshot.canAddToDesktop = display &&\n"
+    Check(source.find("snapshot.showAddToDesktop = display &&\n"
                       "            static_cast<bool>(options.addPackageToDesktop)") !=
                 std::string::npos &&
-            source.find("snapshot.canAddToDesktop = display.active") ==
-                std::string::npos,
-        "disabled and permission-blocked packages remain addable as persisted placeholders");
+            source.find("snapshot.canAddToDesktop = snapshot.showAddToDesktop &&\n"
+                      "            display->active && display->enabled") !=
+                std::string::npos &&
+            source.find("!activePackage->active") != std::string::npos &&
+            source.find("!activePackage->enabled") != std::string::npos,
+        "add-to-desktop stays visible but is disabled and revalidated when the active package cannot run");
 
     Check(source.find("StageDevelopmentPackage(") != std::string::npos &&
             source.find("ScopedPackageIdentityLock sourceLock(development.root") !=

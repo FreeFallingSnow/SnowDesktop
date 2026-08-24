@@ -67,6 +67,9 @@ struct HotkeySettingRow
         reset = muxc::Button{};
         reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
         reset.VerticalAlignment(mux::VerticalAlignment::Center);
+        reset.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        reset.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+        reset.MinHeight(32.0);
         muxc::Grid::SetColumn(reset, 1);
         actions.Children().Append(recorder.Root());
         actions.Children().Append(reset);

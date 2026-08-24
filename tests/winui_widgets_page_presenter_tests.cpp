@@ -129,11 +129,12 @@ void TestWidgetsPagePresenterContract(
         "row.HorizontalContentAlignment(", packageRowStart);
     Check(source.find("presenter_controls::SettingRow managementRow") !=
                 std::string::npos &&
-            source.find("presenter_controls::SettingRow enabledRow") !=
+            source.find("presenter_controls::SettingRow primaryActionsRow") !=
                 std::string::npos &&
             source.find("presenter_controls::SettingRow developmentRow") !=
                 std::string::npos &&
-            source.find("includedCard") != std::string::npos &&
+            source.find("includedExpander.IsExpanded(false)") !=
+                std::string::npos &&
             source.find("allFilterButton") != std::string::npos &&
             source.find("installedFilterButton.Visibility") !=
                 std::string::npos &&
@@ -142,13 +143,19 @@ void TestWidgetsPagePresenterContract(
             source.find("PackageFilter::BuiltIn") == std::string::npos &&
             source.find("managementRow.SetControlAlignment(") !=
                 std::string::npos &&
-            source.find("enabledRow.SetControlAlignment(") !=
+            source.find("primaryActionsRow.SetControlAlignment(") !=
                 std::string::npos,
         "legacy My Components toolbar, filter tags, included group and single-line right-aligned setting rows are retained");
     Check(packageRowStart != std::string::npos &&
             packageRowEnd != std::string::npos &&
             packageContentStretch != std::string::npos &&
             packageContentStretch < packageRowEnd &&
+            source.find("StretchExpanderBody(row, body)") !=
+                std::string::npos &&
+            source.find("app.settings.widgets_package_id") !=
+                std::string::npos &&
+            source.find("app.settings.widgets_provider_id") !=
+                std::string::npos &&
             source.find("permissionsExpander.HorizontalContentAlignment(") !=
                 std::string::npos &&
             source.find("instancesExpander.HorizontalContentAlignment(") !=

@@ -62,6 +62,25 @@ void InitializeCard(
     page.Children().Append(card.root);
 }
 
+void StretchExpanderBody(
+    const muxc::Expander& expander,
+    const mux::FrameworkElement& body)
+{
+    const auto weakBody = winrt::make_weak(body);
+    expander.SizeChanged(
+        [weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
+            if (const auto currentBody = weakBody.get())
+            {
+                // The WinUI Expander template contributes 16 DIP of padding
+                // on each side. Pinning the body to the remaining width keeps
+                // action rows aligned with the full card instead of letting a
+                // desired-width StackPanel appear centered.
+                currentBody.Width(std::max(0.0,
+                    static_cast<double>(args.NewSize().Width) - 32.0));
+            }
+        });
+}
+
 void SetAutomation(
     const mux::DependencyObject& element,
     std::wstring_view name,
@@ -177,7 +196,6 @@ struct WidgetsPagePresenter::Impl
 
     SettingsCard searchCard;
     SettingsCard installedCard;
-    SettingsCard includedCard;
     SettingsCard sourcesCard;
     SettingsCard developerOverridesCard;
     SettingsCard developerWorkspaceCard;
@@ -204,6 +222,9 @@ struct WidgetsPagePresenter::Impl
     muxc::TextBlock taskStatus{nullptr};
     muxc::Button cancelTaskButton{nullptr};
     muxc::StackPanel installedRows{nullptr};
+    muxc::Expander includedExpander{nullptr};
+    muxc::TextBlock includedTitle{nullptr};
+    muxc::TextBlock includedDescription{nullptr};
     muxc::StackPanel includedRows{nullptr};
     muxc::StackPanel sourceRows{nullptr};
     muxc::StackPanel developerOverrideRows{nullptr};
@@ -659,11 +680,30 @@ struct WidgetsPagePresenter::Impl
         installedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         installedCard.content.Children().Append(installedRows);
 
-        InitializeCard(includedCard, cardStyle, root);
+        includedExpander = muxc::Expander{};
+        includedExpander.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        includedExpander.HorizontalContentAlignment(
+            mux::HorizontalAlignment::Stretch);
+        includedExpander.IsExpanded(false);
+        muxc::StackPanel includedHeader;
+        includedHeader.Spacing(3.0);
+        includedTitle = muxc::TextBlock{};
+        includedTitle.FontWeight(
+            winrt::Windows::UI::Text::FontWeights::SemiBold());
+        includedTitle.TextWrapping(mux::TextWrapping::Wrap);
+        includedDescription = muxc::TextBlock{};
+        includedDescription.Opacity(0.72);
+        includedDescription.TextWrapping(mux::TextWrapping::Wrap);
+        includedHeader.Children().Append(includedTitle);
+        includedHeader.Children().Append(includedDescription);
+        includedExpander.Header(includedHeader);
         includedRows = muxc::StackPanel{};
         includedRows.Spacing(8.0);
         includedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        includedCard.content.Children().Append(includedRows);
+        includedExpander.Content(includedRows);
+        StretchExpanderBody(includedExpander, includedRows);
+        root.Children().Append(includedExpander);
 
         InitializeCard(sourcesCard, cardStyle, root);
         sourceRows = muxc::StackPanel{};
@@ -2121,9 +2161,6 @@ struct WidgetsPagePresenter::Impl
             package.canInstallDevelopmentSnapshot ||
             package.canPublishDevelopmentPackage ||
             !package.restorableVersions.empty() || hasWorkshopItem);
-        if (!hasAdvancedAction)
-            return;
-
         muxc::Expander advanced;
         advanced.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         advanced.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -2132,6 +2169,23 @@ struct WidgetsPagePresenter::Impl
         muxc::StackPanel actionsPanel;
         actionsPanel.Spacing(7.0);
         actionsPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+
+        const auto appendTechnicalValue = [&](std::string_view labelKey,
+                                               std::wstring_view fallback,
+                                               std::wstring_view value) {
+            if (!value.empty())
+            {
+                actionsPanel.Children().Append(MakeSecondaryText(
+                    L(labelKey, fallback) + L": " + std::wstring(value)));
+            }
+        };
+        appendTechnicalValue("app.settings.widgets_package_id",
+            L"Component ID", package.packageId);
+        appendTechnicalValue("app.settings.widgets_provider_id",
+            L"Source ID", package.sourceId);
+        appendTechnicalValue("app.settings.widgets_permission_state",
+            L"Permission status", PermissionStateText(
+                package.permissionState));
 
         const auto makeCommand = [this, &package](
             WidgetsPageCommand command,
@@ -2159,21 +2213,21 @@ struct WidgetsPagePresenter::Impl
             return button;
         };
 
-        if (package.canCreateDevelopmentProject)
+        if (hasAdvancedAction && package.canCreateDevelopmentProject)
         {
             actionsPanel.Children().Append(makeCommand(
                 WidgetsPageCommand::CreateDevelopmentProject,
                 "app.settings.widgets_create_development",
                 L"Create Development Version"));
         }
-        if (package.canInstallDevelopmentSnapshot)
+        if (hasAdvancedAction && package.canInstallDevelopmentSnapshot)
         {
             actionsPanel.Children().Append(makeCommand(
                 WidgetsPageCommand::InstallDevelopmentSnapshot,
                 "app.settings.widgets_install_managed",
                 L"Install to Installed"));
         }
-        if (!package.restorableVersions.empty())
+        if (hasAdvancedAction && !package.restorableVersions.empty())
         {
             muxc::Expander versions;
             versions.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -2201,13 +2255,13 @@ struct WidgetsPagePresenter::Impl
             versions.Content(versionRows);
             actionsPanel.Children().Append(versions);
         }
-        if (package.canPublishDevelopmentPackage)
+        if (hasAdvancedAction && package.canPublishDevelopmentPackage)
         {
             actionsPanel.Children().Append(makeCommand(
                 WidgetsPageCommand::PublishDevelopmentPackage,
                 "app.settings.widgets_upload_steam", L"Upload to Steam"));
         }
-        if (hasWorkshopItem)
+        if (hasAdvancedAction && hasWorkshopItem)
         {
             actionsPanel.Children().Append(makeCommand(
                 WidgetsPageCommand::OpenWorkshopItem,
@@ -2253,8 +2307,7 @@ struct WidgetsPagePresenter::Impl
         muxc::TextBlock metadata;
         const std::wstring packageState = PackageStateText(package);
         metadata.Text(JoinMetadata(
-            {package.version, package.author, package.sourceName,
-                packageState}));
+            {package.sourceName, packageState}));
         metadata.Opacity(0.72);
         metadata.TextWrapping(mux::TextWrapping::Wrap);
         header.Children().Append(name);
@@ -2266,6 +2319,18 @@ struct WidgetsPagePresenter::Impl
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         if (!package.description.empty())
             body.Children().Append(MakeSecondaryText(package.description));
+        if (!package.version.empty())
+        {
+            body.Children().Append(MakeSecondaryText(
+                L("app.settings.version", L"Version") + L": " +
+                package.version));
+        }
+        if (!package.author.empty())
+        {
+            body.Children().Append(MakeSecondaryText(
+                L("app.settings.author", L"Author") + L": " +
+                package.author));
+        }
 
         for (const auto& invalid : package.invalidSources)
         {
@@ -2338,54 +2403,64 @@ struct WidgetsPagePresenter::Impl
             body.Children().Append(failureActions);
         }
 
-        if (package.canEnable)
+        if (package.canEnable || package.showAddToDesktop)
         {
-            muxc::Button enabledAction = MakeActionButton(L(
-                package.enabled
-                    ? "app.settings.widgets_disable"
-                    : "app.settings.widgets_enable",
-                package.enabled ? L"Disable" : L"Enable"));
-            HookClick(enabledAction,
-                [this, packageId = package.packageId,
-                    enable = !package.enabled](
-                    const winrt::Windows::Foundation::IInspectable&,
-                    const mux::RoutedEventArgs&) {
-                    if (updatingControls || closed || !active)
-                        return;
-                    WidgetsPageRequest request;
-                    request.command = WidgetsPageCommand::SetPackageEnabled;
-                    request.packageId = packageId;
-                    request.enabled = enable;
-                    Emit(std::move(request));
-                },
-                installedRevokers);
-            presenter_controls::SettingRow enabledRow;
-            enabledRow.Initialize(enabledAction, 180.0);
-            enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-            enabledRow.SetText(
+            muxc::StackPanel primaryActions;
+            primaryActions.Orientation(muxc::Orientation::Horizontal);
+            primaryActions.HorizontalAlignment(
+                mux::HorizontalAlignment::Right);
+            primaryActions.Spacing(8.0);
+            if (package.canEnable)
+            {
+                muxc::Button enabledAction = MakeActionButton(L(
+                    package.enabled
+                        ? "app.settings.widgets_disable"
+                        : "app.settings.widgets_enable",
+                    package.enabled ? L"Disable" : L"Enable"));
+                HookClick(enabledAction,
+                    [this, packageId = package.packageId,
+                        enable = !package.enabled](
+                        const winrt::Windows::Foundation::IInspectable&,
+                        const mux::RoutedEventArgs&) {
+                        if (updatingControls || closed || !active)
+                            return;
+                        WidgetsPageRequest request;
+                        request.command =
+                            WidgetsPageCommand::SetPackageEnabled;
+                        request.packageId = packageId;
+                        request.enabled = enable;
+                        Emit(std::move(request));
+                    },
+                    installedRevokers);
+                primaryActions.Children().Append(enabledAction);
+            }
+            if (package.showAddToDesktop)
+            {
+                muxc::Button add = MakeActionButton(
+                    L("app.widget_preview.add_to_desktop",
+                        L"Add to Desktop"));
+                add.IsEnabled(package.canAddToDesktop);
+                HookClick(add,
+                    [this, packageId = package.packageId](
+                        const winrt::Windows::Foundation::IInspectable&,
+                        const mux::RoutedEventArgs&) {
+                        WidgetsPageRequest request;
+                        request.command =
+                            WidgetsPageCommand::AddPackageToDesktop;
+                        request.packageId = packageId;
+                        Emit(std::move(request));
+                    },
+                    installedRevokers);
+                primaryActions.Children().Append(add);
+            }
+            presenter_controls::SettingRow primaryActionsRow;
+            primaryActionsRow.Initialize(primaryActions);
+            primaryActionsRow.SetControlAlignment(
+                mux::HorizontalAlignment::Right);
+            primaryActionsRow.SetText(
                 L("app.settings.widgets_enabled", L"Enabled"),
                 PackageStateText(package));
-            body.Children().Append(enabledRow.root);
-        }
-
-        if (package.canAddToDesktop)
-        {
-            muxc::Button add = MakeActionButton(
-                L("app.widget_preview.add_to_desktop",
-                    L"Add to Desktop"));
-            add.HorizontalAlignment(mux::HorizontalAlignment::Right);
-            HookClick(add,
-                [this, packageId = package.packageId](
-                    const winrt::Windows::Foundation::IInspectable&,
-                    const mux::RoutedEventArgs&) {
-                    WidgetsPageRequest request;
-                    request.command =
-                        WidgetsPageCommand::AddPackageToDesktop;
-                    request.packageId = packageId;
-                    Emit(std::move(request));
-                },
-                installedRevokers);
-            body.Children().Append(add);
+            body.Children().Append(primaryActionsRow.root);
         }
 
         if (developerOverridesVisible &&
@@ -2452,6 +2527,7 @@ struct WidgetsPagePresenter::Impl
         }
 
         row.Content(body);
+        StretchExpanderBody(row, body);
         SetAutomation(row, name.Text(), package.description);
         if (!firstPackageTarget)
             firstPackageTarget = row;
@@ -2511,12 +2587,10 @@ struct WidgetsPagePresenter::Impl
 
         bool anyUserPackage = false;
         bool anyIncludedPackage = false;
-        bool hasIncludedPackage = false;
         for (const InstalledWidgetPackageSnapshot& package : packages)
         {
             if (IsIncludedOnlyPackage(package))
             {
-                hasIncludedPackage = true;
                 continue;
             }
             if (!MatchesFilter(package))
@@ -2530,11 +2604,6 @@ struct WidgetsPagePresenter::Impl
                 L("app.settings.widgets_filter_empty", L"No components")));
         }
 
-        includedCard.root.Visibility(hasIncludedPackage
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        if (!hasIncludedPackage)
-            return;
         for (const InstalledWidgetPackageSnapshot& package : packages)
         {
             if (!IsIncludedOnlyPackage(package))
@@ -2544,11 +2613,14 @@ struct WidgetsPagePresenter::Impl
             anyIncludedPackage = true;
             AddPackageRow(package, includedRows);
         }
-        if (!anyIncludedPackage)
-        {
-            includedRows.Children().Append(MakeSecondaryText(
-                L("app.settings.widgets_filter_empty", L"No components")));
-        }
+        includedExpander.Visibility(anyIncludedPackage
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+        includedTitle.Text(L(
+            "app.settings.widgets_filter_builtin", L"Included") + L" " +
+            std::to_wstring(includedRows.Children().Size()));
+        if (!query.empty() && anyIncludedPackage)
+            includedExpander.IsExpanded(true);
     }
 
     void AddCatalogResult(
@@ -2846,9 +2918,12 @@ struct WidgetsPagePresenter::Impl
         installedCard.description.Text(L(
             "settings.widgets.installed.description",
             L"Search, enable, disable or uninstall widgets."));
-        includedCard.title.Text(L(
-            "app.settings.widgets_filter_builtin", L"Included"));
-        includedCard.description.Text(L(
+        includedTitle.Text(L(
+            "app.settings.widgets_filter_builtin", L"Included") + L" " +
+            std::to_wstring(includedRows
+                    ? includedRows.Children().Size()
+                    : 0));
+        includedDescription.Text(L(
             "app.settings.widgets_builtin",
             L"Included with SnowDesktop"));
         sourcesCard.title.Text(L("settings.widgets.sources",
@@ -2980,8 +3055,8 @@ struct WidgetsPagePresenter::Impl
                 L"Component Developer Tools"));
         SetAutomation(installedCard.root, installedCard.title.Text(),
             installedCard.description.Text());
-        SetAutomation(includedCard.root, includedCard.title.Text(),
-            includedCard.description.Text());
+        SetAutomation(includedExpander, includedTitle.Text(),
+            includedDescription.Text());
         SetAutomation(sourcesCard.root, sourcesCard.title.Text(),
             sourcesCard.description.Text());
         SetAutomation(developerOverridesCard.root,

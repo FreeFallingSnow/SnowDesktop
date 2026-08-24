@@ -66,7 +66,7 @@ struct ContinuousControl
     SettingRow row;
     muxc::Grid root{nullptr};
     muxc::TextBlock label{nullptr};
-    muxc::StackPanel editors{nullptr};
+    muxc::Grid editors{nullptr};
     muxc::Slider slider{nullptr};
     muxc::NumberBox number{nullptr};
     muxc::TextBlock unit{nullptr};
@@ -643,18 +643,25 @@ struct DockPagePresenter::Impl
         SystemTaskbarDynamicRule DockSettings::* ruleMember = nullptr,
         double defaultValue = std::numeric_limits<double>::quiet_NaN())
     {
-        control.editors = muxc::StackPanel{};
-        control.editors.Orientation(muxc::Orientation::Horizontal);
-        control.editors.Spacing(12.0);
+        control.editors = muxc::Grid{};
+        control.editors.ColumnSpacing(8.0);
+        muxc::ColumnDefinition sliderColumn{};
+        sliderColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition numberColumn{};
+        numberColumn.Width(mux::GridLengthHelper::Auto());
+        muxc::ColumnDefinition unitColumn{};
+        unitColumn.Width(mux::GridLengthHelper::Auto());
+        control.editors.ColumnDefinitions().Append(sliderColumn);
+        control.editors.ColumnDefinitions().Append(numberColumn);
+        control.editors.ColumnDefinitions().Append(unitColumn);
         control.slider = muxc::Slider{};
         control.slider.Minimum(minimum);
         control.slider.Maximum(maximum);
         control.slider.StepFrequency(step);
         control.slider.VerticalAlignment(mux::VerticalAlignment::Center);
-        control.slider.Width(
-            std::isfinite(defaultValue) ? 220.0
-            : field == ContinuousField::FrequentItemCount ? 280.0
-            : 320.0);
+        control.slider.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
         control.number = muxc::NumberBox{};
         control.number.Minimum(minimum);
         control.number.Maximum(maximum);
@@ -662,7 +669,7 @@ struct DockPagePresenter::Impl
         control.number.LargeChange(step * 5.0);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
-        control.number.Width(128.0);
+        control.number.Width(92.0);
         control.unit = muxc::TextBlock{};
         control.unit.VerticalAlignment(mux::VerticalAlignment::Center);
         control.unit.Opacity(0.72);
@@ -671,12 +678,23 @@ struct DockPagePresenter::Impl
         control.ruleMember = ruleMember;
         control.defaultValue = defaultValue;
         control.editors.Children().Append(control.slider);
+        muxc::Grid::SetColumn(control.number, 1);
         control.editors.Children().Append(control.number);
+        muxc::Grid::SetColumn(control.unit, 2);
         control.editors.Children().Append(control.unit);
         if (std::isfinite(defaultValue))
         {
+            muxc::ColumnDefinition resetColumn{};
+            resetColumn.Width(mux::GridLengthHelper::Auto());
+            control.editors.ColumnDefinitions().Append(resetColumn);
             control.reset = muxc::Button{};
             control.reset.VerticalAlignment(mux::VerticalAlignment::Center);
+            control.reset.VerticalContentAlignment(
+                mux::VerticalAlignment::Center);
+            control.reset.HorizontalContentAlignment(
+                mux::HorizontalAlignment::Center);
+            control.reset.MinHeight(32.0);
+            muxc::Grid::SetColumn(control.reset, 3);
             control.editors.Children().Append(control.reset);
         }
         control.row.Initialize(control.editors);

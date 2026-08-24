@@ -34,8 +34,8 @@ constexpr wchar_t kSettingsWindowClassName[] =
     L"SnowDesktop.WinUI3.SettingsWindow";
 constexpr int kDefaultClientWidth = 1100;
 constexpr int kDefaultClientHeight = 760;
-constexpr int kMinimumClientWidth = 500;
-constexpr int kMinimumClientHeight = 350;
+constexpr int kMinimumClientWidth = 840;
+constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 

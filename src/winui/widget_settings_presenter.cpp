@@ -222,7 +222,7 @@ struct WidgetFieldControl
     muxc::TextBox text{nullptr};
     muxc::PasswordBox password{nullptr};
     muxc::ToggleSwitch toggle{nullptr};
-    muxc::StackPanel numericEditors{nullptr};
+    muxc::Grid numericEditors{nullptr};
     muxc::Slider slider{nullptr};
     muxc::NumberBox number{nullptr};
     std::unique_ptr<presenter_controls::ColorFlyoutEditor> colorEditor;
@@ -286,7 +286,7 @@ struct WidgetGroupControl
 struct AppearanceScalarControl
 {
     presenter_controls::SettingRow row;
-    muxc::StackPanel editors{nullptr};
+    muxc::Grid editors{nullptr};
     muxc::Slider slider{nullptr};
     muxc::NumberBox number{nullptr};
     winrt::event_token sliderChanged{};
@@ -524,27 +524,35 @@ struct WidgetSettingsPresenter::Impl
 
     void InitializeAppearanceScalar(AppearanceScalarControl& control)
     {
-        control.editors = muxc::StackPanel{};
-        control.editors.Orientation(muxc::Orientation::Horizontal);
-        control.editors.Spacing(12.0);
+        control.editors = muxc::Grid{};
+        control.editors.ColumnSpacing(8.0);
         control.editors.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        muxc::ColumnDefinition sliderColumn{};
+        sliderColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition numberColumn{};
+        numberColumn.Width(mux::GridLengthHelper::Auto());
+        control.editors.ColumnDefinitions().Append(sliderColumn);
+        control.editors.ColumnDefinitions().Append(numberColumn);
         control.slider = muxc::Slider{};
         control.slider.Minimum(0.0);
         control.slider.Maximum(1.0);
         control.slider.StepFrequency(0.01);
-        control.slider.Width(350.0);
+        control.slider.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
         control.slider.VerticalAlignment(mux::VerticalAlignment::Center);
         control.number = muxc::NumberBox{};
         control.number.Minimum(0.0);
         control.number.Maximum(1.0);
         control.number.SmallChange(0.01);
-        control.number.Width(110.0);
+        control.number.Width(92.0);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
         control.number.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
         control.editors.Children().Append(control.slider);
+        muxc::Grid::SetColumn(control.number, 1);
         control.editors.Children().Append(control.number);
         control.row.Initialize(control.editors);
     }
@@ -716,6 +724,11 @@ struct WidgetSettingsPresenter::Impl
             mux::HorizontalAlignment::Right);
         restoreScriptDefault.VerticalAlignment(
             mux::VerticalAlignment::Center);
+        restoreScriptDefault.VerticalContentAlignment(
+            mux::VerticalAlignment::Center);
+        restoreScriptDefault.HorizontalContentAlignment(
+            mux::HorizontalAlignment::Center);
+        restoreScriptDefault.MinHeight(32.0);
         restoreScriptDefaultRow.Initialize(restoreScriptDefault);
         restoreScriptDefaultRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
@@ -734,6 +747,9 @@ struct WidgetSettingsPresenter::Impl
         reset = muxc::Button{};
         reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
         reset.VerticalAlignment(mux::VerticalAlignment::Center);
+        reset.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        reset.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+        reset.MinHeight(32.0);
         resetRow.Initialize(reset);
         resetRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         resetCard.content.Children().Append(resetRow.root);
@@ -1114,28 +1130,36 @@ struct WidgetSettingsPresenter::Impl
             : (integer ? 1.0 : 0.1);
         if (integer) step = std::max(1.0, std::round(step));
 
-        field.numericEditors = muxc::StackPanel{};
-        field.numericEditors.Orientation(muxc::Orientation::Horizontal);
-        field.numericEditors.Spacing(12.0);
+        field.numericEditors = muxc::Grid{};
+        field.numericEditors.ColumnSpacing(8.0);
         field.numericEditors.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        muxc::ColumnDefinition sliderColumn{};
+        sliderColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition numberColumn{};
+        numberColumn.Width(mux::GridLengthHelper::Auto());
+        field.numericEditors.ColumnDefinitions().Append(sliderColumn);
+        field.numericEditors.ColumnDefinitions().Append(numberColumn);
         field.slider = muxc::Slider{};
         field.slider.Minimum(minimum);
         field.slider.Maximum(maximum);
         field.slider.StepFrequency(step);
-        field.slider.Width(340.0);
+        field.slider.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
         field.slider.VerticalAlignment(mux::VerticalAlignment::Center);
         field.number = muxc::NumberBox{};
         field.number.Minimum(minimum);
         field.number.Maximum(maximum);
         field.number.SmallChange(step);
         field.number.LargeChange(step * 5.0);
-        field.number.Width(128.0);
+        field.number.Width(96.0);
         field.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
         field.number.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
         field.numericEditors.Children().Append(field.slider);
+        muxc::Grid::SetColumn(field.number, 1);
         field.numericEditors.Children().Append(field.number);
         field.editorHost.Children().Append(field.numericEditors);
 

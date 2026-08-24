@@ -233,6 +233,7 @@ struct InstalledWidgetPackageSnapshot
     bool active = true;
     bool canEnable = true;
     bool canUninstall = true;
+    bool showAddToDesktop = true;
     bool canAddToDesktop = true;
     bool canUseDevelopmentOverride = false;
     bool developmentOverrideActive = false;
