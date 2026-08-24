@@ -31,8 +31,10 @@ void TestPresenterContract(const std::filesystem::path& root)
         root / "src/winui/desktop_page_presenter.h");
     const std::string source = ReadText(
         root / "src/winui/desktop_page_presenter.cpp");
-    Check(!header.empty() && !source.empty(),
-        "desktop presenter sources are readable");
+    const std::string controls = ReadText(
+        root / "src/winui/settings_presenter_controls.h");
+    Check(!header.empty() && !source.empty() && !controls.empty(),
+        "desktop presenter and shared control sources are readable");
 
     Check(header.find("SettingsUpdateMode mode") != std::string::npos &&
             header.find("DesktopEdit edit") != std::string::npos &&
@@ -95,7 +97,9 @@ void TestPresenterContract(const std::filesystem::path& root)
     Check(source.find("CloseRuleRows") != std::string::npos &&
             source.find("SelectionChanged(shortcutArrowToken)") !=
                 std::string::npos &&
-            source.find("ColorChanged(colorToken)") != std::string::npos,
+            source.find("editor.Close()") != std::string::npos &&
+            controls.find("picker.ColorChanged(colorToken)") !=
+                std::string::npos,
         "static and dynamic C++/WinRT event handlers are unregistered");
     Check(source.find("MakeDesktopNumber(50.0, 200.0, 1.0, 0") !=
                 std::string::npos &&

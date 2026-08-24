@@ -34,9 +34,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
         repository / "src/winui/dock_page_presenter.h");
     const std::string source = ReadText(
         repository / "src/winui/dock_page_presenter.cpp");
+    const std::string controls = ReadText(
+        repository / "src/winui/settings_presenter_controls.h");
 
-    Check(!header.empty() && !source.empty(),
-        "Dock presenter sources are readable");
+    Check(!header.empty() && !source.empty() && !controls.empty(),
+        "Dock presenter and shared control sources are readable");
     Check(header.find("std::uint64_t generation") != std::string::npos &&
             header.find("SettingsUpdateMode mode") != std::string::npos &&
             header.find("GeneralEdit edit") != std::string::npos &&
@@ -68,11 +70,14 @@ void TestPresenterContract(const std::filesystem::path& repository)
     }
     for (const char* control : {
              "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
-             "muxc::NumberBox", "muxc::ColorPicker", "muxc::Button"})
+             "muxc::NumberBox", "muxc::Button"})
     {
         Check(source.find(control) != std::string::npos,
             "the Dock page uses native WinUI controls");
     }
+    Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
+            controls.find("muxc::ColorPicker picker") != std::string::npos,
+        "Dock colors use the shared native WinUI ColorPicker flyout");
     Check(source.find("SettingsUpdateMode::Preview,") !=
                 std::string::npos &&
             source.find("SettingsUpdateMode::PreviewAndCommit,") !=
@@ -115,13 +120,19 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("taskbarRoot.Children().Append(taskbarCard.root)") !=
                 std::string::npos,
         "system taskbar controls follow appearance and dynamic rules as in the legacy page");
-    Check(source.find("edgeSwipeCard.root.IsEnabled(dockEnabled)") !=
+    Check(source.find("floatingEdgeSwipeRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
-            source.find("layoutCard.root.IsEnabled(dockEnabled)") !=
+            source.find("positionRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
-            source.find("behaviorCard.root.IsEnabled(dockEnabled)") !=
+            source.find("layoutRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
-            source.find("taskbarCard.root.IsEnabled(dockEnabled)") ==
+            source.find("thicknessScale.row.SetEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("showWindowsButtonRow.SetEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("showFrequentItemsRow.SetEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("taskbarAutoHideRow.SetEnabled(dockEnabled)") ==
                 std::string::npos &&
             source.find("edgeSwipeCard.root.IsHitTestVisible(dockEnabled)") !=
                 std::string::npos &&
@@ -135,7 +146,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("if (taskbarHookRequired)") !=
                 std::string::npos,
         "taskbar runtime status is shown only when a visual hook is requested");
-    Check(source.find("ColorChanged(control.changed)") !=
+    Check(source.find("control.editor.Close()") !=
+                std::string::npos &&
+            controls.find("picker.ColorChanged(colorToken)") !=
                 std::string::npos &&
             source.find("ValueChanged(control.sliderChanged)") !=
                 std::string::npos &&

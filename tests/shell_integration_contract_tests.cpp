@@ -63,6 +63,8 @@ int main(int argc, char** argv)
         root / "src" / "winui" / "settings_window_host.cpp");
     const std::string dockPresenter = ReadFile(
         root / "src" / "winui" / "dock_page_presenter.cpp");
+    const std::string presenterControls = ReadFile(
+        root / "src" / "winui" / "settings_presenter_controls.h");
     const std::string messageDispatch = ReadFile(
         root / "src" / "app" / "app_message_dispatch.cpp");
     const std::string controlDispatch = ReadFile(
@@ -70,6 +72,7 @@ int main(int argc, char** argv)
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
             !dockSettings.empty() && !settingsWindow.empty() &&
             !settingsHost.empty() && !dockPresenter.empty() &&
+            !presenterControls.empty() &&
             !messageDispatch.empty() && !controlDispatch.empty(),
         "shell integration sources are readable");
 
@@ -145,7 +148,9 @@ int main(int argc, char** argv)
                 std::string::npos &&
             dockPresenter.find("muxc::ComboBox") !=
                 std::string::npos &&
-            dockPresenter.find("muxc::ColorPicker") !=
+            dockPresenter.find("ColorFlyoutEditor editor") !=
+                std::string::npos &&
+            presenterControls.find("muxc::ColorPicker picker") !=
                 std::string::npos &&
             dockPresenter.find("muxc::Slider") !=
                 std::string::npos,

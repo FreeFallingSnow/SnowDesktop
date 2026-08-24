@@ -30,6 +30,11 @@ using presenter_controls::SettingRow;
 namespace
 {
 
+// The legacy ImGui editor displayed this scale as 100%, while persistence and
+// layout use 1.0.  Keep both sides explicit so the reset cannot drift when the
+// presentation unit changes.
+constexpr double kDefaultIconSpacingScale = 1.0;
+
 struct SettingsCard
 {
     muxc::Border root{nullptr};
@@ -688,7 +693,7 @@ struct DesktopPagePresenter::Impl
             [](DesktopDisplaySettings& settings, double value) {
                 settings.iconSpacingScale =
                     static_cast<float>(value / 100.0);
-            }, 100.0);
+            }, kDefaultIconSpacingScale * 100.0);
         iconSize = MakeDesktopNumber(
             kMinimumItemIconSizeScale * 100.0,
             kMaximumItemIconSizeScale * 100.0, 1.0, 0,

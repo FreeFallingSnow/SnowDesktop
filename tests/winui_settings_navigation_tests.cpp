@@ -166,12 +166,15 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         root / "src/winui/hotkey_recorder.cpp");
     const std::string recorderHeader = ReadText(
         root / "src/winui/hotkey_recorder.h");
+    const std::string recorderRules = ReadText(
+        root / "src/winui/hotkey_recorder_rules.h");
 
     Check(!shell.empty() && !shellHeader.empty() && !presenter.empty() &&
             !presenterHeader.empty() && !personalization.empty() &&
             !desktop.empty() && !dock.empty() &&
             !sharedControls.empty() && !shellXaml.empty() &&
-            !recorder.empty() && !recorderHeader.empty(),
+            !recorder.empty() && !recorderHeader.empty() &&
+            !recorderRules.empty(),
         "General page source-contract inputs are readable");
 
     Check(shell.find("addPlaceholder(\"general.startup\"") ==
@@ -390,20 +393,58 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos,
         "settings rows adapt between two-column and stacked layouts and every color focus target is a compact transactional swatch that rolls back before asynchronous dismissal");
 
-    Check(presenter.find("VK_SPACE") != std::string::npos &&
-            presenter.find("VK_PRIOR") != std::string::npos &&
-            presenter.find("VK_NEXT") != std::string::npos &&
-            presenter.find("VK_OEM_3") != std::string::npos &&
+    const auto firstFontReset = desktop.find("}, 16.0);");
+    const auto numericResetPublish = desktop.find("changed(defaultValue,");
+    const auto numericResetCommit = desktop.find(
+        "SettingsUpdateMode::PreviewAndCommit", numericResetPublish);
+    const auto numericResetEnd = desktop.find(");", numericResetPublish);
+    Check(presenter.find(
+              "settings.modifiers = MOD_CONTROL | MOD_ALT") !=
+                std::string::npos &&
+            presenter.find("settings.virtualKey = VK_SPACE") !=
+                std::string::npos &&
+            presenter.find(
+              "settings.pageNavigationPreviousVirtualKey = VK_PRIOR") !=
+                std::string::npos &&
+            presenter.find(
+              "settings.pageNavigationNextVirtualKey = VK_NEXT") !=
+                std::string::npos &&
+            presenter.find(
+              "settings.desktopPassthroughHotkeyVirtualKey =") !=
+                std::string::npos &&
+            presenter.find("VK_OEM_3;") != std::string::npos &&
             presenter.find("floatingHotkeyVirtualKey = 'D'") !=
                 std::string::npos &&
-            desktop.find("}, 1.0);") != std::string::npos &&
-            desktop.find("}, 16.0);") != std::string::npos &&
+            presenter.find("actions.Children().Append(reset)") !=
+                std::string::npos &&
+            recorderRules.find(
+              "virtualKey == KeyBack || virtualKey == KeyDelete") !=
+                std::string::npos &&
+            recorderRules.find("committed_ = {};") != std::string::npos &&
+            recorderRules.find("HotkeyRecorderAction::Clear") !=
+                std::string::npos &&
+            desktop.find(
+              "constexpr double kDefaultIconSpacingScale = 1.0") !=
+                std::string::npos &&
+            desktop.find(
+              "}, kDefaultIconSpacingScale * 100.0);") !=
+                std::string::npos &&
+            desktop.find(
+              "}, kDefaultItemIconSizeScale * 100.0);") !=
+                std::string::npos &&
+            firstFontReset != std::string::npos &&
+            desktop.find("}, 16.0);", firstFontReset + 1) !=
+                std::string::npos &&
             desktop.find("}, 600.0);") != std::string::npos &&
+            numericResetPublish != std::string::npos &&
+            numericResetCommit != std::string::npos &&
+            numericResetEnd != std::string::npos &&
+            numericResetCommit < numericResetEnd &&
             personalization.find("1.0, 12.0") != std::string::npos &&
             personalization.find("1.0, 24.0") != std::string::npos &&
             personalization.find("1.0, 34.0") != std::string::npos &&
             dock.find("nullptr, 100.0") != std::string::npos,
-        "legacy hotkey and numeric reset defaults remain available beside their editors");
+        "legacy hotkey reset/clear paths and every numeric reset default remain available beside their editors");
 }
 }
 

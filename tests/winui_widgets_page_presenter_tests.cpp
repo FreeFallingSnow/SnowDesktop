@@ -64,7 +64,7 @@ void TestWidgetsPagePresenterContract(
 
     for (const char* control : {
              "muxc::AutoSuggestBox", "muxc::Expander",
-             "muxc::ToggleSwitch", "muxc::ToggleButton",
+             "muxc::ToggleSwitch", "muxcp::ToggleButton",
              "muxc::CheckBox",
              "muxc::Button", "muxc::TextBox", "muxc::GridView",
              "muxc::ProgressRing",

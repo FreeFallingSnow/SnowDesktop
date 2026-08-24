@@ -34,9 +34,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "src/winui/personalization_page_presenter.h");
     const std::string source = ReadText(repository /
         "src/winui/personalization_page_presenter.cpp");
+    const std::string controls = ReadText(repository /
+        "src/winui/settings_presenter_controls.h");
 
-    Check(!header.empty() && !source.empty(),
-        "personalization presenter sources are readable");
+    Check(!header.empty() && !source.empty() && !controls.empty(),
+        "personalization presenter and shared control sources are readable");
     Check(header.find("SettingsUpdateMode mode") != std::string::npos &&
             header.find("std::uint64_t generation") != std::string::npos &&
             header.find("Edit edit") != std::string::npos,
@@ -68,12 +70,15 @@ void TestPresenterContract(const std::filesystem::path& repository)
             "the declared personalization field has a real WinUI binding");
     }
     for (const char* control : {
-             "muxc::ColorPicker", "muxc::Slider", "muxc::NumberBox",
+             "muxc::Slider", "muxc::NumberBox",
              "muxc::ToggleSwitch", "muxc::ComboBox"})
     {
         Check(source.find(control) != std::string::npos,
             "personalization uses the required native WinUI control type");
     }
+    Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
+            controls.find("muxc::ColorPicker picker") != std::string::npos,
+        "personalization colors use the shared native WinUI ColorPicker flyout");
     Check(source.find("kAppearancePresetDark") != std::string::npos &&
             source.find("kAppearancePresetLight") != std::string::npos &&
             source.find("kAppearancePresetGlassDark") != std::string::npos &&
@@ -84,7 +89,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("kAppearancePresetCustom") != std::string::npos,
         "all seven global appearance presets remain selectable");
-    Check(source.find("ColorChanged(control.changed)") != std::string::npos &&
+    Check(source.find("control.editor.Close()") != std::string::npos &&
+            controls.find("picker.ColorChanged(colorToken)") !=
+                std::string::npos &&
             source.find("ValueChanged(control.sliderChanged)") !=
                 std::string::npos &&
             source.find("SelectionChanged(presetToken)") !=

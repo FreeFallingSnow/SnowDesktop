@@ -167,7 +167,7 @@ void TestLegacyPackageManagementParity(const std::string& header,
                 std::string::npos,
         "development, managed snapshot, publishing, and rollback capabilities are advertised from real package state");
 
-    Check(source.find("snapshot.canAddToDesktop =\n"
+    Check(source.find("snapshot.canAddToDesktop = display &&\n"
                       "            static_cast<bool>(options.addPackageToDesktop)") !=
                 std::string::npos &&
             source.find("snapshot.canAddToDesktop = display.active") ==
@@ -197,9 +197,16 @@ void TestLegacyPackageManagementParity(const std::string& header,
                 std::string::npos,
         "rollback and Workshop item commands reject substituted or stale identities");
 
-    Check(header.find("scopeFingerprint") != std::string::npos &&
-            source.find("currentScopeFingerprint") != std::string::npos &&
-            source.find("package->source.externalItemId !=") !=
+    Check(source.find("request.scopeFingerprint") != std::string::npos &&
+            source.find("package->manifest.version != expectedVersion") !=
+                std::string::npos &&
+            source.find("package->source.providerId != expectedSourceId") !=
+                std::string::npos &&
+            source.find(
+                "package->source.externalItemId != expectedExternalItemId") !=
+                std::string::npos &&
+            source.find(
+                "currentScopeFingerprint != expectedScopeFingerprint") !=
                 std::string::npos &&
             source.find("widgets_permissions_scope_changed") !=
                 std::string::npos,
