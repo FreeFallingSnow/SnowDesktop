@@ -100,6 +100,16 @@ void SettingsWindow::SetWidgetSettingsService(
     impl_->host.SetWidgetSettingsService(service);
 }
 
+void SettingsWindow::SetWidgetEngine(WidgetEngine* engine)
+{
+    impl_->host.SetWidgetEngine(engine);
+}
+
+void SettingsWindow::RefreshWidgetsPage()
+{
+    impl_->host.RefreshWidgetsPage();
+}
+
 void SettingsWindow::ApplyLanguageChange()
 {
     impl_->host.ApplyLanguageChange();

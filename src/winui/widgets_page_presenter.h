@@ -88,6 +88,7 @@ struct InstalledWidgetPackageSnapshot
     WidgetPackagePermissionState permissionState =
         WidgetPackagePermissionState::LegacyImplicit;
     std::vector<WidgetPermissionSnapshot> permissions;
+    std::vector<std::wstring> declaredNetworkDomains;
     std::vector<std::wstring> grantedNetworkDomains;
     std::vector<WidgetInstanceSnapshot> instances;
 };

@@ -322,6 +322,14 @@ public:
     [[nodiscard]] SettingsActionResult FlushAll();
     [[nodiscard]] bool RetryPending();
 
+    /**
+     * Abandon every in-memory edit before an already-queued external data
+     * replacement requests process restart. This deliberately does not load
+     * or save any file: once the replacement marker is published, reading the
+     * old data tree or allowing CloseSession() to flush it is unsafe.
+     */
+    void PrepareForExternalDataReplacement();
+
     [[nodiscard]] SettingsActionResult InvokeHostAction(
         const SettingsHostActions::Request& request);
 

@@ -170,11 +170,25 @@ struct RecycleBinPollState {
     std::atomic<DWORD> lastQueryDurationMs{ 0 };
 };
 struct SteamWorkshopSubscriptionPollState {
+    struct ReadyQuery
+    {
+        std::uint64_t queryId = 0;
+        snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
+    };
+    struct SettingsCompletion
+    {
+        std::uint64_t generation = 0;
+        std::uint64_t taskId = 0;
+        std::uint64_t queryId = 0;
+        snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done;
+    };
     std::atomic<bool> queryInFlight{ false };
     std::atomic<bool> refreshPending{ false };
     std::mutex mutex;
-    std::optional<snowdesktop::widget::SteamWorkshopSubscriptionSnapshot>
-        ready;
+    std::optional<ReadyQuery> ready;
+    std::vector<SettingsCompletion> settingsCompletions;
+    std::uint64_t nextQueryId = 1;
+    std::uint64_t activeQueryId = 0;
 };
 enum class DockWindowVisualState
 {

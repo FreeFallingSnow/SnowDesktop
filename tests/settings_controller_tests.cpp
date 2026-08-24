@@ -623,6 +623,35 @@ void TestReentrantCommitKeepsNewerValuePending()
         "the dispatcher retry persists the newer reentrant value");
 }
 
+void TestExternalReplacementDiscardsWithoutStorageIo()
+{
+    auto store = std::make_shared<FakeStore>();
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    (void)controller.Initialize();
+    (void)controller.Open(SettingsRoute::ForPage(
+        SettingsPage::BackupAndData));
+
+    GeneralSettings changed = controller.Snapshot()->values.general;
+    changed.demoModeEnabled = true;
+    controller.UpdateGeneral(changed, SettingsUpdateMode::PreviewAndCommit);
+    const int loadsBefore = store->loadCount;
+    const std::uint64_t generationBefore = controller.Generation();
+
+    controller.PrepareForExternalDataReplacement();
+    const auto snapshot = controller.Snapshot();
+    Check(store->loadCount == loadsBefore &&
+            store->generalSaveCount == 0 &&
+            snapshot->dirtyDomains == SettingsDomain::None &&
+            snapshot->pendingPreviewDomains == SettingsDomain::None &&
+            snapshot->pendingCommitDomains == SettingsDomain::None &&
+            controller.Generation() != generationBefore,
+        "an external replacement discards dirty state without old-tree IO");
+    Check(controller.CloseSession().Succeeded() &&
+            store->generalSaveCount == 0,
+        "closing after a queued replacement cannot flush the abandoned value");
+}
+
 } // namespace
 
 int main()
@@ -639,6 +668,7 @@ int main()
     TestPreviewFailureBlocksPersistence();
     TestDesktopHostPersistenceBoundary();
     TestReentrantCommitKeepsNewerValuePending();
+    TestExternalReplacementDiscardsWithoutStorageIo();
 
     if (failures == 0)
         std::cout << "All settings controller tests passed.\n";

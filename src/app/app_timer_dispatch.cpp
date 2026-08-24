@@ -8,8 +8,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
     if (!widgetEngine_) return;
 
-    std::optional<snowdesktop::widget::SteamWorkshopSubscriptionSnapshot>
-        ready;
+    std::optional<SteamWorkshopSubscriptionPollState::ReadyQuery> ready;
     {
         std::lock_guard lock(steamWorkshopSubscriptionPollState_->mutex);
         if (steamWorkshopSubscriptionPollState_->ready)
@@ -20,14 +19,20 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     }
     if (ready)
     {
-        if (ready->authoritative)
+        bool synchronizationSucceeded = false;
+        std::wstring synchronizationMessage;
+        if (ready->snapshot.authoritative)
         {
             const auto result =
-                widgetEngine_->ApplySteamWorkshopSubscriptions(*ready);
+                widgetEngine_->ApplySteamWorkshopSubscriptions(
+                    ready->snapshot);
             if (result.Changed()) ReloadItems(false);
             if (result.errors.empty())
             {
                 steamWorkshopSubscriptionLastError_.clear();
+                synchronizationSucceeded = true;
+                synchronizationMessage = _LW(
+                    "settings.widgets.source.syncCompleted");
             }
             else
             {
@@ -44,15 +49,59 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                         "Steam Workshop subscription sync: " + combined);
                     WriteDiagnosticLogEntry(message.c_str());
                 }
+                synchronizationMessage = Utf8ToWide(combined);
             }
         }
-        else if (!ready->error.empty() &&
-            ready->error != steamWorkshopSubscriptionLastError_)
+        else if (!ready->snapshot.error.empty())
         {
-            steamWorkshopSubscriptionLastError_ = ready->error;
-            const std::wstring message = Utf8ToWide(
-                "Steam Workshop subscription query: " + ready->error);
-            WriteDiagnosticLogEntry(message.c_str());
+            synchronizationMessage = Utf8ToWide(ready->snapshot.error);
+            if (ready->snapshot.error !=
+                steamWorkshopSubscriptionLastError_)
+            {
+                steamWorkshopSubscriptionLastError_ =
+                    ready->snapshot.error;
+                const std::wstring message = Utf8ToWide(
+                    "Steam Workshop subscription query: " +
+                    ready->snapshot.error);
+                WriteDiagnosticLogEntry(message.c_str());
+            }
+        }
+        if (synchronizationMessage.empty())
+            synchronizationMessage = _LW(
+                "settings.widgets.source.syncFailed");
+        if (settingsWindow_)
+            settingsWindow_->RefreshWidgetsPage();
+
+        std::vector<SteamWorkshopSubscriptionPollState::
+            SettingsCompletion> completions;
+        {
+            std::lock_guard lock(
+                steamWorkshopSubscriptionPollState_->mutex);
+            auto& pending = steamWorkshopSubscriptionPollState_->
+                settingsCompletions;
+            auto item = pending.begin();
+            while (item != pending.end())
+            {
+                if (item->queryId <= ready->queryId)
+                {
+                    completions.push_back(std::move(*item));
+                    item = pending.erase(item);
+                }
+                else
+                {
+                    ++item;
+                }
+            }
+        }
+        for (auto& completion : completions)
+        {
+            if (!completion.done)
+                continue;
+            completion.done(synchronizationSucceeded
+                    ? snowdesktop::winui::WidgetsPageHostOperationResult::
+                          Success(true, synchronizationMessage)
+                    : snowdesktop::winui::WidgetsPageHostOperationResult::
+                          Failure(synchronizationMessage));
         }
     }
 
@@ -79,8 +128,14 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
     const HWND notifyWindow = hwnd_;
-    state->queryInFlight.store(true);
-    std::thread([state, locale, notifyWindow,
+    std::uint64_t queryId = 0;
+    {
+        std::lock_guard lock(state->mutex);
+        queryId = state->nextQueryId++;
+        state->activeQueryId = queryId;
+        state->queryInFlight.store(true);
+    }
+    std::thread([state, locale, notifyWindow, queryId,
         installedPackages, subscriptionHistory, packageStaging]
     {
         auto snapshot =
@@ -91,9 +146,12 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             installedPackages, packageStaging);
         {
             std::lock_guard lock(state->mutex);
-            state->ready = std::move(snapshot);
+            state->ready = SteamWorkshopSubscriptionPollState::ReadyQuery{
+                queryId, std::move(snapshot)};
+            if (state->activeQueryId == queryId)
+                state->activeQueryId = 0;
+            state->queryInFlight.store(false);
         }
-        state->queryInFlight.store(false);
         if (notifyWindow)
             PostMessageW(notifyWindow,
                 kSteamWorkshopSubscriptionReadyMessage, 0, 0);

@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
+#include "../steam_app_identity.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
 
@@ -414,9 +415,59 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return languages;
     };
-    settingsHostOptions.searchInput = []() {
+    settingsHostOptions.searchInput = [this]() {
         snowdesktop::SettingsSearchIndexInput input;
         input.languageTag = Locale::Instance().GetEffectiveLanguage();
+        if (!widgetSettingsBackend_)
+            return input;
+        for (const auto& widget : widgets_)
+        {
+            if (widget.type != DesktopWidgetType::LuaScript)
+                continue;
+            snowdesktop::widget_runtime::WidgetSettingsBackendDescriptor
+                descriptor;
+            if (!widgetSettingsBackend_->Describe(widget.id, descriptor)
+                    .Succeeded())
+            {
+                continue;
+            }
+            snowdesktop::WidgetSettingsSearchDescriptor searchable;
+            searchable.instanceId = widget.id;
+            searchable.widgetName = Utf8ToWide(descriptor.widgetName);
+            if (searchable.widgetName.empty())
+                searchable.widgetName = widget.title;
+
+            std::unordered_map<std::string, std::wstring> groupLabels;
+            for (const auto& group : descriptor.manifestGroups)
+                groupLabels[group.id] = Utf8ToWide(group.label);
+            for (const auto& group : descriptor.scriptGroups)
+                groupLabels[group.id] = Utf8ToWide(group.label);
+            std::unordered_set<std::string> indexedKeys;
+            const auto appendFields = [&](const auto& fields) {
+                for (const auto& source : fields)
+                {
+                    const auto& schema = source.schema;
+                    if (schema.key.empty() || schema.label.empty() ||
+                        !indexedKeys.insert(schema.key).second)
+                    {
+                        continue;
+                    }
+                    snowdesktop::WidgetSettingSearchFieldDescriptor field;
+                    field.key = schema.key;
+                    field.focusId = schema.key;
+                    field.label = Utf8ToWide(schema.label);
+                    field.description = Utf8ToWide(schema.description);
+                    const auto group = groupLabels.find(schema.group);
+                    if (group != groupLabels.end())
+                        field.groupLabel = group->second;
+                    searchable.fields.push_back(std::move(field));
+                }
+            };
+            appendFields(descriptor.manifestFields);
+            appendFields(descriptor.scriptFields);
+            if (!searchable.fields.empty())
+                input.widgets.push_back(std::move(searchable));
+        }
         return input;
     };
     settingsHostOptions.homeAboutStatus = [this](
@@ -461,9 +512,147 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
     };
     settingsHostOptions.developerToolsVisible = [this]() {
-        return widgetSettingsService_ != nullptr;
+        return generalSettings_.widgetDeveloperToolsEnabled;
     };
     settingsHostOptions.debugVisible = []() { return false; };
+
+    settingsHostOptions.widgetsPage.locale = []() {
+        return Locale::Instance().GetEffectiveLanguage();
+    };
+    settingsHostOptions.widgetsPage.instances = [this]() {
+        std::vector<snowdesktop::winui::WidgetsPageHostInstance> instances;
+        instances.reserve(widgets_.size());
+        for (const auto& widget : widgets_)
+        {
+            if (widget.type != DesktopWidgetType::LuaScript)
+                continue;
+            snowdesktop::winui::WidgetsPageHostInstance instance;
+            instance.instanceId = widget.id;
+            instance.packageId = widget.packageId;
+            instance.displayName = widget.title;
+            if (widgetSettingsBackend_)
+            {
+                snowdesktop::widget_runtime::
+                    WidgetSettingsBackendDescriptor descriptor;
+                const auto described = widgetSettingsBackend_->Describe(
+                    widget.id, descriptor);
+                instance.settingsAvailable = described.Succeeded() &&
+                    (!descriptor.manifestFields.empty() ||
+                        !descriptor.scriptFields.empty());
+            }
+            instances.push_back(std::move(instance));
+        }
+        return instances;
+    };
+    settingsHostOptions.widgetsPage.developerOverridesVisible = [this]() {
+        return generalSettings_.widgetDeveloperToolsEnabled;
+    };
+    settingsHostOptions.widgetsPage.openWorkshop = [this](
+        std::string_view) {
+        const std::wstring client =
+            snowdesktop::SnowDesktopSteamWorkshopClientUrl();
+        if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
+                client.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+        {
+            const std::wstring web =
+                snowdesktop::SnowDesktopSteamWorkshopUrl();
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
+                    web.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                return snowdesktop::winui::WidgetsPageHostOperationResult::
+                    Failure(_LW("settings.widgets.workshop.openFailed"));
+            }
+        }
+        return snowdesktop::winui::WidgetsPageHostOperationResult::Success(
+            false);
+    };
+    settingsHostOptions.widgetsPage.addPackageToDesktop = [this](
+        std::wstring_view packageId) {
+        const std::size_t before = widgets_.size();
+        AddLuaWidgetAt(POINT{-32000, -32000}, std::wstring(packageId));
+        if (widgets_.size() == before)
+        {
+            return snowdesktop::winui::WidgetsPageHostOperationResult::
+                Failure(_LW("app.settings.widgets_add_to_desktop_failed"));
+        }
+        return snowdesktop::winui::WidgetsPageHostOperationResult::Success();
+    };
+    settingsHostOptions.widgetsPage.canSynchronizeSource = [](
+        std::string_view sourceId) {
+        return sourceId == "steam-workshop" &&
+            WidgetEngine::IsSteamWorkshopBridgeAvailable();
+    };
+    settingsHostOptions.widgetsPage.synchronizeSource = [this](
+        std::uint64_t generation,
+        std::uint64_t taskId,
+        std::string sourceId,
+        snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done) {
+        if (sourceId != "steam-workshop")
+        {
+            done(snowdesktop::winui::WidgetsPageHostOperationResult::Failure(
+                _LW("settings.widgets.source.syncFailed")));
+            return;
+        }
+        bool alreadyRunning = false;
+        {
+            std::lock_guard lock(
+                steamWorkshopSubscriptionPollState_->mutex);
+            alreadyRunning = steamWorkshopSubscriptionPollState_->
+                queryInFlight.load();
+            const std::uint64_t queryId = alreadyRunning
+                ? steamWorkshopSubscriptionPollState_->activeQueryId
+                : steamWorkshopSubscriptionPollState_->nextQueryId;
+            steamWorkshopSubscriptionPollState_->settingsCompletions.
+                push_back({generation, taskId, queryId, std::move(done)});
+        }
+        PollSteamWorkshopSubscriptions(!alreadyRunning);
+    };
+    settingsHostOptions.widgetsPage.unsubscribeWorkshop = [this](
+        std::uint64_t,
+        std::uint64_t,
+        std::string externalItemId,
+        snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done) {
+        const HWND notifyWindow = hwnd_;
+        std::thread([externalItemId = std::move(externalItemId),
+                        notifyWindow, done = std::move(done)]() mutable {
+            std::string error;
+            if (!WidgetEngine::UnsubscribeSteamWorkshopItem(
+                    externalItemId, error))
+            {
+                if (done)
+                {
+                    done(snowdesktop::winui::
+                            WidgetsPageHostOperationResult::Failure(
+                                Utf8ToWide(error)));
+                }
+                return;
+            }
+
+            // The subscription watcher is the authority for removing the
+            // local managed package and reconciling persisted instances.
+            // PostMessage is safe even when shutdown has already destroyed
+            // the window; a failed post simply leaves the package for the
+            // next normal startup reconciliation.
+            if (notifyWindow)
+            {
+                PostMessageW(notifyWindow,
+                    kSteamWorkshopSubscriptionChangedMessage, 0, 0);
+            }
+            if (done)
+            {
+                done(snowdesktop::winui::
+                        WidgetsPageHostOperationResult::Success());
+            }
+        }).detach();
+    };
+    // Subscription queries do not expose a cooperative abort. Keep the
+    // WinUI task non-cancellable until the authoritative poll completes so a
+    // second package mutation cannot overlap an in-flight reconciliation.
+    settingsHostOptions.widgetsPage.hostStateChanged = [this]() {
+        ReloadItems(false);
+        if (settingsWindow_)
+            settingsWindow_->RefreshWidgetsPage();
+    };
 
     settingsWindow_ = std::make_unique<SettingsWindow>();
     if (!settingsController_ ||
@@ -749,10 +938,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         {
             settingsWindow_->SetWidgetSettingsService(
                 widgetSettingsService_.get());
+            settingsWindow_->SetWidgetEngine(widgetEngine_.get());
         }
     }
     else
     {
+        if (settingsWindow_)
+            settingsWindow_->SetWidgetEngine(nullptr);
         widgetSettingsService_.reset();
         widgetSettingsBackend_.reset();
         widgetEngine_.reset();

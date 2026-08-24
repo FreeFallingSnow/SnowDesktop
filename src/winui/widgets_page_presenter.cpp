@@ -494,6 +494,16 @@ struct WidgetsPagePresenter::Impl
         request.packageId = std::move(packageId);
         request.permissionState = WidgetPackagePermissionState::Granted;
         request.grantedNetworkDomains = package->grantedNetworkDomains;
+        const bool enablingNetwork = granted &&
+            (permissionId == L"network.http" ||
+                permissionId == L"network.internet");
+        if (enablingNetwork && request.grantedNetworkDomains.empty())
+        {
+            // These domains are rendered in the permission expander below;
+            // only an explicit network-permission enable carries them back.
+            request.grantedNetworkDomains =
+                package->declaredNetworkDomains;
+        }
         for (const WidgetPermissionSnapshot& permission :
              package->permissions)
         {
@@ -606,6 +616,23 @@ struct WidgetsPagePresenter::Impl
                 if (!permission.description.empty())
                     permissionBody.Children().Append(
                         MakeSecondaryText(permission.description));
+            }
+
+            if (!package.declaredNetworkDomains.empty())
+            {
+                std::wstring domains = L(
+                    "app.settings.widgets_network_domains",
+                    L"Allowed network domains");
+                domains += L": ";
+                for (std::size_t index = 0;
+                    index < package.declaredNetworkDomains.size(); ++index)
+                {
+                    if (index != 0)
+                        domains += L", ";
+                    domains += package.declaredNetworkDomains[index];
+                }
+                permissionBody.Children().Append(
+                    MakeSecondaryText(domains));
             }
 
             muxc::Button revoke = MakeActionButton(

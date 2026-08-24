@@ -6,15 +6,20 @@
 #include "winui_runtime.h"
 #include "../widget_settings_service.h"
 
+#include <shobjidl.h>
+
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Xaml.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -30,6 +35,7 @@ constexpr int kDefaultClientWidth = 1100;
 constexpr int kDefaultClientHeight = 760;
 constexpr int kMinimumClientWidth = 720;
 constexpr int kMinimumClientHeight = 520;
+constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 
 struct StaticSearchDefinition
 {
@@ -175,6 +181,108 @@ bool IsUsableControllerSnapshot(
 {
     return snapshot && snapshot->initialized;
 }
+
+std::optional<std::filesystem::path> DialogResultPath(
+    IFileDialog* dialog)
+{
+    if (!dialog)
+        return std::nullopt;
+    winrt::com_ptr<IShellItem> item;
+    if (FAILED(dialog->GetResult(item.put())) || !item)
+        return std::nullopt;
+    PWSTR rawPath = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath)) ||
+        !rawPath)
+    {
+        return std::nullopt;
+    }
+    std::filesystem::path result(rawPath);
+    CoTaskMemFree(rawPath);
+    return result;
+}
+
+std::optional<std::filesystem::path> ShowOpenPathDialog(
+    HWND owner,
+    std::wstring_view title,
+    const std::vector<std::pair<std::wstring, std::wstring>>& filters,
+    bool chooseFolder)
+{
+    winrt::com_ptr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.put()))) || !dialog)
+    {
+        return std::nullopt;
+    }
+
+    DWORD options = 0;
+    if (FAILED(dialog->GetOptions(&options)))
+        return std::nullopt;
+    options |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
+    options |= chooseFolder ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST;
+    if (FAILED(dialog->SetOptions(options)))
+        return std::nullopt;
+    if (!title.empty())
+        (void)dialog->SetTitle(std::wstring(title).c_str());
+
+    std::vector<COMDLG_FILTERSPEC> specifications;
+    specifications.reserve(filters.size());
+    for (const auto& [name, pattern] : filters)
+        specifications.push_back({name.c_str(), pattern.c_str()});
+    if (!specifications.empty() && FAILED(dialog->SetFileTypes(
+            static_cast<UINT>(specifications.size()),
+            specifications.data())))
+    {
+        return std::nullopt;
+    }
+    if (FAILED(dialog->Show(owner)))
+        return std::nullopt;
+    return DialogResultPath(dialog.get());
+}
+
+std::optional<std::filesystem::path> ShowSavePathDialog(
+    HWND owner,
+    std::wstring_view title,
+    std::wstring_view suggestedFileName,
+    const std::vector<std::pair<std::wstring, std::wstring>>& filters,
+    std::wstring_view defaultExtension)
+{
+    winrt::com_ptr<IFileSaveDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.put()))) || !dialog)
+    {
+        return std::nullopt;
+    }
+    DWORD options = 0;
+    if (FAILED(dialog->GetOptions(&options)))
+        return std::nullopt;
+    options |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST |
+        FOS_OVERWRITEPROMPT;
+    if (FAILED(dialog->SetOptions(options)))
+        return std::nullopt;
+    if (!title.empty())
+        (void)dialog->SetTitle(std::wstring(title).c_str());
+    if (!suggestedFileName.empty())
+        (void)dialog->SetFileName(std::wstring(suggestedFileName).c_str());
+    if (!defaultExtension.empty())
+    {
+        (void)dialog->SetDefaultExtension(
+            std::wstring(defaultExtension).c_str());
+    }
+
+    std::vector<COMDLG_FILTERSPEC> specifications;
+    specifications.reserve(filters.size());
+    for (const auto& [name, pattern] : filters)
+        specifications.push_back({name.c_str(), pattern.c_str()});
+    if (!specifications.empty() && FAILED(dialog->SetFileTypes(
+            static_cast<UINT>(specifications.size()),
+            specifications.data())))
+    {
+        return std::nullopt;
+    }
+    if (FAILED(dialog->Show(owner)))
+        return std::nullopt;
+    return DialogResultPath(dialog.get());
+}
 } // namespace
 
 struct SettingsWindowHost::Impl
@@ -195,12 +303,17 @@ struct SettingsWindowHost::Impl
     HWND window = nullptr;
     SettingsController* controller = nullptr;
     widget_runtime::WidgetSettingsService* widgetSettingsService = nullptr;
+    WidgetEngine* widgetEngine = nullptr;
     SettingsWindowHostOptions options;
     WinUiRuntime runtime;
     winrt::com_ptr<shell_impl::SettingsShell> shell;
     SettingsSearchIndex searchIndex;
     std::shared_ptr<CallbackState> callbacks;
+    std::unique_ptr<WidgetsPageBackend> widgetsPageBackend;
+    std::unique_ptr<BackupDataPageBackend> backupDataPageBackend;
     std::uint64_t viewEpoch = 0;
+    bool widgetsPageActive = false;
+    bool backupDataPageActive = false;
     bool initialized = false;
     bool shuttingDown = false;
     bool interactionSuspended = true;
@@ -250,6 +363,73 @@ struct SettingsWindowHost::Impl
         (void)shell->ShowInfoForGeneration(snapshot->generation,
             shell_impl::SettingsShellInfoSeverity::Error,
             std::move(title), std::move(message));
+    }
+
+    [[nodiscard]] bool DispatchToOwner(std::function<void()> task)
+    {
+        if (!task || shuttingDown || !callbacks ||
+            !callbacks->alive.load())
+        {
+            return false;
+        }
+        try
+        {
+            if (callbacks->dispatcher.TryEnqueue(task))
+                return true;
+        }
+        catch (...)
+        {
+        }
+
+        if (!window || !IsWindow(window))
+            return false;
+        auto* queued = new (std::nothrow) std::function<void()>(
+            std::move(task));
+        if (!queued)
+            return false;
+        if (PostMessageW(window, kDispatchOwnerTaskMessage, 0,
+                reinterpret_cast<LPARAM>(queued)))
+        {
+            return true;
+        }
+        delete queued;
+        return false;
+    }
+
+    void DiscardPostedOwnerTasks() noexcept
+    {
+        if (!window)
+            return;
+        MSG message{};
+        while (PeekMessageW(&message, window, kDispatchOwnerTaskMessage,
+            kDispatchOwnerTaskMessage, PM_REMOVE))
+        {
+            delete reinterpret_cast<std::function<void()>*>(message.lParam);
+        }
+    }
+
+    void ShowGenerationConfirmation(
+        std::uint64_t generation,
+        std::wstring title,
+        std::wstring message,
+        std::function<void(bool)> completed,
+        bool destructive = true)
+    {
+        if (!shell || !controller ||
+            !controller->IsGenerationCurrent(generation))
+        {
+            if (completed)
+                completed(false);
+            return;
+        }
+        shell_impl::SettingsShellDialogRequest request;
+        request.generation = generation;
+        request.title = std::move(title);
+        request.message = std::move(message);
+        request.primaryButtonText = L("settings.dialog.confirm");
+        request.closeButtonText = L("settings.dialog.cancel");
+        request.destructive = destructive;
+        shell->ShowConfirmation(std::move(request), std::move(completed));
     }
 
     SettingsSearchIndexInput BuildSearchInput() const
@@ -356,7 +536,9 @@ struct SettingsWindowHost::Impl
             return;
         if (!Visible() && !snapshot->sessionActive)
             return;
-        (void)shell->ApplySnapshot(*snapshot);
+        if (!shell->ApplySnapshot(*snapshot))
+            return;
+        SynchronizePageBackends(*snapshot);
         if (options.homeAboutStatus)
         {
             HomeAboutStatusPatch patch = options.homeAboutStatus(
@@ -407,6 +589,324 @@ struct SettingsWindowHost::Impl
             ShowActionError(result);
         else
             RefreshLocalizedPresentation();
+    }
+
+    std::wstring BackupConfirmationMessage(
+        BackupDataConfirmationKind kind) const
+    {
+        switch (kind)
+        {
+        case BackupDataConfirmationKind::RestoreLayoutBackup:
+            return L("settings.backup.restoreLayout.confirm");
+        case BackupDataConfirmationKind::DeleteLayoutBackup:
+            return L("settings.backup.deleteLayout.confirm");
+        case BackupDataConfirmationKind::ImportAndRestoreFullBackup:
+            return L("app.settings.restore_backup_file_confirm");
+        case BackupDataConfirmationKind::RestoreFullBackup:
+            return L("app.settings.restore_full_backup_confirm");
+        case BackupDataConfirmationKind::DeleteFullBackup:
+            return L("app.settings.delete_full_backup_confirm");
+        case BackupDataConfirmationKind::MigrateData:
+            return L("app.settings.migrate_data_confirm");
+        }
+        return {};
+    }
+
+    std::wstring BackupConfirmationTitle(
+        BackupDataConfirmationKind kind) const
+    {
+        switch (kind)
+        {
+        case BackupDataConfirmationKind::RestoreLayoutBackup:
+        case BackupDataConfirmationKind::DeleteLayoutBackup:
+            return L("app.settings.layout_backups");
+        case BackupDataConfirmationKind::MigrateData:
+            return L("app.settings.data_migration");
+        default:
+            return L("app.settings.full_data_backups");
+        }
+    }
+
+    void ConfigureWidgetsPageBackend()
+    {
+        if (!shell || !callbacks || !widgetEngine || widgetsPageBackend)
+            return;
+        const std::weak_ptr<CallbackState> weak = callbacks;
+        auto configured = options.widgetsPage;
+        configured.localize = [weak](std::string_view key) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner
+                ? state->owner->L(key)
+                : std::wstring{};
+        };
+        configured.dispatchToOwner = [weak](std::function<void()> task) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner &&
+                state->owner->DispatchToOwner(std::move(task));
+        };
+        configured.snapshotChanged = [weak](
+            std::shared_ptr<const WidgetsPageSnapshot> snapshot) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner &&
+                state->owner->shell && snapshot)
+            {
+                (void)state->owner->shell->ApplyWidgetsPageSnapshot(
+                    *snapshot);
+            }
+        };
+        configured.pickPackage = [weak](std::uint64_t generation,
+                                     WidgetsPageBackendOptions::
+                                         PackagePickerCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                if (completed)
+                    completed(std::nullopt);
+                return;
+            }
+            auto selected = ShowOpenPathDialog(state->owner->window,
+                state->owner->L("app.settings.widgets_install_package"),
+                {{state->owner->L("app.settings.widgets_install_package"),
+                    L"*.snowwidget"}}, false);
+            if (completed)
+                completed(std::move(selected));
+        };
+        configured.confirmInstall = [weak](std::uint64_t generation,
+                                        std::wstring title,
+                                        std::wstring message,
+                                        WidgetsPageBackendOptions::
+                                            ConfirmationCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner)
+            {
+                if (completed)
+                    completed(false);
+                return;
+            }
+            state->owner->ShowGenerationConfirmation(generation,
+                std::move(title), std::move(message),
+                std::move(completed));
+        };
+
+        widgetsPageBackend = std::make_unique<WidgetsPageBackend>(
+            *widgetEngine, std::move(configured));
+        WidgetsPageActions actions;
+        actions.invoke = [weak](std::uint64_t generation,
+                             WidgetsPageRequest request) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner &&
+                state->owner->widgetsPageBackend)
+            {
+                (void)state->owner->widgetsPageBackend->Invoke(
+                    generation, std::move(request));
+            }
+        };
+        actions.navigate = [weak](std::uint64_t generation,
+                               SettingsRoute route) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner &&
+                state->owner->controller &&
+                state->owner->controller->IsGenerationCurrent(generation))
+            {
+                state->owner->RequestRoute(route);
+            }
+        };
+        actions.confirm = [weak](std::uint64_t generation,
+                              std::wstring title,
+                              std::wstring message,
+                              WidgetsPageActions::ConfirmationCompletion done) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner)
+            {
+                if (done)
+                    done(false);
+                return;
+            }
+            state->owner->ShowGenerationConfirmation(generation,
+                std::move(title), std::move(message), std::move(done));
+        };
+        shell->SetWidgetsPageActions(std::move(actions));
+    }
+
+    void ConfigureBackupDataPageBackend()
+    {
+        if (!shell || !callbacks || !controller || backupDataPageBackend)
+            return;
+        const std::weak_ptr<CallbackState> weak = callbacks;
+        auto configured = options.backupDataPage;
+        configured.ownerWindow = [weak]() -> HWND {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner
+                ? state->owner->window
+                : nullptr;
+        };
+        configured.postToUi = [weak](std::function<void()> task) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner &&
+                state->owner->DispatchToOwner(std::move(task));
+        };
+        configured.localize = [weak](std::string_view key) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner
+                ? state->owner->L(key)
+                : std::wstring{};
+        };
+        configured.confirm = [weak](HWND,
+                                 BackupDataConfirmationRequest request,
+                                 BackupDataPageActions::
+                                     ConfirmationCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller)
+            {
+                if (completed)
+                    completed(false);
+                return;
+            }
+            const auto snapshot = state->owner->controller->Snapshot();
+            if (!snapshot)
+            {
+                if (completed)
+                    completed(false);
+                return;
+            }
+            state->owner->ShowGenerationConfirmation(snapshot->generation,
+                state->owner->BackupConfirmationTitle(request.kind),
+                state->owner->BackupConfirmationMessage(request.kind),
+                std::move(completed));
+        };
+        configured.pickPath = [weak](HWND owner,
+                                  BackupDataPickerRequest request,
+                                  BackupDataPageActions::PickerCompletion done) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner)
+            {
+                if (done)
+                    done(std::nullopt);
+                return;
+            }
+            std::optional<std::filesystem::path> selected;
+            switch (request.kind)
+            {
+            case BackupDataPickerKind::ImportFullBackupArchive:
+                selected = ShowOpenPathDialog(owner,
+                    state->owner->L(
+                        "app.settings.restore_from_backup_file"),
+                    {{state->owner->L(
+                          "app.settings.backup_archive_file_type"),
+                         L"*.snowbackup;*.zip"},
+                        {state->owner->L("app.settings.snowbackup_file_type"),
+                         L"*.snowbackup"},
+                        {state->owner->L("app.settings.zip_file_type"),
+                         L"*.zip"}},
+                    false);
+                break;
+            case BackupDataPickerKind::ExportFullBackupArchive:
+                selected = ShowSavePathDialog(owner,
+                    state->owner->L("app.settings.export_backup"),
+                    request.suggestedFileName,
+                    {{state->owner->L("app.settings.snowbackup_file_type"),
+                         L"*.snowbackup"},
+                        {state->owner->L("app.settings.zip_file_type"),
+                         L"*.zip"}},
+                    L"snowbackup");
+                break;
+            case BackupDataPickerKind::MigrationSourceDirectory:
+                selected = ShowOpenPathDialog(owner,
+                    state->owner->L("app.settings.select_migration_data"),
+                    {}, true);
+                break;
+            }
+            if (done)
+                done(std::move(selected));
+        };
+
+        backupDataPageBackend = std::make_unique<BackupDataPageBackend>(
+            *controller, std::move(configured));
+        backupDataPageBackend->SetSnapshotChangedCallback(
+            [weak](const BackupDataPageSnapshot& snapshot) {
+                const auto state = weak.lock();
+                if (state && state->alive.load() && state->owner &&
+                    state->owner->shell)
+                {
+                    (void)state->owner->shell->ApplyBackupDataPageSnapshot(
+                        snapshot);
+                }
+            });
+        shell->SetBackupDataPageActions(backupDataPageBackend->Actions());
+    }
+
+    void EnsurePageBackends()
+    {
+        ConfigureBackupDataPageBackend();
+        ConfigureWidgetsPageBackend();
+    }
+
+    void DisposePageBackends() noexcept
+    {
+        widgetsPageActive = false;
+        backupDataPageActive = false;
+        if (widgetsPageBackend)
+        {
+            widgetsPageBackend->Close();
+            widgetsPageBackend.reset();
+        }
+        if (backupDataPageBackend)
+        {
+            // Must precede SettingsController::CloseSession: a completed
+            // replacement can discard dirty state or reload the layout here.
+            backupDataPageBackend->Close();
+            backupDataPageBackend.reset();
+        }
+        if (shell)
+        {
+            shell->SetWidgetsPageActions({});
+            shell->SetBackupDataPageActions({});
+        }
+    }
+
+    void SynchronizePageBackends(const SettingsSnapshot& snapshot)
+    {
+        if (!snapshot.sessionActive || shuttingDown)
+            return;
+        EnsurePageBackends();
+
+        const bool showWidgets = snapshot.route.page == SettingsPage::Widgets;
+        if (showWidgets && widgetsPageBackend)
+        {
+            if (!widgetsPageActive ||
+                !widgetsPageBackend->IsGenerationCurrent(
+                    snapshot.generation))
+            {
+                widgetsPageActive =
+                    widgetsPageBackend->Activate(snapshot.generation);
+            }
+        }
+        else if (widgetsPageActive && widgetsPageBackend)
+        {
+            widgetsPageBackend->Deactivate();
+            widgetsPageActive = false;
+        }
+
+        const bool showBackup =
+            snapshot.route.page == SettingsPage::BackupAndData;
+        if (showBackup && backupDataPageBackend)
+        {
+            const auto current = backupDataPageBackend->CurrentSnapshot();
+            if (!backupDataPageActive || !current.initialized ||
+                current.generation != snapshot.generation)
+            {
+                backupDataPageBackend->Activate(snapshot.generation);
+                backupDataPageActive = true;
+            }
+        }
+        else if (backupDataPageActive && backupDataPageBackend)
+        {
+            backupDataPageBackend->Deactivate();
+            backupDataPageActive = false;
+        }
     }
 
     void ConfigurePageActions()
@@ -779,6 +1279,10 @@ struct SettingsWindowHost::Impl
             return;
         shell->RefreshLocalizedText();
         RebuildSearchIndex();
+        if (widgetsPageActive && widgetsPageBackend)
+            (void)widgetsPageBackend->Refresh();
+        if (backupDataPageActive && backupDataPageBackend)
+            backupDataPageBackend->Refresh();
         std::wstring title = L("settings.shell.title");
         if (title.empty())
             title = options.windowTitle;
@@ -822,6 +1326,22 @@ struct SettingsWindowHost::Impl
 
         switch (message)
         {
+        case kDispatchOwnerTaskMessage:
+        {
+            std::unique_ptr<std::function<void()>> task(
+                reinterpret_cast<std::function<void()>*>(lParam));
+            if (task && *task)
+            {
+                try
+                {
+                    (*task)();
+                }
+                catch (...)
+                {
+                }
+            }
+            return 0;
+        }
         case WM_CLOSE:
             (void)self->HideWindow();
             return 0;
@@ -916,11 +1436,13 @@ struct SettingsWindowHost::Impl
             return false;
         ++viewEpoch;
         SuspendInteraction();
+        DisposePageBackends();
         const SettingsActionResult result = controller->CloseSession();
         if (!result.Succeeded())
         {
             --viewEpoch;
             ResumeInteraction();
+            ApplySnapshotNow(controller->Snapshot());
             ShowActionError(result);
             return false;
         }
@@ -1065,6 +1587,7 @@ void SettingsWindowHost::Shutdown() noexcept
 
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(nullptr);
+    impl_->DisposePageBackends();
     if (impl_->controller)
     {
         impl_->controller->SetSnapshotChangedCallback({});
@@ -1090,12 +1613,14 @@ void SettingsWindowHost::Shutdown() noexcept
         impl_->shell = nullptr;
     }
     impl_->runtime.Detach();
+    impl_->DiscardPostedOwnerTasks();
     if (impl_->window && IsWindow(impl_->window))
         DestroyWindow(impl_->window);
     impl_->window = nullptr;
     impl_->runtime.Shutdown();
 
     impl_->callbacks.reset();
+    impl_->widgetEngine = nullptr;
     impl_->widgetSettingsService = nullptr;
     impl_->controller = nullptr;
     impl_->instance = nullptr;
@@ -1181,6 +1706,37 @@ void SettingsWindowHost::SetWidgetSettingsService(
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(service);
     impl_->widgetSettingsService = service;
+}
+
+void SettingsWindowHost::SetWidgetEngine(WidgetEngine* engine)
+{
+    if (!impl_->OnOwnerThread() || impl_->widgetEngine == engine)
+        return;
+    impl_->widgetsPageActive = false;
+    if (impl_->widgetsPageBackend)
+    {
+        impl_->widgetsPageBackend->Close();
+        impl_->widgetsPageBackend.reset();
+    }
+    if (impl_->shell)
+        impl_->shell->SetWidgetsPageActions({});
+    impl_->widgetEngine = engine;
+    if (!impl_->initialized || !impl_->controller)
+        return;
+    impl_->ConfigureWidgetsPageBackend();
+    const auto snapshot = impl_->controller->Snapshot();
+    if (snapshot && snapshot->sessionActive)
+        impl_->SynchronizePageBackends(*snapshot);
+    impl_->RebuildSearchIndex();
+}
+
+void SettingsWindowHost::RefreshWidgetsPage()
+{
+    if (!impl_->initialized || !impl_->OnOwnerThread())
+        return;
+    if (impl_->widgetsPageBackend)
+        (void)impl_->widgetsPageBackend->Refresh();
+    impl_->RebuildSearchIndex();
 }
 
 void SettingsWindowHost::ApplyLanguageChange()

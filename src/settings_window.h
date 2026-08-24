@@ -18,6 +18,8 @@ class WidgetSettingsService;
 }
 }
 
+class WidgetEngine;
+
 /**
  * Thin compatibility facade for the application-owned WinUI settings host.
  *
@@ -57,6 +59,8 @@ public:
 
     void SetWidgetSettingsService(
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
+    void SetWidgetEngine(WidgetEngine* engine);
+    void RefreshWidgetsPage();
     void ApplyLanguageChange();
 
     [[nodiscard]] bool PreTranslateMessage(MSG* message) noexcept;

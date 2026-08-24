@@ -439,6 +439,19 @@ bool SettingsController::RetryPending()
     return true;
 }
 
+void SettingsController::PrepareForExternalDataReplacement()
+{
+    dirtyDomains_ = SettingsDomain::None;
+    pendingPreviewDomains_ = SettingsDomain::None;
+    pendingCommitDomains_ = SettingsDomain::None;
+    retryRequired_ = false;
+    lastActionMessage_.clear();
+    ++generation_;
+    ++revision_;
+    domainRevisions_.fill(revision_);
+    PublishSnapshot();
+}
+
 SettingsActionResult SettingsController::InvokeHostAction(
     const SettingsHostActions::Request& request)
 {

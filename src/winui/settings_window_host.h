@@ -2,7 +2,9 @@
 
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
+#include "backup_data_page_backend.h"
 #include "home_about_page_model.h"
+#include "widgets_page_backend.h"
 
 #include <windows.h>
 
@@ -17,6 +19,8 @@ namespace snowdesktop::widget_runtime
 {
 class WidgetSettingsService;
 }
+
+class WidgetEngine;
 
 namespace snowdesktop::winui
 {
@@ -38,6 +42,11 @@ struct SettingsWindowHostOptions
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;
     HomeAboutStatusProvider homeAboutStatus;
+
+    /** Application-owned seams used by the page backends. UI ownership,
+     * dispatch and snapshot publication are supplied by SettingsWindowHost. */
+    WidgetsPageBackendOptions widgetsPage;
+    BackupDataPageBackendOptions backupDataPage;
 
     /** Reconcile host-owned system state after a persisted-state reload. */
     std::function<void()> refreshExternalState;
@@ -80,6 +89,10 @@ public:
 
     void SetWidgetSettingsService(
         widget_runtime::WidgetSettingsService* service) noexcept;
+    /** Attach/detach the application-lifetime component engine. */
+    void SetWidgetEngine(WidgetEngine* engine);
+    /** Re-capture the component page after an external subscription change. */
+    void RefreshWidgetsPage();
     void ApplyLanguageChange();
     [[nodiscard]] bool PublishHomeAboutStatus(
         HomeAboutStatusPatch patch);
