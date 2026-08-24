@@ -119,6 +119,17 @@ struct SettingsValues
     DesktopDisplaySettings desktop;
 };
 
+/** Per-domain revisions used by views to update only changed presenters. */
+struct SettingsDomainRevisions
+{
+    std::uint64_t personalization = 0;
+    std::uint64_t dock = 0;
+    std::uint64_t navigation = 0;
+    std::uint64_t general = 0;
+    std::uint64_t category = 0;
+    std::uint64_t desktop = 0;
+};
+
 /**
  * Immutable value published to a settings ViewModel.
  *
@@ -134,6 +145,7 @@ struct SettingsSnapshot
     bool sessionActive = false;
     SettingsRoute route;
     SettingsValues values;
+    SettingsDomainRevisions domainRevisions;
     SettingsDomain dirtyDomains = SettingsDomain::None;
     SettingsDomain pendingPreviewDomains = SettingsDomain::None;
     SettingsDomain pendingCommitDomains = SettingsDomain::None;

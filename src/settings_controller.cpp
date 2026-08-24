@@ -541,6 +541,18 @@ void SettingsController::PublishSnapshot()
     snapshot->sessionActive = sessionActive_;
     snapshot->route = route_;
     snapshot->values = values_;
+    snapshot->domainRevisions.personalization =
+        domainRevisions_[DomainIndex(SettingsDomain::Personalization)];
+    snapshot->domainRevisions.dock =
+        domainRevisions_[DomainIndex(SettingsDomain::Dock)];
+    snapshot->domainRevisions.navigation =
+        domainRevisions_[DomainIndex(SettingsDomain::Navigation)];
+    snapshot->domainRevisions.general =
+        domainRevisions_[DomainIndex(SettingsDomain::General)];
+    snapshot->domainRevisions.category =
+        domainRevisions_[DomainIndex(SettingsDomain::Category)];
+    snapshot->domainRevisions.desktop =
+        domainRevisions_[DomainIndex(SettingsDomain::Desktop)];
     snapshot->dirtyDomains = dirtyDomains_;
     snapshot->pendingPreviewDomains = pendingPreviewDomains_;
     snapshot->pendingCommitDomains = pendingCommitDomains_;

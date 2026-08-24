@@ -248,6 +248,60 @@ void TestLoadRouteAndImmutableSnapshots()
         "closing flushes changes and invalidates asynchronous generation tokens");
 }
 
+void TestDomainRevisionsTrackChangedDomain()
+{
+    auto store = std::make_shared<FakeStore>();
+    SettingsController controller(store);
+    (void)controller.Initialize();
+
+    const auto initialized = controller.Snapshot();
+    const SettingsDomainRevisions baseline = initialized->domainRevisions;
+    Check(baseline.personalization == initialized->revision &&
+            baseline.dock == initialized->revision &&
+            baseline.navigation == initialized->revision &&
+            baseline.general == initialized->revision &&
+            baseline.category == initialized->revision &&
+            baseline.desktop == initialized->revision,
+        "initial snapshot publishes a common revision for every domain");
+
+    (void)controller.Open(SettingsRoute::ForPage(SettingsPage::General));
+    const auto opened = controller.Snapshot();
+    Check(opened->revision > initialized->revision &&
+            opened->domainRevisions.general == baseline.general &&
+            opened->domainRevisions.desktop == baseline.desktop,
+        "non-domain controller transitions do not advance domain revisions");
+
+    GeneralSettings general = opened->values.general;
+    general.demoModeEnabled = !general.demoModeEnabled;
+    controller.UpdateGeneral(general, SettingsUpdateMode::Draft);
+    const auto generalChanged = controller.Snapshot();
+    Check(generalChanged->domainRevisions.general ==
+                generalChanged->revision &&
+            generalChanged->domainRevisions.general > baseline.general &&
+            generalChanged->domainRevisions.personalization ==
+                baseline.personalization &&
+            generalChanged->domainRevisions.dock == baseline.dock &&
+            generalChanged->domainRevisions.navigation ==
+                baseline.navigation &&
+            generalChanged->domainRevisions.category == baseline.category &&
+            generalChanged->domainRevisions.desktop == baseline.desktop,
+        "a general edit advances only the general domain revision");
+    Check(opened->domainRevisions.general == baseline.general,
+        "previous snapshots retain their immutable domain revisions");
+
+    DesktopDisplaySettings desktop = generalChanged->values.desktop;
+    desktop.dockEnabled = !desktop.dockEnabled;
+    Check(controller.SynchronizeDesktop(desktop),
+        "a clean desktop domain accepts external synchronization");
+    const auto desktopChanged = controller.Snapshot();
+    Check(desktopChanged->domainRevisions.desktop ==
+                desktopChanged->revision &&
+            desktopChanged->domainRevisions.desktop > baseline.desktop &&
+            desktopChanged->domainRevisions.general ==
+                generalChanged->domainRevisions.general,
+        "desktop synchronization advances desktop without changing general");
+}
+
 void TestPreviewCoalescingAndCommit()
 {
     auto store = std::make_shared<FakeStore>();
@@ -548,6 +602,7 @@ int main()
 {
     TestRoutes();
     TestLoadRouteAndImmutableSnapshots();
+    TestDomainRevisionsTrackChangedDomain();
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();
     TestReloadAndExternalSynchronization();
