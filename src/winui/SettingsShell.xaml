@@ -29,11 +29,42 @@
 
     <Grid x:Name="ShellRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!--
+            AppWindowTitleBar keeps the three caption buttons and the default
+            drag region system-owned. This non-interactive row only paints the
+            app title beneath that system overlay and reserves its live insets.
+        -->
+        <Grid x:Name="IntegratedTitleBarHost"
+              Grid.Row="0"
+              Height="0"
+              Visibility="Collapsed"
+              IsHitTestVisible="False">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="IntegratedTitleBarText"
+                       Grid.Column="1"
+                       Margin="16,0,12,0"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis" />
+        </Grid>
+
         <NavigationView
             x:Name="NavigationRoot"
+            Grid.Row="1"
             IsSettingsVisible="False"
             IsBackButtonVisible="Visible"
             IsBackEnabled="False"
+            IsTitleBarAutoPaddingEnabled="False"
             PaneDisplayMode="Auto"
             CompactModeThresholdWidth="640"
             ExpandedModeThresholdWidth="1000"

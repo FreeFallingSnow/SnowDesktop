@@ -276,6 +276,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/pch.h
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
+    src/winui/settings_titlebar_policy.h
     src/winui/settings_window_host.cpp
     src/winui/settings_window_host.h
     src/winui/widget_settings_presenter.cpp

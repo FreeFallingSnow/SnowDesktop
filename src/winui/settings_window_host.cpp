@@ -3,6 +3,7 @@
 #include "settings_window_host.h"
 
 #include "SettingsShell.xaml.h"
+#include "settings_titlebar_policy.h"
 #include "winui_runtime.h"
 #include "../widget_settings_service.h"
 
@@ -10,7 +11,9 @@
 #include <dwmapi.h>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
+#include <winrt/Microsoft.UI.Windowing.h>
 #include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Windows.UI.h>
 
 #include <algorithm>
 #include <atomic>
@@ -25,6 +28,7 @@
 namespace snowdesktop::winui
 {
 namespace mud = winrt::Microsoft::UI::Dispatching;
+namespace muw = winrt::Microsoft::UI::Windowing;
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace shell_impl = winrt::SnowDesktop::implementation;
 
@@ -38,6 +42,7 @@ constexpr int kMinimumClientWidth = 840;
 constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
+constexpr UINT kRefreshIntegratedTitleBarMessage = WM_APP + 0x349;
 
 bool QueryHighContrastEnabled(bool& enabled) noexcept
 {
@@ -53,7 +58,7 @@ bool QueryHighContrastEnabled(bool& enabled) noexcept
     return true;
 }
 
-bool SupportsMicaBackdrop() noexcept
+bool IsWindows11OrGreater() noexcept
 {
     using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
     static const auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(
@@ -64,6 +69,11 @@ bool SupportsMicaBackdrop() noexcept
     version.dwOSVersionInfoSize = sizeof(version);
     return rtlGetVersion(&version) == 0 && version.dwMajorVersion >= 10 &&
         version.dwBuildNumber >= 22000;
+}
+
+bool SupportsMicaBackdrop() noexcept
+{
+    return IsWindows11OrGreater();
 }
 
 void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
@@ -560,6 +570,9 @@ struct SettingsWindowHost::Impl
     SettingsWindowHostOptions options;
     WinUiRuntime runtime;
     winrt::com_ptr<shell_impl::SettingsShell> shell;
+    muw::AppWindow appWindow{nullptr};
+    muw::AppWindowTitleBar appWindowTitleBar{nullptr};
+    winrt::event_token appWindowChangedToken{};
     SettingsSearchIndex searchIndex;
     std::shared_ptr<CallbackState> callbacks;
     std::unique_ptr<WidgetsPageBackend> widgetsPageBackend;
@@ -575,6 +588,9 @@ struct SettingsWindowHost::Impl
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
+    bool integratedTitleBarActive = false;
+    bool integratedTitleBarLayoutQueued = false;
+    bool windowActive = false;
     std::wstring lastError;
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
@@ -656,6 +672,224 @@ struct SettingsWindowHost::Impl
         shell->SetSystemBackdropActive(active);
     }
 
+    [[nodiscard]] double TitleBarRasterizationScale() const noexcept
+    {
+        try
+        {
+            if (shell)
+            {
+                if (const mux::XamlRoot xamlRoot = shell->XamlRoot())
+                {
+                    const double scale = xamlRoot.RasterizationScale();
+                    if (scale > 0.0)
+                        return scale;
+                }
+            }
+        }
+        catch (...)
+        {
+        }
+
+        const UINT dpi = window && IsWindow(window)
+            ? GetDpiForWindow(window) : 96;
+        return dpi > 0 ? static_cast<double>(dpi) / 96.0 : 1.0;
+    }
+
+    [[nodiscard]] bool ShouldUseIntegratedTitleBar() const noexcept
+    {
+        bool highContrast = false;
+        const bool highContrastQuerySucceeded =
+            QueryHighContrastEnabled(highContrast);
+        bool customizationSupported = false;
+        try
+        {
+            customizationSupported =
+                muw::AppWindowTitleBar::IsCustomizationSupported();
+        }
+        catch (...)
+        {
+        }
+        return ShouldUseIntegratedSettingsTitleBar({
+            IsWindows11OrGreater(), highContrastQuerySucceeded,
+            highContrast, customizationSupported});
+    }
+
+    void UpdateIntegratedTitleBarLayout() noexcept
+    {
+        integratedTitleBarLayoutQueued = false;
+        if (!shell || shuttingDown)
+            return;
+
+        if (!integratedTitleBarActive || !appWindowTitleBar)
+        {
+            shell->SetIntegratedTitleBarLayout(false, 0, 0, 0, 1.0);
+            return;
+        }
+
+        try
+        {
+            shell->SetIntegratedTitleBarLayout(true,
+                appWindowTitleBar.Height(),
+                appWindowTitleBar.LeftInset(),
+                appWindowTitleBar.RightInset(),
+                TitleBarRasterizationScale());
+        }
+        catch (...)
+        {
+            ResetIntegratedTitleBar();
+        }
+    }
+
+    void QueueIntegratedTitleBarLayoutUpdate() noexcept
+    {
+        if (integratedTitleBarLayoutQueued || shuttingDown || !window ||
+            !IsWindow(window) || !shell)
+        {
+            return;
+        }
+        if (PostMessageW(window, kRefreshIntegratedTitleBarMessage, 0, 0))
+        {
+            integratedTitleBarLayoutQueued = true;
+            return;
+        }
+        UpdateIntegratedTitleBarLayout();
+    }
+
+    void ApplyIntegratedTitleBarTheme() noexcept
+    {
+        if (!integratedTitleBarActive || !appWindowTitleBar)
+            return;
+
+        try
+        {
+            using ColorReference = winrt::Windows::Foundation::IReference<
+                winrt::Windows::UI::Color>;
+            const auto transparent = winrt::box_value(
+                winrt::Windows::UI::Color{0, 0, 0, 0}).as<ColorReference>();
+            // Only the system caption-button background properties support
+            // transparency here. Hover, pressed, and Close states remain
+            // system-selected so their native affordances are preserved.
+            appWindowTitleBar.ButtonBackgroundColor(transparent);
+            appWindowTitleBar.ButtonInactiveBackgroundColor(transparent);
+            appWindowTitleBar.PreferredTheme(darkTheme
+                    ? muw::TitleBarTheme::Dark
+                    : muw::TitleBarTheme::Light);
+        }
+        catch (...)
+        {
+            // A decoration failure leaves the system-selected button colors.
+        }
+    }
+
+    void UpdateIntegratedTitleBarActivationVisual() noexcept
+    {
+        if (shell && !shuttingDown && OnOwnerThread())
+            shell->SetIntegratedTitleBarWindowActive(windowActive);
+    }
+
+    void ResetIntegratedTitleBar() noexcept
+    {
+        const bool wasActive = integratedTitleBarActive;
+        integratedTitleBarLayoutQueued = false;
+        if (appWindow && appWindowChangedToken.value != 0)
+        {
+            try
+            {
+                appWindow.Changed(appWindowChangedToken);
+            }
+            catch (...)
+            {
+            }
+        }
+        appWindowChangedToken = {};
+        if (appWindowTitleBar)
+        {
+            try
+            {
+                appWindowTitleBar.ResetToDefault();
+            }
+            catch (...)
+            {
+            }
+        }
+        integratedTitleBarActive = false;
+        if (shell)
+            shell->SetIntegratedTitleBarLayout(false, 0, 0, 0, 1.0);
+        appWindowTitleBar = nullptr;
+        appWindow = nullptr;
+        if (wasActive)
+            runtime.ResizeToClient();
+    }
+
+    void ConfigureIntegratedTitleBar() noexcept
+    {
+        ResetIntegratedTitleBar();
+        if (!window || !IsWindow(window) || !shell ||
+            !ShouldUseIntegratedTitleBar())
+        {
+            return;
+        }
+
+        try
+        {
+            const auto windowId =
+                winrt::Microsoft::UI::GetWindowIdFromWindow(window);
+            appWindow = muw::AppWindow::GetFromWindowId(windowId);
+            if (!appWindow)
+                return;
+            appWindowTitleBar = appWindow.TitleBar();
+            if (!appWindowTitleBar)
+            {
+                appWindow = nullptr;
+                return;
+            }
+
+            appWindowTitleBar.ExtendsContentIntoTitleBar(true);
+            if (!appWindowTitleBar.ExtendsContentIntoTitleBar())
+            {
+                ResetIntegratedTitleBar();
+                return;
+            }
+            integratedTitleBarActive = true;
+            runtime.ResizeToClient();
+            ApplyIntegratedTitleBarTheme();
+            appWindowChangedToken = appWindow.Changed(
+                [this](const muw::AppWindow&,
+                    const muw::AppWindowChangedEventArgs& args) {
+                    if (args.DidSizeChange() || args.DidPresenterChange() ||
+                        args.DidVisibilityChange())
+                    {
+                        QueueIntegratedTitleBarLayoutUpdate();
+                    }
+                });
+            windowActive = GetForegroundWindow() == window;
+            UpdateIntegratedTitleBarActivationVisual();
+            UpdateIntegratedTitleBarLayout();
+            QueueIntegratedTitleBarLayoutUpdate();
+        }
+        catch (...)
+        {
+            ResetIntegratedTitleBar();
+        }
+    }
+
+    void ReconcileIntegratedTitleBar() noexcept
+    {
+        if (!ShouldUseIntegratedTitleBar())
+        {
+            ResetIntegratedTitleBar();
+            return;
+        }
+        if (!integratedTitleBarActive || !appWindowTitleBar)
+        {
+            ConfigureIntegratedTitleBar();
+            return;
+        }
+        ApplyIntegratedTitleBarTheme();
+        UpdateIntegratedTitleBarActivationVisual();
+        QueueIntegratedTitleBarLayoutUpdate();
+    }
+
     void ApplyActualTheme(bool isDark) noexcept
     {
         if (shuttingDown || !OnOwnerThread())
@@ -663,6 +897,7 @@ struct SettingsWindowHost::Impl
 
         darkTheme = isDark;
         ApplySettingsWindowChrome(window, darkTheme);
+        ApplyIntegratedTitleBarTheme();
     }
 
     void ShowActionError(const SettingsActionResult& result)
@@ -2025,6 +2260,9 @@ struct SettingsWindowHost::Impl
         case kApplyXamlBackdropMessage:
             self->ApplyDeferredSystemBackdrop();
             return 0;
+        case kRefreshIntegratedTitleBarMessage:
+            self->UpdateIntegratedTitleBarLayout();
+            return 0;
         case kDispatchOwnerTaskMessage:
         {
             std::unique_ptr<std::function<void()>> task(
@@ -2044,6 +2282,10 @@ struct SettingsWindowHost::Impl
         case WM_CLOSE:
             (void)self->HideWindow();
             return 0;
+        case WM_ACTIVATE:
+            self->windowActive = LOWORD(wParam) != WA_INACTIVE;
+            self->UpdateIntegratedTitleBarActivationVisual();
+            break;
         case WM_GETMINMAXINFO:
         {
             auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -2084,17 +2326,25 @@ struct SettingsWindowHost::Impl
                     suggested->bottom - suggested->top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
             }
+            self->QueueIntegratedTitleBarLayoutUpdate();
             break;
         }
+        case WM_SIZE:
+        case WM_DISPLAYCHANGE:
+            self->QueueIntegratedTitleBarLayoutUpdate();
+            break;
         case WM_SETTINGCHANGE:
         case WM_THEMECHANGED:
         case WM_SYSCOLORCHANGE:
         case WM_DWMCOLORIZATIONCOLORCHANGED:
             ApplySettingsWindowChrome(hwnd, self->darkTheme);
+            self->ReconcileIntegratedTitleBar();
             self->QueueSystemBackdropUpdate();
             break;
         case WM_NCDESTROY:
             self->systemBackdropUpdateQueued = false;
+            self->integratedTitleBarLayoutQueued = false;
+            self->ResetIntegratedTitleBar();
             self->runtime.HandleWindowMessage(message, wParam, lParam);
             self->window = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -2280,6 +2530,7 @@ bool SettingsWindowHost::Initialize(
                     state->owner->ApplyActualTheme(darkTheme);
                 }
             });
+        impl_->ConfigureIntegratedTitleBar();
         impl_->QueueSystemBackdropUpdate();
 
         controller.SetSnapshotChangedCallback(
@@ -2329,6 +2580,7 @@ void SettingsWindowHost::Shutdown() noexcept
 
     if (impl_->shell)
         impl_->shell->SetActualThemeChangedCallback({});
+    impl_->ResetIntegratedTitleBar();
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(nullptr);
     impl_->DisposePageBackends();

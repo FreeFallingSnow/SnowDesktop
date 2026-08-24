@@ -327,7 +327,10 @@ void SettingsShell::RefreshLocalizedText()
         return;
 
     const std::wstring shellTitle = Localize("settings.shell.title");
-    NavigationRoot().PaneTitle(shellTitle);
+    IntegratedTitleBarText().Text(shellTitle);
+    NavigationRoot().PaneTitle(
+        integratedTitleBarActive_ ? winrt::hstring{}
+                                  : winrt::hstring{shellTitle});
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     PersonalizationItem().Content(
@@ -347,6 +350,8 @@ void SettingsShell::RefreshLocalizedText()
 
     muxa::AutomationProperties::SetName(
         NavigationRoot(), Localize("settings.shell.title"));
+    muxa::AutomationProperties::SetName(
+        IntegratedTitleBarHost(), shellTitle);
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
     muxa::AutomationProperties::SetName(
@@ -426,6 +431,68 @@ void SettingsShell::SetSystemBackdropActive(bool active) noexcept
     }
 }
 
+void SettingsShell::SetIntegratedTitleBarLayout(
+    bool active,
+    int heightPixels,
+    int leftInsetPixels,
+    int rightInsetPixels,
+    double rasterizationScale) noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    try
+    {
+        integratedTitleBarActive_ = active;
+        if (!active)
+        {
+            IntegratedTitleBarHost().Visibility(mux::Visibility::Collapsed);
+            IntegratedTitleBarHost().Height(0.0);
+            TitleBarLeftInsetColumn().Width(
+                mux::GridLengthHelper::FromPixels(0.0));
+            TitleBarRightInsetColumn().Width(
+                mux::GridLengthHelper::FromPixels(0.0));
+            NavigationRoot().PaneTitle(Localize("settings.shell.title"));
+            return;
+        }
+
+        const double scale = rasterizationScale > 0.0
+            ? rasterizationScale : 1.0;
+        IntegratedTitleBarHost().Height(std::max(
+            1.0, static_cast<double>(heightPixels) / scale));
+        TitleBarLeftInsetColumn().Width(
+            mux::GridLengthHelper::FromPixels(std::max(
+                0.0, static_cast<double>(leftInsetPixels) / scale)));
+        TitleBarRightInsetColumn().Width(
+            mux::GridLengthHelper::FromPixels(std::max(
+                0.0, static_cast<double>(rightInsetPixels) / scale)));
+        IntegratedTitleBarHost().Visibility(mux::Visibility::Visible);
+        NavigationRoot().PaneTitle(winrt::hstring{});
+        UpdateIntegratedTitleBarTextAppearance();
+    }
+    catch (...)
+    {
+        integratedTitleBarActive_ = false;
+        try
+        {
+            IntegratedTitleBarHost().Visibility(mux::Visibility::Collapsed);
+            IntegratedTitleBarHost().Height(0.0);
+            NavigationRoot().PaneTitle(Localize("settings.shell.title"));
+        }
+        catch (...)
+        {
+        }
+    }
+}
+
+void SettingsShell::SetIntegratedTitleBarWindowActive(bool active) noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+    integratedTitleBarWindowActive_ = active;
+    UpdateIntegratedTitleBarTextAppearance();
+}
+
 void SettingsShell::SetActualThemeChangedCallback(
     ActualThemeChangedCallback callback)
 {
@@ -441,6 +508,7 @@ void SettingsShell::NotifyActualThemeChanged() noexcept
     if (closed_ || ownerThreadId_ != GetCurrentThreadId())
         return;
 
+    UpdateIntegratedTitleBarTextAppearance();
     const ActualThemeChangedCallback callback = actualThemeChanged_;
     if (!callback)
         return;
@@ -453,6 +521,46 @@ void SettingsShell::NotifyActualThemeChanged() noexcept
     {
         // Theme notification is presentation-only and must not unwind through
         // the XAML event dispatcher or window initialization.
+    }
+}
+
+void SettingsShell::UpdateIntegratedTitleBarTextAppearance() noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
+        !integratedTitleBarActive_)
+    {
+        return;
+    }
+
+    try
+    {
+        const wchar_t* resourceKey = integratedTitleBarWindowActive_
+            ? L"TextFillColorPrimaryBrush"
+            : L"TextFillColorSecondaryBrush";
+        muxm::Brush foreground{nullptr};
+        if (const auto application = mux::Application::Current())
+        {
+            if (const auto resource = application.Resources().TryLookup(
+                    winrt::box_value(resourceKey)))
+            {
+                foreground = resource.try_as<muxm::Brush>();
+            }
+        }
+        IntegratedTitleBarText().Foreground(foreground);
+        IntegratedTitleBarText().Opacity(
+            integratedTitleBarWindowActive_ ? 1.0 : 0.72);
+    }
+    catch (...)
+    {
+        try
+        {
+            IntegratedTitleBarText().Foreground(muxm::Brush{nullptr});
+            IntegratedTitleBarText().Opacity(
+                integratedTitleBarWindowActive_ ? 1.0 : 0.72);
+        }
+        catch (...)
+        {
+        }
     }
 }
 
