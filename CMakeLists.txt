@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.24)
 
 project(SnowDesktop LANGUAGES C CXX)
 
+# WinUI 3 XAML compilation and NuGet PackageReference integration are MSBuild
+# features. Keeping this requirement explicit avoids silently generating a
+# project that can compile the native host but cannot generate the XAML/WinRT
+# sources required by the settings UI.
+if (NOT CMAKE_GENERATOR MATCHES "^Visual Studio ")
+    message(FATAL_ERROR
+        "SnowDesktop WinUI 3 requires a Visual Studio/MSBuild generator")
+endif()
+
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
 
@@ -217,7 +226,6 @@ set(SNOWDESKTOP_SOURCES
     src/atomic_file.cpp
     src/dock_window_preview.cpp
     src/dock_window_transition.cpp
-    src/taskbar_dynamic/search_visibility_detector.cpp
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
     src/core/dock.cpp
@@ -232,6 +240,16 @@ set(SNOWDESKTOP_SOURCES
     src/deployment_context.cpp
     src/utils.cpp
     src/settings_window.cpp
+    src/winui/App.idl
+    src/winui/App.xaml
+    src/winui/App.xaml.cpp
+    src/winui/App.xaml.h
+    src/winui/pch.h
+    src/winui/winui_runtime.cpp
+    src/winui/winui_runtime.h
+    src/winui/xaml_metadata_provider_bridge.cpp
+    src/winui/xaml_type_info_bridge.cpp
+    src/winui/xaml_type_info_impl_bridge.cpp
     src/ui_animation_scheduler.cpp
     src/personalization.cpp
     src/dock_settings.cpp
@@ -491,6 +509,34 @@ if (MSVC)
     target_compile_options(SnowDesktopTaskbarHook PRIVATE
         /W4 /permissive- /EHsc /utf-8)
 
+    # Keep the legacy Windows.UI.Xaml/ShellView projection out of the main
+    # WinUI 3 executable.  The Windows SDK currently ships a different
+    # C++/WinRT generator version than the pinned NuGet package, and mixing
+    # their generated headers in one translation unit is rejected by
+    # C++/WinRT.  This narrow library has a standard C++ public boundary and
+    # may therefore continue using the hook projection independently.
+    add_library(SnowDesktopSearchVisibility STATIC
+        src/taskbar_dynamic/search_visibility_detector.cpp
+        src/taskbar_dynamic/search_visibility_detector.h)
+    add_dependencies(SnowDesktopSearchVisibility SnowDesktopCppWinRT)
+    set_property(TARGET SnowDesktopSearchVisibility PROPERTY
+        VS_PACKAGE_REFERENCES "Microsoft.Windows.CppWinRT_3.0.260818.1")
+    set_property(TARGET SnowDesktopSearchVisibility PROPERTY VS_USER_PROPS
+        "${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ShellView.props")
+    target_compile_features(SnowDesktopSearchVisibility PRIVATE cxx_std_20)
+    target_include_directories(SnowDesktopSearchVisibility PRIVATE
+        src/taskbar_dynamic
+        "${CMAKE_BINARY_DIR}/generated/shellview-cppwinrt")
+    target_compile_definitions(SnowDesktopSearchVisibility PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+    target_link_libraries(SnowDesktopSearchVisibility PRIVATE
+        ole32 runtimeobject windowsapp)
+    set_property(TARGET SnowDesktopSearchVisibility PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopSearchVisibility PRIVATE
+        /W4 /permissive- /EHsc /utf-8)
+
     add_library(SnowDesktopWallpaperHook SHARED
         src/wallpaper_hook/wallpaper_hook.cpp
         src/wallpaper_hook/wallpaper_hook_protocol.h
@@ -517,14 +563,49 @@ if (MSVC)
             "/wd4100;/wd4201;/wd4244;/wd4267;/wd4310;/wd4701")
 endif()
 
+set_source_files_properties(src/winui/App.xaml PROPERTIES
+    VS_XAML_TYPE "ApplicationDefinition")
+set_source_files_properties(
+    src/winui/App.idl
+    src/winui/App.xaml.cpp
+    src/winui/App.xaml.h
+    PROPERTIES
+        VS_SETTINGS "DependentUpon=App.xaml;SubType=Code")
+
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     src/resource.rc
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+
+# Pin the complete WinUI toolchain on the executable so NuGet restore,
+# C++/WinRT projection generation, XAML compilation, and self-contained
+# deployment all happen in the CMake-generated MSBuild project.
+set_property(TARGET SnowDesktop PROPERTY VS_PACKAGE_REFERENCES
+    "Microsoft.WindowsAppSDK_2.4.0;Microsoft.Windows.CppWinRT_3.0.260818.1")
+set_property(TARGET SnowDesktop PROPERTY VS_USER_PROPS
+    "${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.WinUI.props")
+set_property(TARGET SnowDesktop PROPERTY
+    VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION "10.0.19041.0")
+set_target_properties(SnowDesktop PROPERTIES
+    VS_GLOBAL_ROOTNAMESPACE "SnowDesktop"
+    VS_GLOBAL_AppContainerApplication "false"
+    VS_GLOBAL_AppxPackage "false"
+    VS_GLOBAL_CppWinRTOptimized "true"
+    VS_GLOBAL_CppWinRTRootNamespaceAutoMerge "true"
+    VS_GLOBAL_EnablePreviewMsixTooling "false"
+    # C++/WinRT's MSBuild targets concatenate this value with ProjectDir in
+    # several places, so it must remain project-relative.
+    VS_GLOBAL_GeneratedFilesDir "generated\\winui\\$(Configuration)\\"
+    VS_GLOBAL_TargetPlatformMinVersion "10.0.19041.0"
+    VS_GLOBAL_TargetPlatformVersion "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}"
+    VS_GLOBAL_UseCrtSDKReferenceStaticWarning "false"
+    VS_GLOBAL_UseWinUI "true"
+    VS_GLOBAL_WindowsAppSDKSelfContained "true"
+    VS_GLOBAL_WindowsAppSdkUndockedRegFreeWinRTInitialize "true"
+    VS_GLOBAL_WindowsPackageType "None")
 if (TARGET SnowDesktopTaskbarHook)
-    add_dependencies(SnowDesktop SnowDesktopTaskbarHook SnowDesktopCppWinRT)
-    target_include_directories(SnowDesktop PRIVATE "${CPPWINRT_OUTPUT_DIR}")
+    add_dependencies(SnowDesktop SnowDesktopTaskbarHook)
 endif()
 if (TARGET SnowDesktopWallpaperHook)
     add_dependencies(SnowDesktop SnowDesktopWallpaperHook)
@@ -537,6 +618,8 @@ target_include_directories(SnowDesktop PRIVATE
     src
     src/core
     src/app
+    src/winui
+    "${CMAKE_BINARY_DIR}/generated/xaml/$<CONFIG>"
 )
 
 if (MSVC)
@@ -545,6 +628,7 @@ if (MSVC)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
+        DISABLE_XAML_GENERATED_MAIN
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
         SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
         SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
@@ -573,6 +657,7 @@ if (MSVC)
     )
     target_link_options(SnowDesktop PRIVATE
         "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+        /DELAYLOAD:Microsoft.UI.Windowing.Core.dll
         /DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:ICF)
 else()
     target_compile_options(SnowDesktop PRIVATE -Wall -Wextra -pedantic)
@@ -586,8 +671,9 @@ endif()
 
 target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
+    SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt crypt32 imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
+    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
     version wbemuuid
 )
 

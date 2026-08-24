@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Generate the private WindowsUdk projection with the same pinned
+       C++/WinRT package used by the main executable.  The taskbar hook keeps
+       its SDK projection in a different binary and generation directory. -->
+  <PropertyGroup>
+    <SnowDesktopShellProjectionDir>$(ProjectDir)generated\shellview-cppwinrt</SnowDesktopShellProjectionDir>
+    <SnowDesktopWindowsWinMD>$(WindowsSdkDir)UnionMetadata\$(WindowsTargetPlatformVersion)\Windows.winmd</SnowDesktopWindowsWinMD>
+    <SnowDesktopShellWinMD>$(ProjectDir)generated\winmd\WindowsUdk.winmd</SnowDesktopShellWinMD>
+  </PropertyGroup>
+
+  <Target Name="SnowDesktopGenerateShellViewProjection"
+          BeforeTargets="ClCompile"
+          Inputs="$(SnowDesktopWindowsWinMD);$(SnowDesktopShellWinMD)"
+          Outputs="$(SnowDesktopShellProjectionDir)\winrt\WindowsUdk.UI.Shell.h">
+    <MakeDir Directories="$(SnowDesktopShellProjectionDir)" />
+    <Exec Command="&quot;$(CppWinRTPackageDir)bin\cppwinrt.exe&quot; -in &quot;$(SnowDesktopWindowsWinMD)&quot; -in &quot;$(SnowDesktopShellWinMD)&quot; -out &quot;$(SnowDesktopShellProjectionDir)&quot;" />
+  </Target>
+</Project>
