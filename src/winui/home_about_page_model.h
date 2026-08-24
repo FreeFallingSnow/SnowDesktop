@@ -38,6 +38,8 @@ struct HomeAboutStatusPatch
     std::uint64_t revision = 0;
     std::optional<std::wstring> applicationVersion;
     std::optional<std::size_t> installedWidgetCount;
+    /** Deployment ownership controls whether the legacy update row exists. */
+    std::optional<bool> packaged;
     std::optional<SettingsUpdateState> updateState;
     std::optional<std::wstring> availableVersion;
     std::optional<std::wstring> updateDetail;

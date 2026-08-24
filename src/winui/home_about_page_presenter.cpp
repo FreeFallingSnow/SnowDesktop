@@ -238,6 +238,7 @@ struct HomeAboutPagePresenter::Impl
     bool dockEnabled = false;
     std::wstring applicationVersion;
     std::optional<std::size_t> installedWidgetCount;
+    bool packaged = false;
     SettingsUpdateState updateState = SettingsUpdateState::Unknown;
     std::wstring availableVersion;
     std::wstring updateDetail;
@@ -515,7 +516,8 @@ struct HomeAboutPagePresenter::Impl
 
         checkUpdateToken = checkUpdateButton.Click(
             [this](const auto&, const auto&) {
-                if (updateState != SettingsUpdateState::Checking)
+                if (packaged &&
+                    updateState != SettingsUpdateState::Checking)
                     Invoke(HomeAboutCommand::CheckForUpdates);
             });
         versionClickToken = versionButton.Click(
@@ -724,15 +726,24 @@ struct HomeAboutPagePresenter::Impl
             L("settings.page.debug.description",
                 L"Click five times to unlock Debug."));
         updateProgress.IsActive(updateRunning);
-        updateProgress.Visibility(updateRunning
+        const bool showUpdateStatus = packaged &&
+            updateState != SettingsUpdateState::Unknown;
+        versionStatusRow.Visibility(showUpdateStatus
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        updateProgress.Visibility(updateRunning && packaged
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         updateStatus.Text(UpdateSummary());
         checkUpdateButton.IsEnabled(!updateRunning);
+        checkUpdateButton.Visibility(packaged
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         SetButtonText(checkUpdateButton,
             "app.settings.check_update", L"Check for Updates");
         const bool showUpdateInfo =
-            updateState == SettingsUpdateState::UpdateAvailable ||
-            updateState == SettingsUpdateState::Failed;
+            packaged &&
+            (updateState == SettingsUpdateState::UpdateAvailable ||
+                updateState == SettingsUpdateState::Failed);
+        updateInfoBar.Visibility(showUpdateInfo
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         updateInfoBar.IsOpen(showUpdateInfo);
         updateInfoBar.Severity(
             updateState == SettingsUpdateState::Failed
@@ -864,6 +875,7 @@ struct HomeAboutPagePresenter::Impl
         hasStatusRevision = false;
         applicationVersion.clear();
         installedWidgetCount.reset();
+        packaged = false;
         updateState = SettingsUpdateState::Unknown;
         availableVersion.clear();
         updateDetail.clear();
@@ -917,6 +929,8 @@ struct HomeAboutPagePresenter::Impl
             applicationVersion = *patch.applicationVersion;
         if (patch.installedWidgetCount)
             installedWidgetCount = *patch.installedWidgetCount;
+        if (patch.packaged)
+            packaged = *patch.packaged;
         if (patch.updateState)
         {
             if (*patch.updateState != updateState)

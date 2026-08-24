@@ -269,6 +269,13 @@ int main(int argc, char** argv)
         "settings search evaluates visible v2 fields without mutating live widget-settings sessions");
     const std::string_view hotkeyProbe = Between(source,
         "HotkeyProbeResult ProbeHotkeyAvailability(", "DesktopApp& app_");
+    const auto reservedPageKey =
+        hotkeyProbe.find("IsReservedDesktopSingleKey(");
+    const auto internalPageAvailable = hotkeyProbe.find(
+        "if (target == HotkeyTarget::PagePrevious ||\n"
+        "            target == HotkeyTarget::PageNext)",
+        reservedPageKey);
+    const auto systemHotkeyProbe = hotkeyProbe.find("RegisterHotKey(");
     Check(hotkeyProbe.find("conflictsWith(HotkeyTarget::PagePrevious") !=
                 std::string_view::npos &&
             hotkeyProbe.find("conflictsWith(HotkeyTarget::PageNext") !=
@@ -284,10 +291,12 @@ int main(int argc, char** argv)
                 std::string_view::npos &&
             hotkeyProbe.find("IsReservedDesktopSingleKey(") !=
                 std::string_view::npos &&
-            hotkeyProbe.find("case HotkeyTarget::PageNext:\n            return true;") ==
-                std::string_view::npos &&
-            hotkeyProbe.find("RegisterHotKey(") != std::string_view::npos,
-        "hotkey probes preserve the specific legacy internal-conflict target before the system availability probe");
+            internalPageAvailable != std::string_view::npos &&
+            hotkeyProbe.find("return { true, HotkeyTarget::None };",
+                internalPageAvailable) < systemHotkeyProbe &&
+            reservedPageKey < internalPageAvailable &&
+            internalPageAvailable < systemHotkeyProbe,
+        "page-navigation hotkeys become available after reserved/internal conflict checks without entering the RegisterHotKey probe");
     Check(source.find("HotkeyTargetLabelKey(") != std::string::npos &&
             source.find("_LFW(\"app.settings.hotkey_conflict_with\"") !=
                 std::string::npos &&

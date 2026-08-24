@@ -37,9 +37,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
         repository / "src/winui/home_about_page_model.h");
     const std::string application = ReadText(
         repository / "src/app/app_settings_apply.cpp");
+    const std::string applicationRun = ReadText(
+        repository / "src/app/app_run.cpp");
 
     Check(!header.empty() && !source.empty() && !model.empty() &&
-            !application.empty(),
+            !application.empty() && !applicationRun.empty(),
         "Home/About presenter, native status model and host are readable");
     Check(header.find("HomeContent()") != std::string::npos &&
             header.find("AboutContent()") != std::string::npos &&
@@ -55,6 +57,8 @@ void TestPresenterContract(const std::filesystem::path& repository)
             model.find("std::optional<std::size_t> installedWidgetCount") !=
                 std::string::npos &&
             model.find("SettingsUpdateState") != std::string::npos &&
+            model.find("std::optional<bool> packaged") !=
+                std::string::npos &&
             model.find("SettingsBackupState") != std::string::npos &&
             model.find("animationDiagnosticsEnabled") !=
                 std::string::npos &&
@@ -65,6 +69,39 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("patch.revision <= statusRevision") !=
                 std::string::npos,
         "host status patches are typed and reject stale async results");
+    const auto updateStart = application.find(
+        "DesktopApp::StartSettingsUpdateCheck()");
+    const auto updateCancel = application.find(
+        "DesktopApp::CancelSettingsUpdateCheck()", updateStart);
+    const std::string_view updateAction =
+        updateStart != std::string::npos &&
+            updateCancel != std::string::npos
+        ? std::string_view(application).substr(
+            updateStart, updateCancel - updateStart)
+        : std::string_view{};
+    Check(updateAction.find(
+              "if (!snowdesktop::deployment::IsPackaged())") !=
+                std::string_view::npos &&
+            updateAction.find("GetStoreProductPageUri()") !=
+                std::string_view::npos &&
+            updateAction.find("SettingsUpdateState::ManagedByStore") !=
+                std::string_view::npos &&
+            updateAction.find("api.github.com") == std::string_view::npos &&
+            updateAction.find("AsyncHttpService") == std::string_view::npos &&
+            applicationRun.find(
+                "patch.packaged = snowdesktop::deployment::IsPackaged()") !=
+                std::string::npos,
+        "packaged About updates open Microsoft Store while portable actions never start GitHub HTTP");
+    Check(source.find("if (packaged &&") != std::string::npos &&
+            source.find("versionStatusRow.Visibility(showUpdateStatus") !=
+                std::string::npos &&
+            source.find("checkUpdateButton.Visibility(packaged") !=
+                std::string::npos &&
+            source.find("updateInfoBar.Visibility(showUpdateInfo") !=
+                std::string::npos &&
+            source.find("updateState != SettingsUpdateState::Unknown") !=
+                std::string::npos,
+        "the About update controls are hidden for portable builds and show Store-managed status only after a packaged check");
     Check(model.find("HomeAboutLinkUri") != std::string::npos &&
             model.find("space.bilibili.com/32837853") !=
                 std::string::npos &&

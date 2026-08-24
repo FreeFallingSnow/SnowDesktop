@@ -426,7 +426,14 @@ snowdesktop::SettingsActionResult DesktopApp::StartSettingsUpdateCheck()
     using snowdesktop::SettingsActionResult;
     using snowdesktop::winui::SettingsUpdateState;
 
-    if (snowdesktop::deployment::IsPackaged())
+    if (!snowdesktop::deployment::IsPackaged())
+    {
+        // The portable build has no update row in the legacy settings UI.
+        // Keep this typed action inert if a stale accessibility invocation
+        // reaches the host; portable settings must not start GitHub HTTP.
+        return SettingsActionResult::Success();
+    }
+
     {
         const std::wstring target =
             snowdesktop::deployment::GetStoreProductPageUri();
@@ -441,49 +448,6 @@ snowdesktop::SettingsActionResult DesktopApp::StartSettingsUpdateCheck()
         PublishSettingsUpdateStatus();
         return SettingsActionResult::Success();
     }
-
-    const auto snapshot = settingsController_
-        ? settingsController_->Snapshot() : nullptr;
-    if (!snapshot || !snapshot->sessionActive)
-    {
-        return SettingsActionResult::Failure(
-            _LW("app.settings.update_http_init_failed"));
-    }
-
-    CancelSettingsUpdateCheck();
-    if (!settingsUpdateHttpService_)
-        settingsUpdateHttpService_ = std::make_unique<AsyncHttpService>();
-
-    HttpRequestOptions request;
-    request.widgetId = kSettingsUpdateRequestOwner;
-    request.url = L"https://api.github.com/repos/FreeFallingSnow/"
-        L"SnowDesktop_Release/releases/latest";
-    request.headers =
-        L"Accept: application/vnd.github+json\r\n"
-        L"X-GitHub-Api-Version: 2022-11-28\r\n";
-    request.timeoutMs = 8000;
-    request.cacheSeconds = 60;
-    request.maximumResponseBytes = 512 * 1024;
-    request.allowedDomains = {"api.github.com"};
-    settingsUpdateRequestId_ =
-        settingsUpdateHttpService_->Submit(std::move(request));
-    if (settingsUpdateRequestId_ == 0)
-    {
-        settingsUpdateState_ = SettingsUpdateState::Failed;
-        settingsUpdateDetailKey_ =
-            "app.settings.update_http_init_failed";
-        PublishSettingsUpdateStatus();
-        return SettingsActionResult::Failure(
-            _LW(settingsUpdateDetailKey_.c_str()));
-    }
-
-    settingsUpdateRequestGeneration_ = snapshot->generation;
-    settingsUpdateState_ = SettingsUpdateState::Checking;
-    settingsUpdateAvailableVersion_.clear();
-    settingsUpdateDetailKey_.clear();
-    settingsUpdateDownloadUrl_.clear();
-    PublishSettingsUpdateStatus();
-    return SettingsActionResult::Success();
 }
 
 void DesktopApp::CancelSettingsUpdateCheck() noexcept
@@ -514,9 +478,8 @@ void DesktopApp::PrepareSettingsUpdateSession(std::uint64_t generation)
     settingsUpdateAvailableVersion_.clear();
     settingsUpdateDownloadUrl_.clear();
     settingsUpdateDetailKey_.clear();
-    settingsUpdateState_ = snowdesktop::deployment::IsPackaged()
-        ? snowdesktop::winui::SettingsUpdateState::ManagedByStore
-        : snowdesktop::winui::SettingsUpdateState::Unknown;
+    settingsUpdateState_ =
+        snowdesktop::winui::SettingsUpdateState::Unknown;
     PublishSettingsUpdateStatus();
 }
 
@@ -599,6 +562,7 @@ void DesktopApp::PublishSettingsUpdateStatus()
     settingsUpdateStatusRevision_ = std::max(
         settingsUpdateStatusRevision_ + 1, snapshot->revision + 1);
     patch.revision = settingsUpdateStatusRevision_;
+    patch.packaged = snowdesktop::deployment::IsPackaged();
     patch.updateState = settingsUpdateState_;
     patch.availableVersion = settingsUpdateAvailableVersion_;
     patch.updateDetail = settingsUpdateDetailKey_.empty()
@@ -1266,6 +1230,14 @@ private:
         {
             return {};
         }
+        if (target == HotkeyTarget::PagePrevious ||
+            target == HotkeyTarget::PageNext)
+        {
+            // Page navigation is dispatched inside SnowDesktop's desktop
+            // input path. Once reserved keys and application conflicts have
+            // been rejected it must not be tested with RegisterHotKey.
+            return { true, HotkeyTarget::None };
+        }
 
         switch (target)
         {
@@ -1302,7 +1274,7 @@ private:
             break;
         case HotkeyTarget::PagePrevious:
         case HotkeyTarget::PageNext:
-            break;
+            return { true, HotkeyTarget::None };
         case HotkeyTarget::None:
             return {};
         }
@@ -1351,9 +1323,8 @@ void DesktopApp::InitializeSettingsController()
         generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
     }
-    settingsUpdateState_ = snowdesktop::deployment::IsPackaged()
-        ? snowdesktop::winui::SettingsUpdateState::ManagedByStore
-        : snowdesktop::winui::SettingsUpdateState::Unknown;
+    settingsUpdateState_ =
+        snowdesktop::winui::SettingsUpdateState::Unknown;
     if (!result.Succeeded())
     {
         std::wstring message =

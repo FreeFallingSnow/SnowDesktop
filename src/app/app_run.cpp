@@ -588,6 +588,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         patch.revision = revision;
         patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
         patch.installedWidgetCount = widgets_.size();
+        patch.packaged = snowdesktop::deployment::IsPackaged();
         patch.updateState = settingsUpdateState_;
         patch.availableVersion = settingsUpdateAvailableVersion_;
         patch.updateDetail = settingsUpdateDetailKey_.empty()
