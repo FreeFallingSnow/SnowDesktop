@@ -2399,13 +2399,13 @@ void SettingsWindow::DrawHotkeyRecorder(
     {
         statusText = _L("app.settings.hotkey_status_recording");
         statusDetails = _L("app.settings.hotkey_capture_active");
-        statusColor = ImVec4(0.18f, 0.45f, 0.82f, 1.0f);
+        statusColor = g_settingsUi.colors.accent;
     }
     else if (virtualKey == 0)
     {
         statusText = _L("app.settings.hotkey_not_set");
         statusDetails = _L("app.settings.hotkey_not_set_warning");
-        statusColor = ImVec4(0.82f, 0.46f, 0.08f, 1.0f);
+        statusColor = g_settingsUi.colors.warning;
     }
     else if (internalConflict != HotkeySettingTarget::None)
     {
@@ -2413,25 +2413,25 @@ void SettingsWindow::DrawHotkeyRecorder(
         statusDetails = _LF(
             "app.settings.hotkey_conflict_with",
             _L(HotkeyTargetLabelKey(internalConflict)));
-        statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
+        statusColor = g_settingsUi.colors.danger;
     }
     else if (!systemAvailable)
     {
         statusText = _L("app.settings.hotkey_status_in_use");
         statusDetails = _L("app.settings.hotkey_conflict_system");
-        statusColor = ImVec4(0.80f, 0.12f, 0.12f, 1.0f);
+        statusColor = g_settingsUi.colors.danger;
     }
     else if (modifiers == 0 && !localDesktopHotkey)
     {
         statusText = _L("app.settings.hotkey_status_no_modifier");
         statusDetails = _L("app.settings.hotkey_no_modifier_warning");
-        statusColor = ImVec4(0.82f, 0.46f, 0.08f, 1.0f);
+        statusColor = g_settingsUi.colors.warning;
     }
     else
     {
         statusText = _L("app.settings.hotkey_status_available");
         statusDetails = _L("app.settings.hotkey_available");
-        statusColor = ImVec4(0.12f, 0.58f, 0.30f, 1.0f);
+        statusColor = g_settingsUi.colors.success;
     }
 
     const float controlWidth =
@@ -4364,7 +4364,7 @@ void SettingsWindow::DrawPersonalizationPage()
         if (taskbarRuntimeStatus)
         {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+            ImGui::TextColored(g_settingsUi.colors.warning,
                 "%s", taskbarRuntimeStatus);
         }
 
@@ -5354,7 +5354,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                         invalidSource =
                             _L("app.settings.widgets_source_steam");
                     ImGui::TextColored(
-                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                        g_settingsUi.colors.danger,
                         "%s · %s · %s", invalidSource,
                         invalid->manifest.version.c_str(),
                         _L("app.settings.invalid"));
@@ -5382,7 +5382,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 if (failure->manifest.version.empty())
                 {
                     ImGui::TextColored(
-                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                        g_settingsUi.colors.danger,
                         "%s · %s",
                         _L("app.settings.widgets_source_steam"),
                         _L("app.settings.widgets_workshop_install_failed"));
@@ -5390,7 +5390,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 else
                 {
                     ImGui::TextColored(
-                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f),
+                        g_settingsUi.colors.danger,
                         "%s · %s · %s",
                         _L("app.settings.widgets_source_steam"),
                         failure->manifest.version.c_str(),
@@ -5421,7 +5421,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     if (!group.invalidManaged.empty())
                     {
                         ImGui::PushStyleColor(ImGuiCol_Text,
-                            ImVec4(0.86f, 0.22f, 0.20f, 1.0f));
+                            g_settingsUi.colors.danger);
                         if (ImGui::MenuItem(
                                 _L("app.settings.widgets_uninstall")))
                         {
@@ -5647,7 +5647,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                         ImGui::EndMenu();
                     }
                     ImGui::PushStyleColor(ImGuiCol_Text,
-                        ImVec4(0.86f, 0.22f, 0.20f, 1.0f));
+                        g_settingsUi.colors.danger);
                     if (ImGui::MenuItem(
                             _L("app.settings.widgets_uninstall")))
                     {
@@ -5702,7 +5702,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 {
                     ImGui::Separator();
                     ImGui::PushStyleColor(ImGuiCol_Text,
-                        ImVec4(0.86f, 0.22f, 0.20f, 1.0f));
+                        g_settingsUi.colors.danger);
                     if (ImGui::MenuItem(
                             _L("app.settings.widgets_uninstall")))
                     {
@@ -5887,7 +5887,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     ImGui::TextUnformatted(name.c_str());
                     ImGui::SameLine();
                     ImGui::TextColored(
-                        ImVec4(0.82f, 0.30f, 0.27f, 1.0f), "%s · %s",
+                        g_settingsUi.colors.danger, "%s · %s",
                         _L("app.settings.widgets_filter_builtin"),
                         _L("app.settings.invalid"));
                     const auto issue = std::find_if(
@@ -6025,11 +6025,12 @@ void SettingsWindow::DrawWidgetPackagesPage()
                     widgetPermissionEditorGrants_.begin(),
                     widgetPermissionEditorGrants_.end(), permission) !=
                     widgetPermissionEditorGrants_.end();
-                std::string label = permissionLabel(permission);
-                label += "##";
-                label += idPrefix;
-                label += permission;
-                if (ImGui::Checkbox(label.c_str(), &selected))
+                const std::string label = permissionLabel(permission);
+                std::string toggleId = "##";
+                toggleId += idPrefix;
+                toggleId += permission;
+                if (DrawSettingCheckbox(label.c_str(), toggleId.c_str(),
+                        &selected))
                 {
                     if (selected)
                     {
@@ -6082,7 +6083,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
             {
                 ImGui::Spacing();
                 ImGui::PushStyleColor(ImGuiCol_Text,
-                    ImVec4(0.86f, 0.44f, 0.12f, 1.0f));
+                    g_settingsUi.colors.warning);
                 ImGui::TextWrapped("%s", _L(
                     "app.settings.widgets_permissions_scope_changed"));
                 ImGui::PopStyleColor();
@@ -6224,7 +6225,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
                 ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(_L("app.settings.cancel")))
+        if (SecondaryButton(_L("app.settings.cancel")))
         {
             pendingWidgetInstallKind_ = PendingWidgetInstallKind::None;
             pendingWidgetInstallPath_.clear();
@@ -6501,9 +6502,8 @@ void SettingsWindow::DrawWidgetDeveloperTools()
     {
         ImGui::PushID(status.agent.id.c_str());
         bool selected = targetSelected(status);
-        BeginSettingRow(targetLabel(status.agent.kind),
-            ImGui::GetFrameHeight());
-        if (ImGui::Checkbox("##AgentSkillTarget", &selected))
+        if (DrawSettingCheckbox(targetLabel(status.agent.kind),
+                "##AgentSkillTarget", &selected))
         {
             const int bit = targetBit(status);
             if (selected)
@@ -6661,7 +6661,7 @@ void SettingsWindow::DrawWidgetDeveloperTools()
                     const std::string buttonLabel = glyph + itemIdPrefix +
                         std::to_string(codepoint);
                     ImGui::PushFont(font, 18.0f * dpiScale_);
-                    const bool clicked = ImGui::Button(buttonLabel.c_str(),
+                    const bool clicked = SecondaryButton(buttonLabel.c_str(),
                         ImVec2(buttonSize, buttonSize));
                     ImGui::PopFont();
                     if (clicked)
