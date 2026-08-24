@@ -584,6 +584,7 @@ struct SettingsWindowHost::Impl
     bool systemBackdropUpdateQueued = false;
     bool integratedTitleBarActive = false;
     bool integratedTitleBarLayoutQueued = false;
+    bool windowActive = false;
     std::wstring lastError;
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
@@ -772,6 +773,28 @@ struct SettingsWindowHost::Impl
             // Keep the system-selected caption colors if a theme property is
             // unavailable or changes during a high-contrast transition.
         }
+    }
+
+    void ApplyActualTheme(bool isDark) noexcept
+    {
+        if (shuttingDown || !OnOwnerThread())
+            return;
+
+        darkTheme = isDark;
+        ApplySettingsWindowChrome(window, darkTheme);
+        ApplyIntegratedTitleBarTheme();
+    }
+
+    void UpdateIntegratedTitleBarActivationVisual() noexcept
+    {
+        if (!shell || shuttingDown || !OnOwnerThread())
+            return;
+
+        bool highContrast = false;
+        const bool useHighContrast =
+            !QueryHighContrastEnabled(highContrast) || highContrast;
+        shell->SetIntegratedTitleBarWindowActive(
+            windowActive, useHighContrast);
     }
 
     void ResetIntegratedTitleBar() noexcept
@@ -1035,9 +1058,6 @@ struct SettingsWindowHost::Impl
             return;
         if (!shell->ApplySnapshot(*snapshot))
             return;
-        darkTheme = snapshot->values.personalization.contentTheme == 0;
-        ApplySettingsWindowChrome(window, darkTheme);
-        ApplyIntegratedTitleBarTheme();
         QueueSystemBackdropUpdate();
         SynchronizePageBackends(*snapshot);
         if (options.homeAboutStatus)
@@ -2233,13 +2253,37 @@ struct SettingsWindowHost::Impl
         case WM_GETMINMAXINFO:
         {
             auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-            const UINT dpi = GetDpiForWindow(hwnd);
-            info->ptMinTrackSize.x = MulDiv(
+            const UINT windowDpi = GetDpiForWindow(hwnd);
+            const UINT dpi = windowDpi != 0 ? windowDpi : 96;
+            const int minimumClientWidth = MulDiv(
                 kMinimumClientWidth, static_cast<int>(dpi), 96);
-            info->ptMinTrackSize.y = MulDiv(
+            const int minimumClientHeight = MulDiv(
                 kMinimumClientHeight, static_cast<int>(dpi), 96);
+            RECT minimumBounds{0, 0,
+                minimumClientWidth, minimumClientHeight};
+            const DWORD style = static_cast<DWORD>(
+                GetWindowLongPtrW(hwnd, GWL_STYLE));
+            const DWORD extendedStyle = static_cast<DWORD>(
+                GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+            if (AdjustWindowRectExForDpi(&minimumBounds, style, FALSE,
+                    extendedStyle, dpi))
+            {
+                info->ptMinTrackSize.x =
+                    minimumBounds.right - minimumBounds.left;
+                info->ptMinTrackSize.y =
+                    minimumBounds.bottom - minimumBounds.top;
+            }
+            else
+            {
+                info->ptMinTrackSize.x = minimumClientWidth;
+                info->ptMinTrackSize.y = minimumClientHeight;
+            }
             return 0;
         }
+        case WM_ACTIVATE:
+            self->windowActive = LOWORD(wParam) != WA_INACTIVE;
+            self->UpdateIntegratedTitleBarActivationVisual();
+            break;
         case WM_DPICHANGED:
         {
             const auto* suggested = reinterpret_cast<RECT*>(lParam);
@@ -2263,6 +2307,7 @@ struct SettingsWindowHost::Impl
         case WM_DWMCOLORIZATIONCOLORCHANGED:
             ApplySettingsWindowChrome(hwnd, self->darkTheme);
             self->ApplyIntegratedTitleBarTheme();
+            self->UpdateIntegratedTitleBarActivationVisual();
             self->QueueIntegratedTitleBarLayoutUpdate();
             self->QueueSystemBackdropUpdate();
             break;
@@ -2446,6 +2491,16 @@ bool SettingsWindowHost::Initialize(
             return false;
         }
         impl_->shell->SetSystemBackdropActive(false);
+        impl_->shell->SetActualThemeChangedCallback(
+            [weak](bool darkTheme) {
+                if (const auto state = weak.lock();
+                    state && state->alive.load() && state->owner)
+                {
+                    state->owner->ApplyActualTheme(darkTheme);
+                }
+            });
+        impl_->windowActive = GetActiveWindow() == impl_->window;
+        impl_->UpdateIntegratedTitleBarActivationVisual();
         impl_->ConfigureIntegratedTitleBar();
         impl_->QueueSystemBackdropUpdate();
 
@@ -2494,6 +2549,8 @@ void SettingsWindowHost::Shutdown() noexcept
         (void)impl_->FlushPendingChanges();
     impl_->shuttingDown = true;
 
+    if (impl_->shell)
+        impl_->shell->SetActualThemeChangedCallback({});
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(nullptr);
     impl_->DisposePageBackends();

@@ -75,6 +75,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         std::uint64_t requestId)>;
     using CancelOperationCallback =
         std::function<void(std::uint64_t generation)>;
+    using ActualThemeChangedCallback = std::function<void(bool darkTheme)>;
     using DialogCompletedCallback = std::function<void(bool confirmed)>;
 
     SettingsShell();
@@ -102,6 +103,10 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         int leftInsetPixels,
         int rightInsetPixels,
         double rasterizationScale) noexcept;
+    void SetIntegratedTitleBarWindowActive(
+        bool active,
+        bool highContrast) noexcept;
+    void SetActualThemeChangedCallback(ActualThemeChangedCallback callback);
 
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
@@ -211,6 +216,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 private:
     void HookEvents();
     void UnhookEvents() noexcept;
+    void NotifyActualThemeChanged() noexcept;
+    void UpdateIntegratedTitleBarTextAppearance() noexcept;
     void RenderRoute(
         bool forcePageCards = false,
         bool scheduleFocus = true);
@@ -259,6 +266,7 @@ private:
     RouteRequestedCallback routeRequested_;
     SearchRequestedCallback searchRequested_;
     CancelOperationCallback cancelOperation_;
+    ActualThemeChangedCallback actualThemeChanged_;
 
     std::unique_ptr<snowdesktop::winui::GeneralPagePresenter> generalPage_;
     std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
@@ -295,8 +303,11 @@ private:
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
     bool integratedTitleBarActive_ = false;
+    bool integratedTitleBarWindowActive_ = false;
+    bool integratedTitleBarHighContrast_ = false;
     bool closed_ = false;
 
+    winrt::event_token actualThemeChangedToken_{};
     winrt::event_token selectionChangedToken_{};
     winrt::event_token backRequestedToken_{};
     winrt::event_token breadcrumbClickedToken_{};

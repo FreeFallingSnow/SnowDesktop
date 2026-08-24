@@ -118,6 +118,51 @@ void TestHostContract(const std::filesystem::path& repository)
             shellMarkup.find("NarrowState") == std::string::npos &&
             shellMarkup.find("AdaptiveTrigger") == std::string::npos,
         "the host enforces the supported wide settings layout instead of retaining an incomplete narrow state");
+    Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
+            source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
+                std::string::npos &&
+            source.find("GetWindowLongPtrW(hwnd, GWL_STYLE)") !=
+                std::string::npos &&
+            source.find("GetWindowLongPtrW(hwnd, GWL_EXSTYLE)") !=
+                std::string::npos &&
+            source.find("minimumBounds.right - minimumBounds.left") !=
+                std::string::npos &&
+            source.find("minimumBounds.bottom - minimumBounds.top") !=
+                std::string::npos,
+        "minimum client DIPs are converted to complete DPI-aware tracking dimensions");
+    Check(shellHeader.find("ActualThemeChangedCallback") !=
+                std::string::npos &&
+            shellHeader.find("SetActualThemeChangedCallback(") !=
+                std::string::npos &&
+            shell.find("ShellRoot().ActualThemeChanged(") !=
+                std::string::npos &&
+            shell.find("ShellRoot().ActualTheme() == mux::ElementTheme::Dark") !=
+                std::string::npos &&
+            source.find("shell->SetActualThemeChangedCallback(") !=
+                std::string::npos &&
+            source.find("state->owner->ApplyActualTheme(darkTheme)") !=
+                std::string::npos &&
+            source.find("darkTheme = isDark;") != std::string::npos &&
+            source.find(
+                "darkTheme = snapshot->values.personalization.contentTheme") ==
+                std::string::npos,
+        "the HWND and AppWindow chrome follow ShellRoot ActualTheme instead of content appearance settings");
+    Check(source.find("case WM_ACTIVATE:") != std::string::npos &&
+            source.find("LOWORD(wParam) != WA_INACTIVE") !=
+                std::string::npos &&
+            source.find("UpdateIntegratedTitleBarActivationVisual()") !=
+                std::string::npos &&
+            shellHeader.find("SetIntegratedTitleBarWindowActive(") !=
+                std::string::npos &&
+            shell.find("TextFillColorPrimaryBrush") !=
+                std::string::npos &&
+            shell.find("TextFillColorSecondaryBrush") !=
+                std::string::npos &&
+            shell.find("integratedTitleBarHighContrast_") !=
+                std::string::npos &&
+            shell.find("visuallyActive ? 1.0 : 0.72") !=
+                std::string::npos,
+        "WM_ACTIVATE drives theme-aware caption text while high contrast remains fully opaque");
     Check(source.find("ColorReference automatic{nullptr}") !=
                 std::string::npos &&
             source.find("QueryHighContrastEnabled(highContrast)") !=
@@ -248,6 +293,10 @@ void TestHostContract(const std::filesystem::path& repository)
         : std::string_view{};
     Check(shutdownFunction.find("ResetIntegratedTitleBar()") !=
                 std::string_view::npos &&
+            shutdownFunction.find("SetActualThemeChangedCallback({})") !=
+                std::string_view::npos &&
+            shutdownFunction.find("callbacks->alive.store(false)") !=
+                std::string_view::npos &&
             shutdownFunction.find("shell->Close()") !=
                 std::string_view::npos &&
             shutdownFunction.find("runtime.Detach()") !=
@@ -256,6 +305,8 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             shutdownFunction.find("ResetIntegratedTitleBar()") <
                 shutdownFunction.find("shell->Close()") &&
+            shutdownFunction.find("SetActualThemeChangedCallback({})") <
+                shutdownFunction.find("callbacks->alive.store(false)") &&
             shutdownFunction.find("shell->Close()") <
                 shutdownFunction.find("runtime.Detach()") &&
             shutdownFunction.find("runtime.Detach()") <
@@ -344,6 +395,10 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("app.settings.widgets_technical_details") !=
                 std::string::npos &&
             shell.find("muxc::Expander technicalDetails") !=
+                std::string::npos &&
+            shell.find("technicalDetails.HorizontalAlignment(") !=
+                std::string::npos &&
+            shell.find("technicalDetails.HorizontalContentAlignment(") !=
                 std::string::npos &&
             source.find("shell->ShowWidgetInstallConfirmation(") !=
                 std::string::npos,

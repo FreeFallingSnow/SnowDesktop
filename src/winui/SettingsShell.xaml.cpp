@@ -299,6 +299,7 @@ void SettingsShell::Close() noexcept
     routeRequested_ = {};
     searchRequested_ = {};
     cancelOperation_ = {};
+    actualThemeChanged_ = {};
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -483,6 +484,91 @@ void SettingsShell::SetIntegratedTitleBarLayout(
             IntegratedTitleBarHost().Visibility(mux::Visibility::Collapsed);
             IntegratedTitleBarHost().Height(0.0);
             NavigationRoot().PaneTitle(Localize("settings.shell.title"));
+        }
+        catch (...)
+        {
+        }
+    }
+}
+
+void SettingsShell::SetIntegratedTitleBarWindowActive(
+    bool active,
+    bool highContrast) noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    integratedTitleBarWindowActive_ = active;
+    integratedTitleBarHighContrast_ = highContrast;
+    UpdateIntegratedTitleBarTextAppearance();
+}
+
+void SettingsShell::SetActualThemeChangedCallback(
+    ActualThemeChangedCallback callback)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    actualThemeChanged_ = std::move(callback);
+    NotifyActualThemeChanged();
+}
+
+void SettingsShell::NotifyActualThemeChanged() noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    UpdateIntegratedTitleBarTextAppearance();
+    const ActualThemeChangedCallback callback = actualThemeChanged_;
+    if (!callback)
+        return;
+
+    try
+    {
+        callback(ShellRoot().ActualTheme() == mux::ElementTheme::Dark);
+    }
+    catch (...)
+    {
+        // Theme notification is presentation-only and must not unwind through
+        // the XAML event dispatcher or window initialization.
+    }
+}
+
+void SettingsShell::UpdateIntegratedTitleBarTextAppearance() noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    try
+    {
+        const bool visuallyActive = integratedTitleBarWindowActive_ ||
+            integratedTitleBarHighContrast_;
+        const wchar_t* resourceKey = visuallyActive
+            ? L"TextFillColorPrimaryBrush"
+            : L"TextFillColorSecondaryBrush";
+        muxm::Brush foreground{nullptr};
+        if (const auto application = mux::Application::Current())
+        {
+            if (const auto resource = application.Resources().TryLookup(
+                    winrt::box_value(resourceKey)))
+            {
+                foreground = resource.try_as<muxm::Brush>();
+            }
+        }
+        IntegratedTitleBarText().Foreground(foreground);
+        IntegratedTitleBarText().Opacity(
+            visuallyActive ? 1.0 : 0.72);
+    }
+    catch (...)
+    {
+        // Keep the inherited theme foreground. High contrast must never be
+        // dimmed if a resource dictionary is changing underneath the Island.
+        try
+        {
+            IntegratedTitleBarText().Foreground(muxm::Brush{nullptr});
+            IntegratedTitleBarText().Opacity(
+                integratedTitleBarHighContrast_ ? 1.0 :
+                (integratedTitleBarWindowActive_ ? 1.0 : 0.72));
         }
         catch (...)
         {
@@ -1092,6 +1178,13 @@ void SettingsShell::ShowWidgetPermissionEditor(
 
 void SettingsShell::HookEvents()
 {
+    actualThemeChangedToken_ = ShellRoot().ActualThemeChanged(
+        [this](const mux::FrameworkElement&,
+               const winrt::Windows::Foundation::IInspectable&) {
+            if (!closed_)
+                NotifyActualThemeChanged();
+        });
+
     selectionChangedToken_ = NavigationRoot().SelectionChanged(
         [this](const muxc::NavigationView&,
                const muxc::NavigationViewSelectionChangedEventArgs& args) {
@@ -1187,6 +1280,8 @@ void SettingsShell::UnhookEvents() noexcept
 {
     try
     {
+        if (actualThemeChangedToken_.value)
+            ShellRoot().ActualThemeChanged(actualThemeChangedToken_);
         if (selectionChangedToken_.value)
             NavigationRoot().SelectionChanged(selectionChangedToken_);
         if (backRequestedToken_.value)
@@ -1207,6 +1302,7 @@ void SettingsShell::UnhookEvents() noexcept
     catch (...)
     {
     }
+    actualThemeChangedToken_ = {};
     selectionChangedToken_ = {};
     backRequestedToken_ = {};
     breadcrumbClickedToken_ = {};
@@ -2014,6 +2110,8 @@ winrt::fire_and_forget SettingsShell::ShowWidgetInstallConfirmationAsync(
         {
             muxc::Expander technicalDetails;
             technicalDetails.HorizontalAlignment(
+                mux::HorizontalAlignment::Stretch);
+            technicalDetails.HorizontalContentAlignment(
                 mux::HorizontalAlignment::Stretch);
             technicalDetails.Header(winrt::box_value(Localize(
                 "app.settings.widgets_technical_details")));
