@@ -9,6 +9,10 @@ App::App()
           winrt::Microsoft::UI::Xaml::Hosting::WindowsXamlManager::
               InitializeForCurrentThread())
 {
+    // Load the compiled application resources before any Island content is
+    // constructed.  Without this call WinUI controls cannot resolve the
+    // XamlControlsResources declared in App.xaml.
+    InitializeComponent();
 }
 
 App::~App()

@@ -252,7 +252,12 @@ set(SNOWDESKTOP_SOURCES
     src/winui/App.xaml
     src/winui/App.xaml.cpp
     src/winui/App.xaml.h
+    src/winui/SettingsShell.xaml
+    src/winui/SettingsShell.xaml.cpp
+    src/winui/SettingsShell.xaml.h
     src/winui/pch.h
+    src/winui/settings_shell_navigation.cpp
+    src/winui/settings_shell_navigation.h
     src/winui/winui_runtime.cpp
     src/winui/winui_runtime.h
     src/winui/xaml_metadata_provider_bridge.cpp
@@ -576,12 +581,19 @@ endif()
 
 set_source_files_properties(src/winui/App.xaml PROPERTIES
     VS_XAML_TYPE "ApplicationDefinition")
+set_source_files_properties(src/winui/SettingsShell.xaml PROPERTIES
+    VS_XAML_TYPE "Page")
 set_source_files_properties(
     src/winui/App.idl
     src/winui/App.xaml.cpp
     src/winui/App.xaml.h
     PROPERTIES
         VS_SETTINGS "DependentUpon=App.xaml;SubType=Code")
+set_source_files_properties(
+    src/winui/SettingsShell.xaml.cpp
+    src/winui/SettingsShell.xaml.h
+    PROPERTIES
+        VS_SETTINGS "DependentUpon=SettingsShell.xaml;SubType=Code")
 
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
@@ -1185,6 +1197,16 @@ if (BUILD_TESTING)
             src/settings_route.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract l10n navigation settings)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiSettingsNavigationTests
+        winui_settings_navigation
+        SOURCES
+            tests/winui_settings_navigation_tests.cpp
+            src/winui/settings_shell_navigation.cpp
+            src/settings_route.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract navigation settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests

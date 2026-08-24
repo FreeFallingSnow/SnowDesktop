@@ -1,3 +1,8 @@
 namespace SnowDesktop
 {
+    [default_interface]
+    runtimeclass SettingsShell : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        SettingsShell();
+    }
 }
