@@ -2561,10 +2561,15 @@ struct WidgetsPagePresenter::Impl
             workshop
                 ? L"Unsubscribe and uninstall this component?"
                 : L"Uninstall this component? Its desktop instances will stop.");
+        const std::wstring primaryButtonText = L(workshop
+                ? "app.settings.widgets_unsubscribe_and_uninstall"
+                : "app.settings.widgets_uninstall",
+            workshop ? L"Unsubscribe and Uninstall" : L"Uninstall");
         const std::shared_ptr<CallbackGenerationGate> gate = callbackGate;
         const auto invoke = actions.invoke;
 
         actions.confirm(requestGeneration, title, message,
+            primaryButtonText,
             [gate, invoke, requestGeneration, requestActivation,
                 packageId](bool confirmed) {
                 if (!confirmed || !invoke ||

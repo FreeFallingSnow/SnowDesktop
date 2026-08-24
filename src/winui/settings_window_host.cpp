@@ -771,7 +771,8 @@ struct SettingsWindowHost::Impl
         std::wstring title,
         std::wstring message,
         std::function<void(bool)> completed,
-        bool destructive = true)
+        bool destructive = true,
+        std::wstring primaryButtonText = {})
     {
         if (!shell || !controller ||
             !controller->IsGenerationCurrent(generation))
@@ -784,7 +785,9 @@ struct SettingsWindowHost::Impl
         request.generation = generation;
         request.title = std::move(title);
         request.message = std::move(message);
-        request.primaryButtonText = L("settings.dialog.confirm");
+        request.primaryButtonText = primaryButtonText.empty()
+            ? L("settings.dialog.confirm")
+            : std::move(primaryButtonText);
         request.closeButtonText = L("settings.dialog.cancel");
         request.destructive = destructive;
         shell->ShowConfirmation(std::move(request), std::move(completed));
@@ -1137,6 +1140,7 @@ struct SettingsWindowHost::Impl
         actions.confirm = [weak](std::uint64_t generation,
                               std::wstring title,
                               std::wstring message,
+                              std::wstring primaryButtonText,
                               WidgetsPageActions::ConfirmationCompletion done) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner)
@@ -1146,7 +1150,8 @@ struct SettingsWindowHost::Impl
                 return;
             }
             state->owner->ShowGenerationConfirmation(generation,
-                std::move(title), std::move(message), std::move(done));
+                std::move(title), std::move(message), std::move(done), true,
+                std::move(primaryButtonText));
         };
         actions.editPermissions = [weak](std::uint64_t generation,
                                       WidgetPermissionEditorRequest request,

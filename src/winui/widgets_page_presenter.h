@@ -467,6 +467,7 @@ struct WidgetsPageActions
         std::uint64_t generation,
         std::wstring title,
         std::wstring message,
+        std::wstring primaryButtonText,
         ConfirmationCompletion completion)> confirm;
 
     /** Shows the Shell-owned batch permission ContentDialog. */

@@ -341,10 +341,14 @@ void TestWidgetsPagePresenterContract(
 
     Check(source.find("actions.confirm(requestGeneration") !=
                 std::string::npos &&
+            source.find(
+                "app.settings.widgets_unsubscribe_and_uninstall") !=
+                std::string::npos &&
+            source.find("primaryButtonText") != std::string::npos &&
             source.find("WidgetsPageCommand::UninstallPackage") !=
                 std::string::npos &&
             source.find("if (!confirmed || !invoke") != std::string::npos,
-        "uninstall waits for an asynchronous host-owned ContentDialog result");
+        "uninstall keeps its legacy normal or Workshop-specific action label and waits for an asynchronous host-owned ContentDialog result");
 
     Check(header.find("WidgetPermissionEditorRequest") !=
                 std::string::npos &&

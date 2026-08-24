@@ -499,6 +499,15 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos,
         "the Shell renders structured install changes and collapsible technical details in its ContentDialog");
 
+    Check(source.find("std::wstring primaryButtonText") !=
+                std::string::npos &&
+            source.find("primaryButtonText.empty()") !=
+                std::string::npos &&
+            source.find("std::move(primaryButtonText)") !=
+                std::string::npos &&
+            source.find("settings.dialog.confirm") != std::string::npos,
+        "destructive widget confirmations may retain their specific legacy action label while other dialogs keep the generic fallback");
+
     Check(source.find(
               "route.page == SettingsPage::DeveloperTools") !=
                 std::string::npos &&
