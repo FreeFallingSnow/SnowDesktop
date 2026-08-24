@@ -1816,7 +1816,7 @@ struct DesktopPagePresenter::Impl
         outlineColor->Close();
     }
 
-    void DismissColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         backgroundStart->Dismiss();
         backgroundEnd->Dismiss();
@@ -1827,7 +1827,7 @@ struct DesktopPagePresenter::Impl
     void Close() noexcept
     {
         if (closed) return;
-        DismissColorEditors();
+        CommitOpenColorEditors();
         if (active)
             CommitContinuousEdits();
         active = false;
@@ -1923,7 +1923,7 @@ void DesktopPagePresenter::Activate() noexcept
 void DesktopPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed || !impl_->active) return;
-    impl_->DismissColorEditors();
+    impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
 }

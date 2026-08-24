@@ -401,10 +401,16 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",
         dismissStart);
-    const auto dismissRollback = sharedControls.find("Rollback();",
+    const auto dismissCommit = sharedControls.find("Commit();",
         dismissStart);
     const auto dismissHide = sharedControls.find("flyout.Hide();",
         dismissStart);
+    const auto cancelStart = sharedControls.find(
+        "cancelToken = cancel.Click");
+    const auto cancelEnd = sharedControls.find(
+        "closedToken = flyout.Closed", cancelStart);
+    const auto cancelRollback = sharedControls.find("Rollback();", cancelStart);
+    const auto cancelHide = sharedControls.find("flyout.Hide();", cancelStart);
     Check(sharedControls.find("struct SettingRow") != std::string::npos &&
             sharedControls.find("kSettingControlWidth = 520.0") !=
                 std::string::npos &&
@@ -425,7 +431,9 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             sharedControls.find("Rollback()") != std::string::npos &&
             dismissStart != std::string::npos &&
-            dismissRollback < dismissHide && dismissHide < dismissEnd &&
+            dismissCommit < dismissHide && dismissHide < dismissEnd &&
+            cancelStart != std::string::npos &&
+            cancelRollback < cancelHide && cancelHide < cancelEnd &&
             personalization.find("mux::DispatcherTimer") !=
                 std::string::npos &&
             personalization.find("std::chrono::milliseconds(650)") !=
@@ -442,7 +450,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "settings rows remain single-line left-description/right-editor layouts and every color focus target is a compact transactional swatch that rolls back before asynchronous dismissal");
+        "settings rows retain single-line alignment while color swatches commit before dismiss and Cancel transactionally restores the opening color");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");

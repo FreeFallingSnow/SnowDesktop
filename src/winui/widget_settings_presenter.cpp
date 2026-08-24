@@ -652,12 +652,6 @@ struct WidgetSettingsPresenter::Impl
                 if (!CanMutate()) return;
                 constexpr std::string_view owner =
                     "__appearance.backgroundColor";
-                if (mode == SettingsUpdateMode::Preview &&
-                    backgroundColorEditor->rollbackApplied)
-                {
-                    (void)CancelTransientOwner(owner);
-                    return;
-                }
                 wr::WidgetHostAppearancePatch patch;
                 patch.backgroundColor = static_cast<int>(FromColor(color));
                 QueueTransientAppearance(owner, std::move(patch));
@@ -677,12 +671,6 @@ struct WidgetSettingsPresenter::Impl
                 if (!CanMutate()) return;
                 constexpr std::string_view owner =
                     "__appearance.borderColor";
-                if (mode == SettingsUpdateMode::Preview &&
-                    borderColorEditor->rollbackApplied)
-                {
-                    (void)CancelTransientOwner(owner);
-                    return;
-                }
                 wr::WidgetHostAppearancePatch patch;
                 patch.borderColor = static_cast<int>(FromColor(color));
                 QueueTransientAppearance(owner, std::move(patch));
@@ -1205,12 +1193,6 @@ struct WidgetSettingsPresenter::Impl
                 const wui::Color& color,
                 SettingsUpdateMode mode) {
                 if (!CanMutateField(field)) return;
-                if (mode == SettingsUpdateMode::Preview &&
-                    field.colorEditor->rollbackApplied)
-                {
-                    (void)CancelTransientOwner(field.schema.key);
-                    return;
-                }
                 const long long value = FromColor(color);
                 QueueTransientOrdinary(field.schema.key,
                     wr::MakeWidgetSettingInteger(value));
@@ -2154,24 +2136,6 @@ struct WidgetSettingsPresenter::Impl
         return previewed;
     }
 
-    wr::WidgetSettingMutationResult CancelTransientOwner(
-        std::string_view owner)
-    {
-        pendingTransientPreviews.erase(std::string(owner));
-        ClearContinuousDirty(owner);
-        if (!transientPreviewActive || transientPreviewOwner != owner)
-            return UnchangedResult();
-        const auto result = service.RevertPreview(Guard());
-        if (result.Succeeded())
-        {
-            transientPreviewActive = false;
-            transientPreviewOwner.clear();
-            ApplyCurrentSnapshot();
-        }
-        NotifyMutation(owner, result);
-        return result;
-    }
-
     wr::WidgetSettingMutationResult CommitAllTransient()
     {
         while (!pendingTransientPreviews.empty())
@@ -2773,29 +2737,20 @@ struct WidgetSettingsPresenter::Impl
         }
     }
 
-    void RollbackOpenColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         try
         {
-            const auto rollbackAppearance = [](auto& editor) {
-                if (!editor || !editor->open || editor->accepted)
-                    return;
-                editor->Rollback();
-                editor->Dismiss();
+            const auto commitAppearance = [](auto& editor) {
+                if (editor && editor->open)
+                    editor->Dismiss();
             };
-            rollbackAppearance(backgroundColorEditor);
-            rollbackAppearance(borderColorEditor);
+            commitAppearance(backgroundColorEditor);
+            commitAppearance(borderColorEditor);
             for (auto& field : fields)
             {
-                if (!field->colorEditor ||
-                    !field->colorEditor->open ||
-                    field->colorEditor->accepted)
-                    continue;
-                // Rollback must run while the presenter is still active so
-                // the opening value reaches the service before route/window
-                // shutdown disables guarded mutations.
-                field->colorEditor->Rollback();
-                field->colorEditor->Dismiss();
+                if (field->colorEditor && field->colorEditor->open)
+                    field->colorEditor->Dismiss();
             }
         }
         catch (...)
@@ -2921,7 +2876,7 @@ struct WidgetSettingsPresenter::Impl
         if (closed) return;
         try
         {
-            RollbackOpenColorEditors();
+            CommitOpenColorEditors();
             (void)FlushPendingEdits();
             CancelSearches();
         }
@@ -3082,7 +3037,7 @@ void WidgetSettingsPresenter::Deactivate() noexcept
     if (!impl_ || impl_->closed) return;
     try
     {
-        impl_->RollbackOpenColorEditors();
+        impl_->CommitOpenColorEditors();
         const auto result = impl_->FlushPendingEdits();
         if (!result.Succeeded())
             return;

@@ -4,8 +4,10 @@
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
+#include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.h>
 
 #include <algorithm>
@@ -20,6 +22,7 @@ namespace presenter_controls
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 
 inline constexpr double kSettingControlWidth = 520.0;
@@ -117,6 +120,14 @@ struct SettingRow
 /** Compact color swatch whose full ColorPicker exists only inside a flyout. */
 struct ColorFlyoutEditor
 {
+    enum class EditState
+    {
+        Inactive,
+        Committed,
+        PendingPreview,
+        RolledBack,
+    };
+
     using ChangedCallback = std::function<void(
         const winrt::Windows::UI::Color&, SettingsUpdateMode)>;
 
@@ -131,13 +142,15 @@ struct ColorFlyoutEditor
     winrt::Windows::UI::Color original{};
     bool updating = false;
     bool open = false;
-    bool accepted = false;
-    bool rollbackApplied = false;
     bool closed = false;
+    EditState editState = EditState::Inactive;
 
     winrt::event_token openingToken{};
     winrt::event_token closedToken{};
     winrt::event_token colorToken{};
+    winrt::event_token pointerReleasedToken{};
+    winrt::event_token lostFocusToken{};
+    winrt::event_token keyDownToken{};
     winrt::event_token applyToken{};
     winrt::event_token cancelToken{};
 
@@ -185,23 +198,30 @@ struct ColorFlyoutEditor
             if (closed) return;
             original = picker.Color();
             open = true;
-            accepted = false;
-            rollbackApplied = false;
+            // The opening value is already authoritative. A later change
+            // becomes PendingPreview until one of the continuous-control
+            // commit boundaries accepts it.
+            editState = EditState::Committed;
         });
         colorToken = picker.ColorChanged([this](const auto&, const auto&) {
             if (closed || updating || !open) return;
             UpdateSwatch();
+            editState = EditState::PendingPreview;
             if (changed)
                 changed(picker.Color(), SettingsUpdateMode::Preview);
         });
+        pointerReleasedToken = picker.PointerReleased(
+            [this](const auto&, const auto&) { Commit(); });
+        lostFocusToken = picker.LostFocus(
+            [this](const auto&, const auto&) { Commit(); });
+        keyDownToken = picker.KeyDown(
+            [this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+                if (args.Key() == winrt::Windows::System::VirtualKey::Enter)
+                    Commit();
+            });
         applyToken = apply.Click([this](const auto&, const auto&) {
             if (closed || !open) return;
-            accepted = true;
-            if (changed)
-            {
-                changed(picker.Color(),
-                    SettingsUpdateMode::PreviewAndCommit);
-            }
+            Commit();
             flyout.Hide();
         });
         cancelToken = cancel.Click([this](const auto&, const auto&) {
@@ -211,9 +231,11 @@ struct ColorFlyoutEditor
         });
         closedToken = flyout.Closed([this](const auto&, const auto&) {
             if (closed) return;
-            if (!accepted)
-                Rollback();
+            // Closed without Apply/Cancel is a light-dismiss. Accept the last
+            // preview synchronously while the owning presenter is active.
+            Commit();
             open = false;
+            editState = EditState::Inactive;
         });
         UpdateSwatch();
     }
@@ -254,17 +276,27 @@ struct ColorFlyoutEditor
         button.IsEnabled(enabled);
     }
 
+    void Commit()
+    {
+        if (closed || !open || editState != EditState::PendingPreview)
+            return;
+        if (changed)
+            changed(picker.Color(), SettingsUpdateMode::PreviewAndCommit);
+        editState = EditState::Committed;
+    }
+
     void Rollback()
     {
-        if (rollbackApplied) return;
-        rollbackApplied = true;
+        if (closed || !open || editState == EditState::RolledBack)
+            return;
         const bool previous = updating;
         updating = true;
         picker.Color(original);
         updating = previous;
         UpdateSwatch();
         if (changed)
-            changed(original, SettingsUpdateMode::Preview);
+            changed(original, SettingsUpdateMode::PreviewAndCommit);
+        editState = EditState::RolledBack;
     }
 
     void UpdateSwatch()
@@ -278,26 +310,23 @@ struct ColorFlyoutEditor
         if (!open || !flyout) return;
         try
         {
-            // Flyout::Hide completes asynchronously. Roll back while the
-            // owning presenter is still active so its Preview callback can
-            // restore the controller before navigation or teardown disables
-            // event emission. The later Closed event is idempotent through
-            // rollbackApplied.
-            if (!accepted)
-                Rollback();
+            // Flyout::Hide completes asynchronously. Commit while the owning
+            // presenter is still active so navigation/window teardown cannot
+            // strand the last preview after disabling guarded mutations.
+            Commit();
             flyout.Hide();
         }
         catch (...)
         {
             try
             {
-                if (!accepted)
-                    Rollback();
+                Commit();
             }
             catch (...)
             {
             }
             open = false;
+            editState = EditState::Inactive;
         }
     }
 
@@ -306,18 +335,22 @@ struct ColorFlyoutEditor
         if (closed) return;
         try
         {
-            if (open && !accepted)
-                Rollback();
+            Commit();
         }
         catch (...)
         {
         }
+        open = false;
+        editState = EditState::Inactive;
         closed = true;
         try
         {
             flyout.Opening(openingToken);
             flyout.Closed(closedToken);
             picker.ColorChanged(colorToken);
+            picker.PointerReleased(pointerReleasedToken);
+            picker.LostFocus(lostFocusToken);
+            picker.KeyDown(keyDownToken);
             apply.Click(applyToken);
             cancel.Click(cancelToken);
         }

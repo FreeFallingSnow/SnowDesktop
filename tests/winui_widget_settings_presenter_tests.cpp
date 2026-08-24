@@ -137,28 +137,102 @@ void TestPopupColorEditing(
               "SettingsUpdateMode mode",
               "service.SetOrdinary(guard, key,",
               "wr::MakeWidgetSettingInteger(value)",
-              "RollbackOpenColorEditors()",
-              "field->colorEditor->Rollback()",
+              "CommitOpenColorEditors()",
               "field->colorEditor->Dismiss()",
               "field.colorEditor->Close()",
               "if (field.colorEditor) return field.colorEditor->button",
               "backgroundColorEditor",
               "borderColorEditor",
               "RunAppearancePatch",
-              "rollbackAppearance(backgroundColorEditor)",
-              "rollbackAppearance(borderColorEditor)"}),
-        "field and host appearance colors persist live picker changes, focus the swatch, and roll back before teardown");
+              "commitAppearance(backgroundColorEditor)",
+              "commitAppearance(borderColorEditor)",
+              "QueueTransientOrdinary(field.schema.key,",
+              "CommitTransientOwner(field.schema.key)"}),
+        "field and host appearance colors preserve guarded coalesced preview and commit before teardown");
     Check(ContainsAll(sharedControls, {
               "muxc::Flyout",
               "button.Flyout(flyout)",
+              "enum class EditState",
+              "EditState::PendingPreview",
+              "EditState::Committed",
+              "EditState::RolledBack",
               "colorToken = picker.ColorChanged",
-              "SettingsUpdateMode::Preview",
-              "SettingsUpdateMode::PreviewAndCommit",
+              "pointerReleasedToken = picker.PointerReleased",
+              "lostFocusToken = picker.LostFocus",
+              "keyDownToken = picker.KeyDown",
+              "VirtualKey::Enter",
               "closedToken = flyout.Closed",
-              "if (!accepted)",
-              "Rollback();",
+              "changed(picker.Color(), SettingsUpdateMode::Preview)",
+              "changed(picker.Color(), SettingsUpdateMode::PreviewAndCommit)",
+              "changed(original, SettingsUpdateMode::PreviewAndCommit)",
+              "picker.PointerReleased(pointerReleasedToken)",
+              "picker.LostFocus(lostFocusToken)",
+              "picker.KeyDown(keyDownToken)",
               "swatch.Background"}),
-        "the shared compact swatch opens a ColorPicker and rolls back cancel or light-dismiss");
+        "the shared swatch previews continuously, commits every interaction boundary, and unloads every handler");
+
+    const auto cancelStart = sharedControls.find(
+        "cancelToken = cancel.Click");
+    const auto cancelEnd = sharedControls.find(
+        "closedToken = flyout.Closed", cancelStart);
+    const auto cancelRollback = sharedControls.find(
+        "Rollback();", cancelStart);
+    const auto cancelHide = sharedControls.find(
+        "flyout.Hide();", cancelStart);
+    const auto applyStart = sharedControls.find("applyToken = apply.Click");
+    const auto applyEnd = sharedControls.find(
+        "cancelToken = cancel.Click", applyStart);
+    const auto applyCommit = sharedControls.find("Commit();", applyStart);
+    const auto applyHide = sharedControls.find("flyout.Hide();", applyStart);
+    const auto lightDismissStart = sharedControls.find(
+        "closedToken = flyout.Closed");
+    const auto lightDismissEnd = sharedControls.find(
+        "UpdateSwatch();", lightDismissStart);
+    const auto lightDismissCommit = sharedControls.find(
+        "Commit();", lightDismissStart);
+    const auto lightDismissDeactivate = sharedControls.find(
+        "open = false;", lightDismissStart);
+    const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
+    const auto dismissEnd = sharedControls.find(
+        "void Close() noexcept", dismissStart);
+    const auto dismissCommit = sharedControls.find("Commit();", dismissStart);
+    const auto dismissHide = sharedControls.find("flyout.Hide();", dismissStart);
+    const auto closeStart = dismissEnd;
+    const auto closeCommit = sharedControls.find("Commit();", closeStart);
+    const auto closeDisable = sharedControls.find("closed = true;", closeStart);
+    Check(cancelStart != std::string::npos &&
+            cancelEnd != std::string::npos &&
+            cancelRollback < cancelHide && cancelHide < cancelEnd &&
+            applyStart != std::string::npos &&
+            applyCommit < applyHide && applyHide < applyEnd &&
+            lightDismissStart != std::string::npos &&
+            lightDismissCommit < lightDismissDeactivate &&
+            lightDismissDeactivate < lightDismissEnd &&
+            dismissStart != std::string::npos &&
+            dismissCommit < dismissHide && dismissHide < dismissEnd &&
+            closeStart != std::string::npos &&
+            closeCommit < closeDisable,
+        "Cancel commits the opening color while dismiss and close synchronously commit the final preview before teardown");
+    const auto rollbackStart = sharedControls.find("void Rollback()");
+    const auto rollbackEnd = sharedControls.find(
+        "void UpdateSwatch()", rollbackStart);
+    const std::string_view rollbackBody =
+        rollbackStart != std::string::npos &&
+                rollbackEnd != std::string::npos
+            ? std::string_view(sharedControls).substr(
+                  rollbackStart, rollbackEnd - rollbackStart)
+            : std::string_view{};
+    Check(rollbackBody.find("picker.Color(original)") !=
+                std::string_view::npos &&
+            rollbackBody.find(
+              "changed(original, SettingsUpdateMode::PreviewAndCommit)") !=
+                std::string_view::npos &&
+            rollbackBody.find("EditState::PendingPreview") ==
+                std::string_view::npos,
+        "Cancel formally commits the opening color even after an intermediate interaction commit");
+    Check(source.find("RollbackOpenColorEditors") == std::string::npos &&
+            source.find("rollbackApplied") == std::string::npos,
+        "widget teardown no longer converts an accepted color preview into a rollback");
 }
 
 void TestOpaqueChannels(const std::string& source)
@@ -333,7 +407,6 @@ void TestTransientPreviewAndDraftValidation(
               "service.PreviewOrdinary(",
               "service.PreviewHostAppearance(",
               "service.CommitPreview(Guard())",
-              "service.RevertPreview(Guard())",
               "PointerReleased(",
               "LostFocus(",
               "if (IsEnter(args))",

@@ -61,6 +61,19 @@ void TestPresenterContract(const std::filesystem::path& root)
             source.find("std::chrono::milliseconds(650)") !=
                 std::string::npos,
         "continuous controls preview and commit on release, focus, Enter, or keyboard idle");
+    Check(source.find("void CommitOpenColorEditors() noexcept") !=
+                std::string::npos &&
+            source.find("impl_->CommitOpenColorEditors();") !=
+                std::string::npos &&
+            controls.find("pointerReleasedToken = picker.PointerReleased") !=
+                std::string::npos &&
+            controls.find("lostFocusToken = picker.LostFocus") !=
+                std::string::npos &&
+            controls.find("keyDownToken = picker.KeyDown") !=
+                std::string::npos &&
+            controls.find("changed(original, SettingsUpdateMode::PreviewAndCommit)") !=
+                std::string::npos,
+        "desktop colors preview live, commit on interaction or page close, and Cancel persists the opening color");
     Check(source.find("iconSpacing->SetUnit(L\"%\")") !=
                 std::string::npos &&
             source.find("itemFontSize->SetUnit(L\"cu\")") !=

@@ -78,6 +78,19 @@ void TestPresenterContract(const std::filesystem::path& repository)
     Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
             controls.find("muxc::ColorPicker picker") != std::string::npos,
         "Dock colors use the shared native WinUI ColorPicker flyout");
+    Check(source.find("void CommitOpenColorEditors() noexcept") !=
+                std::string::npos &&
+            source.find("impl_->CommitOpenColorEditors();") !=
+                std::string::npos &&
+            controls.find("pointerReleasedToken = picker.PointerReleased") !=
+                std::string::npos &&
+            controls.find("lostFocusToken = picker.LostFocus") !=
+                std::string::npos &&
+            controls.find("keyDownToken = picker.KeyDown") !=
+                std::string::npos &&
+            controls.find("changed(original, SettingsUpdateMode::PreviewAndCommit)") !=
+                std::string::npos,
+        "Dock colors commit on interaction and before page teardown while Cancel restores the opening value");
     Check(source.find("SettingsUpdateMode::Preview,") !=
                 std::string::npos &&
             source.find("SettingsUpdateMode::PreviewAndCommit,") !=

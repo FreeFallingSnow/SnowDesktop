@@ -1034,7 +1034,7 @@ struct PersonalizationPagePresenter::Impl
         control.editor.Close();
     }
 
-    void DismissColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         for (ColorControl* control : colorControls)
             control->editor.Dismiss();
@@ -1056,7 +1056,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
-        DismissColorEditors();
+        CommitOpenColorEditors();
         if (active)
             CommitContinuousEdits();
         active = false;
@@ -1133,7 +1133,7 @@ void PersonalizationPagePresenter::Activate() noexcept
 void PersonalizationPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed) return;
-    impl_->DismissColorEditors();
+    impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
 }
