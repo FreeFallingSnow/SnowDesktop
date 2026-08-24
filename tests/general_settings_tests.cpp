@@ -39,7 +39,6 @@ int main()
     saved.agentSkillTargetMask = 0x15;
     saved.quickNavTheme = kFourThemeAcrylicDark;
     saved.collectionPopupTheme = kFourThemeAcrylicLight;
-    saved.settingsWindowTheme = SettingsWindowTheme::Dark;
     saved.pageNavigationKeyboardEnabled = false;
     saved.pageNavigationPreviousModifiers = MOD_CONTROL;
     saved.pageNavigationPreviousVirtualKey = VK_HOME;
@@ -55,7 +54,6 @@ int main()
     Check(loaded.demoModeEnabled &&
         loaded.widgetDeveloperToolsEnabled &&
         loaded.agentSkillTargetMask == 0x15 &&
-        loaded.settingsWindowTheme == SettingsWindowTheme::Dark &&
         loaded.quickNavTheme == kFourThemeAcrylicDark &&
         loaded.collectionPopupTheme == kFourThemeAcrylicLight &&
         !loaded.pageNavigationKeyboardEnabled &&
@@ -83,18 +81,6 @@ int main()
         "general settings reject invalid persisted themes and page keys");
 
     {
-        std::ofstream invalidTheme(path,
-            std::ios::binary | std::ios::trunc);
-        invalidTheme << "{\n  \"settingsWindowTheme\": 99,\n"
-            "  \"language\": \"system\"\n}\n";
-    }
-    GeneralSettings invalidWindowTheme;
-    Check(LoadGeneralSettings(path.c_str(), invalidWindowTheme) &&
-            invalidWindowTheme.settingsWindowTheme ==
-                SettingsWindowTheme::System,
-        "invalid settings-window themes fall back to system");
-
-    {
         std::ofstream legacy(path, std::ios::binary | std::ios::trunc);
         legacy << "{\n  \"language\": \"system\"\n}\n";
     }
@@ -109,7 +95,6 @@ int main()
         migrated.pageNavigationPreviousVirtualKey == VK_PRIOR &&
         migrated.pageNavigationNextModifiers == 0 &&
         migrated.pageNavigationNextVirtualKey == VK_NEXT &&
-        migrated.settingsWindowTheme == SettingsWindowTheme::System &&
         migrated.agentSkillTargetMask ==
             GeneralSettings::kAllAgentSkillTargetsMask,
         "legacy settings preserve the dark popup and page-navigation defaults");

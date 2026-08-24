@@ -11,13 +11,6 @@
 
 #include <string>
 
-enum class SettingsWindowTheme : int
-{
-    System = 0,
-    Light = 1,
-    Dark = 2,
-};
-
 struct GeneralSettings
 {
     static constexpr int kAllAgentSkillTargetsMask = 0x3F;
@@ -40,7 +33,6 @@ struct GeneralSettings
     bool dockEnabled = false;
     bool widgetDeveloperToolsEnabled = false;
     int agentSkillTargetMask = kAllAgentSkillTargetsMask;
-    SettingsWindowTheme settingsWindowTheme = SettingsWindowTheme::System;
     char language[85] = "system";
 };
 

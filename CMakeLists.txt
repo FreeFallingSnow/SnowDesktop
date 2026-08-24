@@ -232,7 +232,6 @@ set(SNOWDESKTOP_SOURCES
     src/deployment_context.cpp
     src/utils.cpp
     src/settings_window.cpp
-    src/settings_ui_theme.cpp
     src/ui_animation_scheduler.cpp
     src/personalization.cpp
     src/dock_settings.cpp
@@ -1054,15 +1053,6 @@ if (BUILD_TESTING)
             src/general_settings.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract settings)
-
-    snowdesktop_add_test(
-        SnowDesktopSettingsUiThemeTests
-        settings_ui_theme
-        SOURCES
-            tests/settings_ui_theme_tests.cpp
-            src/settings_ui_theme.cpp
-        INCLUDE_DIRECTORIES src
-        LABELS core contract settings render)
 
     snowdesktop_add_test(
         SnowDesktopDemoModeRulesTests
