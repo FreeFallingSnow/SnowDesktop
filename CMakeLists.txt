@@ -255,6 +255,9 @@ set(SNOWDESKTOP_SOURCES
     src/winui/SettingsShell.xaml
     src/winui/SettingsShell.xaml.cpp
     src/winui/SettingsShell.xaml.h
+    src/winui/hotkey_recorder.cpp
+    src/winui/hotkey_recorder.h
+    src/winui/hotkey_recorder_rules.h
     src/winui/pch.h
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
@@ -1207,6 +1210,13 @@ if (BUILD_TESTING)
             src/settings_route.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract navigation settings ui winui)
+
+    snowdesktop_add_test(
+        SnowDesktopHotkeyRecorderRulesTests
+        hotkey_recorder_rules
+        SOURCES tests/hotkey_recorder_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract hotkey input settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests
