@@ -224,14 +224,27 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
     InitCommonControlsEx(&icc);
 
-    HRESULT hr = OleInitialize(nullptr);
-    WriteDiagnosticLogEntry(SUCCEEDED(hr) ? L"OleInit ok" : L"OleInit FAILED");
+    const HRESULT oleInitializeResult = OleInitialize(nullptr);
+    if (FAILED(oleInitializeResult))
+    {
+        WriteDiagnosticLogEntry(L"OleInit FAILED");
+        return __LINE__;
+    }
+    WriteDiagnosticLogEntry(L"OleInit ok");
+
+    // OleInitialize returns S_FALSE when this STA was already initialized, and
+    // that successful call still requires a matching OleUninitialize. Keep the
+    // pairing scoped to Run so every later bootstrap failure unwinds it too.
+    struct OleUninitializeOnExit final
+    {
+        ~OleUninitializeOnExit() noexcept { OleUninitialize(); }
+    };
+    const OleUninitializeOnExit oleUninitializeOnExit;
 
     if (!uiAnimationScheduler_.Initialize())
     {
         WriteDiagnosticLogEntry(
             L"UiAnimationScheduler initialization failed");
-        OleUninitialize();
         return __LINE__;
     }
 
@@ -1455,6 +1468,5 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();
     uiAnimationScheduler_.Shutdown();
-    OleUninitialize();
     return static_cast<int>(msg.wParam);
 }

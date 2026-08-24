@@ -81,6 +81,34 @@ int main(int argc, char** argv)
         Check(!source.empty(), "settings window source is readable");
         Check(!header.empty() && !host.empty() && !appRun.empty(),
             "WinUI settings facade, host, and message pump are readable");
+        const std::size_t oleInitialize = appRun.find(
+            "const HRESULT oleInitializeResult = OleInitialize(nullptr);");
+        const std::size_t oleFailure = appRun.find(
+            "if (FAILED(oleInitializeResult))", oleInitialize);
+        const std::size_t oleFailureReturn = appRun.find(
+            "return __LINE__;", oleFailure);
+        const std::size_t oleGuard = appRun.find(
+            "struct OleUninitializeOnExit final", oleFailureReturn);
+        const std::size_t schedulerInitialize = appRun.find(
+            "uiAnimationScheduler_.Initialize()", oleGuard);
+        Check(oleInitialize != std::string::npos &&
+                oleFailure != std::string::npos &&
+                oleFailureReturn != std::string::npos &&
+                oleGuard != std::string::npos &&
+                schedulerInitialize != std::string::npos &&
+                oleInitialize < oleFailure &&
+                oleFailure < oleFailureReturn &&
+                oleFailureReturn < oleGuard &&
+                oleGuard < schedulerInitialize,
+            "STA initialization failure returns before later application or WinUI startup");
+        const std::size_t oleUninitialize =
+            appRun.find("OleUninitialize();");
+        Check(oleUninitialize != std::string::npos &&
+                oleUninitialize == appRun.rfind("OleUninitialize();") &&
+                oleGuard < oleUninitialize &&
+                appRun.find("OleUninitializeOnExit oleUninitializeOnExit") !=
+                    std::string::npos,
+            "only a successfully initialized STA installs one scoped OleUninitialize");
         Check(source.find("ImGui") == std::string::npos &&
                 source.find("ID3D11") == std::string::npos &&
                 source.find("IDXGISwapChain") == std::string::npos &&
