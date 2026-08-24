@@ -379,6 +379,9 @@ private:
      * @brief 设置 ImGui 字体（根据 DPI 缩放加载默认字体）
      */
     void SetupFonts();
+    void RefreshVisualTheme();
+    void ApplyWindowAppearance();
+    void QueueFontRebuild();
 
     /**
      * @brief 向窗口发送关闭消息，触发关闭流程
@@ -588,14 +591,20 @@ private:
     /** @name 窗口布局与页面状态
      *  @{ */
 
-    /// 窗口宽度（像素），初始值 800
-    int windowWidth_ = 800;
+    /// 窗口宽度（像素），默认客户区为 960 DIP
+    int windowWidth_ = 960;
 
-    /// 窗口高度（像素），初始值 560
-    int windowHeight_ = 560;
+    /// 窗口高度（像素），默认客户区为 680 DIP
+    int windowHeight_ = 680;
 
     /// 系统 DPI 缩放比例，用于字体和界面缩放适配
     float dpiScale_ = 1.0f;
+    bool visualThemeRefreshPending_ = false;
+    bool fontRebuildPending_ = false;
+    bool settingsUiLightTheme_ = true;
+    bool settingsUiHighContrast_ = false;
+    bool settingsUiMicaActive_ = false;
+    bool settingsUiAnimationsEnabled_ = true;
 
     /// 当前活动页面索引（8 = 组件管理，9 = 组件创作）
     int activePage_ = 0;

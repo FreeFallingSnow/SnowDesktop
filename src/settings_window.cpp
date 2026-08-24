@@ -30,6 +30,7 @@
 #include "http_runtime.h"
 #include "portable_data_migration.h"
 #include "page_navigation_rules.h"
+#include "settings_ui_theme.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -39,6 +40,7 @@
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <wbemidl.h>
+#include <dwmapi.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -51,6 +53,7 @@
 #include <iterator>
 #include <initializer_list>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -63,11 +66,298 @@ constexpr UINT_PTR kSettingsRefreshTimerId = 1;
 constexpr UINT kSettingsRefreshIntervalMs = 500;
 constexpr UINT_PTR kSettingsHotkeyCaptureTimerId = 2;
 constexpr UINT kSettingsHotkeyCaptureIntervalMs = 16;
+constexpr UINT_PTR kSettingsAnimationTimerId = 3;
+constexpr UINT kSettingsAnimationIntervalMs = 16;
 constexpr float kSettingControlWidthDip = 300.0f;
 constexpr wchar_t kAutoStartRunSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr DWORD kPortableAutoStartQueryIntervalMs = 2000;
+
+struct SettingsUiColors
+{
+    ImVec4 window;
+    ImVec4 navigation;
+    ImVec4 card;
+    ImVec4 cardBorder;
+    ImVec4 control;
+    ImVec4 controlHover;
+    ImVec4 controlPressed;
+    ImVec4 text;
+    ImVec4 textSecondary;
+    ImVec4 accent;
+    ImVec4 accentHover;
+    ImVec4 accentPressed;
+    ImVec4 accentForeground;
+    ImVec4 danger;
+    ImVec4 warning;
+    ImVec4 success;
+};
+
+struct SettingsUiVisualState
+{
+    float dpi = 1.0f;
+    bool light = true;
+    bool highContrast = false;
+    bool mica = false;
+    bool animations = true;
+    bool animationFrameRequested = false;
+    bool cardOpen = false;
+    int sectionIndex = 0;
+    ImFont* bodyFont = nullptr;
+    ImFont* fluentFont = nullptr;
+    SettingsUiColors colors{};
+    std::unordered_map<ImGuiID, float> animationValues;
+};
+
+SettingsUiVisualState g_settingsUi;
+
+ImVec4 RgbColor(std::uint32_t color, float alpha = 1.0f)
+{
+    return ImVec4(
+        static_cast<float>((color >> 16) & 0xffu) / 255.0f,
+        static_cast<float>((color >> 8) & 0xffu) / 255.0f,
+        static_cast<float>(color & 0xffu) / 255.0f,
+        alpha);
+}
+
+ImVec4 MixColor(const ImVec4& first, const ImVec4& second, float amount)
+{
+    const float t = std::clamp(amount, 0.0f, 1.0f);
+    return ImVec4(
+        first.x + (second.x - first.x) * t,
+        first.y + (second.y - first.y) * t,
+        first.z + (second.z - first.z) * t,
+        first.w + (second.w - first.w) * t);
+}
+
+bool ReadPersonalizeDword(const wchar_t* name, DWORD fallback) noexcept
+{
+    DWORD value = fallback;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            name, RRF_RT_REG_DWORD, nullptr, &value, &size) != ERROR_SUCCESS)
+        value = fallback;
+    return value != 0;
+}
+
+bool SystemUsesLightAppTheme() noexcept
+{
+    return ReadPersonalizeDword(L"AppsUseLightTheme", 1);
+}
+
+bool SystemTransparencyEnabled() noexcept
+{
+    return ReadPersonalizeDword(L"EnableTransparency", 1);
+}
+
+bool SystemHighContrastEnabled() noexcept
+{
+    HIGHCONTRASTW highContrast{ sizeof(highContrast) };
+    return SystemParametersInfoW(SPI_GETHIGHCONTRAST,
+        sizeof(highContrast), &highContrast, 0) &&
+        (highContrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
+}
+
+bool SystemUiAnimationsEnabled() noexcept
+{
+    ANIMATIONINFO animationInfo{ sizeof(animationInfo) };
+    if (SystemParametersInfoW(SPI_GETANIMATION,
+            sizeof(animationInfo), &animationInfo, 0) &&
+        animationInfo.iMinAnimate == 0)
+        return false;
+    BOOL clientAnimations = TRUE;
+    if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0,
+            &clientAnimations, 0) && !clientAnimations)
+        return false;
+    return true;
+}
+
+std::uint32_t SystemAccentColor() noexcept
+{
+    DWORD colorization = 0;
+    BOOL opaque = FALSE;
+    if (SUCCEEDED(DwmGetColorizationColor(&colorization, &opaque)))
+        return colorization & 0x00ffffffu;
+    const COLORREF fallback = GetSysColor(COLOR_HIGHLIGHT);
+    return (static_cast<std::uint32_t>(GetRValue(fallback)) << 16) |
+        (static_cast<std::uint32_t>(GetGValue(fallback)) << 8) |
+        static_cast<std::uint32_t>(GetBValue(fallback));
+}
+
+SettingsUiColors MakeSettingsUiColors(bool light, bool highContrast)
+{
+    SettingsUiColors result;
+    if (highContrast)
+    {
+        const auto system = [](int index) {
+            const COLORREF color = GetSysColor(index);
+            return (static_cast<std::uint32_t>(GetRValue(color)) << 16) |
+                (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
+                static_cast<std::uint32_t>(GetBValue(color));
+        };
+        result.window = RgbColor(system(COLOR_WINDOW));
+        result.navigation = result.window;
+        result.card = result.window;
+        result.cardBorder = RgbColor(system(COLOR_WINDOWTEXT));
+        result.control = RgbColor(system(COLOR_BTNFACE));
+        result.controlHover = RgbColor(system(COLOR_HIGHLIGHT));
+        result.controlPressed = result.controlHover;
+        result.text = RgbColor(system(COLOR_WINDOWTEXT));
+        result.textSecondary = RgbColor(system(COLOR_GRAYTEXT));
+        result.accent = RgbColor(system(COLOR_HIGHLIGHT));
+        result.accentHover = result.accent;
+        result.accentPressed = result.accent;
+        result.accentForeground = RgbColor(system(COLOR_HIGHLIGHTTEXT));
+        result.danger = result.text;
+        result.warning = result.text;
+        result.success = result.text;
+        return result;
+    }
+
+    const auto accent = snowdesktop::settings_ui::MakeAccentPalette(
+        SystemAccentColor(), light);
+    result.accent = RgbColor(accent.base);
+    result.accentHover = RgbColor(accent.hover);
+    result.accentPressed = RgbColor(accent.pressed);
+    result.accentForeground = RgbColor(accent.foreground);
+    if (light)
+    {
+        result.window = RgbColor(0xf3f3f3, 0.90f);
+        result.navigation = RgbColor(0xf7f7f7, 0.72f);
+        result.card = RgbColor(0xffffff, 0.88f);
+        result.cardBorder = RgbColor(0x000000, 0.10f);
+        result.control = RgbColor(0xffffff, 0.92f);
+        result.controlHover = RgbColor(0xf5f5f5);
+        result.controlPressed = RgbColor(0xebebeb);
+        result.text = RgbColor(0x1a1a1a);
+        result.textSecondary = RgbColor(0x616161);
+        result.danger = RgbColor(0xc42b1c);
+        result.warning = RgbColor(0x9d5d00);
+        result.success = RgbColor(0x0f7b0f);
+    }
+    else
+    {
+        result.window = RgbColor(0x202020, 0.94f);
+        result.navigation = RgbColor(0x1d1d1d, 0.78f);
+        result.card = RgbColor(0x2d2d2d, 0.90f);
+        result.cardBorder = RgbColor(0xffffff, 0.10f);
+        result.control = RgbColor(0x333333, 0.96f);
+        result.controlHover = RgbColor(0x3b3b3b);
+        result.controlPressed = RgbColor(0x454545);
+        result.text = RgbColor(0xffffff);
+        result.textSecondary = RgbColor(0xc5c5c5);
+        result.danger = RgbColor(0xff99a4);
+        result.warning = RgbColor(0xfce100);
+        result.success = RgbColor(0x6ccb5f);
+    }
+    return result;
+}
+
+void ApplyFluentImGuiStyle(float dpi, bool mica)
+{
+    ImGuiStyle style;
+    style.Alpha = 1.0f;
+    style.DisabledAlpha = 0.45f;
+    style.WindowPadding = ImVec2(0.0f, 0.0f);
+    style.WindowRounding = 0.0f;
+    style.WindowBorderSize = 0.0f;
+    style.ChildRounding = 8.0f * dpi;
+    style.ChildBorderSize = 1.0f;
+    style.PopupRounding = 8.0f * dpi;
+    style.PopupBorderSize = 1.0f;
+    style.FramePadding = ImVec2(10.0f * dpi, 7.0f * dpi);
+    style.FrameRounding = 4.0f * dpi;
+    style.FrameBorderSize = 1.0f;
+    style.ItemSpacing = ImVec2(8.0f * dpi, 10.0f * dpi);
+    style.ItemInnerSpacing = ImVec2(7.0f * dpi, 6.0f * dpi);
+    style.IndentSpacing = 20.0f * dpi;
+    style.ScrollbarSize = 12.0f * dpi;
+    style.ScrollbarRounding = 6.0f * dpi;
+    style.GrabMinSize = 12.0f * dpi;
+    style.GrabRounding = 6.0f * dpi;
+    style.TabRounding = 4.0f * dpi;
+    style.SeparatorTextBorderSize = 0.0f;
+    style.SeparatorTextPadding = ImVec2(0.0f, 8.0f * dpi);
+    style.FontSizeBase = 15.0f * dpi;
+
+    const SettingsUiColors& p = g_settingsUi.colors;
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_Text] = p.text;
+    c[ImGuiCol_TextDisabled] = p.textSecondary;
+    c[ImGuiCol_WindowBg] = mica ? ImVec4(
+        p.window.x, p.window.y, p.window.z, p.window.w) :
+        ImVec4(p.window.x, p.window.y, p.window.z, 1.0f);
+    c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_PopupBg] = ImVec4(
+        p.card.x, p.card.y, p.card.z, 0.98f);
+    c[ImGuiCol_Border] = p.cardBorder;
+    c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_FrameBg] = p.control;
+    c[ImGuiCol_FrameBgHovered] = p.controlHover;
+    c[ImGuiCol_FrameBgActive] = p.controlPressed;
+    c[ImGuiCol_TitleBg] = p.navigation;
+    c[ImGuiCol_TitleBgActive] = p.navigation;
+    c[ImGuiCol_TitleBgCollapsed] = p.navigation;
+    c[ImGuiCol_MenuBarBg] = p.navigation;
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ScrollbarGrab] = MixColor(p.textSecondary, p.window, 0.55f);
+    c[ImGuiCol_ScrollbarGrabHovered] = p.textSecondary;
+    c[ImGuiCol_ScrollbarGrabActive] = p.text;
+    c[ImGuiCol_CheckMark] = p.accentForeground;
+    c[ImGuiCol_SliderGrab] = p.accent;
+    c[ImGuiCol_SliderGrabActive] = p.accentPressed;
+    c[ImGuiCol_Button] = p.control;
+    c[ImGuiCol_ButtonHovered] = p.controlHover;
+    c[ImGuiCol_ButtonActive] = p.controlPressed;
+    c[ImGuiCol_Header] = MixColor(p.accent, p.window, 0.82f);
+    c[ImGuiCol_HeaderHovered] = MixColor(p.accent, p.window, 0.72f);
+    c[ImGuiCol_HeaderActive] = MixColor(p.accent, p.window, 0.62f);
+    c[ImGuiCol_Separator] = p.cardBorder;
+    c[ImGuiCol_SeparatorHovered] = p.accentHover;
+    c[ImGuiCol_SeparatorActive] = p.accentPressed;
+    c[ImGuiCol_ResizeGrip] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ResizeGripHovered] = p.accentHover;
+    c[ImGuiCol_ResizeGripActive] = p.accentPressed;
+    c[ImGuiCol_InputTextCursor] = p.text;
+    c[ImGuiCol_TextSelectedBg] = ImVec4(
+        p.accent.x, p.accent.y, p.accent.z, 0.35f);
+    c[ImGuiCol_Tab] = p.control;
+    c[ImGuiCol_TabHovered] = p.controlHover;
+    c[ImGuiCol_TabSelected] = p.card;
+    c[ImGuiCol_TabDimmed] = p.control;
+    c[ImGuiCol_TabDimmedSelected] = p.card;
+    c[ImGuiCol_TableHeaderBg] = p.control;
+    c[ImGuiCol_TableBorderStrong] = p.cardBorder;
+    c[ImGuiCol_TableBorderLight] = p.cardBorder;
+    c[ImGuiCol_NavCursor] = p.accent;
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.42f);
+    ImGui::GetStyle() = style;
+}
+
+float AnimateUiValue(ImGuiID id, float target, float durationSeconds)
+{
+    float& value = g_settingsUi.animationValues[id];
+    if (!g_settingsUi.animations || durationSeconds <= 0.0f)
+    {
+        value = target;
+        return value;
+    }
+    if (std::abs(value - target) <= 0.001f)
+    {
+        value = target;
+        return value;
+    }
+    const float delta = std::max(0.0f, ImGui::GetIO().DeltaTime);
+    const float amount = std::clamp(delta / durationSeconds, 0.0f, 1.0f);
+    value += (target - value) * amount;
+    if (std::abs(value - target) > 0.001f)
+        g_settingsUi.animationFrameRequested = true;
+    else
+        value = target;
+    return value;
+}
 
 void LogSettingsWindowFailure(const wchar_t* stage, HRESULT result)
 {
@@ -516,17 +806,84 @@ void DrawHelpMarker(const char* description)
     DrawHelpTooltip(description);
 }
 
+void DrawInfoBar(const char* text, const ImVec4& severityColor)
+{
+    if (!text || !text[0]) return;
+    ImGui::PushID(text);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
+        MixColor(severityColor, g_settingsUi.colors.card, 0.88f));
+    ImGui::PushStyleColor(ImGuiCol_Border,
+        MixColor(severityColor, g_settingsUi.colors.cardBorder, 0.35f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+        ImVec2(12.0f * g_settingsUi.dpi, 10.0f * g_settingsUi.dpi));
+    ImGui::BeginChild("##InfoBar", ImVec2(0.0f, 0.0f),
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding |
+        ImGuiChildFlags_AutoResizeY);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    const ImVec2 start = ImGui::GetWindowPos();
+    ImGui::GetWindowDrawList()->AddRectFilled(start,
+        ImVec2(start.x + 3.0f * g_settingsUi.dpi,
+            start.y + ImGui::GetWindowHeight()),
+        ImGui::ColorConvertFloat4ToU32(severityColor),
+        2.0f * g_settingsUi.dpi);
+    ImGui::TextWrapped("%s", text);
+    ImGui::EndChild();
+    ImGui::PopID();
+}
+
 void DrawSettingSection(const char* label, const char* description = nullptr)
 {
-    if (!description || !description[0])
+    if (g_settingsUi.cardOpen)
     {
-        ImGui::SeparatorText(label);
-        return;
+        ImGui::EndChild();
+        g_settingsUi.cardOpen = false;
+        ImGui::Dummy(ImVec2(0.0f, 8.0f * g_settingsUi.dpi));
     }
 
-    const std::string displayLabel = std::string(label) + "  ?";
-    ImGui::SeparatorText(displayLabel.c_str());
-    DrawHelpTooltip(description);
+    const float headingSize = (g_settingsUi.sectionIndex == 0
+        ? 28.0f : 17.0f) * g_settingsUi.dpi;
+    ImGui::PushFont(g_settingsUi.bodyFont, headingSize);
+    ImGui::TextUnformatted(label);
+    ImGui::PopFont();
+    if (description && description[0])
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            g_settingsUi.colors.textSecondary);
+        ImGui::TextWrapped("%s", description);
+        ImGui::PopStyleColor();
+    }
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * g_settingsUi.dpi));
+
+    ImGui::PushID(g_settingsUi.sectionIndex);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, g_settingsUi.colors.card);
+    ImGui::PushStyleColor(ImGuiCol_Border,
+        g_settingsUi.colors.cardBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+        ImVec2(16.0f * g_settingsUi.dpi, 14.0f * g_settingsUi.dpi));
+    ImGui::BeginChild("##SettingsCard", ImVec2(0.0f, 0.0f),
+        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding |
+        ImGuiChildFlags_AutoResizeY);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    ImGui::PopID();
+    g_settingsUi.cardOpen = true;
+    ++g_settingsUi.sectionIndex;
+}
+
+void BeginSettingPageLayout()
+{
+    g_settingsUi.cardOpen = false;
+    g_settingsUi.sectionIndex = 0;
+}
+
+void EndSettingPageLayout()
+{
+    if (g_settingsUi.cardOpen)
+    {
+        ImGui::EndChild();
+        g_settingsUi.cardOpen = false;
+    }
 }
 
 bool DrawCollapsingHeaderWithHelp(const char* label, const char* description)
@@ -555,8 +912,50 @@ float BeginSettingRow(const char* label, float controlWidth,
 bool DrawSettingCheckbox(const char* label, const char* id, bool* value,
     const char* description = nullptr)
 {
-    BeginSettingRow(label, ImGui::GetFrameHeight(), description);
-    return ImGui::Checkbox(id, value);
+    const float dpi = g_settingsUi.dpi;
+    const ImVec2 size(40.0f * dpi, 20.0f * dpi);
+    BeginSettingRow(label, size.x, description);
+    ImGui::InvisibleButton(id, size);
+    const bool changed = ImGui::IsItemClicked();
+    if (changed)
+        *value = !*value;
+
+    const ImGuiID itemId = ImGui::GetItemID();
+    const float progress = AnimateUiValue(itemId, *value ? 1.0f : 0.0f,
+        0.16f);
+    const bool hovered = ImGui::IsItemHovered();
+    const ImVec2 minimum = ImGui::GetItemRectMin();
+    const ImVec2 maximum = ImGui::GetItemRectMax();
+    ImVec4 offColor = hovered
+        ? g_settingsUi.colors.controlPressed
+        : g_settingsUi.colors.controlHover;
+    ImVec4 trackColor = MixColor(offColor,
+        hovered ? g_settingsUi.colors.accentHover
+                : g_settingsUi.colors.accent,
+        progress);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(minimum, maximum,
+        ImGui::ColorConvertFloat4ToU32(trackColor), size.y * 0.5f);
+    draw->AddRect(minimum, maximum,
+        ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.cardBorder),
+        size.y * 0.5f, 0, 1.0f);
+    const float thumbRadius = 7.0f * dpi;
+    const float thumbX = minimum.x + 10.0f * dpi +
+        progress * 20.0f * dpi;
+    draw->AddCircleFilled(
+        ImVec2(thumbX, (minimum.y + maximum.y) * 0.5f), thumbRadius,
+        ImGui::ColorConvertFloat4ToU32(progress > 0.5f
+            ? g_settingsUi.colors.accentForeground
+            : g_settingsUi.colors.textSecondary));
+    if (ImGui::IsItemFocused())
+    {
+        draw->AddRect(
+            ImVec2(minimum.x - 2.0f * dpi, minimum.y - 2.0f * dpi),
+            ImVec2(maximum.x + 2.0f * dpi, maximum.y + 2.0f * dpi),
+            ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.accent),
+            size.y * 0.5f, 0, 2.0f * dpi);
+    }
+    return changed;
 }
 
 bool DrawSettingColorEdit3(const char* label, const char* id, float color[3])
@@ -601,67 +1000,153 @@ float SettingButtonWidth(const char* label)
 
 void CopyWideToUtf8Buffer(
     const std::wstring& text, char* buffer, size_t bufferSize);
-}
+std::string WideToUtf8(const std::wstring& text);
 
-/**
- * @brief 配置 ImGui 的浅色主题配色方案。
- *
- * 对 ImGui 样式表逐项设置圆角半径和颜色值，为整个设置窗口
- * 提供统一的浅色外观。颜色值覆盖窗口背景、子窗口背景、边框、
- * 按钮、标签页、滚动条、调节手柄等全部 UI 元素。
- */
-static void SetupLightTheme()
+bool DrawFluentNavigationItem(const char* label, const wchar_t* glyph,
+    bool active, bool compact, float width)
 {
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.Alpha = 1.0f;
-    s.FrameRounding = 4.0f;
-    s.WindowRounding = 0.0f;
-    s.ChildRounding = 6.0f;
-    s.ScrollbarSize = 10.0f;
-    s.ScrollbarRounding = 4.0f;
-    s.GrabRounding = 4.0f;
-    s.TabRounding = 4.0f;
+    const float dpi = g_settingsUi.dpi;
+    const float height = 42.0f * dpi;
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(label, ImVec2(width, height));
+    const bool clicked = ImGui::IsItemClicked();
+    const bool hovered = ImGui::IsItemHovered();
+    const ImGuiID id = ImGui::GetItemID();
+    const float hover = AnimateUiValue(id,
+        hovered || active ? 1.0f : 0.0f, 0.12f);
 
-    ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]             = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
-    c[ImGuiCol_ChildBg]              = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_PopupBg]              = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_Border]               = ImVec4(0.78f, 0.78f, 0.82f, 1.00f);
-    c[ImGuiCol_FrameBg]              = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
-    c[ImGuiCol_FrameBgActive]        = ImVec4(0.82f, 0.82f, 0.87f, 1.00f);
-    c[ImGuiCol_TitleBg]              = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
-    c[ImGuiCol_TitleBgActive]        = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
-    c[ImGuiCol_Text]                 = ImVec4(0.10f, 0.10f, 0.14f, 1.00f);
-    c[ImGuiCol_TextDisabled]         = ImVec4(0.55f, 0.55f, 0.60f, 1.00f);
-    c[ImGuiCol_TextSelectedBg]       = ImVec4(0.25f, 0.55f, 0.90f, 0.35f);
-    c[ImGuiCol_InputTextCursor]      = ImVec4(0.08f, 0.08f, 0.12f, 1.00f);
-    c[ImGuiCol_Header]               = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
-    c[ImGuiCol_HeaderHovered]        = ImVec4(0.84f, 0.84f, 0.88f, 1.00f);
-    c[ImGuiCol_HeaderActive]         = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
-    c[ImGuiCol_Button]               = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
-    c[ImGuiCol_ButtonHovered]        = ImVec4(0.24f, 0.56f, 0.96f, 1.00f);
-    c[ImGuiCol_ButtonActive]         = ImVec4(0.14f, 0.42f, 0.84f, 1.00f);
-    c[ImGuiCol_CheckMark]            = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
-    c[ImGuiCol_SliderGrab]           = ImVec4(0.24f, 0.55f, 0.92f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]     = ImVec4(0.30f, 0.60f, 0.96f, 1.00f);
-    c[ImGuiCol_Tab]                  = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
-    c[ImGuiCol_TabHovered]           = ImVec4(0.84f, 0.84f, 0.88f, 1.00f);
-    c[ImGuiCol_TabActive]            = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_TabUnfocused]         = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
-    c[ImGuiCol_TabUnfocusedActive]   = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    c[ImGuiCol_TableHeaderBg]        = ImVec4(0.92f, 0.92f, 0.95f, 1.00f);
-    c[ImGuiCol_TableBorderStrong]    = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
-    c[ImGuiCol_TableBorderLight]     = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
-    c[ImGuiCol_Separator]            = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]          = ImVec4(1.00f, 1.00f, 1.00f, 0.00f);
-    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.80f, 0.80f, 0.84f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.70f, 0.70f, 0.75f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);
-    c[ImGuiCol_ResizeGrip]           = ImVec4(0.85f, 0.85f, 0.88f, 1.00f);
-    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.70f, 0.70f, 0.75f, 1.00f);
-    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.55f, 0.55f, 0.60f, 1.00f);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 end(start.x + width, start.y + height);
+    if (hover > 0.001f)
+    {
+        ImVec4 fill = MixColor(ImVec4(0, 0, 0, 0),
+            active
+                ? MixColor(g_settingsUi.colors.accent,
+                    g_settingsUi.colors.navigation, 0.84f)
+                : g_settingsUi.colors.controlHover,
+            hover);
+        fill.w = std::max(fill.w, 0.08f * hover);
+        draw->AddRectFilled(start, end, ImGui::ColorConvertFloat4ToU32(fill),
+            4.0f * dpi);
+    }
+    if (active)
+    {
+        const float indicatorHeight = 18.0f * dpi;
+        draw->AddRectFilled(
+            ImVec2(start.x, start.y + (height - indicatorHeight) * 0.5f),
+            ImVec2(start.x + 3.0f * dpi,
+                start.y + (height + indicatorHeight) * 0.5f),
+            ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.accent),
+            2.0f * dpi);
+    }
+
+    const std::string icon = WideToUtf8(glyph ? glyph : L"");
+    const float iconSize = 20.0f * dpi;
+    const ImU32 textColor = ImGui::ColorConvertFloat4ToU32(
+        g_settingsUi.colors.text);
+    const ImVec2 iconExtent = g_settingsUi.fluentFont
+        ? g_settingsUi.fluentFont->CalcTextSizeA(iconSize, FLT_MAX, 0.0f,
+            icon.c_str())
+        : ImVec2(iconSize, iconSize);
+    const float iconX = compact
+        ? start.x + (width - iconExtent.x) * 0.5f
+        : start.x + 14.0f * dpi;
+    if (g_settingsUi.fluentFont)
+    {
+        draw->AddText(g_settingsUi.fluentFont, iconSize,
+            ImVec2(iconX, start.y + (height - iconSize) * 0.5f),
+            textColor, icon.c_str());
+    }
+    if (!compact)
+    {
+        const float bodySize = 15.0f * dpi;
+        draw->AddText(g_settingsUi.bodyFont, bodySize,
+            ImVec2(start.x + 46.0f * dpi,
+                start.y + (height - bodySize) * 0.5f - 1.0f * dpi),
+            textColor, label);
+    }
+    if (ImGui::IsItemFocused())
+    {
+        draw->AddRect(
+            ImVec2(start.x + 2.0f * dpi, start.y + 2.0f * dpi),
+            ImVec2(end.x - 2.0f * dpi, end.y - 2.0f * dpi),
+            ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.accent),
+            4.0f * dpi, 0, 2.0f * dpi);
+    }
+    if (compact && hovered)
+    {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(label);
+        ImGui::EndTooltip();
+    }
+    return clicked;
 }
+}
+
+void SettingsWindow::ApplyWindowAppearance()
+{
+    if (!hwnd_)
+        return;
+
+    const BOOL darkMode = settingsUiLightTheme_ ? FALSE : TRUE;
+    DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE,
+        &darkMode, sizeof(darkMode));
+    const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
+        &corner, sizeof(corner));
+
+    const bool wantMica = snowdesktop::settings_ui::ShouldUseMica(
+        true, SystemTransparencyEnabled(), settingsUiHighContrast_);
+    DWM_SYSTEMBACKDROP_TYPE backdrop = wantMica
+        ? DWMSBT_MAINWINDOW : DWMSBT_NONE;
+    const HRESULT backdropResult = DwmSetWindowAttribute(hwnd_,
+        DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    settingsUiMicaActive_ = wantMica && SUCCEEDED(backdropResult);
+    if (settingsUiMicaActive_)
+    {
+        const MARGINS margins{ -1, -1, -1, -1 };
+        DwmExtendFrameIntoClientArea(hwnd_, &margins);
+    }
+    else
+    {
+        const MARGINS margins{};
+        DwmExtendFrameIntoClientArea(hwnd_, &margins);
+    }
+}
+
+void SettingsWindow::RefreshVisualTheme()
+{
+    const auto effective = snowdesktop::settings_ui::ResolveTheme(
+        generalSettings_.settingsWindowTheme,
+        SystemUsesLightAppTheme(), SystemHighContrastEnabled());
+    settingsUiHighContrast_ =
+        effective == snowdesktop::settings_ui::EffectiveTheme::HighContrast;
+    settingsUiLightTheme_ = effective !=
+        snowdesktop::settings_ui::EffectiveTheme::Dark;
+    settingsUiAnimationsEnabled_ = snowdesktop::settings_ui::ShouldAnimate(
+        SystemUiAnimationsEnabled(), settingsUiHighContrast_);
+    ApplyWindowAppearance();
+
+    g_settingsUi.dpi = dpiScale_;
+    g_settingsUi.light = settingsUiLightTheme_;
+    g_settingsUi.highContrast = settingsUiHighContrast_;
+    g_settingsUi.mica = settingsUiMicaActive_;
+    g_settingsUi.animations = settingsUiAnimationsEnabled_;
+    g_settingsUi.colors = MakeSettingsUiColors(
+        settingsUiLightTheme_, settingsUiHighContrast_);
+    ApplyFluentImGuiStyle(dpiScale_, settingsUiMicaActive_);
+    visualThemeRefreshPending_ = false;
+    renderRequested_ = true;
+}
+
+void SettingsWindow::QueueFontRebuild()
+{
+    fontRebuildPending_ = true;
+    renderRequested_ = true;
+}
+
+static bool BlueButton(const char* label, const ImVec2& size);
+static bool SecondaryButton(const char* label, const ImVec2& size);
 
 /**
  * @brief 析构函数，自动调用 Shutdown() 释放资源。
@@ -741,8 +1226,26 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         }
     }
     dpiScale_ = static_cast<float>(dpi) / 96.0f;
-    windowWidth_ = static_cast<int>(800.0f * dpiScale_);
-    windowHeight_ = static_cast<int>(560.0f * dpiScale_);
+    RECT initialBounds{ 0, 0,
+        static_cast<LONG>(std::lround(960.0f * dpiScale_)),
+        static_cast<LONG>(std::lround(680.0f * dpiScale_)) };
+    AdjustWindowRectExForDpi(&initialBounds, WS_OVERLAPPEDWINDOW,
+        FALSE, WS_EX_APPWINDOW, dpi);
+    windowWidth_ = initialBounds.right - initialBounds.left;
+    windowHeight_ = initialBounds.bottom - initialBounds.top;
+
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    GetMonitorInfoW(MonitorFromPoint(POINT{ 0, 0 },
+        MONITOR_DEFAULTTOPRIMARY), &monitorInfo);
+    const int availableWidth = monitorInfo.rcWork.right -
+        monitorInfo.rcWork.left;
+    const int availableHeight = monitorInfo.rcWork.bottom -
+        monitorInfo.rcWork.top;
+    const int margin = static_cast<int>(std::lround(24.0f * dpiScale_));
+    windowWidth_ = std::min(windowWidth_,
+        std::max(1, availableWidth - margin * 2));
+    windowHeight_ = std::min(windowHeight_,
+        std::max(1, availableHeight - margin * 2));
 
     hwnd_ = CreateWindowExW(
         WS_EX_APPWINDOW,
@@ -781,7 +1284,8 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
     }
     ImGui::SetCurrentContext(imguiContext_);
 
-    SetupLightTheme();
+    LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
+    RefreshVisualTheme();
 
     imguiWin32Initialized_ = ImGui_ImplWin32_Init(hwnd_);
     if (!imguiWin32Initialized_)
@@ -815,7 +1319,6 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
         &categorizedTabHeightLoaded);
     LoadDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
-    LoadGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
     if (std::strcmp(generalSettings_.language, "system") != 0 &&
         !Locale::Instance().HasLanguage(generalSettings_.language))
     {
@@ -844,11 +1347,16 @@ bool SettingsWindow::Init(HINSTANCE instance, ID3D11Device* device)
 
     RECT rc;
     GetWindowRect(hwnd_, &rc);
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    MONITORINFO centerMonitor{ sizeof(centerMonitor) };
+    GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY),
+        &centerMonitor);
+    const int screenW = centerMonitor.rcWork.right - centerMonitor.rcWork.left;
+    const int screenH = centerMonitor.rcWork.bottom - centerMonitor.rcWork.top;
     SetWindowPos(hwnd_, nullptr,
-        (screenW - (rc.right - rc.left)) / 2,
-        (screenH - (rc.bottom - rc.top)) / 2,
+        centerMonitor.rcWork.left +
+            (screenW - (rc.right - rc.left)) / 2,
+        centerMonitor.rcWork.top +
+            (screenH - (rc.bottom - rc.top)) / 2,
         0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
     WriteDiagnosticLogEntry(L"SettingsWindow initialized");
@@ -867,6 +1375,7 @@ void SettingsWindow::Shutdown()
     {
         KillTimer(hwnd_, kSettingsRefreshTimerId);
         KillTimer(hwnd_, kSettingsHotkeyCaptureTimerId);
+        KillTimer(hwnd_, kSettingsAnimationTimerId);
     }
     hotkeyCaptureTarget_ = HotkeySettingTarget::None;
 
@@ -920,6 +1429,9 @@ void SettingsWindow::Shutdown()
     fluentDebugFont_ = nullptr;
     faDebugCodepoints_.clear();
     fluentDebugCodepoints_.clear();
+    g_settingsUi.animationValues.clear();
+    g_settingsUi.bodyFont = nullptr;
+    g_settingsUi.fluentFont = nullptr;
     CleanupSwapChain();
     if (hwnd_ != nullptr) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
     pendingClose_ = false;
@@ -949,6 +1461,7 @@ bool SettingsWindow::Show()
     dockSettings_.systemTaskbarAlignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     ShowWindow(hwnd_, IsIconic(hwnd_) ? SW_RESTORE : SW_SHOW);
     SetTimer(hwnd_, kSettingsRefreshTimerId, kSettingsRefreshIntervalMs, nullptr);
+    visualThemeRefreshPending_ = true;
     renderRequested_ = true;
     BringWindowToTop(hwnd_);
     SetForegroundWindow(hwnd_);
@@ -1068,6 +1581,22 @@ void SettingsWindow::Render()
     renderRequested_ = false;
     PollUpdateCheck();
 
+    if (visualThemeRefreshPending_)
+        RefreshVisualTheme();
+    if (fontRebuildPending_)
+    {
+        if (imguiDx11Initialized_)
+            ImGui_ImplDX11_InvalidateDeviceObjects();
+        SetupFonts();
+        if (imguiDx11Initialized_ && !ImGui_ImplDX11_CreateDeviceObjects())
+        {
+            LogSettingsWindowFailure(
+                L"Recreate ImGui font objects", E_FAIL);
+        }
+        fontRebuildPending_ = false;
+    }
+    g_settingsUi.animationFrameRequested = false;
+
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
 
@@ -1099,11 +1628,20 @@ void SettingsWindow::Render()
     else
     {
         // Sidebar + Content layout
-        const float sidebarW = 160.0f;
+        const float clientWidthDip = ImGui::GetIO().DisplaySize.x /
+            std::max(0.1f, dpiScale_);
+        const bool compactNavigation =
+            snowdesktop::settings_ui::ResolveNavigationMode(clientWidthDip) ==
+            snowdesktop::settings_ui::NavigationMode::Compact;
+        const float sidebarW = (compactNavigation ? 56.0f : 208.0f) *
+            dpiScale_;
         const float sidebarPad = 8.0f * dpiScale_;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(sidebarPad, sidebarPad));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,
+            g_settingsUi.colors.navigation);
         ImGui::BeginChild("##Sidebar", ImVec2(sidebarW, 0),
-            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleColor();
         ImGui::PopStyleVar();
         DrawSidebar();
         ImGui::EndChild();
@@ -1218,9 +1756,9 @@ void SettingsWindow::Render()
             ImGui::Text("%s", _L("app.settings.exit_restore_text"));
             ImGui::Spacing();
 
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            bool okClicked = ImGui::Button(_L("app.settings.exit_ok"), ImVec2(120, 0));
-            ImGui::PopStyleColor();
+            bool okClicked = BlueButton(
+                _L("app.settings.exit_ok"),
+                ImVec2(120.0f * dpiScale_, 0));
             if (okClicked)
             {
                 showExitConfirm_ = false;
@@ -1228,10 +1766,9 @@ void SettingsWindow::Render()
                 if (exitCallback_) exitCallback_();
             }
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            bool cancelClicked = ImGui::Button(_L("app.settings.cancel"), ImVec2(80, 0));
-            ImGui::PopStyleColor(2);
+            bool cancelClicked = SecondaryButton(
+                _L("app.settings.cancel"),
+                ImVec2(80.0f * dpiScale_, 0));
             if (cancelClicked)
             {
                 showExitConfirm_ = false;
@@ -1256,11 +1793,20 @@ void SettingsWindow::Render()
         return;
     }
 
-    const float clearColor[4] = { 0.96f, 0.96f, 0.97f, 1.0f };
+    const ImVec4& background = g_settingsUi.colors.window;
+    const float clearColor[4] = {
+        background.x, background.y, background.z,
+        settingsUiMicaActive_ ? 0.0f : 1.0f };
     context_->OMSetRenderTargets(1, rtv_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(rtv_.Get(), clearColor);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     swapChain_->Present(0, 0);
+
+    if (g_settingsUi.animationFrameRequested)
+        SetTimer(hwnd_, kSettingsAnimationTimerId,
+            kSettingsAnimationIntervalMs, nullptr);
+    else
+        KillTimer(hwnd_, kSettingsAnimationTimerId);
 }
 
 /**
@@ -1272,41 +1818,39 @@ void SettingsWindow::Render()
  */
 void SettingsWindow::DrawSidebar()
 {
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.86f, 0.86f, 0.90f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.80f, 0.85f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.12f, 0.12f, 0.16f, 1.0f));
+    const float dpi = dpiScale_;
+    const float availableWidth = ImGui::GetContentRegionAvail().x;
+    const bool compact = availableWidth < 80.0f * dpi;
+    if (!compact)
+    {
+        ImGui::PushFont(g_settingsUi.bodyFont, 19.0f * dpi);
+        ImGui::TextUnformatted("SnowDesktop");
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 10.0f * dpi));
+    }
+    else
+    {
+        ImGui::Dummy(ImVec2(0, 8.0f * dpi));
+    }
 
-    ImGui::Dummy(ImVec2(0, 4));
-
-    auto SideButton = [&](int idx, const char* label) {
+    auto SideButton = [&](int idx, const char* label, const wchar_t* glyph) {
         ImGui::PushID(idx);
-        bool active = (activePage_ == idx);
-        if (active) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.80f, 0.85f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.08f, 0.12f, 1.0f));
-        }
-        if (ImGui::Button(label, ImVec2(ImGui::GetContentRegionAvail().x, 32))) {
+        if (DrawFluentNavigationItem(label, glyph,
+                activePage_ == idx, compact, availableWidth))
             activePage_ = idx;
-        }
-        if (active) ImGui::PopStyleColor(2);
         ImGui::PopID();
     };
 
-    SideButton(0, _L("app.settings.general"));
-    SideButton(1, _L("app.settings.appearance"));
-    SideButton(4, _L("app.settings.category"));
-    SideButton(8, _L("app.settings.widgets"));
+    SideButton(0, _L("app.settings.general"), L"\uF587");
+    SideButton(1, _L("app.settings.appearance"), L"\uF2F5");
+    SideButton(4, _L("app.settings.category"), L"\uF4ED");
+    SideButton(8, _L("app.settings.widgets"), L"\uE9E9");
     if (generalSettings_.widgetDeveloperToolsEnabled)
-        SideButton(9, _L("app.settings.widgets_developer_tools"));
-    SideButton(5, _L("app.settings.backup"));
-    SideButton(6, _L("app.settings.about"));
+        SideButton(9, _L("app.settings.widgets_developer_tools"), L"\uF166");
+    SideButton(5, _L("app.settings.backup"), L"\uF418");
+    SideButton(6, _L("app.settings.about"), L"\uF4A3");
     if (debugUnlocked_)
-        SideButton(7, _L("app.settings.debug"));
-
-    ImGui::PopStyleColor(4);
-    ImGui::PopStyleVar();
+        SideButton(7, _L("app.settings.debug"), L"\uF6A9");
 }
 
 // ── UTF helpers ──────────────────────────────────────────────────
@@ -1368,9 +1912,15 @@ namespace {
  */
 static bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
 {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, g_settingsUi.colors.accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+        g_settingsUi.colors.accentHover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+        g_settingsUi.colors.accentPressed);
+    ImGui::PushStyleColor(ImGuiCol_Text,
+        g_settingsUi.colors.accentForeground);
     bool clicked = ImGui::Button(label, size);
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(4);
     return clicked;
 }
 
@@ -1909,26 +2459,29 @@ void SettingsWindow::DrawHotkeyRecorder(
     if (capturing)
     {
         ImGui::PushStyleColor(ImGuiCol_Button,
-            ImVec4(0.18f, 0.45f, 0.82f, 1.0f));
+            g_settingsUi.colors.accent);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-            ImVec4(0.20f, 0.49f, 0.88f, 1.0f));
+            g_settingsUi.colors.accentHover);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-            ImVec4(0.16f, 0.40f, 0.75f, 1.0f));
+            g_settingsUi.colors.accentPressed);
         ImGui::PushStyleColor(ImGuiCol_Text,
-            ImVec4(1, 1, 1, 1));
+            g_settingsUi.colors.accentForeground);
     }
     else if (enabled &&
         (internalConflict != HotkeySettingTarget::None ||
             !systemAvailable))
     {
         ImGui::PushStyleColor(ImGuiCol_Button,
-            ImVec4(1.0f, 0.88f, 0.88f, 1.0f));
+            MixColor(g_settingsUi.colors.danger,
+                g_settingsUi.colors.card, 0.82f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-            ImVec4(1.0f, 0.82f, 0.82f, 1.0f));
+            MixColor(g_settingsUi.colors.danger,
+                g_settingsUi.colors.card, 0.70f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-            ImVec4(0.97f, 0.76f, 0.76f, 1.0f));
+            MixColor(g_settingsUi.colors.danger,
+                g_settingsUi.colors.card, 0.58f));
         ImGui::PushStyleColor(ImGuiCol_Text,
-            ImVec4(0.54f, 0.08f, 0.08f, 1.0f));
+            g_settingsUi.colors.danger);
     }
     else
     {
@@ -1949,16 +2502,13 @@ void SettingsWindow::DrawHotkeyRecorder(
     }
     ImGui::PopStyleColor(4);
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text,
-        ImVec4(1, 1, 1, 1));
-    if (ImGui::Button(resetLabel.c_str(),
+    if (SecondaryButton(resetLabel.c_str(),
             ImVec2(resetWidth, 0)))
     {
         CancelHotkeyCapture();
         CommitHotkeyCapture(target,
             defaultModifiers, defaultVirtualKey);
     }
-    ImGui::PopStyleColor();
     ImGui::EndDisabled();
 }
 
@@ -1978,9 +2528,10 @@ void SettingsWindow::DrawBackupPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##BackupPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
-    ImGui::SeparatorText(_L("app.settings.layout_backups"));
+    BeginSettingPageLayout();
+    DrawSettingSection(_L("app.settings.layout_backups"));
     ImGui::Spacing();
 
     const char* saveBackupLabel = _L("app.settings.save_backup");
@@ -2054,7 +2605,7 @@ void SettingsWindow::DrawBackupPage()
     ImGui::EndChild();
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.full_data_backups"));
+    DrawSettingSection(_L("app.settings.full_data_backups"));
     ImGui::Spacing();
     ImGui::TextWrapped("%s",
         _L("app.settings.full_data_backup_description"));
@@ -2161,7 +2712,7 @@ void SettingsWindow::DrawBackupPage()
     ImGui::EndChild();
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.data_migration"));
+    DrawSettingSection(_L("app.settings.data_migration"));
     ImGui::Spacing();
     ImGui::TextWrapped("%s",
         _L("app.settings.data_migration_description"));
@@ -2169,6 +2720,7 @@ void SettingsWindow::DrawBackupPage()
     if (BlueButton(_L("app.settings.migrate_all_data")))
         MigrateAllData();
 
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -2188,10 +2740,11 @@ void SettingsWindow::DrawGeneralPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##GeneralPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
-    ImGui::SeparatorText(_L("app.settings.general_settings"));
+    DrawSettingSection(_L("app.settings.general_settings"));
     ImGui::Spacing();
 
     bool autoStart = IsAutoStartEnabled();
@@ -2208,10 +2761,7 @@ void SettingsWindow::DrawGeneralPage()
             const std::string warning = _LF(
                 "app.settings.auto_start_other_version",
                 WideToUtf8(otherAutoStart));
-            ImGui::PushStyleColor(
-                ImGuiCol_Text, ImVec4(0.95f, 0.58f, 0.16f, 1.0f));
-            ImGui::TextWrapped("%s", warning.c_str());
-            ImGui::PopStyleColor();
+            DrawInfoBar(warning.c_str(), g_settingsUi.colors.warning);
             if (BlueButton(
                     _L("app.settings.auto_start_open_windows_settings")))
             {
@@ -2230,11 +2780,9 @@ void SettingsWindow::DrawGeneralPage()
                 installedState))
         {
             ImGui::Spacing();
-            ImGui::PushStyleColor(
-                ImGuiCol_Text, ImVec4(0.95f, 0.58f, 0.16f, 1.0f));
-            ImGui::TextWrapped("%s",
-                _L("app.settings.auto_start_installed_version_active"));
-            ImGui::PopStyleColor();
+            DrawInfoBar(
+                _L("app.settings.auto_start_installed_version_active"),
+                g_settingsUi.colors.warning);
             if (BlueButton(
                     _L("app.settings.auto_start_open_windows_settings")))
             {
@@ -2249,6 +2797,27 @@ void SettingsWindow::DrawGeneralPage()
     if (DrawSettingCheckbox(_L("app.settings.software_desktop"), "##SoftwareDesktopEnabled",
         &generalSettings_.softwareDesktopEnabled))
         generalSettingsDirty_ = true;
+
+    {
+        const float controlW = kSettingControlWidthDip * dpiScale_;
+        BeginSettingRow(_L("app.settings.settings_window_theme"), controlW);
+        int theme = static_cast<int>(generalSettings_.settingsWindowTheme);
+        const char* themes[] = {
+            _L("app.settings.settings_window_theme_system"),
+            _L("app.settings.settings_window_theme_light"),
+            _L("app.settings.settings_window_theme_dark"),
+        };
+        ImGui::SetNextItemWidth(controlW);
+        if (ImGui::Combo("##SettingsWindowTheme", &theme, themes,
+                static_cast<int>(std::size(themes))))
+        {
+            generalSettings_.settingsWindowTheme =
+                static_cast<SettingsWindowTheme>(theme);
+            generalSettingsDirty_ = true;
+            visualThemeRefreshPending_ = true;
+            renderRequested_ = true;
+        }
+    }
 
     {
         const float controlW = kSettingControlWidthDip * dpiScale_;
@@ -2294,7 +2863,7 @@ void SettingsWindow::DrawGeneralPage()
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.quick_navigation"));
+    DrawSettingSection(_L("app.settings.quick_navigation"));
     ImGui::Spacing();
 
     if (DrawSettingCheckbox(_L("app.settings.enable_global_navigation"), "##NavigationEnabled",
@@ -2312,7 +2881,7 @@ void SettingsWindow::DrawGeneralPage()
         VK_SPACE);
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.desktop_interact"));
+    DrawSettingSection(_L("app.settings.desktop_interact"));
     ImGui::Spacing();
 
     if (DrawSettingCheckbox(
@@ -2372,10 +2941,11 @@ void SettingsWindow::DrawGeneralPage()
         generalSettingsDirty_ = true;
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.dock_bar"));
+    DrawSettingSection(_L("app.settings.dock_bar"));
     ImGui::Spacing();
     DrawDockPage();
 
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -3134,8 +3704,9 @@ void SettingsWindow::DrawCategorySettingsPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##CategorySettingsPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
     const float inputW = kSettingControlWidthDip * dpiScale_;
 
@@ -3151,7 +3722,7 @@ void SettingsWindow::DrawCategorySettingsPage()
             DrawHelpMarker(description);
     };
 
-    ImGui::SeparatorText(_L("app.settings.category_settings"));
+    DrawSettingSection(_L("app.settings.category_settings"));
     ImGui::Spacing();
 
     drawSubsectionLabel(_L("app.settings.category_type"),
@@ -3280,6 +3851,7 @@ void SettingsWindow::DrawCategorySettingsPage()
     }
 
     ImGui::Unindent(subsectionContentIndent);
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -3299,8 +3871,9 @@ void SettingsWindow::DrawPersonalizationPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##PersonalizationPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
     auto markChanged = [&](bool saveImmediately) {
         personalizationDirty_ = true;
@@ -3315,7 +3888,7 @@ void SettingsWindow::DrawPersonalizationPage()
     const float sliderActionW = controlW;
     const float actionSliderW = std::max(1.0f,
         controlW - ImGui::GetStyle().ItemSpacing.x - resetW);
-    ImGui::SeparatorText(_L("app.settings.global_theme"));
+    DrawSettingSection(_L("app.settings.global_theme"));
     ImGui::Spacing();
 
     auto presetForId = [](int id) { return MakeAppearancePreset(id); };
@@ -3505,7 +4078,7 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.context_menu_appearance"));
+    DrawSettingSection(_L("app.settings.context_menu_appearance"));
     ImGui::Spacing();
 
     const char* contextMenuStyleNames[] = {
@@ -3527,7 +4100,7 @@ void SettingsWindow::DrawPersonalizationPage()
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.widget_layout"));
+    DrawSettingSection(_L("app.settings.widget_layout"));
     ImGui::Spacing();
 
     BeginSettingRow(_L("app.settings.corner_radius"), sliderActionW);
@@ -3661,12 +4234,12 @@ void SettingsWindow::DrawPersonalizationPage()
     };
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.desktop_icons"));
+    DrawSettingSection(_L("app.settings.desktop_icons"));
     ImGui::Spacing();
     DrawDisplayPage();
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.system_appearance"));
+    DrawSettingSection(_L("app.settings.system_appearance"));
     ImGui::Spacing();
 
     int taskbarThemeMode;
@@ -3954,6 +4527,7 @@ void SettingsWindow::DrawPersonalizationPage()
     ImGui::Spacing();
     DrawSystemTaskbarPage();
 
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -3995,10 +4569,12 @@ void SettingsWindow::DrawWidgetEditorPage()
 
     drawList->AddRectFilled(toolbarPos,
         ImVec2(toolbarPos.x + toolbarW, toolbarPos.y + toolbarH),
-        IM_COL32(248, 248, 250, 255), 8.0f * dpiScale_);
+        ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.card),
+        8.0f * dpiScale_);
     drawList->AddLine(ImVec2(toolbarPos.x, toolbarPos.y + toolbarH),
         ImVec2(toolbarPos.x + toolbarW, toolbarPos.y + toolbarH),
-        IM_COL32(210, 210, 218, 255), 1.0f);
+        ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.cardBorder),
+        1.0f);
 
     ImGui::SetCursorScreenPos(ImVec2(toolbarPos.x + pad, toolbarPos.y + 8.0f * dpiScale_));
     const ImVec2 backSize(116.0f * dpiScale_, 32.0f * dpiScale_);
@@ -4007,16 +4583,21 @@ void SettingsWindow::DrawWidgetEditorPage()
     bool backHovered = ImGui::IsItemHovered();
     drawList->AddRectFilled(backPos,
         ImVec2(backPos.x + backSize.x, backPos.y + backSize.y),
-        backHovered ? IM_COL32(226, 234, 246, 255) : IM_COL32(238, 242, 248, 255),
+        ImGui::ColorConvertFloat4ToU32(backHovered
+            ? g_settingsUi.colors.controlHover
+            : g_settingsUi.colors.control),
         16.0f * dpiScale_);
     drawList->AddRect(backPos,
         ImVec2(backPos.x + backSize.x, backPos.y + backSize.y),
-        backHovered ? IM_COL32(110, 145, 190, 255) : IM_COL32(198, 208, 222, 255),
+        ImGui::ColorConvertFloat4ToU32(backHovered
+            ? g_settingsUi.colors.accent
+            : g_settingsUi.colors.cardBorder),
         16.0f * dpiScale_, 0, 1.0f);
     drawList->AddText(ImVec2(backPos.x + 14.0f * dpiScale_, backPos.y + 7.0f * dpiScale_),
-        IM_COL32(42, 52, 68, 255), "<");
+        ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.text), "<");
     drawList->AddText(ImVec2(backPos.x + 34.0f * dpiScale_, backPos.y + 7.0f * dpiScale_),
-        IM_COL32(42, 52, 68, 255), _L("app.settings.widget_editor_back"));
+        ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.text),
+        _L("app.settings.widget_editor_back"));
 
     std::string title = _L("app.settings.widget_editor");
     std::string name = WideToUtf8(editingWidgetName_);
@@ -4024,7 +4605,8 @@ void SettingsWindow::DrawWidgetEditorPage()
         title += " / " + name;
     drawList->AddText(ImVec2(backPos.x + backSize.x + 18.0f * dpiScale_,
             toolbarPos.y + 15.0f * dpiScale_),
-        IM_COL32(36, 39, 46, 255), title.c_str());
+        ImGui::ColorConvertFloat4ToU32(g_settingsUi.colors.text),
+        title.c_str());
 
     ImGui::SetCursorScreenPos(ImVec2(toolbarPos.x, toolbarPos.y + toolbarH + 10.0f * dpiScale_));
 
@@ -4032,15 +4614,17 @@ void SettingsWindow::DrawWidgetEditorPage()
         widgetEditorBackPending_ = true;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, g_settingsUi.colors.card);
     ImGui::BeginChild("##WidgetEditorScroll", ImVec2(0, 0),
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
         ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 
     if (widgetEngine_ && !widgetEditorBackPending_)
     {
-        // Make input cursor clearly black
-        ImGui::PushStyleColor(ImGuiCol_InputTextCursor, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_InputTextCursor,
+            g_settingsUi.colors.text);
 
         widgetEngine_->EnsureWidgetLoaded(editingWidgetId_, editingScriptPath_);
         bool sharedGlassSettingsChanged = false;
@@ -4070,9 +4654,10 @@ void SettingsWindow::DrawWidgetPackagesPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##WidgetPackagesPage", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiChildFlags_AlwaysUseWindowPadding,
         ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
     const auto packages = WidgetEngine::ListWidgetPackages();
     const auto invalidPackages = WidgetEngine::ListInvalidWidgetPackages();
@@ -4304,7 +4889,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
         finishInstallAttempt(ok, installError, path, developmentId);
     };
 
-    ImGui::SeparatorText(_L("app.settings.widgets_my_components"));
+    DrawSettingSection(_L("app.settings.widgets_my_components"));
     static constexpr COMDLG_FILTERSPEC packageFilters[] = {
         { L"SnowDesktop Component", L"*.snowwidget;widget.json" },
         { L"All Files", L"*.*" },
@@ -5733,6 +6318,7 @@ void SettingsWindow::DrawWidgetPackagesPage()
         ImGui::EndPopup();
     }
 
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -5768,9 +6354,10 @@ void SettingsWindow::DrawWidgetDeveloperTools()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##WidgetAuthoringPage", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiChildFlags_AlwaysUseWindowPadding,
         ImGuiWindowFlags_AlwaysVerticalScrollbar);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
     const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
     std::error_code createError;
@@ -6293,6 +6880,7 @@ void SettingsWindow::DrawWidgetDeveloperTools()
         }
         ImGui::EndChild();
     }
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -6304,12 +6892,11 @@ void SettingsWindow::DrawDebugPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##DebugPageInner", pageSize,
-        ImGuiChildFlags_Borders |
-            ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
-    ImGui::Text("%s", _L("app.settings.debug_page"));
-    ImGui::Separator();
+    DrawSettingSection(_L("app.settings.debug_page"));
     ImGui::Spacing();
     if (DrawSettingCheckbox(_L("app.settings.demo_mode"),
             "##DemoModeEnabled", &generalSettings_.demoModeEnabled))
@@ -6318,10 +6905,9 @@ void SettingsWindow::DrawDebugPage()
     ImGui::TextDisabled("%s", _L("app.settings.demo_mode_hint"));
     ImGui::Unindent();
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    if (ImGui::Checkbox(
+    if (DrawSettingCheckbox(
             _L("app.settings.animation_diagnostics"),
+            "##AnimationDiagnostics",
             &animationDiagnosticsEnabled_))
     {
         if (animationDiagnosticsToggleCallback_)
@@ -6353,6 +6939,7 @@ void SettingsWindow::DrawDebugPage()
             TriggerCrashForTesting();
         ImGui::Spacing();
     }
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -6537,21 +7124,22 @@ void SettingsWindow::DrawAboutPage()
     pageSize.y = std::max(1.0f, pageSize.y);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
     ImGui::BeginChild("##AboutPageInner", pageSize,
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
+    BeginSettingPageLayout();
 
-    ImGui::SeparatorText(_L("app.settings.about_snowdesktop"));
+    DrawSettingSection(_L("app.settings.about_snowdesktop"));
     ImGui::Spacing();
 
     ImGui::TextWrapped("%s", _L("app.settings.about_description"));
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.author"));
+    DrawSettingSection(_L("app.settings.author"));
     ImGui::Spacing();
     ImGui::Text("    逍遥飘雪（郭云哲）"); // l10n-allow: author name is intentionally fixed
     ImGui::Spacing();
 
-    ImGui::SeparatorText(_L("app.settings.copyright"));
+    DrawSettingSection(_L("app.settings.copyright"));
     ImGui::Spacing();
     ImGui::TextWrapped("    %s", _L("app.settings.copyright_notice"));
     ImGui::TextWrapped("    %s", _L("app.settings.license_notice"));
@@ -6560,7 +7148,7 @@ void SettingsWindow::DrawAboutPage()
     auto LinkButton = [](const char* label, const char* url) {
         ImGui::Text("    ");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.30f, 0.60f, 0.95f, 1.00f), label);
+        ImGui::TextColored(g_settingsUi.colors.accent, "%s", label);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -6572,7 +7160,7 @@ void SettingsWindow::DrawAboutPage()
         }
     };
 
-    ImGui::SeparatorText(_L("app.settings.personal_homepages"));
+    DrawSettingSection(_L("app.settings.personal_homepages"));
     ImGui::Spacing();
     LinkButton("Bilibili", "https://space.bilibili.com/32837853");
     ImGui::Dummy(ImVec2(0, 2));
@@ -6583,19 +7171,19 @@ void SettingsWindow::DrawAboutPage()
     LinkButton(_L("app.settings.xiaohongshu"), "https://www.xiaohongshu.com/user/profile/6819eed7000000000403bf0e");
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.project_url"));
+    DrawSettingSection(_L("app.settings.project_url"));
     ImGui::Spacing();
     LinkButton("GitHub (Release)", "https://github.com/FreeFallingSnow/SnowDesktop_Release");
     ImGui::Dummy(ImVec2(0, 2));
     LinkButton("GitHub (Source)", "https://github.com/FreeFallingSnow/SnowDesktop");
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.community"));
+    DrawSettingSection(_L("app.settings.community"));
     ImGui::Spacing();
     LinkButton(_L("app.settings.join_qq"), "https://qm.qq.com/q/HyazkCIRig");
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.version"));
+    DrawSettingSection(_L("app.settings.version"));
     ImGui::TextDisabled("SnowDesktop v" SNOWDESKTOP_VERSION);
     if (ImGui::IsItemClicked())
     {
@@ -6617,35 +7205,34 @@ void SettingsWindow::DrawAboutPage()
         {
             if (updateCheckStatus_ == "checking")
             {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", _L("app.settings.checking"));
+                ImGui::TextColored(g_settingsUi.colors.textSecondary,
+                    "%s", _L("app.settings.checking"));
             }
             else if (updateAvailable_)
             {
-                ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.40f, 1.0f), "%s", updateCheckStatus_.c_str());
+                ImGui::TextColored(g_settingsUi.colors.success,
+                    "%s", updateCheckStatus_.c_str());
             }
             else
             {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", updateCheckStatus_.c_str());
+                ImGui::TextColored(g_settingsUi.colors.textSecondary,
+                    "%s", updateCheckStatus_.c_str());
             }
         }
 
         float updateButtonW = SettingButtonWidth(_L("app.settings.check_update")) + ImGui::GetStyle().FramePadding.x * 2.0f;
         ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - updateButtonW);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.45f, 0.90f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.55f, 1.0f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.35f, 0.75f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
         ImGui::BeginDisabled(updateCheckRequestId_ != 0);
-        if (ImGui::Button(_L("app.settings.check_update"), ImVec2(updateButtonW, 0)))
+        if (BlueButton(_L("app.settings.check_update"),
+                ImVec2(updateButtonW, 0)))
         {
             PerformUpdateCheck();
         }
         ImGui::EndDisabled();
-        ImGui::PopStyleColor(4);
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.third_party_libs"));
+    DrawSettingSection(_L("app.settings.third_party_libs"));
     ImGui::Spacing();
 
     LinkButton("Everything SDK", "https://www.voidtools.com/support/everything/sdk/");
@@ -6674,7 +7261,7 @@ void SettingsWindow::DrawAboutPage()
     ImGui::TextDisabled("        Copyright (c) 2016 mozillazg");
 
     ImGui::Spacing();
-    ImGui::SeparatorText(_L("app.settings.reference_programs"));
+    DrawSettingSection(_L("app.settings.reference_programs"));
     ImGui::Spacing();
 
     LinkButton("TranslucentTB (modified portions)",
@@ -6684,6 +7271,7 @@ void SettingsWindow::DrawAboutPage()
     ImGui::TextDisabled("        Copyright (c) TranslucentTB contributors");
     ImGui::TextDisabled("        Modified for SnowDesktop from upstream commit 322e2b7");
 
+    EndSettingPageLayout();
     ImGui::EndChild();
 }
 
@@ -7317,36 +7905,69 @@ void SettingsWindow::CleanupSwapChain()
 /**
  * @brief 加载系统字体用于 ImGui 渲染。
  *
- * 从 C:\\Windows\\Fonts\\msyh.ttc 加载微软雅黑字体，
- * 字体大小根据 DPI 缩放系数调整，
- * 并包含简体中文常用字形和韩文字形范围。
+ * 使用 Segoe UI Variable 作为基础界面字体，并合并完整 CJK 字形。
+ * Fluent 与 Font Awesome 图标保持为独立字体，供导航和调试页使用。
  */
 void SettingsWindow::SetupFonts()
 {
     ImGuiIO& io = ImGui::GetIO();
-    std::string fontPath = "C:\\Windows\\Fonts\\msyh.ttc";
-    if (FILE* f = fopen(fontPath.c_str(), "rb"))
-    {
-        fclose(f);
-        io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f * dpiScale_, nullptr,
-            io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
-    }
-    else
-    {
-        io.Fonts->AddFontDefault();
-    }
+    io.Fonts->Clear();
+    faDebugFont_ = nullptr;
+    fluentDebugFont_ = nullptr;
+    g_settingsUi.bodyFont = nullptr;
+    g_settingsUi.fluentFont = nullptr;
 
-    const std::string koreanFontPath =
-        "C:\\Windows\\Fonts\\malgun.ttf";
-    if (FILE* f = fopen(koreanFontPath.c_str(), "rb"))
+    auto fileExists = [](const char* path) {
+        if (FILE* file = fopen(path, "rb"))
+        {
+            fclose(file);
+            return true;
+        }
+        return false;
+    };
+    const char* baseFontPath = fileExists(
+        "C:\\Windows\\Fonts\\SegUIVar.ttf")
+        ? "C:\\Windows\\Fonts\\SegUIVar.ttf"
+        : "C:\\Windows\\Fonts\\segoeui.ttf";
+    const float bodySize = 15.0f * dpiScale_;
+    ImFontConfig baseConfig;
+    baseConfig.OversampleH = 2;
+    baseConfig.OversampleV = 2;
+    strcpy_s(baseConfig.Name, "Segoe UI Variable + CJK");
+    ImFont* bodyFont = nullptr;
+    if (fileExists(baseFontPath))
     {
-        fclose(f);
-        ImFontConfig koreanConfig;
-        koreanConfig.MergeMode = true;
-        io.Fonts->AddFontFromFileTTF(koreanFontPath.c_str(),
-            16.0f * dpiScale_, &koreanConfig,
-            io.Fonts->GetGlyphRangesKorean());
+        bodyFont = io.Fonts->AddFontFromFileTTF(baseFontPath, bodySize,
+            &baseConfig, io.Fonts->GetGlyphRangesDefault());
     }
+    if (!bodyFont)
+        bodyFont = io.Fonts->AddFontDefault();
+
+    const auto mergeFont = [&](const char* path, const ImWchar* ranges,
+                               const char* name) {
+        if (!fileExists(path)) return;
+        ImFontConfig config;
+        config.MergeMode = true;
+        config.PixelSnapH = false;
+        config.OversampleH = 2;
+        config.OversampleV = 2;
+        strcpy_s(config.Name, name);
+        io.Fonts->AddFontFromFileTTF(path, bodySize, &config, ranges);
+    };
+    mergeFont("C:\\Windows\\Fonts\\msjh.ttc",
+        io.Fonts->GetGlyphRangesChineseFull(), "Microsoft JhengHei merge");
+    mergeFont("C:\\Windows\\Fonts\\YuGothM.ttc",
+        io.Fonts->GetGlyphRangesJapanese(), "Yu Gothic merge");
+    mergeFont("C:\\Windows\\Fonts\\malgun.ttf",
+        io.Fonts->GetGlyphRangesKorean(), "Malgun Gothic merge");
+    if (!fileExists("C:\\Windows\\Fonts\\msjh.ttc"))
+    {
+        mergeFont("C:\\Windows\\Fonts\\msyh.ttc",
+            io.Fonts->GetGlyphRangesChineseSimplifiedCommon(),
+            "Microsoft YaHei merge");
+    }
+    io.FontDefault = bodyFont;
+    g_settingsUi.bodyFont = bodyFont;
 
     HRSRC resource = FindResourceW(instance_, MAKEINTRESOURCEW(IDR_FA_FONT), RT_RCDATA);
     HGLOBAL resourceHandle = resource ? LoadResource(instance_, resource) : nullptr;
@@ -7378,6 +7999,7 @@ void SettingsWindow::SetupFonts()
         fluentDebugFont_ = io.Fonts->AddFontFromMemoryTTF(fontData,
             static_cast<int>(fontSize), 18.0f * dpiScale_,
             &config, iconRanges);
+        g_settingsUi.fluentFont = fluentDebugFont_;
     }
 }
 
@@ -7622,6 +8244,23 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             g_settingsWindow->renderRequested_ = true;
             return 0;
         }
+        if (g_settingsWindow != nullptr &&
+            wParam == kSettingsAnimationTimerId)
+        {
+            g_settingsWindow->renderRequested_ = true;
+            return 0;
+        }
+        break;
+    case WM_SETTINGCHANGE:
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+    case WM_DWMCOLORIZATIONCOLORCHANGED:
+    case WM_DWMCOMPOSITIONCHANGED:
+        if (g_settingsWindow != nullptr)
+        {
+            g_settingsWindow->visualThemeRefreshPending_ = true;
+            g_settingsWindow->renderRequested_ = true;
+        }
         break;
     case WM_KILLFOCUS:
         if (g_settingsWindow != nullptr &&
@@ -7656,6 +8295,8 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         if (g_settingsWindow != nullptr)
         {
             g_settingsWindow->dpiScale_ = static_cast<float>(LOWORD(wParam)) / 96.0f;
+            g_settingsWindow->visualThemeRefreshPending_ = true;
+            g_settingsWindow->QueueFontRebuild();
         }
         RECT* suggested = reinterpret_cast<RECT*>(lParam);
         SetWindowPos(hwnd, nullptr,
@@ -7668,8 +8309,14 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
     case WM_GETMINMAXINFO:
     {
         MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-        mmi->ptMinTrackSize.x = 500;
-        mmi->ptMinTrackSize.y = 350;
+        const UINT dpi = GetDpiForWindow(hwnd);
+        RECT minimum{ 0, 0,
+            static_cast<LONG>(std::lround(560.0 * dpi / 96.0)),
+            static_cast<LONG>(std::lround(420.0 * dpi / 96.0)) };
+        AdjustWindowRectExForDpi(&minimum, WS_OVERLAPPEDWINDOW,
+            FALSE, WS_EX_APPWINDOW, dpi);
+        mmi->ptMinTrackSize.x = minimum.right - minimum.left;
+        mmi->ptMinTrackSize.y = minimum.bottom - minimum.top;
         return 0;
     }
     case WM_CLOSE:
