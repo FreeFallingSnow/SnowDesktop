@@ -184,6 +184,16 @@ public:
 class SettingsHostActions
 {
 public:
+    enum class HotkeyTarget : std::uint8_t
+    {
+        None,
+        QuickNavigation,
+        DesktopPassthrough,
+        FloatingDock,
+        PagePrevious,
+        PageNext,
+    };
+
     enum class Action : std::uint8_t
     {
         ApplyLanguage,
@@ -208,6 +218,7 @@ public:
         Action action = Action::RefreshDesktop;
         std::wstring widgetInstanceId;
         std::wstring value;
+        HotkeyTarget hotkeyTarget = HotkeyTarget::None;
         UINT modifiers = 0;
         UINT virtualKey = 0;
     };

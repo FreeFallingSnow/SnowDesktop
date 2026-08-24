@@ -126,6 +126,8 @@ public:
     SettingsActionStatus nextCommitStatus =
         SettingsActionStatus::Succeeded;
     std::function<void()> duringCommit;
+    int invokeCount = 0;
+    Request lastRequest;
 
     SettingsActionResult OnSettingsPreview(
         const SettingsSnapshot& snapshot,
@@ -165,8 +167,10 @@ public:
         return SettingsActionResult::Success();
     }
 
-    SettingsActionResult Invoke(const Request&) override
+    SettingsActionResult Invoke(const Request& request) override
     {
+        ++invokeCount;
+        lastRequest = request;
         return SettingsActionResult::Success();
     }
 };
@@ -300,6 +304,29 @@ void TestDomainRevisionsTrackChangedDomain()
             desktopChanged->domainRevisions.general ==
                 generalChanged->domainRevisions.general,
         "desktop synchronization advances desktop without changing general");
+}
+
+void TestTypedHotkeyRequestTransport()
+{
+    auto store = std::make_shared<FakeStore>();
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+
+    SettingsHostActions::Request request;
+    request.action =
+        SettingsHostActions::Action::ProbeHotkeyAvailability;
+    request.hotkeyTarget =
+        SettingsHostActions::HotkeyTarget::DesktopPassthrough;
+    request.modifiers = MOD_CONTROL | MOD_ALT;
+    request.virtualKey = VK_OEM_3;
+
+    Check(controller.InvokeHostAction(request).Succeeded() &&
+            host.invokeCount == 1 &&
+            host.lastRequest.action == request.action &&
+            host.lastRequest.hotkeyTarget == request.hotkeyTarget &&
+            host.lastRequest.modifiers == request.modifiers &&
+            host.lastRequest.virtualKey == request.virtualKey,
+        "controller transports a strongly typed hotkey probe request");
 }
 
 void TestPreviewCoalescingAndCommit()
@@ -603,6 +630,7 @@ int main()
     TestRoutes();
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
+    TestTypedHotkeyRequestTransport();
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();
     TestReloadAndExternalSynchronization();

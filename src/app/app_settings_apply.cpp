@@ -225,13 +225,101 @@ public:
             break;
         }
         case Action::ProbeHotkeyAvailability:
+            if (request.hotkeyTarget == HotkeyTarget::None)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"Hotkey probes require a typed capture target.");
+            }
+            if (ProbeHotkeyAvailability(
+                    request.hotkeyTarget,
+                    request.modifiers,
+                    request.virtualKey))
+            {
+                return snowdesktop::SettingsActionResult::Success();
+            }
             return snowdesktop::SettingsActionResult::Failure(
-                L"Hotkey probes require a typed capture target.");
+                L"The hotkey is unavailable.");
         }
         return snowdesktop::SettingsActionResult::Success();
     }
 
 private:
+    bool ProbeHotkeyAvailability(
+        HotkeyTarget target,
+        UINT modifiers,
+        UINT virtualKey) const
+    {
+        if (virtualKey == 0)
+            return false;
+
+        const UINT normalizedModifiers = modifiers &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+        const auto matches = [normalizedModifiers, virtualKey](
+            UINT configuredModifiers,
+            UINT configuredVirtualKey) {
+            return normalizedModifiers ==
+                    (configuredModifiers &
+                        (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN)) &&
+                virtualKey == configuredVirtualKey;
+        };
+
+        switch (target)
+        {
+        case HotkeyTarget::QuickNavigation:
+            if (app_.navigationSettings_.enabled &&
+                matches(app_.navigationSettings_.modifiers,
+                    app_.navigationSettings_.virtualKey))
+            {
+                return app_.navigationHotkeyRegistered_;
+            }
+            break;
+        case HotkeyTarget::DesktopPassthrough:
+            if (app_.generalSettings_.desktopPassthroughHotkeyEnabled &&
+                app_.customDesktopVisible_ &&
+                matches(app_.generalSettings_.
+                        desktopPassthroughHotkeyModifiers,
+                    app_.generalSettings_.
+                        desktopPassthroughHotkeyVirtualKey))
+            {
+                return app_.desktopPassthroughHotkeyRegistered_;
+            }
+            break;
+        case HotkeyTarget::FloatingDock:
+            if (app_.generalSettings_.dockEnabled &&
+                app_.dockSettings_.floatingShortcutMode &&
+                matches(app_.dockSettings_.floatingHotkeyModifiers,
+                    app_.dockSettings_.floatingHotkeyVirtualKey))
+            {
+                return app_.floatingDockHotkeyRegistered_;
+            }
+            break;
+        case HotkeyTarget::PagePrevious:
+        case HotkeyTarget::PageNext:
+            return true;
+        case HotkeyTarget::None:
+            return false;
+        }
+
+        HWND probeWindow =
+            app_.controlHwnd_ && IsWindow(app_.controlHwnd_)
+                ? app_.controlHwnd_
+                : (app_.inputHwnd_ && IsWindow(app_.inputHwnd_)
+                    ? app_.inputHwnd_ : app_.hwnd_);
+        if (!probeWindow || !IsWindow(probeWindow))
+            return false;
+
+        const BOOL registered = RegisterHotKey(
+            probeWindow,
+            kSettingsHotkeyProbeId,
+            normalizedModifiers | MOD_NOREPEAT,
+            virtualKey);
+        if (!registered)
+            return false;
+
+        UnregisterHotKey(probeWindow, kSettingsHotkeyProbeId);
+        return true;
+    }
+
     DesktopApp& app_;
 };
 
