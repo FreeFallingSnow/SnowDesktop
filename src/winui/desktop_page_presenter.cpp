@@ -1539,8 +1539,8 @@ struct DesktopPagePresenter::Impl
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
-        SetCardText(displayCard, "app.settings.desktop_display",
-            L"Desktop icon display");
+        SetCardText(displayCard, "app.settings.desktop_icons",
+            L"Desktop Icons");
         SetCardText(categoryLayoutCard, "app.settings.category_settings",
             L"Category tab layout");
         SetCardText(beautifyCard, "app.settings.icon_beautify",

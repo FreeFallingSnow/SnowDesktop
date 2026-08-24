@@ -210,6 +210,48 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find("actions.commitDock(generation") !=
                 std::string::npos,
         "control feedback is suppressed and edits are sent through latest-state actions");
+
+    const auto desktopInteractionCard = presenter.find(
+        "SetCardText(pageNavigationCard");
+    const auto desktopInteractionTitle = presenter.find(
+        "\"app.settings.desktop_interact\"", desktopInteractionCard);
+    const auto pageNavigationRow = presenter.find(
+        "pageNavigationToggleRow.SetText(", desktopInteractionTitle);
+    Check(desktopInteractionCard != std::string::npos &&
+            desktopInteractionTitle < pageNavigationRow,
+        "Desktop Interaction remains the legacy group title before the page-navigation setting");
+
+    const auto conditionalHintsStart = presenter.find(
+        "void UpdateConditionalHintVisibility()");
+    const auto conditionalHintsEnd = presenter.find(
+        "void SelectLanguage()", conditionalHintsStart);
+    const std::string_view conditionalHints =
+        conditionalHintsStart != std::string::npos &&
+                conditionalHintsEnd != std::string::npos
+            ? std::string_view(presenter).substr(conditionalHintsStart,
+                  conditionalHintsEnd - conditionalHintsStart)
+            : std::string_view{};
+    Check(conditionalHints.find(
+              "desktopPassthroughToggleRow.help.Visibility(") !=
+                std::string_view::npos &&
+            conditionalHints.find("desktopPassthroughToggle.IsOn()") !=
+                std::string_view::npos &&
+            conditionalHints.find(
+              "floatingDockToggleRow.help.Visibility(") !=
+                std::string_view::npos &&
+            conditionalHints.find("floatingDockToggle.IsOn()") !=
+                std::string_view::npos &&
+            conditionalHints.find("dockEnabled") == std::string_view::npos &&
+            presenter.find(
+              "void UpdateDependentEnabledStates()\n    {\n        UpdateConditionalHintVisibility();") !=
+                std::string::npos &&
+            presenter.find(
+              "hasSnapshot = true;\n        UpdateDependentEnabledStates();") !=
+                std::string::npos &&
+            presenter.find(
+              "RefreshStartupConflict();\n        UpdateConditionalHintVisibility();") !=
+                std::string::npos,
+        "desktop passthrough and floating-Dock hints follow only their own toggles and refresh after localization");
     Check(personalization.find(
               "FourThemeSelectionFromAppearancePreset(") !=
                 std::string::npos &&

@@ -96,6 +96,50 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("ExtractNumericUnit(") != std::string::npos &&
             source.find("app.settings.items_unit") != std::string::npos,
         "Dock percentages, blur pixels, and localized item-count units match the legacy surface");
+    Check(source.find(
+              "SetCardText(taskbarAppearanceCard,\n            \"app.settings.system_appearance\"") !=
+                std::string::npos,
+        "System Appearance remains the legacy group title above taskbar appearance settings");
+    Check(source.find(
+              "SetContinuousText(thicknessScale,\n            \"app.settings.dock_thickness\"") !=
+                std::string::npos &&
+            source.find("app.settings.dock_thickness_hint") !=
+                std::string::npos,
+        "Dock thickness retains its legacy explanatory text on the setting row");
+
+    const auto edgeHintStart = source.find(
+        "void UpdateEdgeSwipeHintVisibility()");
+    const auto edgeHintEnd = source.find(
+        "void RefreshTaskbarRuntimeStatus()", edgeHintStart);
+    const std::string_view edgeHint =
+        edgeHintStart != std::string::npos && edgeHintEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  edgeHintStart, edgeHintEnd - edgeHintStart)
+            : std::string_view{};
+    const auto edgeToggleStart = source.find(
+        "floatingEdgeSwipeToken = floatingEdgeSwipeToggle.Toggled(");
+    const auto edgeToggleEnd = source.find(
+        "showWindowsButtonToken", edgeToggleStart);
+    const std::string_view edgeToggle =
+        edgeToggleStart != std::string::npos &&
+                edgeToggleEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  edgeToggleStart, edgeToggleEnd - edgeToggleStart)
+            : std::string_view{};
+    Check(edgeHint.find("floatingEdgeSwipeRow.help.Visibility(") !=
+                std::string_view::npos &&
+            edgeHint.find("floatingEdgeSwipeToggle.IsOn()") !=
+                std::string_view::npos &&
+            edgeHint.find("dockEnabled") == std::string_view::npos &&
+            edgeToggle.find("UpdateEdgeSwipeHintVisibility();") !=
+                std::string_view::npos &&
+            source.find(
+              "RefreshTaskbarRuntimeStatus();\n        UpdateDependentStates();\n    }\n\n    void UpdateDependentStates()") !=
+                std::string::npos &&
+            source.find(
+              "updatingControls = previousUpdating;\n        UpdateDependentStates();") !=
+                std::string::npos,
+        "edge-swipe help follows only its own toggle across toggle, snapshot, and localization refreshes");
 
     Check(source.find("actions.confirm") != std::string::npos &&
             source.find("Action::RestartExplorer") != std::string::npos &&

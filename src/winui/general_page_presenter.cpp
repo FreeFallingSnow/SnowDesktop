@@ -575,6 +575,7 @@ struct GeneralPagePresenter::Impl
 
     void UpdateDependentEnabledStates()
     {
+        UpdateConditionalHintVisibility();
         SetRecorderEnabled(
             quickNavigationHotkey, quickNavigationToggle.IsOn());
         quickNavigationHotkeyRow.row.SetEnabled(
@@ -595,6 +596,18 @@ struct GeneralPagePresenter::Impl
             dockEnabled && floatingDockToggle.IsOn());
         floatingDockHotkeyRow.row.SetEnabled(
             dockEnabled && floatingDockToggle.IsOn());
+    }
+
+    void UpdateConditionalHintVisibility()
+    {
+        desktopPassthroughToggleRow.help.Visibility(
+            desktopPassthroughToggle.IsOn()
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+        floatingDockToggleRow.help.Visibility(
+            floatingDockToggle.IsOn()
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
     }
 
     void SelectLanguage()
@@ -672,7 +685,7 @@ struct GeneralPagePresenter::Impl
         SetCardText(languageCard, "app.settings.language");
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
-            "app.settings.page_navigation_keyboard");
+            "app.settings.desktop_interact");
         SetCardText(desktopPassthroughCard,
             "app.settings.desktop_passthrough_hotkey");
         SetCardText(floatingDockCard,
@@ -763,6 +776,7 @@ struct GeneralPagePresenter::Impl
 
         RebuildLanguageOptions();
         RefreshStartupConflict();
+        UpdateConditionalHintVisibility();
         updatingControls = wasUpdating;
     }
 

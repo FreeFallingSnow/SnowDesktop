@@ -850,6 +850,7 @@ struct DockPagePresenter::Impl
             });
         floatingEdgeSwipeToken = floatingEdgeSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
+                UpdateEdgeSwipeHintVisibility();
                 const bool value = floatingEdgeSwipeToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
@@ -1406,6 +1407,7 @@ struct DockPagePresenter::Impl
     {
         if (closed)
             return;
+        UpdateEdgeSwipeHintVisibility();
         const bool dockEnabled = dockEnabledToggle.IsOn();
         // Match the legacy BeginDisabled(!dockEnabled_) scope. Border and Grid
         // are FrameworkElements, not Controls, so disable each SettingRow's
@@ -1470,6 +1472,14 @@ struct DockPagePresenter::Impl
         }
     }
 
+    void UpdateEdgeSwipeHintVisibility()
+    {
+        floatingEdgeSwipeRow.help.Visibility(
+            floatingEdgeSwipeToggle.IsOn()
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+    }
+
     void RefreshTaskbarRuntimeStatus()
     {
         if (!taskbarRuntimeStatus) return;
@@ -1512,9 +1522,10 @@ struct DockPagePresenter::Impl
     void SetContinuousText(
         ContinuousControl& control,
         std::string_view key,
-        std::wstring_view fallback)
+        std::wstring_view fallback,
+        std::wstring help = {})
     {
-        control.row.SetText(L(key, fallback));
+        control.row.SetText(L(key, fallback), std::move(help));
         muxa::AutomationProperties::SetName(control.slider,
             control.label.Text());
         if (control.reset)
@@ -1647,7 +1658,7 @@ struct DockPagePresenter::Impl
         SetCardText(taskbarCard,
             "app.settings.system_panel", L"Windows Taskbar");
         SetCardText(taskbarAppearanceCard,
-            "app.settings.taskbar_theme", L"Taskbar Theme");
+            "app.settings.system_appearance", L"System Appearance");
         SetCardText(taskbarCustomCard,
             "app.settings.custom", L"Custom Taskbar Appearance");
 
@@ -1680,7 +1691,9 @@ struct DockPagePresenter::Impl
             {"app.dock.all_screens", L"All Displays"},
         });
         SetContinuousText(thicknessScale,
-            "app.settings.dock_thickness", L"Dock Thickness");
+            "app.settings.dock_thickness", L"Dock Thickness",
+            L("app.settings.dock_thickness_hint",
+                L"Adjust dock bar and icon size together."));
 
         floatingEdgeSwipeRow.SetText(
             L("app.dock.floating_edge_swipe", L"Edge Swipe"),

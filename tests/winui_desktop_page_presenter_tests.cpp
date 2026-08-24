@@ -77,6 +77,10 @@ void TestPresenterContract(const std::filesystem::path& root)
     Check(source.find("UpdateCategory(SettingsUpdateMode::Commit") !=
                 std::string::npos,
         "restoring category defaults saves immediately like the legacy page");
+    Check(source.find(
+              "SetCardText(displayCard, \"app.settings.desktop_icons\"") !=
+                std::string::npos,
+        "Desktop Icons remains the legacy group title above display settings");
 
     for (const char* field : {
              "iconSpacingScale", "itemIconSizeScale", "itemFontSizeCu",
