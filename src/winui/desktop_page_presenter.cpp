@@ -511,11 +511,13 @@ struct DesktopPagePresenter::Impl
     std::unique_ptr<NumericEditor> categorizedTabHeight;
     std::unique_ptr<NumericEditor> tabFontSize;
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
+    SettingRow showCategoryTabCountsRow;
 
     muxc::TextBlock beautifyPresetLabel{nullptr};
     muxc::ComboBox beautifyPreset{nullptr};
     SettingRow beautifyPresetRow;
     muxc::ToggleSwitch beautifyEnabled{nullptr};
+    SettingRow beautifyEnabledRow;
     muxc::StackPanel beautifyAdvanced{nullptr};
     muxc::TextBlock beautifyModeLabel{nullptr};
     muxc::ComboBox beautifyMode{nullptr};
@@ -752,15 +754,23 @@ struct DesktopPagePresenter::Impl
         showCategoryTabCounts = muxc::ToggleSwitch{};
         showCategoryTabCounts.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
+        showCategoryTabCountsRow.Initialize(showCategoryTabCounts);
+        showCategoryTabCountsRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         categoryLayoutCard.content.Children().Append(
             categorizedTabHeight->root);
         categoryLayoutCard.content.Children().Append(tabFontSize->root);
-        categoryLayoutCard.content.Children().Append(showCategoryTabCounts);
+        categoryLayoutCard.content.Children().Append(
+            showCategoryTabCountsRow.root);
 
         InitializeCard(beautifyCard, cardStyle, appearanceRoot);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         beautifyEnabled = muxc::ToggleSwitch{};
         beautifyEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        beautifyEnabledRow.Initialize(beautifyEnabled);
+        beautifyEnabledRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        beautifyCard.content.Children().Append(beautifyEnabledRow.root);
         beautifyAdvanced = muxc::StackPanel{};
         beautifyAdvanced.Spacing(12.0);
         beautifyCard.content.Children().Append(beautifyAdvanced);
@@ -1580,10 +1590,10 @@ struct DesktopPagePresenter::Impl
             L("app.settings.tab_height", L"Category tab height"));
         tabFontSize->SetLabel(
             L("app.settings.category_font_size", L"Category tab font size"));
-        showCategoryTabCounts.Header(winrt::box_value(L(
-            "app.settings.category_show_count", L"Show item counts")));
+        showCategoryTabCountsRow.SetText(L(
+            "app.settings.category_show_count", L"Show item counts"));
         muxa::AutomationProperties::SetName(showCategoryTabCounts,
-            L("app.settings.category_show_count", L"Show item counts"));
+            showCategoryTabCountsRow.label.Text());
 
         beautifyPresetRow.SetText(
             L("app.settings.icon_beautify", L"Icon beautification"));
@@ -1594,6 +1604,10 @@ struct DesktopPagePresenter::Impl
             L("app.settings.beautify_preset_default", L"Default"),
             L("app.settings.custom", L"Custom"),
         }, std::max(0, beautifyPreset.SelectedIndex()));
+        beautifyEnabledRow.SetText(L(
+            "app.settings.beautify_enabled", L"Enable beautification"));
+        muxa::AutomationProperties::SetName(
+            beautifyEnabled, beautifyEnabledRow.label.Text());
         beautifyModeRow.SetText(
             L("app.settings.beautify_mode", L"Beautification mode"));
         muxa::AutomationProperties::SetName(

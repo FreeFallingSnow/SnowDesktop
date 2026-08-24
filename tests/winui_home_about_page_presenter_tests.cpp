@@ -241,6 +241,26 @@ void TestPresenterContract(const std::filesystem::path& repository)
     Check(source.find("versionClickCount < 5") != std::string::npos &&
             source.find("SettingsPage::Debug") != std::string::npos,
         "five version clicks unlock and navigate to Debug");
+    Check(source.find(
+              "versionControls.HorizontalAlignment(mux::HorizontalAlignment::Stretch)") !=
+                std::string::npos &&
+            source.find(
+              "versionButton.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "versionButton.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            source.find(
+              "checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+                std::string::npos &&
+            source.find(
+              "checkUpdateButton.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+                std::string::npos &&
+            source.find("versionRow.Initialize(versionControls);") !=
+                std::string::npos &&
+            source.find("versionRow.Initialize(versionControls, 360.0)") ==
+                std::string::npos,
+        "About version content stretches while version and update actions keep natural width at the right edge");
     Check(source.find("controls::SettingRow") != std::string::npos &&
             source.find("snapshot.values.general.demoModeEnabled") !=
                 std::string::npos &&

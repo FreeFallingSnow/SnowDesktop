@@ -128,6 +128,32 @@ void TestPresenterContract(const std::filesystem::path& root)
             source.find("categoryActionsRow.Initialize(categoryActions)") !=
                 std::string::npos,
         "category name/delete, add, and save actions retain legacy row alignment");
+    const auto beautifyPresetRow = source.find(
+        "AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset)");
+    const auto beautifyEnabledRow = source.find(
+        "beautifyCard.content.Children().Append(beautifyEnabledRow.root)");
+    const auto beautifyAdvanced = source.find(
+        "beautifyCard.content.Children().Append(beautifyAdvanced)");
+    Check(source.find(
+              "showCategoryTabCountsRow.Initialize(showCategoryTabCounts)") !=
+                std::string::npos &&
+            source.find("showCategoryTabCountsRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("showCategoryTabCountsRow.root") !=
+                std::string::npos &&
+            source.find("showCategoryTabCounts.Header(") ==
+                std::string::npos &&
+            source.find("beautifyEnabledRow.Initialize(beautifyEnabled)") !=
+                std::string::npos &&
+            source.find("beautifyEnabledRow.SetControlAlignment(") !=
+                std::string::npos &&
+            source.find("beautifyEnabledRow.SetText(L(") !=
+                std::string::npos &&
+            source.find("app.settings.beautify_enabled") !=
+                std::string::npos &&
+            beautifyPresetRow < beautifyEnabledRow &&
+            beautifyEnabledRow < beautifyAdvanced,
+        "category counts and beautification enablement use localized two-column rows in visible legacy order");
     Check(source.find(
               "gradientEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&

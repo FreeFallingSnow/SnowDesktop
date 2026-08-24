@@ -169,6 +169,35 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos,
         "package and nested Expander content stretches across each card while natural-width actions align at the right edge");
 
+    const auto commandRowsStart = source.find("const auto addCommandRow =");
+    const auto commandRowsEnd = source.find(
+        "addCommandRow(\"app.settings.widgets_cli_capabilities\"",
+        commandRowsStart);
+    const std::string commandRows =
+        commandRowsStart != std::string::npos &&
+            commandRowsEnd != std::string::npos
+        ? source.substr(commandRowsStart, commandRowsEnd - commandRowsStart)
+        : std::string{};
+    Check(commandRows.find("muxc::Grid controls;") != std::string::npos &&
+            commandRows.find("controls.ColumnSpacing(8.0);") !=
+                std::string::npos &&
+            commandRows.find(
+              "valueColumn.Width(mux::GridLengthHelper::FromValueAndType(") !=
+                std::string::npos &&
+            commandRows.find("1.0, mux::GridUnitType::Star") !=
+                std::string::npos &&
+            commandRows.find(
+              "copyColumn.Width(mux::GridLengthHelper::Auto())") !=
+                std::string::npos &&
+            commandRows.find("muxc::Grid::SetColumn(copy, 1)") !=
+                std::string::npos &&
+            commandRows.find("value.Width(300.0)") == std::string::npos &&
+            commandRows.find("row.Initialize(controls);") !=
+                std::string::npos &&
+            commandRows.find("row.Initialize(controls, 420.0)") ==
+                std::string::npos,
+        "developer CLI commands stretch in the default setting column while copy actions remain at the right edge");
+
     Check(header.find("WidgetsPageRequest request)> invoke") !=
                 std::string::npos &&
             header.find("std::uint64_t generation") !=

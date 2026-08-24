@@ -215,12 +215,26 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("control.acrylicRow.SetControlAlignment(") !=
                 std::string::npos &&
-            source.find("systemThemeActions.HorizontalAlignment(") !=
+            source.find("muxc::Grid systemThemeActions{};") !=
+                std::string::npos &&
+            source.find("systemThemeActions.ColumnSpacing(8.0);") !=
+                std::string::npos &&
+            source.find("themeColumn.Width(mux::GridLengthHelper::FromValueAndType(") !=
+                std::string::npos &&
+            source.find("1.0, mux::GridUnitType::Star") !=
+                std::string::npos &&
+            source.find("restartColumn.Width(mux::GridLengthHelper::Auto())") !=
+                std::string::npos &&
+            source.find("muxc::Grid::SetColumn(restartExplorerButton, 1)") !=
+                std::string::npos &&
+            source.find("windowsSystemThemeRow.Initialize(systemThemeActions)") !=
+                std::string::npos &&
+            source.find("windowsSystemThemeRow.SetControlAlignment(") ==
                 std::string::npos &&
             source.find(
               "control.reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
-        "Dock toggles and compact action groups align right while every inline default reset is vertically centered");
+        "Dock toggles and compact actions align right while the theme selector stretches beside its Explorer action and every inline reset stays centered");
 }
 } // namespace
 

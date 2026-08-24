@@ -1817,12 +1817,18 @@ struct WidgetsPagePresenter::Impl
             muxc::Button copy = MakeActionButton(L(
                 "app.settings.widgets_copy_command", L"Copy"));
             copy.HorizontalAlignment(mux::HorizontalAlignment::Right);
-            muxc::StackPanel controls;
-            controls.Orientation(muxc::Orientation::Horizontal);
-            controls.Spacing(8.0);
+            muxc::Grid controls;
             controls.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-            value.Width(300.0);
+            controls.ColumnSpacing(8.0);
+            muxc::ColumnDefinition valueColumn;
+            valueColumn.Width(mux::GridLengthHelper::FromValueAndType(
+                1.0, mux::GridUnitType::Star));
+            muxc::ColumnDefinition copyColumn;
+            copyColumn.Width(mux::GridLengthHelper::Auto());
+            controls.ColumnDefinitions().Append(valueColumn);
+            controls.ColumnDefinitions().Append(copyColumn);
             controls.Children().Append(value);
+            muxc::Grid::SetColumn(copy, 1);
             controls.Children().Append(copy);
             HookClick(copy,
                 [this, command = std::move(command)](
@@ -1840,7 +1846,7 @@ struct WidgetsPagePresenter::Impl
                 },
                 developerRevokers);
             presenter_controls::SettingRow row;
-            row.Initialize(controls, 420.0);
+            row.Initialize(controls);
             row.SetText(L(labelKey, fallback));
             cliRows.Children().Append(row.root);
         };

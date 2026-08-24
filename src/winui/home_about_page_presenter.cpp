@@ -383,8 +383,10 @@ struct HomeAboutPagePresenter::Impl
         versionSection.title.Visibility(mux::Visibility::Collapsed);
         versionControls = muxc::StackPanel{};
         versionControls.Spacing(7.0);
+        versionControls.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         versionButton = muxc::Button{};
-        versionButton.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        versionButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        versionButton.VerticalAlignment(mux::VerticalAlignment::Center);
         versionButton.UseSystemFocusVisuals(true);
         versionStatusRow = muxc::StackPanel{};
         versionStatusRow.Orientation(muxc::Orientation::Horizontal);
@@ -404,13 +406,14 @@ struct HomeAboutPagePresenter::Impl
         updateInfoBar.IsClosable(false);
         updateInfoBar.IsOpen(false);
         checkUpdateButton = muxc::Button{};
-        checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        checkUpdateButton.VerticalAlignment(mux::VerticalAlignment::Center);
         checkUpdateButton.UseSystemFocusVisuals(true);
         versionControls.Children().Append(versionButton);
         versionControls.Children().Append(versionStatusRow);
         versionControls.Children().Append(updateInfoBar);
         versionControls.Children().Append(checkUpdateButton);
-        versionRow.Initialize(versionControls, 360.0);
+        versionRow.Initialize(versionControls);
         versionSection.content.Children().Append(versionRow.root);
 
         InitializeSection(thirdPartySection, cardStyle, aboutRoot);

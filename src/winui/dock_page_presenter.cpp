@@ -544,16 +544,21 @@ struct DockPagePresenter::Impl
             mux::HorizontalAlignment::Right);
         restartExplorerButton.VerticalAlignment(
             mux::VerticalAlignment::Center);
-        muxc::StackPanel systemThemeActions{};
-        systemThemeActions.Orientation(muxc::Orientation::Horizontal);
+        muxc::Grid systemThemeActions{};
         systemThemeActions.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
-        systemThemeActions.Spacing(8.0);
+            mux::HorizontalAlignment::Stretch);
+        systemThemeActions.ColumnSpacing(8.0);
+        muxc::ColumnDefinition themeColumn{};
+        themeColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition restartColumn{};
+        restartColumn.Width(mux::GridLengthHelper::Auto());
+        systemThemeActions.ColumnDefinitions().Append(themeColumn);
+        systemThemeActions.ColumnDefinitions().Append(restartColumn);
         systemThemeActions.Children().Append(windowsSystemThemeCombo);
+        muxc::Grid::SetColumn(restartExplorerButton, 1);
         systemThemeActions.Children().Append(restartExplorerButton);
         windowsSystemThemeRow.Initialize(systemThemeActions);
-        windowsSystemThemeRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarAutoHideRow.root);
         taskbarCard.content.Children().Append(taskbarAlignmentRow.root);
         taskbarCard.content.Children().Append(windowsSystemThemeRow.root);
