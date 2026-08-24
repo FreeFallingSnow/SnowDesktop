@@ -43,7 +43,13 @@ struct BackupDataPageBackendOptions
     std::string hostVersion;
     std::string sourceType;
 
-    /** Return the current settings top-level HWND at the instant of use. */
+    /**
+     * Return the current settings top-level HWND at the instant of use.
+     * Besides picker ownership, the backend uses this as the lifetime boundary
+     * for a detached replacement completion: a hidden window remains valid,
+     * while permanent host shutdown must return null before destroying the
+     * SettingsController.
+     */
     std::function<HWND()> ownerWindow;
 
     /** Marshal a completion to the settings STA. False means enqueue failed. */
@@ -85,11 +91,20 @@ struct BackupDataPageBackendOptions
  * Application-side adapter for BackupDataPagePresenter.
  *
  * All public methods are settings-STA affine. File enumeration, copying,
- * archive validation and migration staging run on one cooperative jthread.
- * Every presenter callback is checked against the exact published generation
- * and revision. A successful full restore/import/migration abandons dirty
- * controller state without reading or writing the old data tree and only then
- * requests an application restart; this class never flushes the pre-restore
+ * archive validation and migration staging run on one detached cooperative
+ * jthread, so route deactivation and window close only request cancellation and
+ * never join storage work on the STA. Every callback and ordinary completion
+ * is checked against its exact generation, activation, revision and task.
+ *
+ * FullDataBackupManager's synchronous archive/queue calls do not expose a
+ * cancellation token. Cancellation is observed immediately around those
+ * non-interruptible calls, while their detached execution cannot block the
+ * settings STA. Detached workers from a closed and reopened settings window
+ * are process-serialized, and no later storage task may cross an already
+ * queued replacement transaction. If a restore/import/migration atomically
+ * queues an external replacement, its dirty-discard/restart transition
+ * remains an application-lifecycle obligation after the page closes, but may
+ * not publish stale view state. This class never flushes the pre-restore
  * snapshot.
  */
 class BackupDataPageBackend final
@@ -122,7 +137,9 @@ public:
     void Refresh();
 
     /**
-     * Stop accepting actions and drain a completed replacement safely.
+     * Stop accepting actions without waiting for storage work on the STA.
+     * A detached task retains only its copied work context plus guarded state
+     * needed to finalize an already-queued replacement safely.
      * The settings host must close this backend before CloseSession so a
      * successfully queued replacement cannot be followed by an old flush.
      */

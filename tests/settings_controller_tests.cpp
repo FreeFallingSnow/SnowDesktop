@@ -24,8 +24,11 @@ CategorySettings CategorySettings::Defaults()
     return {};
 }
 
+int g_categoryNormalizationCount = 0;
+
 void NormalizeCategorySettings(CategorySettings&)
 {
+    ++g_categoryNormalizationCount;
 }
 
 namespace
@@ -412,14 +415,17 @@ void TestFailureRetryAndExplicitApply()
 
     CategorySettings category = controller.Snapshot()->values.category;
     category.tabFontSize = 18.0f;
+    const int normalizationsBeforeDraft = g_categoryNormalizationCount;
     controller.UpdateCategory(category, SettingsUpdateMode::Draft);
     Check(controller.FlushPending().Succeeded() &&
-            store->categorySaveCount == 0,
-        "category drafts do not save before explicit apply");
+            store->categorySaveCount == 0 &&
+            g_categoryNormalizationCount == normalizationsBeforeDraft,
+        "category drafts stay verbatim and do not save before explicit apply");
     controller.RequestCommit(SettingsDomain::Category);
     Check(controller.FlushPending().Succeeded() &&
-            store->categorySaveCount == 1,
-        "explicit apply persists a category draft");
+            store->categorySaveCount == 1 &&
+            g_categoryNormalizationCount == normalizationsBeforeDraft + 1,
+        "explicit apply normalizes once and persists a category draft");
 }
 
 void TestReloadAndExternalSynchronization()

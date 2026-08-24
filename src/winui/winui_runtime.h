@@ -40,6 +40,16 @@ public:
         const winrt::Microsoft::UI::Xaml::UIElement& content) noexcept;
     void Detach() noexcept;
 
+    /**
+     * Enable or clear the Island-owned Mica system backdrop.
+     *
+     * Enabling must be requested by the HWND host from a later message-loop
+     * turn after Attach completes. Creating a system backdrop synchronously
+     * while the Island is attaching can wait on a DispatcherQueue that has
+     * not begun pumping yet.
+     */
+    [[nodiscard]] bool SetSystemBackdropEnabled(bool enabled) noexcept;
+
     /** Resize the Island to the current client rectangle of its parent. */
     void ResizeToClient() noexcept;
 

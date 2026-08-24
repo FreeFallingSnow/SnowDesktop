@@ -18,14 +18,34 @@ namespace snowdesktop::winui
 
 struct HomeAboutPageActions
 {
+    using GeneralEdit = std::function<void(GeneralSettings&)>;
+
     std::function<void(const SettingsRoute& route)> navigate;
     std::function<void(
         std::uint64_t generation,
         HomeAboutCommand command)> invoke;
+    /** Opens one of the fixed, typed links from the legacy About page. */
+    std::function<void(
+        std::uint64_t generation,
+        HomeAboutLink link)> openLink;
+    /** Applies the persisted Debug demo-mode setting through the controller. */
+    std::function<void(
+        std::uint64_t generation,
+        SettingsUpdateMode mode,
+        GeneralEdit edit)> updateGeneral;
+    /** Toggles the non-persisted animation metrics for this application run. */
+    std::function<void(
+        std::uint64_t generation,
+        bool enabled)> setAnimationDiagnostics;
+    /** Makes the conditional Debug route visible; true permits navigation. */
+    std::function<bool(std::uint64_t generation)> unlockDebug;
+    /** The host owns the HWND-scoped ContentDialog and crash-test action. */
+    std::function<void(std::uint64_t generation)>
+        requestCrashTestConfirmation;
 };
 
 /**
- * Cached native WinUI presentation for the Home and About routes.
+ * Cached native WinUI presentation for the Home, About and Debug routes.
  *
  * The presenter performs no file, network or shell work. ProgressRing and
  * InfoBar state is driven exclusively by SettingsSnapshot/status publications
@@ -54,6 +74,8 @@ public:
         HomeContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         AboutContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        DebugContent() const noexcept;
 
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     /** Returns false for a stale generation or non-newer status patch. */

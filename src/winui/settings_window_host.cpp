@@ -7,6 +7,7 @@
 #include "../widget_settings_service.h"
 
 #include <shobjidl.h>
+#include <dwmapi.h>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -36,6 +37,48 @@ constexpr int kDefaultClientHeight = 760;
 constexpr int kMinimumClientWidth = 720;
 constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
+constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
+
+bool QueryHighContrastEnabled(bool& enabled) noexcept
+{
+    HIGHCONTRASTW state{};
+    state.cbSize = sizeof(state);
+    if (!SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST, sizeof(state), &state, 0))
+    {
+        enabled = false;
+        return false;
+    }
+    enabled = (state.dwFlags & HCF_HIGHCONTRASTON) != 0;
+    return true;
+}
+
+bool SupportsMicaBackdrop() noexcept
+{
+    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+    static const auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+    if (!rtlGetVersion)
+        return false;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    return rtlGetVersion(&version) == 0 && version.dwMajorVersion >= 10 &&
+        version.dwBuildNumber >= 22000;
+}
+
+void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
+{
+    if (!window || !IsWindow(window))
+        return;
+
+    const BOOL dark = darkTheme ? TRUE : FALSE;
+    (void)DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+        &dark, sizeof(dark));
+
+    const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    (void)DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
+        &corner, sizeof(corner));
+}
 
 struct StaticSearchDefinition
 {
@@ -46,14 +89,9 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
-    {SettingsPage::Home, "home.theme", "settings.home.theme",
-        "settings.home.theme.description"},
-    {SettingsPage::Home, "home.dock", "settings.home.dock",
-        "settings.home.dock.description"},
-    {SettingsPage::Home, "home.widgets", "settings.home.widgets",
-        "settings.home.widgets.description"},
-    {SettingsPage::Home, "home.backup", "settings.home.backup",
-        "settings.home.backup.description"},
+    {SettingsPage::General, "general.autoStart",
+        "settings.general.startup",
+        "settings.general.startup.description"},
     {SettingsPage::General, "general.softwareDesktop",
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
@@ -66,14 +104,29 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "general.quickNavigation",
         "settings.general.quickNavigation",
         "settings.general.quickNavigation.description"},
+    {SettingsPage::General, "general.quickNavigation.hotkey",
+        "app.settings.hotkey",
+        "settings.general.quickNavigation.description"},
     {SettingsPage::General, "general.pageNavigation",
         "settings.general.pageNavigation",
+        "settings.general.pageNavigation.description"},
+    {SettingsPage::General, "general.pageNavigation.previous",
+        "app.settings.page_navigation_previous",
+        "settings.general.pageNavigation.description"},
+    {SettingsPage::General, "general.pageNavigation.next",
+        "app.settings.page_navigation_next",
         "settings.general.pageNavigation.description"},
     {SettingsPage::General, "general.desktopPassthrough",
         "settings.general.desktopPassthrough",
         "settings.general.desktopPassthrough.description"},
+    {SettingsPage::General, "general.desktopPassthrough.hotkey",
+        "app.settings.hotkey",
+        "settings.general.desktopPassthrough.description"},
     {SettingsPage::General, "general.floatingDock",
         "settings.general.floatingDock",
+        "settings.general.floatingDock.description"},
+    {SettingsPage::General, "general.floatingDock.hotkey",
+        "app.settings.hotkey",
         "settings.general.floatingDock.description"},
     {SettingsPage::Personalization, "personalization.theme",
         "settings.personalization.theme",
@@ -81,17 +134,56 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Personalization, "personalization.backgroundColor",
         "settings.personalization.colors",
         "settings.personalization.colors.description"},
+    {SettingsPage::Personalization,
+        "personalization.quickNavigationTheme",
+        "app.settings.quick_nav_theme",
+        "settings.personalization.theme.description"},
+    {SettingsPage::Personalization,
+        "personalization.collectionPopupTheme",
+        "app.settings.collection_popup_theme",
+        "settings.personalization.theme.description"},
+    {SettingsPage::Personalization, "personalization.borderColor",
+        "app.settings.component_border",
+        "settings.personalization.colors.description"},
+    {SettingsPage::Personalization, "personalization.widgetAlpha",
+        "app.settings.bg_opacity",
+        "settings.personalization.colors.description"},
+    {SettingsPage::Personalization, "personalization.borderAlpha",
+        "app.settings.border_opacity",
+        "settings.personalization.colors.description"},
+    {SettingsPage::Personalization, "personalization.enableGradient",
+        "app.settings.enable_gradient",
+        "settings.personalization.colors.description"},
+    {SettingsPage::Personalization, "personalization.gradientEndAlpha",
+        "app.settings.gradient_end_alpha",
+        "settings.personalization.colors.description"},
     {SettingsPage::Personalization, "personalization.glass",
         "settings.personalization.glass",
         "settings.personalization.glass.description"},
     {SettingsPage::Personalization, "personalization.acrylic",
         "settings.personalization.acrylic",
         "settings.personalization.acrylic.description"},
+    {SettingsPage::Personalization, "personalization.blurRadius",
+        "app.settings.blur_radius",
+        "settings.personalization.glass.description"},
+    {SettingsPage::Personalization, "personalization.contentTheme",
+        "app.settings.text_color",
+        "settings.personalization.theme.description"},
     {SettingsPage::Personalization, "personalization.contextMenu",
         "settings.personalization.contextMenu",
         "settings.personalization.contextMenu.description"},
     {SettingsPage::Personalization, "personalization.cornerRadius",
         "settings.personalization.widgets",
+        "settings.personalization.widgets.description"},
+    {SettingsPage::Personalization, "personalization.barHeight",
+        "app.settings.bar_height",
+        "settings.personalization.widgets.description"},
+    {SettingsPage::Personalization, "personalization.tabHeight",
+        "app.settings.tab_height",
+        "settings.personalization.widgets.description"},
+    {SettingsPage::Personalization,
+        "personalization.showCategoryTabCounts",
+        "app.settings.category_show_count",
         "settings.personalization.widgets.description"},
     {SettingsPage::Desktop, "desktop.spacing", "settings.desktop.spacing",
         "settings.desktop.spacing.description"},
@@ -100,17 +192,89 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Desktop, "desktop.itemFontSize",
         "settings.desktop.typography",
         "settings.desktop.typography.description"},
+    {SettingsPage::Desktop, "desktop.listFontSize",
+        "app.settings.list_font_size",
+        "settings.desktop.typography.description"},
+    {SettingsPage::Desktop, "desktop.fontWeight",
+        "app.settings.title_font_weight",
+        "settings.desktop.typography.description"},
     {SettingsPage::Desktop, "desktop.shortcutArrow",
         "settings.desktop.shortcutArrow",
         "settings.desktop.shortcutArrow.description"},
     {SettingsPage::Desktop, "desktop.iconBeautify",
         "settings.desktop.iconBeautify",
         "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.mode",
+        "app.settings.beautify_mode",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.backgroundColor",
+        "app.settings.default_bg",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.backgroundOpacity",
+        "app.settings.bg_opacity_val",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.gradient",
+        "app.settings.enable_gradient_bg",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.gradientEndColor",
+        "app.settings.gradient_end_color",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.gradientDirection",
+        "app.settings.beautify_gradient_dir",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.shape",
+        "app.settings.beautify_shape",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.contentScale",
+        "app.settings.beautify_content_scale",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.highlightStrength",
+        "app.settings.beautify_texture_highlight",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.highlightSize",
+        "app.settings.beautify_texture_highlight_size",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.highlightAngle",
+        "app.settings.beautify_texture_highlight_angle",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.shadeStrength",
+        "app.settings.beautify_texture_shade",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.edgeHighlight",
+        "app.settings.beautify_texture_edge",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.filter",
+        "app.settings.beautify_filter",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.filterColor",
+        "app.settings.beautify_filter_color",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.filterStrength",
+        "app.settings.beautify_filter_strength",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.shadowStrength",
+        "app.settings.beautify_shadow_strength",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.outline",
+        "app.settings.beautify_outline",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.outlineWidth",
+        "app.settings.beautify_outline_width",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.outlineOpacity",
+        "app.settings.beautify_outline_opacity",
+        "settings.desktop.iconBeautify.description"},
+    {SettingsPage::Desktop, "desktop.iconBeautify.outlineColor",
+        "app.settings.beautify_outline_color",
+        "settings.desktop.iconBeautify.description"},
     {SettingsPage::Desktop, "desktop.categoryLayout",
         "settings.desktop.categoryLayout",
         "settings.desktop.categoryLayout.description"},
     {SettingsPage::Desktop, "desktop.categories",
         "settings.desktop.categories",
+        "settings.desktop.categories.description"},
+    {SettingsPage::Desktop, "desktop.category.add",
+        "app.settings.add_category",
         "settings.desktop.categories.description"},
     {SettingsPage::DockAndTaskbar, "dock.enable", "settings.dock.enable",
         "settings.dock.enable.description"},
@@ -125,6 +289,15 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DockAndTaskbar, "dock.showFrequentItems",
         "settings.dock.frequentItems",
         "settings.dock.frequentItems.description"},
+    {SettingsPage::DockAndTaskbar, "dock.floatingEdgeSwipe",
+        "app.dock.floating_edge_swipe",
+        "settings.dock.items.description"},
+    {SettingsPage::DockAndTaskbar, "dock.showWindowsButton",
+        "app.dock.show_windows_button",
+        "settings.dock.items.description"},
+    {SettingsPage::DockAndTaskbar, "dock.frequentItemCount",
+        "app.settings.show_count",
+        "settings.dock.frequentItems.description"},
     {SettingsPage::DockAndTaskbar, "taskbar.autoHide",
         "settings.taskbar.autoHide",
         "settings.taskbar.autoHide.description"},
@@ -133,11 +306,55 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.taskbar.alignment.description"},
     {SettingsPage::DockAndTaskbar, "taskbar.theme",
         "settings.taskbar.theme", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.contentTheme",
+        "app.settings.taskbar_foreground_color",
+        "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.backgroundColor",
+        "app.settings.bg_color", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.borderColor",
+        "app.settings.border_color", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.backgroundOpacity",
+        "app.settings.bg_opacity", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.borderOpacity",
+        "app.settings.border_opacity", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.glass",
+        "app.settings.glass_enabled", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.blurRadius",
+        "app.settings.blur_radius", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.acrylic",
+        "app.settings.acrylic_noise", "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.dynamic.visibleWindow",
+        "app.settings.taskbar_dynamic_visible_window",
+        "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.dynamic.maximizedWindow",
+        "app.settings.taskbar_dynamic_maximized_window",
+        "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.dynamic.shellUi",
+        "app.settings.taskbar_dynamic_shell_ui",
+        "settings.taskbar.theme.description"},
+    {SettingsPage::DockAndTaskbar, "taskbar.systemTheme",
+        "app.settings.system_panel",
+        "settings.taskbar.restartExplorer.description"},
     {SettingsPage::DockAndTaskbar, "taskbar.restartExplorer",
         "settings.taskbar.restartExplorer",
         "settings.taskbar.restartExplorer.description"},
     {SettingsPage::Widgets, "widgets.installed",
         "settings.widgets.installed",
+        "settings.widgets.installed.description"},
+    {SettingsPage::Widgets, "widgets.search",
+        "app.settings.widgets_search",
+        "settings.widgets.installed.description"},
+    {SettingsPage::Widgets, "widgets.install",
+        "app.settings.widgets_install_package",
+        "settings.widgets.sources.description"},
+    {SettingsPage::Widgets, "widgets.workshop",
+        "app.settings.widgets_open_steam_workshop",
+        "settings.widgets.sources.description"},
+    {SettingsPage::Widgets, "widgets.developer",
+        "app.settings.widgets_self_develop",
+        "settings.widgets.sources.description"},
+    {SettingsPage::Widgets, "widgets.included",
+        "app.settings.widgets_builtin",
         "settings.widgets.installed.description"},
     {SettingsPage::Widgets, "widgets.sources", "settings.widgets.sources",
         "settings.widgets.sources.description"},
@@ -151,10 +368,17 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::BackupAndData, "backup.directory",
         "settings.backup.directory",
         "settings.backup.directory.description"},
+    {SettingsPage::BackupAndData, "backup.migration",
+        "app.settings.migrate_all_data",
+        "settings.backup.full.description"},
     {SettingsPage::About, "about.version", "settings.about.version",
         "settings.about.version.description"},
+    {SettingsPage::About, "about.profile", "app.settings.personal_homepages",
+        "app.settings.about_description"},
     {SettingsPage::About, "about.project", "settings.about.project",
         "settings.about.project.description"},
+    {SettingsPage::About, "about.community", "app.settings.community",
+        "app.settings.join_qq"},
     {SettingsPage::About, "about.thirdparty", "settings.about.thirdparty",
         "settings.about.thirdparty.description"},
     {SettingsPage::DeveloperTools, "developer.overrides",
@@ -163,8 +387,31 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DeveloperTools, "developer.tools",
         "settings.developer.tools",
         "settings.developer.tools.description"},
-    {SettingsPage::Debug, "debug.runtime", "settings.debug.runtime",
-        "settings.debug.runtime.description"},
+    {SettingsPage::DeveloperTools, "developer.agentSkill",
+        "app.settings.widgets_agent_skill",
+        "app.settings.widgets_agent_skill_description"},
+    {SettingsPage::DeveloperTools, "developer.workspace",
+        "app.settings.widgets_authoring_workspace",
+        "settings.developer.tools.description"},
+    {SettingsPage::DeveloperTools, "developer.cli",
+        "app.settings.widgets_component_cli",
+        "settings.developer.tools.description"},
+    {SettingsPage::DeveloperTools, "developer.publish",
+        "app.settings.widgets_authoring_publish",
+        "app.settings.widgets_authoring_publish_description"},
+    {SettingsPage::DeveloperTools, "developer.reference",
+        "app.settings.widgets_authoring_reference",
+        "app.settings.widgets_authoring_reference_description"},
+    {SettingsPage::DeveloperTools, "developer.runtime",
+        "app.settings.widgets_runtime_diagnostics",
+        "settings.developer.tools.description"},
+    {SettingsPage::Debug, "debug.demo_mode", "app.settings.demo_mode",
+        "app.settings.demo_mode_hint"},
+    {SettingsPage::Debug, "debug.animation",
+        "app.settings.animation_diagnostics",
+        "app.settings.animation_diagnostics_desc"},
+    {SettingsPage::Debug, "debug.crash", "app.settings.crash_test",
+        "app.settings.crash_test_desc"},
 };
 
 std::wstring FormatWin32Error(const wchar_t* operation, DWORD error)
@@ -180,6 +427,12 @@ bool IsUsableControllerSnapshot(
     const SettingsController::SnapshotPtr& snapshot) noexcept
 {
     return snapshot && snapshot->initialized;
+}
+
+bool IsWidgetsBackendPage(SettingsPage page) noexcept
+{
+    return page == SettingsPage::Widgets ||
+        page == SettingsPage::DeveloperTools;
 }
 
 std::optional<std::filesystem::path> DialogResultPath(
@@ -313,10 +566,15 @@ struct SettingsWindowHost::Impl
     std::unique_ptr<BackupDataPageBackend> backupDataPageBackend;
     std::uint64_t viewEpoch = 0;
     bool widgetsPageActive = false;
+    SettingsPage widgetsBackendPage = SettingsPage::Home;
     bool backupDataPageActive = false;
     bool initialized = false;
     bool shuttingDown = false;
     bool interactionSuspended = true;
+    bool darkTheme = false;
+    /** Legacy five-click About unlock; retained for this host lifetime. */
+    bool debugUnlocked = false;
+    bool systemBackdropUpdateQueued = false;
     std::wstring lastError;
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
@@ -329,6 +587,12 @@ struct SettingsWindowHost::Impl
     {
         return window && IsWindow(window) &&
             IsWindowVisible(window) != FALSE;
+    }
+
+    [[nodiscard]] bool DebugPageVisible() const
+    {
+        return debugUnlocked ||
+            (options.debugVisible && options.debugVisible());
     }
 
     std::wstring L(std::string_view key) const
@@ -345,6 +609,51 @@ struct SettingsWindowHost::Impl
     void SetError(std::wstring message)
     {
         lastError = std::move(message);
+    }
+
+    void QueueSystemBackdropUpdate() noexcept
+    {
+        if (systemBackdropUpdateQueued || shuttingDown || !window ||
+            !IsWindow(window) || !runtime.IsAttached())
+        {
+            return;
+        }
+
+        // MicaBackdrop construction can synchronously wait for the current
+        // DispatcherQueue. Post back to the HWND so Attach has returned and
+        // SnowDesktop's normal message pump has advanced at least once.
+        if (PostMessageW(window, kApplyXamlBackdropMessage, 0, 0))
+        {
+            systemBackdropUpdateQueued = true;
+            return;
+        }
+
+        // A failed post must leave a usable opaque surface, particularly if a
+        // high-contrast transition is trying to remove an existing backdrop.
+        (void)runtime.SetSystemBackdropEnabled(false);
+        if (shell)
+            shell->SetSystemBackdropActive(false);
+    }
+
+    void ApplyDeferredSystemBackdrop() noexcept
+    {
+        systemBackdropUpdateQueued = false;
+        if (shuttingDown || !runtime.IsAttached() || !shell)
+            return;
+
+        bool highContrast = false;
+        const bool shouldEnable = SupportsMicaBackdrop() &&
+            QueryHighContrastEnabled(highContrast) && !highContrast;
+        bool active = false;
+        if (shouldEnable)
+            active = runtime.SetSystemBackdropEnabled(true);
+        else
+            (void)runtime.SetSystemBackdropEnabled(false);
+
+        // The root becomes transparent only after the Island accepted Mica.
+        // Windows 10, high contrast, and platform failures retain a current
+        // theme-resource solid brush instead.
+        shell->SetSystemBackdropActive(active);
     }
 
     void ShowActionError(const SettingsActionResult& result)
@@ -440,8 +749,7 @@ struct SettingsWindowHost::Impl
 
         input.developerToolsVisible = options.developerToolsVisible &&
             options.developerToolsVisible();
-        input.debugVisible = options.debugVisible &&
-            options.debugVisible();
+        input.debugVisible = DebugPageVisible();
         if (input.languageTag.empty())
             input.languageTag = "runtime";
 
@@ -538,6 +846,9 @@ struct SettingsWindowHost::Impl
             return;
         if (!shell->ApplySnapshot(*snapshot))
             return;
+        darkTheme = snapshot->values.personalization.contentTheme == 0;
+        ApplySettingsWindowChrome(window, darkTheme);
+        QueueSystemBackdropUpdate();
         SynchronizePageBackends(*snapshot);
         if (options.homeAboutStatus)
         {
@@ -644,6 +955,26 @@ struct SettingsWindowHost::Impl
             return state && state->alive.load() && state->owner &&
                 state->owner->DispatchToOwner(std::move(task));
         };
+        configured.diagnosticsVisible = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner)
+                return false;
+            const auto snapshot = state->owner->controller
+                ? state->owner->controller->Snapshot() : nullptr;
+            if (!snapshot || !snapshot->sessionActive)
+                return false;
+            const auto& hostOptions = state->owner->options;
+            if (snapshot->route.page == SettingsPage::DeveloperTools)
+            {
+                return hostOptions.developerToolsVisible &&
+                    hostOptions.developerToolsVisible();
+            }
+            if (snapshot->route.page == SettingsPage::Debug)
+            {
+                return state->owner->DebugPageVisible();
+            }
+            return false;
+        };
         configured.snapshotChanged = [weak](
             std::shared_ptr<const WidgetsPageSnapshot> snapshot) {
             const auto state = weak.lock();
@@ -674,19 +1005,20 @@ struct SettingsWindowHost::Impl
                 completed(std::move(selected));
         };
         configured.confirmInstall = [weak](std::uint64_t generation,
-                                        std::wstring title,
-                                        std::wstring message,
+                                        WidgetInstallConfirmationRequest request,
                                         WidgetsPageBackendOptions::
                                             ConfirmationCompletion completed) {
             const auto state = weak.lock();
-            if (!state || !state->alive.load() || !state->owner)
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->shell || !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
             {
                 if (completed)
                     completed(false);
                 return;
             }
-            state->owner->ShowGenerationConfirmation(generation,
-                std::move(title), std::move(message),
+            state->owner->shell->ShowWidgetInstallConfirmation(generation,
+                std::move(request),
                 std::move(completed));
         };
 
@@ -713,6 +1045,47 @@ struct SettingsWindowHost::Impl
                 state->owner->RequestRoute(route);
             }
         };
+        actions.setDeveloperToolsEnabled = [weak](
+            std::uint64_t generation, bool enabled) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return false;
+            }
+            state->owner->EditGeneral(
+                generation, SettingsUpdateMode::PreviewAndCommit,
+                [enabled](GeneralSettings& settings) {
+                    settings.widgetDeveloperToolsEnabled = enabled;
+                });
+            const auto snapshot = state->owner->controller->Snapshot();
+            return snapshot && snapshot->generation == generation &&
+                snapshot->values.general.widgetDeveloperToolsEnabled ==
+                    enabled;
+        };
+        actions.reloadWidgetInstance = [weak](
+                                           std::uint64_t generation,
+                                           std::wstring instanceId) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation) ||
+                !state->owner->options.developerToolsVisible ||
+                !state->owner->options.developerToolsVisible())
+            {
+                return;
+            }
+            SettingsHostActions::Request request;
+            request.action =
+                SettingsHostActions::Action::ReloadWidgetInstance;
+            request.widgetInstanceId = std::move(instanceId);
+            const SettingsActionResult result =
+                state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+            if (result.Succeeded() && state->owner->widgetsPageBackend)
+                (void)state->owner->widgetsPageBackend->Refresh();
+        };
         actions.confirm = [weak](std::uint64_t generation,
                               std::wstring title,
                               std::wstring message,
@@ -726,6 +1099,21 @@ struct SettingsWindowHost::Impl
             }
             state->owner->ShowGenerationConfirmation(generation,
                 std::move(title), std::move(message), std::move(done));
+        };
+        actions.editPermissions = [weak](std::uint64_t generation,
+                                      WidgetPermissionEditorRequest request,
+                                      WidgetsPageActions::
+                                          PermissionEditorCompletion done) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->shell || !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                if (done) done({});
+                return;
+            }
+            state->owner->shell->ShowWidgetPermissionEditor(generation,
+                std::move(request), std::move(done));
         };
         shell->SetWidgetsPageActions(std::move(actions));
     }
@@ -847,6 +1235,7 @@ struct SettingsWindowHost::Impl
     void DisposePageBackends() noexcept
     {
         widgetsPageActive = false;
+        widgetsBackendPage = SettingsPage::Home;
         backupDataPageActive = false;
         if (widgetsPageBackend)
         {
@@ -873,21 +1262,31 @@ struct SettingsWindowHost::Impl
             return;
         EnsurePageBackends();
 
-        const bool showWidgets = snapshot.route.page == SettingsPage::Widgets;
+        const bool showWidgets = IsWidgetsBackendPage(snapshot.route.page);
         if (showWidgets && widgetsPageBackend)
         {
+            if (widgetsPageActive &&
+                widgetsBackendPage != snapshot.route.page)
+            {
+                widgetsPageBackend->Deactivate();
+                widgetsPageActive = false;
+            }
             if (!widgetsPageActive ||
                 !widgetsPageBackend->IsGenerationCurrent(
                     snapshot.generation))
             {
-                widgetsPageActive =
-                    widgetsPageBackend->Activate(snapshot.generation);
+                widgetsPageActive = widgetsPageBackend->Activate(
+                    snapshot.generation,
+                    snapshot.route.page == SettingsPage::Widgets);
+                if (widgetsPageActive)
+                    widgetsBackendPage = snapshot.route.page;
             }
         }
         else if (widgetsPageActive && widgetsPageBackend)
         {
             widgetsPageBackend->Deactivate();
             widgetsPageActive = false;
+            widgetsBackendPage = SettingsPage::Home;
         }
 
         const bool showBackup =
@@ -984,6 +1383,49 @@ struct SettingsWindowHost::Impl
             }
             return result;
         };
+        general.setAutoStart = [weak](
+                                   std::uint64_t generation,
+                                   bool enabled) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return;
+            }
+            SettingsHostActions::Request request;
+            request.action =
+                SettingsHostActions::Action::SetAutoStartEnabled;
+            request.boolValue = enabled;
+            const SettingsActionResult result =
+                state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+        };
+        general.openStartupAppsSettings = [weak](
+                                                  std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return;
+            }
+            SettingsHostActions::Request request;
+            request.action =
+                SettingsHostActions::Action::OpenStartupAppsSettings;
+            const SettingsActionResult result =
+                state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+        };
+        general.queryStartupConflict = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->options.startupConflict)
+            {
+                return GeneralStartupConflict{};
+            }
+            return state->owner->options.startupConflict();
+        };
         shell->SetGeneralPageActions(std::move(general));
 
         PersonalizationPageActions personalization;
@@ -995,6 +1437,17 @@ struct SettingsWindowHost::Impl
                 state && state->alive.load() && state->owner)
             {
                 state->owner->EditPersonalization(
+                    generation, mode, std::move(edit));
+            }
+        };
+        personalization.updateGeneral = [weak](
+            std::uint64_t generation,
+            SettingsUpdateMode mode,
+            PersonalizationPageActions::GeneralEdit edit) {
+            if (const auto state = weak.lock();
+                state && state->alive.load() && state->owner)
+            {
+                state->owner->EditGeneral(
                     generation, mode, std::move(edit));
             }
         };
@@ -1136,6 +1589,10 @@ struct SettingsWindowHost::Impl
             case HomeAboutCommand::CheckForUpdates:
                 request.action = SettingsHostActions::Action::CheckForUpdates;
                 break;
+            case HomeAboutCommand::CancelUpdateCheck:
+                request.action =
+                    SettingsHostActions::Action::CancelUpdateCheck;
+                break;
             case HomeAboutCommand::OpenProject:
                 request.action = SettingsHostActions::Action::OpenProject;
                 break;
@@ -1150,6 +1607,100 @@ struct SettingsWindowHost::Impl
             const SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
+        };
+        homeAbout.openLink = [weak](
+                                 std::uint64_t generation,
+                                 HomeAboutLink link) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return;
+            }
+            const std::wstring_view uri = HomeAboutLinkUri(link);
+            if (uri.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    state->owner->window, L"open",
+                    std::wstring(uri).c_str(), nullptr, nullptr,
+                    SW_SHOWNORMAL)) <= 32)
+            {
+                state->owner->ShowActionError(
+                    SettingsActionResult::Failure(
+                        state->owner->L(
+                            "settings.about.link.openFailed")));
+            }
+        };
+        homeAbout.updateGeneral = [weak](
+            std::uint64_t generation,
+            SettingsUpdateMode mode,
+            HomeAboutPageActions::GeneralEdit edit) {
+            if (const auto state = weak.lock();
+                state && state->alive.load() && state->owner)
+            {
+                state->owner->EditGeneral(
+                    generation, mode, std::move(edit));
+            }
+        };
+        homeAbout.setAnimationDiagnostics = [weak](
+            std::uint64_t generation, bool enabled) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return;
+            }
+            SettingsHostActions::Request request;
+            request.action =
+                SettingsHostActions::Action::SetAnimationDiagnostics;
+            request.boolValue = enabled;
+            const SettingsActionResult result =
+                state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+        };
+        homeAbout.unlockDebug = [weak](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return false;
+            }
+            state->owner->debugUnlocked = true;
+            state->owner->RebuildSearchIndex();
+            return state->owner->DebugPageVisible();
+        };
+        homeAbout.requestCrashTestConfirmation = [weak](
+            std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->DebugPageVisible())
+            {
+                return;
+            }
+            state->owner->ShowGenerationConfirmation(
+                generation,
+                state->owner->L("app.settings.crash_test"),
+                state->owner->L("app.settings.crash_test_desc"),
+                [weak, generation](bool confirmed) {
+                    if (!confirmed)
+                        return;
+                    const auto current = weak.lock();
+                    if (!current || !current->alive.load() ||
+                        !current->owner || !current->owner->controller ||
+                        !current->owner->controller->IsGenerationCurrent(
+                            generation) ||
+                        !current->owner->DebugPageVisible())
+                    {
+                        return;
+                    }
+                    SettingsHostActions::Request request;
+                    request.action =
+                        SettingsHostActions::Action::TriggerCrashTest;
+                    (void)current->owner->controller->InvokeHostAction(
+                        request);
+                },
+                true);
         };
         shell->SetHomeAboutPageActions(std::move(homeAbout));
     }
@@ -1237,6 +1788,15 @@ struct SettingsWindowHost::Impl
     {
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
+        if ((route.page == SettingsPage::DeveloperTools &&
+                (!options.developerToolsVisible ||
+                    !options.developerToolsVisible())) ||
+            (route.page == SettingsPage::Debug &&
+                !DebugPageVisible()))
+        {
+            SetError(L"The requested conditional settings page is hidden.");
+            return false;
+        }
 
         const auto previous = controller->Snapshot();
         if (previous && previous->sessionActive && shell &&
@@ -1455,6 +2015,9 @@ struct SettingsWindowHost::Impl
 
         switch (message)
         {
+        case kApplyXamlBackdropMessage:
+            self->ApplyDeferredSystemBackdrop();
+            return 0;
         case kDispatchOwnerTaskMessage:
         {
             std::unique_ptr<std::function<void()>> task(
@@ -1496,7 +2059,15 @@ struct SettingsWindowHost::Impl
             }
             break;
         }
+        case WM_SETTINGCHANGE:
+        case WM_THEMECHANGED:
+        case WM_SYSCOLORCHANGE:
+        case WM_DWMCOLORIZATIONCOLORCHANGED:
+            ApplySettingsWindowChrome(hwnd, self->darkTheme);
+            self->QueueSystemBackdropUpdate();
+            break;
         case WM_NCDESTROY:
+            self->systemBackdropUpdateQueued = false;
             self->runtime.HandleWindowMessage(message, wParam, lParam);
             self->window = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -1556,6 +2127,7 @@ struct SettingsWindowHost::Impl
                 L"Create settings window", GetLastError()));
             return false;
         }
+        ApplySettingsWindowChrome(window, darkTheme);
         return true;
     }
 
@@ -1672,6 +2244,8 @@ bool SettingsWindowHost::Initialize(
             Shutdown();
             return false;
         }
+        impl_->shell->SetSystemBackdropActive(false);
+        impl_->QueueSystemBackdropUpdate();
 
         controller.SetSnapshotChangedCallback(
             [weak](SettingsController::SnapshotPtr snapshot) {
@@ -1740,6 +2314,9 @@ void SettingsWindowHost::Shutdown() noexcept
         }
     }
 
+    impl_->systemBackdropUpdateQueued = false;
+    if (impl_->shell)
+        impl_->shell->SetSystemBackdropActive(false);
     if (impl_->shell)
     {
         impl_->shell->Close();
@@ -1824,6 +2401,7 @@ void SettingsWindowHost::SetWidgetEngine(WidgetEngine* engine)
     if (!impl_->OnOwnerThread() || impl_->widgetEngine == engine)
         return;
     impl_->widgetsPageActive = false;
+    impl_->widgetsBackendPage = SettingsPage::Home;
     if (impl_->widgetsPageBackend)
     {
         impl_->widgetsPageBackend->Close();
@@ -1908,10 +2486,11 @@ void SettingsWindowHost::ShowExitConfirmation(
     }
     shell_impl::SettingsShellDialogRequest request;
     request.generation = snapshot->generation;
-    request.title = impl_->L("app.exit_confirm_title");
-    request.message = impl_->L("app.exit_confirm_message");
-    request.primaryButtonText = impl_->L("app.exit");
-    request.closeButtonText = impl_->L("app.cancel");
+    request.title = impl_->L("app.settings.exit_confirm");
+    request.message = impl_->L("app.settings.exit_confirm_text") + L"\n\n" +
+        impl_->L("app.settings.exit_restore_text");
+    request.primaryButtonText = impl_->L("app.settings.exit_ok");
+    request.closeButtonText = impl_->L("app.settings.cancel");
     request.destructive = true;
     impl_->shell->ShowConfirmation(std::move(request), std::move(completed));
 }

@@ -261,6 +261,11 @@ public:
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,
         const std::vector<WidgetSettingOrdinaryWrite>& writes) override;
+    WidgetSettingsBackendResult ApplyHostAppearanceTransaction(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& appearance,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes) override;
     WidgetSettingsBackendResult SetSecret(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,

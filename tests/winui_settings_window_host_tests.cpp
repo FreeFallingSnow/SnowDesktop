@@ -45,14 +45,19 @@ void TestHostContract(const std::filesystem::path& repository)
         repository / "src/winui/settings_window_host.h");
     const std::string source = ReadText(
         repository / "src/winui/settings_window_host.cpp");
+    const std::string runtimeHeader = ReadText(
+        repository / "src/winui/winui_runtime.h");
     const std::string runtime = ReadText(
         repository / "src/winui/winui_runtime.cpp");
+    const std::string shellMarkup = ReadText(
+        repository / "src/winui/SettingsShell.xaml");
     const std::string shellHeader = ReadText(
         repository / "src/winui/SettingsShell.xaml.h");
     const std::string shell = ReadText(
         repository / "src/winui/SettingsShell.xaml.cpp");
 
-    Check(!header.empty() && !source.empty() && !runtime.empty() &&
+    Check(!header.empty() && !source.empty() && !runtimeHeader.empty() &&
+            !runtime.empty() && !shellMarkup.empty() &&
             !shellHeader.empty() && !shell.empty(),
         "WinUI settings host contract sources are readable");
     Check(source.find("DesktopWindowXamlSource") == std::string::npos &&
@@ -61,6 +66,25 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN") !=
                 std::string::npos,
         "the reusable Win32 top-level HWND delegates its full client to WinUiRuntime");
+    Check(source.find("WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN") !=
+                std::string::npos &&
+            source.find("SetTitleBar(") == std::string::npos &&
+            source.find("AppWindow") == std::string::npos &&
+            source.find("InputNonClientPointerSource") ==
+                std::string::npos &&
+            runtime.find("SetTitleBar(") == std::string::npos &&
+            runtime.find("AppWindow") == std::string::npos &&
+            shell.find("SetTitleBar(") == std::string::npos &&
+            shell.find("AppWindow") == std::string::npos &&
+            shellMarkup.find("ExtendsContentIntoTitleBar") ==
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"MinimizeButton\"") ==
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"MaximizeButton\"") ==
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"CloseButton\"") ==
+                std::string::npos,
+        "WS_OVERLAPPEDWINDOW keeps native system caption buttons without a custom non-client title bar");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&
@@ -118,6 +142,71 @@ void TestHostContract(const std::filesystem::path& repository)
             runtime.find("return ::ContentPreTranslateMessage(message)") !=
                 std::string::npos,
         "WinUI message preprocessing is restricted to the settings HWND tree");
+
+    const std::size_t attachBegin = runtime.find(
+        "bool WinUiRuntime::Attach(");
+    const std::size_t detachBegin = runtime.find(
+        "void WinUiRuntime::Detach()", attachBegin);
+    const std::size_t backdropSetterBegin = runtime.find(
+        "bool WinUiRuntime::SetSystemBackdropEnabled(", detachBegin);
+    const std::size_t resizeBegin = runtime.find(
+        "void WinUiRuntime::ResizeToClient()", backdropSetterBegin);
+    const std::string_view attachFunction =
+        attachBegin != std::string::npos && detachBegin != std::string::npos
+        ? std::string_view(runtime).substr(
+            attachBegin, detachBegin - attachBegin)
+        : std::string_view{};
+    const std::string_view detachFunction =
+        detachBegin != std::string::npos &&
+            backdropSetterBegin != std::string::npos
+        ? std::string_view(runtime).substr(
+            detachBegin, backdropSetterBegin - detachBegin)
+        : std::string_view{};
+    const std::string_view backdropSetter =
+        backdropSetterBegin != std::string::npos &&
+            resizeBegin != std::string::npos
+        ? std::string_view(runtime).substr(
+            backdropSetterBegin, resizeBegin - backdropSetterBegin)
+        : std::string_view{};
+    Check(runtimeHeader.find("SetSystemBackdropEnabled(bool enabled)") !=
+                std::string::npos &&
+            attachFunction.find("SystemBackdrop(") ==
+                std::string_view::npos &&
+            source.find(
+                "PostMessageW(window, kApplyXamlBackdropMessage") !=
+                std::string::npos &&
+            source.find("case kApplyXamlBackdropMessage:") !=
+                std::string::npos &&
+            backdropSetter.find(
+                "xamlSource.SystemBackdrop(muxm::MicaBackdrop{})") !=
+                std::string_view::npos,
+        "the Island creates Mica only from a posted host message after Attach returns");
+    Check(detachFunction.find("xamlSource.SystemBackdrop(") !=
+                std::string_view::npos &&
+            detachFunction.find("xamlSource.Content(nullptr)") !=
+                std::string_view::npos &&
+            detachFunction.find("xamlSource.SystemBackdrop(") <
+                detachFunction.find("xamlSource.Content(nullptr)") &&
+            source.find("DWMWA_SYSTEMBACKDROP_TYPE") ==
+                std::string::npos &&
+            source.find("DwmExtendFrameIntoClientArea") ==
+                std::string::npos,
+        "Detach clears the Island backdrop and the HWND does not install a competing client backdrop");
+    Check(source.find("QueryHighContrastEnabled(highContrast)") !=
+                std::string::npos &&
+            source.find("SupportsMicaBackdrop()") != std::string::npos &&
+            shellHeader.find("SetSystemBackdropActive(bool active)") !=
+                std::string::npos &&
+            shell.find("ShellRoot().Background(muxm::Brush{nullptr})") !=
+                std::string::npos &&
+            shell.find("ApplicationPageBackgroundThemeBrush") !=
+                std::string::npos &&
+            shell.find("GetSysColor(COLOR_WINDOW)") !=
+                std::string::npos &&
+            shellMarkup.find(
+                "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
+                std::string::npos,
+        "Mica exposes a transparent ShellRoot while Windows 10, high contrast, and failures retain a solid theme brush");
     Check(shellHeader.find("SuspendInteraction()") != std::string::npos &&
             shellHeader.find("ResumeInteraction()") != std::string::npos &&
             shell.find("generalPage_->Deactivate()") !=
@@ -150,6 +239,71 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("backupDataPage_->Activate()") !=
                 std::string::npos,
         "widget management and backup routes render cached native WinUI presenters driven by immutable snapshots");
+
+    Check(shellHeader.find("ShowWidgetPermissionEditor(") !=
+                std::string::npos &&
+            shell.find("ShowWidgetPermissionEditorAsync(") !=
+                std::string::npos &&
+            shell.find("dialog.SecondaryButtonText") !=
+                std::string::npos &&
+            shell.find("WidgetPermissionEditorAction::Apply") !=
+                std::string::npos &&
+            shell.find("WidgetPermissionEditorAction::Revoke") !=
+                std::string::npos &&
+            shell.find("navigation_.Route() != route") !=
+                std::string::npos &&
+            source.find("actions.editPermissions") !=
+                std::string::npos,
+        "the Shell owns the batch permission ContentDialog and drops stale route results");
+
+    Check(shellHeader.find("ShowWidgetInstallConfirmation(") !=
+                std::string::npos &&
+            shell.find("ShowWidgetInstallConfirmationAsync(") !=
+                std::string::npos &&
+            shell.find("WidgetInstallConfirmationReasonKind::NewPermission") !=
+                std::string::npos &&
+            shell.find("WidgetInstallConfirmationReasonKind::NewWebsite") !=
+                std::string::npos &&
+            shell.find("WidgetInstallConfirmationReasonKind::SourceChange") !=
+                std::string::npos &&
+            shell.find("app.settings.widgets_new_permission") !=
+                std::string::npos &&
+            shell.find("app.settings.widgets_new_website") !=
+                std::string::npos &&
+            shell.find("app.settings.widgets_source_change") !=
+                std::string::npos &&
+            shell.find("app.settings.widgets_technical_details") !=
+                std::string::npos &&
+            shell.find("muxc::Expander technicalDetails") !=
+                std::string::npos &&
+            source.find("shell->ShowWidgetInstallConfirmation(") !=
+                std::string::npos,
+        "the Shell renders structured install changes and collapsible technical details in its ContentDialog");
+
+    Check(source.find(
+              "route.page == SettingsPage::DeveloperTools") !=
+                std::string::npos &&
+            source.find("route.page == SettingsPage::Debug") !=
+                std::string::npos &&
+            source.find("options.developerToolsVisible()") !=
+                std::string::npos &&
+            source.find("options.debugVisible()") !=
+                std::string::npos &&
+            source.find("configured.diagnosticsVisible") !=
+                std::string::npos &&
+            source.find("widgetsBackendPage != snapshot.route.page") !=
+                std::string::npos &&
+            source.find(
+                "snapshot.route.page == SettingsPage::Widgets") !=
+                std::string::npos &&
+            source.find(
+                "SettingsHostActions::Action::ReloadWidgetInstance") !=
+                std::string::npos &&
+            shell.find("widgetsPage_->DeveloperToolsContent()") !=
+                std::string::npos &&
+            shell.find("homeAboutPage_->DebugContent()") !=
+                std::string::npos,
+        "conditional pages validate independent gates while Debug restores its legacy presenter");
 }
 } // namespace
 

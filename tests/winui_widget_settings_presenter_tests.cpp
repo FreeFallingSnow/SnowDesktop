@@ -60,8 +60,11 @@ void TestPublicContract(const std::string& header)
         "widget presenter does not retain or accept the application settings snapshot");
 }
 
-void TestNativeControlMapping(const std::string& source)
+void TestNativeControlMapping(
+    const std::string& source,
+    const std::string& sharedControls)
 {
+    const std::string nativeControlSources = source + sharedControls;
     for (const char* control : {
              "muxc::TextBox", "muxc::PasswordBox",
              "muxc::ToggleSwitch", "muxc::Slider", "muxc::NumberBox",
@@ -70,7 +73,7 @@ void TestNativeControlMapping(const std::string& source)
              "muxc::TimePicker", "muxc::AutoSuggestBox",
              "muxc::ProgressRing", "muxc::Expander", "muxc::Button"})
     {
-        Check(source.find(control) != std::string::npos,
+        Check(nativeControlSources.find(control) != std::string::npos,
             "every declarative field family uses a native WinUI control");
     }
 
@@ -92,6 +95,63 @@ void TestNativeControlMapping(const std::string& source)
         Check(source.find(kind) != std::string::npos,
             "every v2 setting kind has an explicit presenter branch");
     }
+}
+
+void TestResponsiveFieldRows(
+    const std::string& source,
+    const std::string& sharedControls)
+{
+    Check(ContainsAll(source, {
+              "#include \"settings_presenter_controls.h\"",
+              "presenter_controls::SettingRow row",
+              "field.row.Initialize(field.editorHost)",
+              "field.row.SetText(",
+              "field.editorHost.Children().Append(",
+              "field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right)",
+              "field.opaqueActions.HorizontalAlignment(",
+              "field.content.Children().Append(field.validation)",
+              "field.content.Children().Append(field.diagnostic)"}),
+        "widget fields use the shared left-description/right-editor row and keep validation below it");
+    Check(ContainsAll(sharedControls, {
+              "kSettingControlWidth = 520.0",
+              "kStackedSettingThreshold = 760.0",
+              "muxc::Grid::SetColumn(currentControl, 1)",
+              "muxc::Grid::SetRow(currentControl, 1)",
+              "args.NewSize().Width < kStackedSettingThreshold"}),
+        "shared setting rows retain wide two-column and narrow stacked layouts");
+}
+
+void TestPopupColorEditing(
+    const std::string& source,
+    const std::string& sharedControls)
+{
+    Check(ContainsAll(source, {
+              "presenter_controls::ColorFlyoutEditor",
+              "SettingsUpdateMode mode",
+              "service.SetOrdinary(guard, key,",
+              "wr::MakeWidgetSettingInteger(value)",
+              "RollbackOpenColorEditors()",
+              "field->colorEditor->Rollback()",
+              "field->colorEditor->Dismiss()",
+              "field.colorEditor->Close()",
+              "if (field.colorEditor) return field.colorEditor->button",
+              "backgroundColorEditor",
+              "borderColorEditor",
+              "RunAppearancePatch",
+              "rollbackAppearance(backgroundColorEditor)",
+              "rollbackAppearance(borderColorEditor)"}),
+        "field and host appearance colors persist live picker changes, focus the swatch, and roll back before teardown");
+    Check(ContainsAll(sharedControls, {
+              "muxc::Flyout",
+              "button.Flyout(flyout)",
+              "colorToken = picker.ColorChanged",
+              "SettingsUpdateMode::Preview",
+              "SettingsUpdateMode::PreviewAndCommit",
+              "closedToken = flyout.Closed",
+              "if (!accepted)",
+              "Rollback();",
+              "swatch.Background"}),
+        "the shared compact swatch opens a ColorPicker and rolls back cancel or light-dismiss");
 }
 
 void TestOpaqueChannels(const std::string& source)
@@ -173,10 +233,56 @@ void TestDeclarativeBehavior(const std::string& source)
         "groups, dependency visibility/enabled state, and validation come from the snapshot");
     Check(ContainsAll(source, {
               "service.ApplyPreset(",
+              "service.UpdateHostAppearance(",
               "service.Reset(",
               "cachedPresets",
-              "defaultPresetId"}),
-        "presets and ordinary reset use transactional service operations");
+              "defaultPresetId",
+              "__global_dark", "__global_light",
+              "__global_glass_dark", "__global_glass_light",
+              "__global_acrylic_dark", "__global_acrylic_light",
+              "__custom",
+              "MakeAppearancePreset(",
+              "restoreScriptDefault",
+              "restore_default_settings"}),
+        "appearance, immediate preset selection, script-default restore, and ordinary reset retain the legacy semantics");
+    const auto ungrouped = source.find(
+        "fieldsHost.Children().Append(ungrouped)");
+    const auto orderedGroups = source.find(
+        "fieldsHost.Children().Append(group.root)", ungrouped);
+    Check(ungrouped != std::string::npos &&
+            orderedGroups != std::string::npos &&
+            ungrouped < orderedGroups,
+        "ungrouped declarative fields precede authored groups");
+    Check(source.find("apply_preset") == std::string::npos &&
+            source.find("presetCombo.SelectionChanged") !=
+                std::string::npos &&
+            source.find("appearanceTheme.SelectionChanged") !=
+                std::string::npos,
+        "preset combos apply immediately without a second Apply button");
+
+    std::size_t order = 0;
+    for (const char* fragment : {
+             "appearanceCard.content.Children().Append(followGlobalRow.root)",
+             "appearanceCard.content.Children().Append(appearanceThemeRow.root)",
+             "backgroundColorEditor->row.root",
+             "customAppearanceHost.Children().Append(backgroundOpacity.row.root)",
+             "customAppearanceHost.Children().Append(borderColorEditor->row.root)",
+             "customAppearanceHost.Children().Append(borderOpacity.row.root)",
+             "customAppearanceHost.Children().Append(gradientEndOpacity.row.root)",
+             "customAppearanceHost.Children().Append(glassRow.root)",
+             "customAppearanceHost.Children().Append(acrylicRow.root)",
+             "customAppearanceHost.Children().Append(contentThemeRow.root)",
+             "root.Children().Append(appearanceCard.root)",
+             "root.Children().Append(stylePreviewCard.root)",
+             "root.Children().Append(scriptSettingsTitle)",
+             "root.Children().Append(fieldsHost)",
+             "root.Children().Append(resetCard.root)"})
+    {
+        const auto next = source.find(fragment, order);
+        Check(next != std::string::npos,
+            "custom appearance, preset, fields, and reset controls retain the legacy order");
+        if (next != std::string::npos) order = next + 1;
+    }
     Check(ContainsAll(source, {
               "WidgetSettingKind::Unknown",
               "BuildTextEditor(*field)",
@@ -228,11 +334,15 @@ int main(int argc, char** argv)
         repository / "src/winui/widget_settings_presenter.h");
     const std::string source = ReadText(
         repository / "src/winui/widget_settings_presenter.cpp");
+    const std::string sharedControls = ReadText(
+        repository / "src/winui/settings_presenter_controls.h");
 
-    Check(!header.empty() && !source.empty(),
+    Check(!header.empty() && !source.empty() && !sharedControls.empty(),
         "widget settings presenter sources are readable");
     TestPublicContract(header);
-    TestNativeControlMapping(source);
+    TestNativeControlMapping(source, sharedControls);
+    TestResponsiveFieldRows(source, sharedControls);
+    TestPopupColorEditing(source, sharedControls);
     TestOpaqueChannels(source);
     TestSnapshotAndAsyncSafety(source);
     TestDeclarativeBehavior(source);

@@ -412,7 +412,8 @@ void DesktopApp::SetItemFontSize(float valueCu)
 {
     valueCu = std::clamp(valueCu,
         kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
-    if (valueCu == itemFontSizeCu_) return;
+    const bool changed = valueCu != itemFontSizeCu_;
+    if (!changed && !itemFontSizePreviewActive_) return;
     itemFontSizeCu_ = valueCu;
     RecreateItemTextFormat();
 
@@ -426,6 +427,7 @@ void DesktopApp::SetItemFontSize(float valueCu)
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
+    itemFontSizePreviewActive_ = false;
     if (floatingDockVisible_)
         UpdateFloatingDockWindowBounds();
     if (hwnd_)
@@ -433,11 +435,35 @@ void DesktopApp::SetItemFontSize(float valueCu)
     InvalidateDockRects(TRUE);
 }
 
+void DesktopApp::PreviewItemFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    if (valueCu == itemFontSizeCu_) return;
+    itemFontSizeCu_ = valueCu;
+    itemFontSizePreviewActive_ = true;
+    RecreateItemTextFormat();
+    ApplyDockWorkAreaReservation();
+    LayoutItems();
+    InvalidateDockContainers();
+    InvalidateDragStaticScene();
+    if (floatingDockVisible_)
+        UpdateFloatingDockWindowBounds();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+    InvalidateDockRects(TRUE);
+}
+
 void DesktopApp::SetListItemFontSize(float valueCu)
 {
     valueCu = std::clamp(valueCu,
         kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
-    if (valueCu == listItemFontSizeCu_) return;
+    const bool changed = valueCu != listItemFontSizeCu_;
+    if (!changed && !listItemFontSizePreviewActive_) return;
     listItemFontSizeCu_ = valueCu;
     RecreateComponentListTextFormat();
     for (auto& container : containers_)
@@ -448,8 +474,32 @@ void DesktopApp::SetListItemFontSize(float valueCu)
     }
     InvalidateDragStaticScene();
     SaveLayoutSlots();
+    listItemFontSizePreviewActive_ = false;
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateFloatingDockWindow(false);
+}
+
+void DesktopApp::PreviewListItemFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    if (valueCu == listItemFontSizeCu_) return;
+    listItemFontSizeCu_ = valueCu;
+    listItemFontSizePreviewActive_ = true;
+    RecreateComponentListTextFormat();
+    for (auto& container : containers_)
+    {
+        if (auto* widget = dynamic_cast<WidgetContainer*>(container.get()))
+            widget->InvalidateSlots();
+    }
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
     InvalidateFloatingDockWindow(false);
 }
 
@@ -460,14 +510,33 @@ DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
 
 void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
 {
-    if (weight == itemFontWeight_) return;
+    const bool changed = weight != itemFontWeight_;
+    if (!changed && !itemFontWeightPreviewActive_) return;
     itemFontWeight_ = weight;
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
+    itemFontWeightPreviewActive_ = false;
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateDockRects(TRUE);
+}
+
+void DesktopApp::PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight)
+{
+    if (weight == itemFontWeight_) return;
+    itemFontWeight_ = weight;
+    itemFontWeightPreviewActive_ = true;
+    RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
     InvalidateDockRects(TRUE);
 }
 

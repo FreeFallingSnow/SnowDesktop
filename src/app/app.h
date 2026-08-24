@@ -141,6 +141,63 @@ class IWidgetSettingsBackend;
 class WidgetSettingsService;
 }
 
+class AsyncHttpService;
+
+namespace snowdesktop
+{
+enum class PortableAutoStartApprovalState : std::uint8_t
+{
+    Missing,
+    Enabled,
+    Disabled,
+    Error,
+};
+
+enum class PortableAutoStartRegistrationOwner : std::uint8_t
+{
+    Missing,
+    CurrentExecutable,
+    OtherExecutable,
+    Error,
+};
+
+struct AutoStartQueryResult
+{
+    bool packaged = false;
+    bool stateKnown = false;
+    bool enabled = false;
+    bool installedPackageEnabled = false;
+    PortableAutoStartRegistrationOwner portableOwner =
+        PortableAutoStartRegistrationOwner::Missing;
+    PortableAutoStartApprovalState portableApproval =
+        PortableAutoStartApprovalState::Missing;
+    std::wstring portableCommand;
+};
+
+enum class AutoStartApplyStatus : std::uint8_t
+{
+    Applied,
+    ManualEnableRequired,
+    BlockedByPolicy,
+    PortableRegistrationConflict,
+    InstalledRegistrationConflict,
+    StateUnavailable,
+    Failed,
+};
+
+struct AutoStartApplyResult
+{
+    AutoStartApplyStatus status = AutoStartApplyStatus::Failed;
+    AutoStartQueryResult state;
+    std::wstring message;
+
+    [[nodiscard]] bool Succeeded() const noexcept
+    {
+        return status == AutoStartApplyStatus::Applied;
+    }
+};
+} // namespace snowdesktop
+
 // Shared render helpers used by both the remaining inline render code and the
 // extracted rendering translation units. Keep their declarations independent
 // of DesktopApp so pure color conversion/brush-key logic stays reusable.
@@ -180,6 +237,8 @@ struct SteamWorkshopSubscriptionPollState {
         std::uint64_t generation = 0;
         std::uint64_t taskId = 0;
         std::uint64_t queryId = 0;
+        std::string expectedUnsubscribedPublishedFileId;
+        std::vector<std::string> expectedRemovedPackageIds;
         snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done;
     };
     std::atomic<bool> queryInFlight{ false };
@@ -1153,7 +1212,7 @@ private:
     void ShowSettingsWindow(
         snowdesktop::SettingsRoute route =
             snowdesktop::SettingsRoute::ForPage(
-                snowdesktop::SettingsPage::Home));
+                snowdesktop::SettingsPage::General));
     /** Initialize the application-lifetime settings state owner. */
     void InitializeSettingsController();
     /** Release settings UI and services while their borrowed owners are alive. */
@@ -1161,6 +1220,17 @@ private:
     /** Commit a validated layout backup on the application STA. */
     snowdesktop::SettingsActionResult CommitLayoutRestore(
         snowdesktop::winui::LayoutRestorePayload payload);
+    [[nodiscard]] snowdesktop::AutoStartQueryResult QueryAutoStartState()
+        const noexcept;
+    [[nodiscard]] bool QueryAutoStartEnabled() const noexcept;
+    [[nodiscard]] snowdesktop::AutoStartApplyResult ApplyAutoStartEnabled(
+        bool enabled);
+    snowdesktop::SettingsActionResult StartSettingsUpdateCheck();
+    void CancelSettingsUpdateCheck() noexcept;
+    void PrepareSettingsUpdateSession(std::uint64_t generation);
+    void PollSettingsUpdateCheck();
+    void PublishSettingsUpdateStatus();
+    [[nodiscard]] std::wstring BuildAnimationDiagnosticsStatus() const;
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
@@ -1769,11 +1839,17 @@ private:
     void AdjustIconSpacing(float delta);
     /** @brief 设置图标标题字号（cu）。 @param valueCu cu 字号 */
     void SetItemFontSize(float valueCu);
+    /** @brief 实时预览图标标题字号，不保存布局。 */
+    void PreviewItemFontSize(float valueCu);
     /** @brief 设置组件列表字号（cu）。 @param valueCu cu 字号 */
     void SetListItemFontSize(float valueCu);
+    /** @brief 实时预览组件列表字号，不保存布局。 */
+    void PreviewListItemFontSize(float valueCu);
     float GetListItemFontSize() const { return listItemFontSizeCu_; }
     /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
+    /** @brief 实时预览标题字体粗细，不保存布局。 */
+    void PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight);
     DWRITE_FONT_WEIGHT GetItemFontWeight() const;
     void SetShortcutArrowMode(int mode);
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
@@ -2900,6 +2976,16 @@ private:
     std::unique_ptr<snowdesktop::widget_runtime::WidgetSettingsService>
         widgetSettingsService_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
+    std::unique_ptr<AsyncHttpService> settingsUpdateHttpService_;
+    int settingsUpdateRequestId_ = 0;
+    std::uint64_t settingsUpdateRequestGeneration_ = 0;
+    std::uint64_t settingsUpdateSessionGeneration_ = 0;
+    std::uint64_t settingsUpdateStatusRevision_ = 1;
+    snowdesktop::winui::SettingsUpdateState settingsUpdateState_ =
+        snowdesktop::winui::SettingsUpdateState::Unknown;
+    std::wstring settingsUpdateAvailableVersion_;
+    std::string settingsUpdateDetailKey_;
+    std::wstring settingsUpdateDownloadUrl_;
     std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
         widgetAccessibilityProvider_;
     struct PendingLuaWidgetConsent
@@ -3079,8 +3165,11 @@ private:
     bool itemIconSizePreviewActive_ = false;
     bool collectionLargeFolderTitleless_ = false;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
+    bool itemFontSizePreviewActive_ = false;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
+    bool listItemFontSizePreviewActive_ = false;
     DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    bool itemFontWeightPreviewActive_ = false;
     int shortcutArrowMode_ = 0;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;

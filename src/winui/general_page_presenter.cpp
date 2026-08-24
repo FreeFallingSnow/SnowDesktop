@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "general_page_presenter.h"
+#include "settings_presenter_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
@@ -14,6 +15,7 @@ namespace snowdesktop::winui
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+using presenter_controls::SettingRow;
 
 namespace
 {
@@ -43,16 +45,33 @@ void InitializeCard(
     page.Children().Append(card.root);
 }
 
-void AppendHotkey(
-    const SettingsCard& card,
-    const muxc::TextBlock& label,
-    HotkeyRecorder& recorder)
+struct HotkeySettingRow
 {
-    label.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(label);
-    recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-    card.content.Children().Append(recorder.Root());
-}
+    SettingRow row;
+    muxc::Grid actions{nullptr};
+    muxc::Button reset{nullptr};
+    winrt::event_token resetToken{};
+
+    void Initialize(HotkeyRecorder& recorder)
+    {
+        actions = muxc::Grid{};
+        actions.ColumnSpacing(8.0);
+        muxc::ColumnDefinition recorderColumn{};
+        recorderColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition resetColumn{};
+        resetColumn.Width(mux::GridLengthHelper::Auto());
+        actions.ColumnDefinitions().Append(recorderColumn);
+        actions.ColumnDefinitions().Append(resetColumn);
+        recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        reset = muxc::Button{};
+        reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid::SetColumn(reset, 1);
+        actions.Children().Append(recorder.Root());
+        actions.Children().Append(reset);
+        row.Initialize(actions);
+    }
+};
 
 HotkeyChord Chord(UINT modifiers, UINT virtualKey) noexcept
 {
@@ -79,6 +98,7 @@ struct GeneralPagePresenter::Impl
     GeneralPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
+    muxc::StackPanel dockShortcutRoot{nullptr};
 
     SettingsCard startupCard;
     SettingsCard languageCard;
@@ -87,6 +107,7 @@ struct GeneralPagePresenter::Impl
     SettingsCard desktopPassthroughCard;
     SettingsCard floatingDockCard;
 
+    muxc::ToggleSwitch autoStartToggle{nullptr};
     muxc::ToggleSwitch softwareDesktopToggle{nullptr};
     muxc::ToggleSwitch doubleClickHideToggle{nullptr};
     muxc::ComboBox languageCombo{nullptr};
@@ -107,6 +128,24 @@ struct GeneralPagePresenter::Impl
     muxc::TextBlock floatingDockHotkeyLabel{nullptr};
     HotkeyRecorder floatingDockHotkey;
 
+    SettingRow autoStartRow;
+    SettingRow softwareDesktopRow;
+    SettingRow doubleClickHideRow;
+    SettingRow languageRow;
+    SettingRow quickNavigationToggleRow;
+    HotkeySettingRow quickNavigationHotkeyRow;
+    SettingRow pageNavigationToggleRow;
+    HotkeySettingRow previousPageHotkeyRow;
+    HotkeySettingRow nextPageHotkeyRow;
+    SettingRow desktopPassthroughToggleRow;
+    HotkeySettingRow desktopPassthroughHotkeyRow;
+    SettingRow floatingDockToggleRow;
+    HotkeySettingRow floatingDockHotkeyRow;
+    muxc::InfoBar portableStartupConflict{nullptr};
+    muxc::InfoBar installedStartupConflict{nullptr};
+    muxc::Button openPortableStartupSettings{nullptr};
+    muxc::Button openInstalledStartupSettings{nullptr};
+
     std::vector<SettingsLanguageOption> languageOptions;
     std::string selectedLanguage = "system";
     std::uint64_t generation = 0;
@@ -119,6 +158,7 @@ struct GeneralPagePresenter::Impl
     bool active = false;
     bool closed = false;
 
+    winrt::event_token autoStartToken{};
     winrt::event_token softwareDesktopToken{};
     winrt::event_token doubleClickHideToken{};
     winrt::event_token languageSelectionToken{};
@@ -126,6 +166,8 @@ struct GeneralPagePresenter::Impl
     winrt::event_token pageNavigationToken{};
     winrt::event_token desktopPassthroughToken{};
     winrt::event_token floatingDockToken{};
+    winrt::event_token openPortableStartupSettingsToken{};
+    winrt::event_token openInstalledStartupSettingsToken{};
 
     [[nodiscard]] std::wstring L(std::string_view key) const
     {
@@ -136,43 +178,73 @@ struct GeneralPagePresenter::Impl
     {
         root = muxc::StackPanel{};
         root.Spacing(8.0);
+        dockShortcutRoot = muxc::StackPanel{};
+        dockShortcutRoot.Spacing(8.0);
 
         InitializeCard(startupCard, cardStyle, root);
+        autoStartToggle = muxc::ToggleSwitch{};
+        autoStartToggle.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
         softwareDesktopToggle = muxc::ToggleSwitch{};
         softwareDesktopToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         doubleClickHideToggle = muxc::ToggleSwitch{};
         doubleClickHideToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        startupCard.content.Children().Append(softwareDesktopToggle);
-        startupCard.content.Children().Append(doubleClickHideToggle);
+        autoStartRow.Initialize(autoStartToggle);
+        softwareDesktopRow.Initialize(softwareDesktopToggle);
+        doubleClickHideRow.Initialize(doubleClickHideToggle);
+        startupCard.content.Children().Append(autoStartRow.root);
+        portableStartupConflict = muxc::InfoBar{};
+        portableStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
+        portableStartupConflict.IsClosable(false);
+        portableStartupConflict.IsOpen(false);
+        openPortableStartupSettings = muxc::Button{};
+        portableStartupConflict.ActionButton(openPortableStartupSettings);
+        installedStartupConflict = muxc::InfoBar{};
+        installedStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
+        installedStartupConflict.IsClosable(false);
+        installedStartupConflict.IsOpen(false);
+        openInstalledStartupSettings = muxc::Button{};
+        installedStartupConflict.ActionButton(openInstalledStartupSettings);
+        startupCard.content.Children().Append(portableStartupConflict);
+        startupCard.content.Children().Append(installedStartupConflict);
+        startupCard.content.Children().Append(softwareDesktopRow.root);
 
         InitializeCard(languageCard, cardStyle, root);
         languageCombo = muxc::ComboBox{};
         languageCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         languageCombo.MaxWidth(520.0);
-        languageCard.content.Children().Append(languageCombo);
+        languageRow.Initialize(languageCombo);
+        languageCard.content.Children().Append(languageRow.root);
 
         InitializeCard(quickNavigationCard, cardStyle, root);
         quickNavigationToggle = muxc::ToggleSwitch{};
         quickNavigationToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        quickNavigationCard.content.Children().Append(quickNavigationToggle);
+        quickNavigationToggleRow.Initialize(quickNavigationToggle);
+        quickNavigationCard.content.Children().Append(
+            quickNavigationToggleRow.root);
         quickNavigationHotkeyLabel = muxc::TextBlock{};
-        AppendHotkey(quickNavigationCard, quickNavigationHotkeyLabel,
-            quickNavigationHotkey);
+        quickNavigationHotkeyRow.Initialize(quickNavigationHotkey);
+        quickNavigationCard.content.Children().Append(
+            quickNavigationHotkeyRow.row.root);
 
         InitializeCard(pageNavigationCard, cardStyle, root);
         pageNavigationToggle = muxc::ToggleSwitch{};
         pageNavigationToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        pageNavigationCard.content.Children().Append(pageNavigationToggle);
+        pageNavigationToggleRow.Initialize(pageNavigationToggle);
+        pageNavigationCard.content.Children().Append(
+            pageNavigationToggleRow.root);
         previousPageHotkeyLabel = muxc::TextBlock{};
-        AppendHotkey(pageNavigationCard, previousPageHotkeyLabel,
-            previousPageHotkey);
+        previousPageHotkeyRow.Initialize(previousPageHotkey);
+        pageNavigationCard.content.Children().Append(
+            previousPageHotkeyRow.row.root);
         nextPageHotkeyLabel = muxc::TextBlock{};
-        AppendHotkey(pageNavigationCard, nextPageHotkeyLabel,
-            nextPageHotkey);
+        nextPageHotkeyRow.Initialize(nextPageHotkey);
+        pageNavigationCard.content.Children().Append(
+            nextPageHotkeyRow.row.root);
 
         InitializeCard(desktopPassthroughCard, cardStyle, root);
         desktopPassthroughToggle = muxc::ToggleSwitch{};
@@ -181,26 +253,29 @@ struct GeneralPagePresenter::Impl
         desktopPassthroughHint = muxc::TextBlock{};
         desktopPassthroughHint.Opacity(0.72);
         desktopPassthroughHint.TextWrapping(mux::TextWrapping::Wrap);
+        desktopPassthroughToggleRow.Initialize(desktopPassthroughToggle);
         desktopPassthroughCard.content.Children().Append(
-            desktopPassthroughToggle);
-        desktopPassthroughCard.content.Children().Append(
-            desktopPassthroughHint);
+            desktopPassthroughToggleRow.root);
         desktopPassthroughHotkeyLabel = muxc::TextBlock{};
-        AppendHotkey(desktopPassthroughCard,
-            desktopPassthroughHotkeyLabel, desktopPassthroughHotkey);
+        desktopPassthroughHotkeyRow.Initialize(desktopPassthroughHotkey);
+        desktopPassthroughCard.content.Children().Append(
+            desktopPassthroughHotkeyRow.row.root);
+        desktopPassthroughCard.content.Children().Append(
+            doubleClickHideRow.root);
 
-        InitializeCard(floatingDockCard, cardStyle, root);
+        InitializeCard(floatingDockCard, cardStyle, dockShortcutRoot);
         floatingDockToggle = muxc::ToggleSwitch{};
         floatingDockToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         floatingDockHint = muxc::TextBlock{};
         floatingDockHint.Opacity(0.72);
         floatingDockHint.TextWrapping(mux::TextWrapping::Wrap);
-        floatingDockCard.content.Children().Append(floatingDockToggle);
-        floatingDockCard.content.Children().Append(floatingDockHint);
+        floatingDockToggleRow.Initialize(floatingDockToggle);
+        floatingDockCard.content.Children().Append(floatingDockToggleRow.root);
         floatingDockHotkeyLabel = muxc::TextBlock{};
-        AppendHotkey(floatingDockCard, floatingDockHotkeyLabel,
-            floatingDockHotkey);
+        floatingDockHotkeyRow.Initialize(floatingDockHotkey);
+        floatingDockCard.content.Children().Append(
+            floatingDockHotkeyRow.row.root);
     }
 
     template <typename Edit>
@@ -238,6 +313,27 @@ struct GeneralPagePresenter::Impl
 
     void HookEvents()
     {
+        autoStartToken = autoStartToggle.Toggled(
+            [this](const auto&, const auto&) {
+                if (closed || updatingControls || !active || !hasSnapshot ||
+                    !actions.setAutoStart)
+                {
+                    return;
+                }
+                const bool enabled = autoStartToggle.IsOn();
+                actions.setAutoStart(generation, enabled);
+            });
+        const auto openStartupApps = [this](const auto&, const auto&) {
+            if (!closed && active && hasSnapshot &&
+                actions.openStartupAppsSettings)
+            {
+                actions.openStartupAppsSettings(generation);
+            }
+        };
+        openPortableStartupSettingsToken =
+            openPortableStartupSettings.Click(openStartupApps);
+        openInstalledStartupSettingsToken =
+            openInstalledStartupSettings.Click(openStartupApps);
         softwareDesktopToken = softwareDesktopToggle.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = softwareDesktopToggle.IsOn();
@@ -300,6 +396,48 @@ struct GeneralPagePresenter::Impl
                     settings.floatingShortcutMode = enabled;
                 });
             });
+        quickNavigationHotkeyRow.resetToken =
+            quickNavigationHotkeyRow.reset.Click(
+                [this](const auto&, const auto&) {
+                    CommitNavigation([](NavigationSettings& settings) {
+                        settings.modifiers = MOD_CONTROL | MOD_ALT;
+                        settings.virtualKey = VK_SPACE;
+                    });
+                });
+        previousPageHotkeyRow.resetToken =
+            previousPageHotkeyRow.reset.Click(
+                [this](const auto&, const auto&) {
+                    CommitGeneral([](GeneralSettings& settings) {
+                        settings.pageNavigationPreviousModifiers = 0;
+                        settings.pageNavigationPreviousVirtualKey = VK_PRIOR;
+                    });
+                });
+        nextPageHotkeyRow.resetToken = nextPageHotkeyRow.reset.Click(
+            [this](const auto&, const auto&) {
+                CommitGeneral([](GeneralSettings& settings) {
+                    settings.pageNavigationNextModifiers = 0;
+                    settings.pageNavigationNextVirtualKey = VK_NEXT;
+                });
+            });
+        desktopPassthroughHotkeyRow.resetToken =
+            desktopPassthroughHotkeyRow.reset.Click(
+                [this](const auto&, const auto&) {
+                    CommitGeneral([](GeneralSettings& settings) {
+                        settings.desktopPassthroughHotkeyModifiers =
+                            MOD_CONTROL | MOD_ALT;
+                        settings.desktopPassthroughHotkeyVirtualKey =
+                            VK_OEM_3;
+                    });
+                });
+        floatingDockHotkeyRow.resetToken =
+            floatingDockHotkeyRow.reset.Click(
+                [this](const auto&, const auto&) {
+                    CommitDock([](DockSettings& settings) {
+                        settings.floatingHotkeyModifiers =
+                            MOD_CONTROL | MOD_ALT;
+                        settings.floatingHotkeyVirtualKey = 'D';
+                    });
+                });
     }
 
     void BindHotkeyRecorder(
@@ -317,7 +455,8 @@ struct GeneralPagePresenter::Impl
                     !actions.probeHotkey)
                 {
                     completion(false,
-                        L("app.settings.hotkey_conflict_system"));
+                        L("app.settings.hotkey_status_in_use") + L" — " +
+                            L("app.settings.hotkey_conflict_system"));
                     return;
                 }
                 actions.probeHotkey(target, chord, expectedGeneration,
@@ -375,6 +514,7 @@ struct GeneralPagePresenter::Impl
 
     void PatchGeneral(const GeneralSettings& settings)
     {
+        autoStartToggle.IsOn(settings.autoStartEnabled);
         softwareDesktopToggle.IsOn(settings.softwareDesktopEnabled);
         doubleClickHideToggle.IsOn(settings.doubleClickHideDesktop);
         pageNavigationToggle.IsOn(
@@ -410,10 +550,14 @@ struct GeneralPagePresenter::Impl
             settings.floatingHotkeyVirtualKey), generation);
     }
 
-    void SetRecorderEnabled(HotkeyRecorder& recorder, bool enabled)
+    void SetRecorderEnabled(
+        HotkeyRecorder& recorder,
+        bool enabled,
+        bool localDesktopHotkey = false)
     {
         if (!enabled && recorder.IsCapturing())
             recorder.CancelCapture();
+        recorder.SetValidationContext(enabled, localDesktopHotkey);
         recorder.Root().IsEnabled(enabled);
     }
 
@@ -421,14 +565,23 @@ struct GeneralPagePresenter::Impl
     {
         SetRecorderEnabled(
             quickNavigationHotkey, quickNavigationToggle.IsOn());
+        quickNavigationHotkeyRow.row.SetEnabled(
+            quickNavigationToggle.IsOn());
         SetRecorderEnabled(
-            previousPageHotkey, pageNavigationToggle.IsOn());
+            previousPageHotkey, pageNavigationToggle.IsOn(), true);
         SetRecorderEnabled(
-            nextPageHotkey, pageNavigationToggle.IsOn());
+            nextPageHotkey, pageNavigationToggle.IsOn(), true);
+        previousPageHotkeyRow.row.SetEnabled(pageNavigationToggle.IsOn());
+        nextPageHotkeyRow.row.SetEnabled(pageNavigationToggle.IsOn());
         SetRecorderEnabled(desktopPassthroughHotkey,
             desktopPassthroughToggle.IsOn());
+        desktopPassthroughHotkeyRow.row.SetEnabled(
+            desktopPassthroughToggle.IsOn());
         floatingDockToggle.IsEnabled(dockEnabled);
+        floatingDockToggleRow.SetEnabled(dockEnabled);
         SetRecorderEnabled(floatingDockHotkey,
+            dockEnabled && floatingDockToggle.IsOn());
+        floatingDockHotkeyRow.row.SetEnabled(
             dockEnabled && floatingDockToggle.IsOn());
     }
 
@@ -478,6 +631,16 @@ struct GeneralPagePresenter::Impl
         text.conflict = L("app.settings.hotkey_status_conflict");
         text.cleared = L("app.settings.hotkey_not_set");
         text.none = L("app.settings.hotkey_not_set");
+        text.disabled = L("app.settings.hotkey_status_disabled");
+        text.captureActive = L("app.settings.hotkey_capture_active");
+        text.notSetWarning = L("app.settings.hotkey_not_set_warning");
+        text.availableStatus = L("app.settings.hotkey_status_available");
+        text.inUseStatus = L("app.settings.hotkey_status_in_use");
+        text.noModifierStatus =
+            L("app.settings.hotkey_status_no_modifier");
+        text.noModifierWarning =
+            L("app.settings.hotkey_no_modifier_warning");
+        text.systemConflict = L("app.settings.hotkey_conflict_system");
         return text;
     }
 
@@ -493,7 +656,7 @@ struct GeneralPagePresenter::Impl
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
-        SetCardText(startupCard, "app.settings.software_desktop");
+        SetCardText(startupCard, "app.settings.general_settings");
         SetCardText(languageCard, "app.settings.language");
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
@@ -503,29 +666,49 @@ struct GeneralPagePresenter::Impl
         SetCardText(floatingDockCard,
             "app.dock.floating_shortcut_mode");
 
-        softwareDesktopToggle.Header(winrt::box_value(
-            L("app.settings.software_desktop")));
-        doubleClickHideToggle.Header(winrt::box_value(
-            L("app.settings.double_click_hide")));
-        languageCombo.Header(winrt::box_value(L("app.settings.language")));
-        quickNavigationToggle.Header(winrt::box_value(
-            L("app.settings.enable_global_navigation")));
-        pageNavigationToggle.Header(winrt::box_value(
-            L("app.settings.page_navigation_keyboard")));
-        desktopPassthroughToggle.Header(winrt::box_value(
-            L("app.settings.desktop_passthrough_hotkey")));
-        desktopPassthroughHint.Text(
+        autoStartRow.SetText(L("app.settings.auto_start"));
+        softwareDesktopRow.SetText(L("app.settings.software_desktop"));
+        doubleClickHideRow.SetText(L("app.settings.double_click_hide"));
+        languageRow.SetText(L("app.settings.language"));
+        quickNavigationToggleRow.SetText(
+            L("app.settings.enable_global_navigation"));
+        quickNavigationHotkeyRow.row.SetText(
+            L("app.settings.hotkey"),
+            L("app.settings.hotkey_capture_help"));
+        pageNavigationToggleRow.SetText(
+            L("app.settings.page_navigation_keyboard"));
+        previousPageHotkeyRow.row.SetText(
+            L("app.settings.page_navigation_previous"),
+            L("app.settings.hotkey_capture_help"));
+        nextPageHotkeyRow.row.SetText(
+            L("app.settings.page_navigation_next"),
+            L("app.settings.hotkey_capture_help"));
+        desktopPassthroughToggleRow.SetText(
+            L("app.settings.desktop_passthrough_hotkey"),
             L("app.settings.desktop_passthrough_hotkey_hint"));
-        floatingDockToggle.Header(winrt::box_value(
-            L("app.dock.floating_shortcut_mode")));
-        floatingDockHint.Text(L("app.dock.floating_shortcut_hint"));
+        desktopPassthroughHotkeyRow.row.SetText(
+            L("app.settings.hotkey"),
+            L("app.settings.hotkey_capture_help"));
+        floatingDockToggleRow.SetText(
+            L("app.dock.floating_shortcut_mode"),
+            L("app.dock.floating_shortcut_hint"));
+        floatingDockHotkeyRow.row.SetText(
+            L("app.settings.hotkey"),
+            L("app.settings.hotkey_capture_help"));
 
-        quickNavigationHotkeyLabel.Text(L("app.settings.hotkey"));
-        previousPageHotkeyLabel.Text(
-            L("app.settings.page_navigation_previous"));
-        nextPageHotkeyLabel.Text(L("app.settings.page_navigation_next"));
-        desktopPassthroughHotkeyLabel.Text(L("app.settings.hotkey"));
-        floatingDockHotkeyLabel.Text(L("app.settings.hotkey"));
+        const auto restoreDefault = winrt::box_value(
+            L("app.settings.restore_default"));
+        for (const auto& button : {
+                 quickNavigationHotkeyRow.reset,
+                 previousPageHotkeyRow.reset,
+                 nextPageHotkeyRow.reset,
+                 desktopPassthroughHotkeyRow.reset,
+                 floatingDockHotkeyRow.reset})
+        {
+            button.Content(restoreDefault);
+            muxa::AutomationProperties::SetName(
+                button, L("app.settings.restore_default"));
+        }
 
         quickNavigationHotkey.SetText(HotkeyText(
             L("app.settings.quick_navigation") + L" — " +
@@ -539,20 +722,61 @@ struct GeneralPagePresenter::Impl
         floatingDockHotkey.SetText(HotkeyText(
             L("app.dock.floating_shortcut_mode")));
 
-        for (const auto& control : {
-                 softwareDesktopToggle, doubleClickHideToggle,
-                 quickNavigationToggle, pageNavigationToggle,
-                 desktopPassthroughToggle, floatingDockToggle})
-        {
-            muxa::AutomationProperties::SetName(
-                control, winrt::unbox_value_or<winrt::hstring>(
-                    control.Header(), winrt::hstring{}));
-        }
+        muxa::AutomationProperties::SetName(
+            autoStartToggle, autoStartRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            softwareDesktopToggle, softwareDesktopRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            doubleClickHideToggle, doubleClickHideRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            quickNavigationToggle, quickNavigationToggleRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            pageNavigationToggle, pageNavigationToggleRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            desktopPassthroughToggle,
+            desktopPassthroughToggleRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            floatingDockToggle, floatingDockToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
             languageCombo, L("app.settings.language"));
 
+        const auto openStartupSettings = winrt::box_value(
+            L("app.settings.auto_start_open_windows_settings"));
+        openPortableStartupSettings.Content(openStartupSettings);
+        openInstalledStartupSettings.Content(openStartupSettings);
+        muxa::AutomationProperties::SetName(openPortableStartupSettings,
+            L("app.settings.auto_start_open_windows_settings"));
+        muxa::AutomationProperties::SetName(openInstalledStartupSettings,
+            L("app.settings.auto_start_open_windows_settings"));
+
         RebuildLanguageOptions();
+        RefreshStartupConflict();
         updatingControls = wasUpdating;
+    }
+
+    void RefreshStartupConflict()
+    {
+        GeneralStartupConflict conflict;
+        if (actions.queryStartupConflict)
+            conflict = actions.queryStartupConflict();
+
+        portableStartupConflict.IsOpen(
+            conflict.kind ==
+                GeneralStartupConflictKind::PortableVersionOwnsStartup);
+        installedStartupConflict.IsOpen(
+            conflict.kind ==
+                GeneralStartupConflictKind::InstalledVersionOwnsStartup);
+
+        std::wstring portableMessage =
+            L("app.settings.auto_start_other_version");
+        if (const auto marker = portableMessage.find(L"{0}");
+            marker != std::wstring::npos)
+        {
+            portableMessage.replace(marker, 3, conflict.ownerCommand);
+        }
+        portableStartupConflict.Message(portableMessage);
+        installedStartupConflict.Message(
+            L("app.settings.auto_start_installed_version_active"));
     }
 
     void ApplySnapshot(const SettingsSnapshot& snapshot)
@@ -560,12 +784,13 @@ struct GeneralPagePresenter::Impl
         if (closed) return;
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
+        const bool generalChanged = newGeneration ||
+            snapshot.domainRevisions.general != generalRevision;
         generation = snapshot.generation;
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
-        if (newGeneration ||
-            snapshot.domainRevisions.general != generalRevision)
+        if (generalChanged)
         {
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
@@ -584,6 +809,8 @@ struct GeneralPagePresenter::Impl
         }
         hasSnapshot = true;
         UpdateDependentEnabledStates();
+        if (generalChanged)
+            RefreshStartupConflict();
         updatingControls = wasUpdating;
     }
 
@@ -614,6 +841,7 @@ struct GeneralPagePresenter::Impl
         closed = true;
         try
         {
+            autoStartToggle.Toggled(autoStartToken);
             softwareDesktopToggle.Toggled(softwareDesktopToken);
             doubleClickHideToggle.Toggled(doubleClickHideToken);
             languageCombo.SelectionChanged(languageSelectionToken);
@@ -621,6 +849,19 @@ struct GeneralPagePresenter::Impl
             pageNavigationToggle.Toggled(pageNavigationToken);
             desktopPassthroughToggle.Toggled(desktopPassthroughToken);
             floatingDockToggle.Toggled(floatingDockToken);
+            quickNavigationHotkeyRow.reset.Click(
+                quickNavigationHotkeyRow.resetToken);
+            previousPageHotkeyRow.reset.Click(
+                previousPageHotkeyRow.resetToken);
+            nextPageHotkeyRow.reset.Click(nextPageHotkeyRow.resetToken);
+            desktopPassthroughHotkeyRow.reset.Click(
+                desktopPassthroughHotkeyRow.resetToken);
+            floatingDockHotkeyRow.reset.Click(
+                floatingDockHotkeyRow.resetToken);
+            openPortableStartupSettings.Click(
+                openPortableStartupSettingsToken);
+            openInstalledStartupSettings.Click(
+                openInstalledStartupSettingsToken);
         }
         catch (...)
         {
@@ -659,6 +900,11 @@ muxc::StackPanel GeneralPagePresenter::Root() const noexcept
     return impl_ ? impl_->root : nullptr;
 }
 
+muxc::StackPanel GeneralPagePresenter::DockShortcutContent() const noexcept
+{
+    return impl_ ? impl_->dockShortcutRoot : nullptr;
+}
+
 void GeneralPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
     if (impl_) impl_->ApplySnapshot(snapshot);
@@ -680,25 +926,30 @@ void GeneralPagePresenter::RegisterFocusTargets(
             registrar(std::string(id), element);
     };
 
+    registerAliases(impl_->autoStartToggle,
+        {"general.startup", "general.autoStart"});
     registerAliases(impl_->softwareDesktopToggle,
-        {"general.startup", "general.softwareDesktop"});
+        {"general.softwareDesktop"});
     registerAliases(impl_->languageCombo, {"general.language"});
     registerAliases(impl_->quickNavigationToggle,
-        {"general.hotkeys", "general.quickNavigation.enabled"});
+        {"general.hotkeys", "general.quickNavigation",
+            "general.quickNavigation.enabled"});
     registerAliases(impl_->quickNavigationHotkey.FocusTarget(),
         {"general.quickNavigation.hotkey"});
     registerAliases(impl_->pageNavigationToggle,
-        {"general.navigation", "general.pageNavigation.enabled"});
+        {"general.navigation", "general.pageNavigation",
+            "general.pageNavigation.enabled"});
     registerAliases(impl_->previousPageHotkey.FocusTarget(),
         {"general.pageNavigation.previous"});
     registerAliases(impl_->nextPageHotkey.FocusTarget(),
         {"general.pageNavigation.next"});
     registerAliases(impl_->desktopPassthroughToggle,
-        {"general.desktopPassthrough.enabled"});
+        {"general.desktopPassthrough",
+            "general.desktopPassthrough.enabled"});
     registerAliases(impl_->desktopPassthroughHotkey.FocusTarget(),
         {"general.desktopPassthrough.hotkey"});
     registerAliases(impl_->floatingDockToggle,
-        {"general.floatingDock.enabled"});
+        {"general.floatingDock", "general.floatingDock.enabled"});
     registerAliases(impl_->floatingDockHotkey.FocusTarget(),
         {"general.floatingDock.hotkey"});
     registerAliases(impl_->doubleClickHideToggle,
@@ -707,7 +958,18 @@ void GeneralPagePresenter::RegisterFocusTargets(
 
 void GeneralPagePresenter::Activate() noexcept
 {
-    if (impl_ && !impl_->closed) impl_->active = true;
+    if (!impl_ || impl_->closed) return;
+    impl_->active = true;
+    try
+    {
+        // Snapshots are applied before the route presenter is activated.
+        // Re-probe every saved chord now that the generation gate is live.
+        impl_->UpdateDependentEnabledStates();
+        impl_->RefreshStartupConflict();
+    }
+    catch (...)
+    {
+    }
 }
 
 void GeneralPagePresenter::Deactivate() noexcept

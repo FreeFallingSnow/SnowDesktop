@@ -96,19 +96,31 @@ void SettingsWindow::Shutdown() noexcept
 
 bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 {
-    return impl_->EnsureInitialized() && impl_->host->Open(route);
+    snowdesktop::SettingsRoute canonical = route;
+    if (canonical.page == snowdesktop::SettingsPage::Home)
+    {
+        canonical.page = snowdesktop::SettingsPage::General;
+    }
+    else if (canonical.page ==
+        snowdesktop::SettingsPage::DockAndTaskbar)
+    {
+        canonical.page = canonical.focusId.starts_with("taskbar.")
+            ? snowdesktop::SettingsPage::Personalization
+            : snowdesktop::SettingsPage::General;
+    }
+    return impl_->EnsureInitialized() && impl_->host->Open(canonical);
 }
 
 bool SettingsWindow::Show()
 {
     return Open(snowdesktop::SettingsRoute::ForPage(
-        snowdesktop::SettingsPage::Home));
+        snowdesktop::SettingsPage::General));
 }
 
 bool SettingsWindow::ShowDockSettings()
 {
     return Open(snowdesktop::SettingsRoute::ForPage(
-        snowdesktop::SettingsPage::DockAndTaskbar));
+        snowdesktop::SettingsPage::General, "dock.enable"));
 }
 
 bool SettingsWindow::ShowAppearanceSettings()
@@ -179,6 +191,13 @@ void SettingsWindow::ApplyLanguageChange()
 {
     if (impl_->host)
         impl_->host->ApplyLanguageChange();
+}
+
+bool SettingsWindow::PublishHomeAboutStatus(
+    snowdesktop::winui::HomeAboutStatusPatch patch)
+{
+    return impl_->host &&
+        impl_->host->PublishHomeAboutStatus(std::move(patch));
 }
 
 bool SettingsWindow::PreTranslateMessage(MSG* message) noexcept

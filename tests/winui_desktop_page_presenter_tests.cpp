@@ -54,12 +54,27 @@ void TestPresenterContract(const std::filesystem::path& root)
                 std::string::npos &&
             source.find("PointerReleased") != std::string::npos &&
             source.find("VirtualKey::Enter") != std::string::npos &&
-            source.find("LostFocus") != std::string::npos,
-        "continuous controls preview and commit at interaction boundaries");
+            source.find("LostFocus") != std::string::npos &&
+            source.find("mux::DispatcherTimer") != std::string::npos &&
+            source.find("std::chrono::milliseconds(650)") !=
+                std::string::npos,
+        "continuous controls preview and commit on release, focus, Enter, or keyboard idle");
+    Check(source.find("iconSpacing->SetUnit(L\"%\")") !=
+                std::string::npos &&
+            source.find("itemFontSize->SetUnit(L\"cu\")") !=
+                std::string::npos &&
+            source.find("highlightAngle->SetUnit(L\"°\")") !=
+                std::string::npos &&
+            source.find("outlineWidth->SetUnit(L\"px\")") !=
+                std::string::npos,
+        "legacy percent, coordinate-unit, degree, and pixel suffixes remain visible");
     Check(source.find("SettingsUpdateMode::Draft") != std::string::npos &&
             source.find("actions.commitCategory(generation)") !=
                 std::string::npos,
         "category edits remain drafts until explicit Apply");
+    Check(source.find("UpdateCategory(SettingsUpdateMode::Commit") !=
+                std::string::npos,
+        "restoring category defaults saves immediately like the legacy page");
 
     for (const char* field : {
              "iconSpacingScale", "itemIconSizeScale", "itemFontSizeCu",
@@ -82,6 +97,29 @@ void TestPresenterContract(const std::filesystem::path& root)
                 std::string::npos &&
             source.find("ColorChanged(colorToken)") != std::string::npos,
         "static and dynamic C++/WinRT event handlers are unregistered");
+    Check(source.find("MakeDesktopNumber(50.0, 200.0, 1.0, 0") !=
+                std::string::npos &&
+            source.find("kMinimumItemIconSizeScale * 100.0") !=
+                std::string::npos &&
+            source.find("MakeBeautifyNumber(-45.0, 45.0, 1.0, 0") !=
+                std::string::npos &&
+            source.find("value.textureHighlightAngle * 45.0") !=
+                std::string::npos,
+        "legacy percentage and degree units are preserved in WinUI editors");
+    Check(source.find("filterDetails.Visibility(filterEnabled.IsOn()") !=
+                std::string::npos &&
+            source.find("outlineDetails.Visibility(outlineEnabled.IsOn()") !=
+                std::string::npos &&
+            source.find("mux::Visibility::Collapsed") !=
+                std::string::npos,
+        "disabled filter and outline children collapse like the legacy page");
+    Check(source.find("row->nameActions.Children().Append(row->remove)") !=
+                std::string::npos &&
+            source.find("newCategoryNameActions.Children().Append(addCategory)") !=
+                std::string::npos &&
+            source.find("categoryActionsRow.Initialize(categoryActions)") !=
+                std::string::npos,
+        "category name/delete, add, and save actions retain legacy row alignment");
 }
 }
 

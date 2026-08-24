@@ -32,7 +32,7 @@ enum class SettingsPage : std::uint8_t
  */
 struct SettingsRoute
 {
-    SettingsPage page = SettingsPage::Home;
+    SettingsPage page = SettingsPage::General;
     std::wstring widgetInstanceId;
     std::string focusId;
 

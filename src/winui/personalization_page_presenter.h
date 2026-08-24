@@ -17,6 +17,7 @@ namespace snowdesktop::winui
 struct PersonalizationPageActions
 {
     using Edit = std::function<void(PersonalizationSettings&)>;
+    using GeneralEdit = std::function<void(GeneralSettings&)>;
 
     /**
      * Applies an edit to the controller's latest PersonalizationSettings.
@@ -26,6 +27,11 @@ struct PersonalizationPageActions
         std::uint64_t generation,
         SettingsUpdateMode mode,
         Edit edit)> update;
+    /** Theme choices stored in GeneralSettings by the legacy surface. */
+    std::function<void(
+        std::uint64_t generation,
+        SettingsUpdateMode mode,
+        GeneralEdit edit)> updateGeneral;
 };
 
 /**

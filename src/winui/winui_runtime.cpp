@@ -14,6 +14,7 @@ namespace snowdesktop::winui
 {
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxh = winrt::Microsoft::UI::Xaml::Hosting;
+namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace mud = winrt::Microsoft::UI::Dispatching;
 
 namespace
@@ -63,6 +64,7 @@ struct WinUiRuntime::Impl
     bool initialized = false;
     bool ownsDispatcherQueue = false;
     bool addedControlParentStyle = false;
+    bool systemBackdropEnabled = false;
     HWND parentWindow = nullptr;
     HWND islandWindow = nullptr;
     HWND lastFocusedWindow = nullptr;
@@ -293,6 +295,18 @@ void WinUiRuntime::Detach() noexcept
 
     if (impl_->xamlSource)
     {
+        // Clear the backdrop while the Island still owns a valid site. This is
+        // deliberately separate from the remaining best-effort cleanup so a
+        // platform failure here cannot skip Content(nullptr) or Close().
+        try
+        {
+            impl_->xamlSource.SystemBackdrop(muxm::SystemBackdrop{nullptr});
+        }
+        catch (...)
+        {
+        }
+        impl_->systemBackdropEnabled = false;
+
         try
         {
             if (impl_->takeFocusRequestedToken.value != 0)
@@ -323,6 +337,56 @@ void WinUiRuntime::Detach() noexcept
     impl_->addedControlParentStyle = false;
     impl_->originalParentExStyle = 0;
     impl_->parentWindow = nullptr;
+}
+
+bool WinUiRuntime::SetSystemBackdropEnabled(bool enabled) noexcept
+{
+    if (!impl_->initialized || !impl_->OnOwnerThread() ||
+        !impl_->xamlSource || !impl_->islandWindow)
+    {
+        impl_->SetError(L"Set XAML Island system backdrop before Attach",
+            impl_->initialized && !impl_->OnOwnerThread()
+                ? RPC_E_WRONG_THREAD
+                : E_UNEXPECTED);
+        return false;
+    }
+    if (impl_->systemBackdropEnabled == enabled)
+        return true;
+
+    try
+    {
+        if (enabled)
+            impl_->xamlSource.SystemBackdrop(muxm::MicaBackdrop{});
+        else
+            impl_->xamlSource.SystemBackdrop(
+                muxm::SystemBackdrop{nullptr});
+        impl_->systemBackdropEnabled = enabled;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(L"Set XAML Island system backdrop", error.code());
+    }
+    catch (...)
+    {
+        impl_->SetError(L"Set XAML Island system backdrop", E_FAIL);
+    }
+
+    // A failed enable is optional UI decoration. Restore the no-backdrop
+    // state best-effort so the host can safely expose its solid fallback.
+    if (enabled)
+    {
+        try
+        {
+            impl_->xamlSource.SystemBackdrop(
+                muxm::SystemBackdrop{nullptr});
+        }
+        catch (...)
+        {
+        }
+    }
+    impl_->systemBackdropEnabled = false;
+    return false;
 }
 
 void WinUiRuntime::ResizeToClient() noexcept

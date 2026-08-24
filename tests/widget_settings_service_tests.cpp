@@ -58,6 +58,8 @@ public:
     std::map<std::string, WidgetSettingOpaqueState, std::less<>> opaque;
     std::vector<WidgetSettingOrdinaryWrite> lastWrites;
     std::vector<std::vector<WidgetSettingOrdinaryWrite>> transactions;
+    WidgetHostAppearancePatch lastAppearancePatch;
+    std::vector<WidgetHostAppearancePatch> appearanceTransactions;
     std::vector<WidgetSettingSearchRequest> searches;
     std::vector<WidgetSettingSearchRequest> cancellations;
     std::vector<SearchCompletion> searchCallbacks;
@@ -139,7 +141,16 @@ public:
 
     WidgetSettingsBackendResult ApplyOrdinaryTransaction(
         const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes) override
+    {
+        return ApplyHostAppearanceTransaction(widget, guard, {}, writes);
+    }
+
+    WidgetSettingsBackendResult ApplyHostAppearanceTransaction(
+        const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard&,
+        const WidgetHostAppearancePatch& appearance,
         const std::vector<WidgetSettingOrdinaryWrite>& writes) override
     {
         ++ordinaryCalls;
@@ -147,7 +158,37 @@ public:
         lastOwnerPackage = widget.packageId;
         lastWrites = writes;
         transactions.push_back(writes);
+        lastAppearancePatch = appearance;
+        appearanceTransactions.push_back(appearance);
         if (!mutationResult.Succeeded()) return mutationResult;
+        if (appearance.followPersonalization)
+            descriptor.hostAppearance.followPersonalization =
+                *appearance.followPersonalization;
+        if (appearance.presetId)
+            descriptor.hostAppearance.presetId = *appearance.presetId;
+        if (appearance.backgroundColor)
+            descriptor.hostAppearance.backgroundColor =
+                *appearance.backgroundColor;
+        if (appearance.borderColor)
+            descriptor.hostAppearance.borderColor = *appearance.borderColor;
+        if (appearance.backgroundOpacity)
+            descriptor.hostAppearance.backgroundOpacity =
+                *appearance.backgroundOpacity;
+        if (appearance.borderOpacity)
+            descriptor.hostAppearance.borderOpacity =
+                *appearance.borderOpacity;
+        if (appearance.gradientEndOpacity)
+            descriptor.hostAppearance.gradientEndOpacity =
+                *appearance.gradientEndOpacity;
+        if (appearance.glassEnabled)
+            descriptor.hostAppearance.glassEnabled =
+                *appearance.glassEnabled;
+        if (appearance.acrylicEnabled)
+            descriptor.hostAppearance.acrylicEnabled =
+                *appearance.acrylicEnabled;
+        if (appearance.contentTheme)
+            descriptor.hostAppearance.contentTheme =
+                *appearance.contentTheme;
         for (const auto& write : writes)
         {
             ordinary.insert_or_assign(write.key, write.value);
@@ -367,6 +408,7 @@ FakeBackend MakeBackend()
     preset.values["scale"] = MakeWidgetSettingNumber(0.5);
     preset.values["feeds"] =
         MakeWidgetSettingStringArray({ "news" });
+    preset.hostAppearanceValues["bg"] = "1122867";
     backend.descriptor.scriptPresets.push_back(preset);
     return backend;
 }
@@ -439,6 +481,13 @@ int main()
 
     WidgetSettingMutationGuard guard =
         WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot);
+    WidgetHostAppearancePatch unavailableAppearance;
+    unavailableAppearance.backgroundColor = 0x123456;
+    Check(service.UpdateHostAppearance(
+                guard, unavailableAppearance).status ==
+                WidgetSettingMutationStatus::Unavailable &&
+            backend.appearanceTransactions.empty(),
+        "direct host appearance editing remains unavailable when customStyle is disabled");
     WidgetSettingMutationResult range = service.SetOrdinary(
         guard, "scale", MakeWidgetSettingNumber(1.62));
     Check(range.status == WidgetSettingMutationStatus::Applied &&
@@ -495,8 +544,11 @@ int main()
             backend.transactions.size() == transactionsBeforePreset + 1 &&
             backend.lastWrites.size() == 2 &&
             backend.lastWrites[0].typedStorage &&
-            backend.lastWrites[1].typedStorage,
-        "preset application is one transaction and preserves typed values");
+            backend.lastWrites[1].typedStorage &&
+            backend.lastAppearancePatch.presetId == "compact" &&
+            backend.lastAppearancePatch.backgroundColor == 1122867 &&
+            backend.descriptor.hostAppearance.presetId == "compact",
+        "preset selection is one transaction, persists __preset and legacy host values immediately, and preserves typed values");
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
@@ -915,6 +967,68 @@ int main()
             Find(*previewSnapshot, "appSearch")->searchQuery == "calc" &&
             Find(*previewSnapshot, "appSearch")->currentValue.string.empty(),
         "preview keeps query edits in the session, can search, and cannot commit a result");
+
+    FakeBackend appearanceBackend = MakeBackend();
+    appearanceBackend.descriptor.customStyle = true;
+    appearanceBackend.descriptor.hostAppearance = {
+        false, "__custom", 0x102030, 0xE0D0C0,
+        0.25f, 0.5f, 0.75f, false, false, 0 };
+    appearanceBackend.descriptor.scriptPresets[0]
+        .hostAppearanceValues = {
+            { "bg", "1193046" },
+            { "alpha", "0.625" },
+            { "glassEnabled", "1" },
+            { "glassBlurRadius", "18.5" },
+            { "shadowBlur", "20" },
+            { "followPersonalization", "1" },
+            { "__contentTheme", "1" },
+            { "__preset", "must-not-win" },
+        };
+    // Opaque entries authored in a preset are ignored without preventing the
+    // ordinary and host appearance values from applying.
+    appearanceBackend.descriptor.scriptPresets[0].values["token"] =
+        MakeWidgetSettingString("must-not-write");
+    WidgetSettingsService appearanceService(appearanceBackend);
+    auto appearanceLoad = appearanceService.Load(L"widget-1");
+    Check(appearanceLoad.Succeeded() && appearanceLoad.snapshot &&
+            appearanceLoad.snapshot->hostAppearance ==
+                appearanceBackend.descriptor.hostAppearance,
+        "snapshots carry the host-owned component appearance state");
+    auto appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceLoad.snapshot);
+    WidgetHostAppearancePatch livePatch;
+    livePatch.backgroundColor = 0xABCDEF;
+    livePatch.backgroundOpacity = 0.4f;
+    const auto liveAppearance = appearanceService.UpdateHostAppearance(
+        appearanceGuard, livePatch);
+    auto appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(liveAppearance.status == WidgetSettingMutationStatus::Applied &&
+            appearanceSnapshot &&
+            appearanceSnapshot->hostAppearance.backgroundColor ==
+                0xABCDEF &&
+            appearanceSnapshot->hostAppearance.backgroundOpacity == 0.4f &&
+            appearanceBackend.lastAppearancePatch == livePatch,
+        "live custom appearance updates round-trip through a typed snapshot");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    const auto appearancePreset = appearanceService.ApplyPreset(
+        appearanceGuard, "compact");
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(appearancePreset.status == WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch.presetId == "compact" &&
+            appearanceBackend.lastAppearancePatch.backgroundColor ==
+                1193046 &&
+            appearanceBackend.lastAppearancePatch.backgroundOpacity ==
+                0.625f &&
+            appearanceBackend.lastAppearancePatch.glassEnabled == true &&
+            appearanceBackend.lastAppearancePatch.acrylicEnabled == false &&
+            !appearanceBackend.lastAppearancePatch.followPersonalization &&
+            !appearanceBackend.lastAppearancePatch.contentTheme &&
+            appearanceBackend.lastAppearancePatch.clearContentTheme &&
+            !appearanceBackend.ordinary.contains("token") &&
+            appearanceSnapshot &&
+            appearanceSnapshot->hostAppearance.presetId == "compact",
+        "component themes atomically persist __preset, editable host appearance, and ordinary values while skipping opaque and host-shared or retired entries");
 
     FakeBackend utf8Backend = MakeBackend();
     WidgetSettingsService utf8Service(utf8Backend);

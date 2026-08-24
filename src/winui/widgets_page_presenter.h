@@ -4,6 +4,7 @@
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -56,7 +57,68 @@ struct WidgetPermissionSnapshot
     std::wstring description;
     WidgetPermissionRisk risk = WidgetPermissionRisk::Unknown;
     bool required = false;
+    bool requiresConsent = false;
     bool granted = false;
+};
+
+struct WidgetPackageValidationIssueSnapshot
+{
+    std::wstring code;
+    std::wstring message;
+};
+
+/** One invalid source/version retained by the package manager. */
+struct InvalidWidgetPackageSourceSnapshot
+{
+    std::wstring sourceId;
+    std::wstring sourceName;
+    std::wstring version;
+    std::wstring rootName;
+    bool builtIn = false;
+    bool development = false;
+    bool selected = false;
+    std::vector<WidgetPackageValidationIssueSnapshot> issues;
+};
+
+/** One cached Steam subscription which failed package installation. */
+struct WidgetWorkshopInstallFailureSnapshot
+{
+    std::wstring sourceId;
+    std::wstring externalItemId;
+    std::wstring version;
+    std::wstring error;
+};
+
+enum class WidgetInstallConfirmationReasonKind : std::uint8_t
+{
+    NewPermission,
+    NewWebsite,
+    SourceChange,
+    Other,
+};
+
+/** One independently rendered reason for an installation confirmation. */
+struct WidgetInstallConfirmationReasonSnapshot
+{
+    WidgetInstallConfirmationReasonKind kind =
+        WidgetInstallConfirmationReasonKind::Other;
+    /** Permission ID or network domain; empty for source changes. */
+    std::wstring value;
+    /** Present for known permission IDs so the Shell localizes at render time. */
+    std::string valueLabelKey;
+};
+
+/** Structured package identity and access changes reviewed by the Shell. */
+struct WidgetInstallConfirmationRequest
+{
+    std::wstring packageId;
+    std::wstring packageName;
+    std::wstring version;
+    std::wstring sourceId;
+    std::wstring externalItemId;
+    std::wstring sha256;
+    std::vector<WidgetInstallConfirmationReasonSnapshot> reasons;
+    std::wstring technicalDetails;
 };
 
 struct WidgetInstanceSnapshot
@@ -64,6 +126,89 @@ struct WidgetInstanceSnapshot
     std::wstring instanceId;
     std::wstring displayName;
     bool settingsAvailable = false;
+};
+
+/** One managed package version kept by the package manager for rollback. */
+struct WidgetRestorableVersionSnapshot
+{
+    std::wstring version;
+};
+
+struct WidgetRuntimeLogSnapshot
+{
+    std::wstring level;
+    std::wstring message;
+};
+
+struct WidgetRuntimeErrorSnapshot
+{
+    std::wstring key;
+    std::wstring message;
+};
+
+struct WidgetRuntimeViewNodeSnapshot
+{
+    std::wstring type;
+    std::wstring key;
+    std::wstring debugName;
+    std::wstring testId;
+    std::size_t depth = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+};
+
+/** Runtime-only diagnostics exposed exclusively by gated native pages. */
+struct WidgetRuntimeDiagnosticSnapshot
+{
+    std::wstring instanceId;
+    std::wstring displayName;
+    std::wstring packageId;
+    std::wstring scriptPath;
+    bool valid = false;
+    bool hasManifest = false;
+    std::wstring lastError;
+    std::size_t memoryBytes = 0;
+    std::size_t memoryLimit = 0;
+    double lastCallbackMs = 0.0;
+    bool executionQuotaExceeded = false;
+    bool memoryQuotaExceeded = false;
+    bool circuitOpen = false;
+    std::vector<std::wstring> permissions;
+    std::vector<WidgetRuntimeLogSnapshot> recentLogs;
+    std::wstring auxiliarySurface;
+    std::vector<WidgetRuntimeViewNodeSnapshot> desktopViewNodes;
+    std::vector<WidgetRuntimeViewNodeSnapshot> auxiliaryViewNodes;
+};
+
+enum class WidgetAgentSkillInstallState : std::uint8_t
+{
+    Unavailable,
+    NotInstalled,
+    UpdateAvailable,
+    Current,
+};
+
+enum class WidgetAgentSkillTargetKind : std::uint8_t
+{
+    Shared,
+    Codex,
+    ClaudeCode,
+    Cursor,
+    GitHubCopilot,
+    GeminiCli,
+};
+
+struct WidgetAgentSkillTargetSnapshot
+{
+    WidgetAgentSkillTargetKind kind = WidgetAgentSkillTargetKind::Shared;
+    std::string id;
+    std::wstring targetPath;
+    WidgetAgentSkillInstallState state =
+        WidgetAgentSkillInstallState::Unavailable;
+    bool selected = false;
+    bool installed = false;
 };
 
 /** One installed package, including its active source and desktop instances. */
@@ -76,8 +221,14 @@ struct InstalledWidgetPackageSnapshot
     std::wstring author;
     std::wstring sourceId;
     std::wstring sourceName;
+    std::wstring sourceExternalItemId;
+    /** Provider item identity used to open the package's Workshop page. */
+    std::wstring workshopExternalItemId;
+    /** Exact identity reviewed by the permission editor. */
+    std::wstring permissionScopeFingerprint;
     bool builtIn = false;
     bool development = false;
+    bool valid = true;
     bool enabled = true;
     bool active = true;
     bool canEnable = true;
@@ -85,12 +236,52 @@ struct InstalledWidgetPackageSnapshot
     bool canAddToDesktop = true;
     bool canUseDevelopmentOverride = false;
     bool developmentOverrideActive = false;
+    /** Optional legacy actions are hidden until the host publishes support. */
+    bool canCreateDevelopmentProject = false;
+    bool canInstallDevelopmentSnapshot = false;
+    bool canPublishDevelopmentPackage = false;
+    std::vector<WidgetRestorableVersionSnapshot> restorableVersions;
     WidgetPackagePermissionState permissionState =
         WidgetPackagePermissionState::LegacyImplicit;
+    bool canRevokePermissions = false;
     std::vector<WidgetPermissionSnapshot> permissions;
     std::vector<std::wstring> declaredNetworkDomains;
     std::vector<std::wstring> grantedNetworkDomains;
+    std::vector<InvalidWidgetPackageSourceSnapshot> invalidSources;
+    std::vector<WidgetWorkshopInstallFailureSnapshot>
+        workshopInstallFailures;
     std::vector<WidgetInstanceSnapshot> instances;
+};
+
+enum class WidgetPermissionEditorAction : std::uint8_t
+{
+    Cancel,
+    Apply,
+    Revoke,
+};
+
+/** Immutable package identity and draft content shown by the Shell dialog. */
+struct WidgetPermissionEditorRequest
+{
+    std::wstring packageId;
+    std::wstring packageName;
+    std::wstring version;
+    std::wstring sourceId;
+    std::wstring sourceExternalItemId;
+    std::wstring scopeFingerprint;
+    WidgetPackagePermissionState permissionState =
+        WidgetPackagePermissionState::LegacyImplicit;
+    bool canRevoke = false;
+    std::vector<WidgetPermissionSnapshot> permissions;
+    std::vector<std::wstring> declaredNetworkDomains;
+};
+
+struct WidgetPermissionEditorResult
+{
+    WidgetPermissionEditorAction action =
+        WidgetPermissionEditorAction::Cancel;
+    std::vector<std::wstring> grantedPermissions;
+    std::vector<std::wstring> grantedNetworkDomains;
 };
 
 /** A result supplied by a catalog or Workshop source worker owned by the host. */
@@ -181,6 +372,15 @@ struct WidgetsPageSnapshot
     std::uint64_t searchRevision = 0;
     std::wstring searchQuery;
     std::vector<InstalledWidgetPackageSnapshot> installed;
+    std::vector<WidgetAgentSkillTargetSnapshot> agentSkills;
+    int agentSkillTargetMask = 0;
+    std::wstring agentSkillStatusError;
+    std::wstring developerActionStatus;
+    std::wstring developmentWorkspace;
+    std::wstring componentCliPath;
+    bool developerPublisherAvailable = false;
+    std::vector<WidgetRuntimeErrorSnapshot> errors;
+    std::vector<WidgetRuntimeDiagnosticSnapshot> diagnostics;
     std::vector<WidgetSourceGroupSnapshot> sources;
     WidgetsPageTaskSnapshot task;
     WidgetsPageFeedbackSnapshot feedback;
@@ -189,17 +389,30 @@ struct WidgetsPageSnapshot
 
 enum class WidgetsPageCommand : std::uint8_t
 {
+    Refresh,
     BrowseInstallPackage,
     SearchSources,
     CancelTask,
     InstallCatalogItem,
+    RetryWorkshopInstall,
     SetPackageEnabled,
     UninstallPackage,
     SetPermissionDecision,
     SetDevelopmentOverride,
+    CreateDevelopmentProject,
+    InstallDevelopmentSnapshot,
+    RollbackPackage,
+    PublishDevelopmentPackage,
     OpenWorkshop,
+    OpenWorkshopItem,
     SynchronizeSource,
     AddPackageToDesktop,
+    RefreshAgentSkills,
+    ApplyAgentSkillSelection,
+    SetAgentSkillTargetSelection,
+    OpenDevelopmentFolder,
+    PublishDevelopmentWorkspace,
+    ClearWidgetErrors,
 };
 
 /** Strongly typed payload emitted for all package/source operations. */
@@ -213,16 +426,20 @@ struct WidgetsPageRequest
     std::wstring sourceId;
     std::wstring externalItemId;
     std::wstring version;
+    std::wstring scopeFingerprint;
     bool enabled = false;
     WidgetPackagePermissionState permissionState =
         WidgetPackagePermissionState::Granted;
     std::vector<std::wstring> grantedPermissions;
     std::vector<std::wstring> grantedNetworkDomains;
+    int agentSkillTargetMask = 0;
 };
 
 struct WidgetsPageActions
 {
     using ConfirmationCompletion = std::function<void(bool confirmed)>;
+    using PermissionEditorCompletion =
+        std::function<void(WidgetPermissionEditorResult result)>;
 
     /** Performs package, Workshop, permission and desktop actions in the host. */
     std::function<void(
@@ -234,12 +451,28 @@ struct WidgetsPageActions
         std::uint64_t generation,
         SettingsRoute route)> navigate;
 
+    /** Toggles the legacy developer-tools setting; true permits navigation. */
+    std::function<bool(
+        std::uint64_t generation,
+        bool enabled)> setDeveloperToolsEnabled;
+
+    /** Reuses SettingsHostActions::ReloadWidgetInstance. */
+    std::function<void(
+        std::uint64_t generation,
+        std::wstring instanceId)> reloadWidgetInstance;
+
     /** Shows an HWND-owned ContentDialog; the presenter never owns dialogs. */
     std::function<void(
         std::uint64_t generation,
         std::wstring title,
         std::wstring message,
         ConfirmationCompletion completion)> confirm;
+
+    /** Shows the Shell-owned batch permission ContentDialog. */
+    std::function<void(
+        std::uint64_t generation,
+        WidgetPermissionEditorRequest request,
+        PermissionEditorCompletion completion)> editPermissions;
 };
 
 /**
@@ -269,6 +502,10 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         Content() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        DeveloperToolsContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        DebugContent() const noexcept;
 
     /** Establishes the generation accepted by subsequent snapshots/actions. */
     void Activate(std::uint64_t generation) noexcept;
@@ -280,6 +517,10 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusTarget(std::string_view focusId) const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        DeveloperToolsFocusTarget(std::string_view focusId) const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        DebugFocusTarget(std::string_view focusId) const noexcept;
     void Close() noexcept;
 
 private:

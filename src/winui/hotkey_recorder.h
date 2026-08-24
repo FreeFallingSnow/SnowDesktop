@@ -27,6 +27,16 @@ struct HotkeyRecorderText
     std::wstring conflict = L"Shortcut conflicts with another command";
     std::wstring cleared = L"Shortcut cleared";
     std::wstring none = L"None";
+    std::wstring disabled = L"Disabled";
+    std::wstring captureActive = L"Shortcut recording is active";
+    std::wstring notSetWarning = L"No shortcut is configured";
+    std::wstring availableStatus = L"Available";
+    std::wstring inUseStatus = L"In use";
+    std::wstring noModifierStatus = L"No modifier";
+    std::wstring noModifierWarning =
+        L"No modifier is used, which may interfere with normal typing";
+    std::wstring systemConflict =
+        L"Already used by Windows or another application";
     std::wstring control = L"Ctrl";
     std::wstring alt = L"Alt";
     std::wstring shift = L"Shift";
@@ -69,6 +79,12 @@ public:
     void SetAvailabilityProbe(AvailabilityProbe probe);
     void SetCommittedCallback(CommittedCallback callback);
     void SetCancelledCallback(CancelledCallback callback);
+
+    /**
+     * Sets the legacy enable/local-desktop context used to continuously
+     * validate the saved chord while the recorder is not capturing.
+     */
+    void SetValidationContext(bool enabled, bool localDesktopHotkey);
 
     /** Rebinds the control to an immutable settings generation. */
     void SetValue(HotkeyChord value, std::uint64_t generation);

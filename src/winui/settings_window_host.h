@@ -3,6 +3,7 @@
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_backend.h"
+#include "general_page_presenter.h"
 #include "home_about_page_model.h"
 #include "widgets_page_backend.h"
 
@@ -42,6 +43,8 @@ struct SettingsWindowHostOptions
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;
     HomeAboutStatusProvider homeAboutStatus;
+    /** Runtime-only ownership warnings for the Windows auto-start setting. */
+    std::function<GeneralStartupConflict()> startupConflict;
 
     /** Ensure a persisted component instance is loaded before its declarative
      * settings session is created. The application owns the instance-to-
@@ -64,6 +67,8 @@ struct SettingsWindowHostOptions
 
 /**
  * Owns the Win32 top-level settings HWND and its full-client WinUI 3 Island.
+ * WS_OVERLAPPEDWINDOW deliberately retains the native system caption buttons;
+ * the Island never extends or substitutes the non-client title bar.
  *
  * The host does not own SettingsController or WidgetSettingsService. All
  * methods are STA-thread affine except callbacks that only enqueue immutable

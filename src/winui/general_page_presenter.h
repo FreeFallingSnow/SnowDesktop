@@ -22,6 +22,20 @@ struct SettingsLanguageOption
     std::wstring label;
 };
 
+enum class GeneralStartupConflictKind : std::uint8_t
+{
+    None,
+    PortableVersionOwnsStartup,
+    InstalledVersionOwnsStartup,
+};
+
+/** Runtime-only startup ownership projected by the host. */
+struct GeneralStartupConflict
+{
+    GeneralStartupConflictKind kind = GeneralStartupConflictKind::None;
+    std::wstring ownerCommand;
+};
+
 /** Commands emitted by the cached General settings presenter. */
 struct GeneralPageActions
 {
@@ -35,6 +49,13 @@ struct GeneralPageActions
         commitNavigation;
     std::function<void(std::uint64_t generation, DockEdit edit)>
         commitDock;
+
+    /** Auto-start is a Windows/MSIX projection, not a GeneralSettings edit. */
+    std::function<void(std::uint64_t generation, bool enabled)>
+        setAutoStart;
+    std::function<void(std::uint64_t generation)>
+        openStartupAppsSettings;
+    std::function<GeneralStartupConflict()> queryStartupConflict;
 
     std::function<void(
         SettingsHostActions::HotkeyTarget target,
@@ -75,6 +96,9 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         Root() const noexcept;
+    /** Legacy Dock shortcut/hotkey block, inserted after Dock enablement. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
+        DockShortcutContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;

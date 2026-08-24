@@ -216,10 +216,15 @@ public:
         RestartApplication,
         ExitApplication,
         OpenDataDirectory,
+        SetAutoStartEnabled,
+        OpenStartupAppsSettings,
         CheckForUpdates,
+        CancelUpdateCheck,
         OpenProject,
         OpenLicense,
         OpenThirdPartyNotices,
+        SetAnimationDiagnostics,
+        TriggerCrashTest,
         ProbeHotkeyAvailability,
     };
 
@@ -228,6 +233,7 @@ public:
         Action action = Action::RefreshDesktop;
         std::wstring widgetInstanceId;
         std::wstring value;
+        bool boolValue = false;
         HotkeyTarget hotkeyTarget = HotkeyTarget::None;
         UINT modifiers = 0;
         UINT virtualKey = 0;

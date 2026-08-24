@@ -2,6 +2,7 @@
 #include "dock_platform_helpers.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
+#include "../http_runtime.h"
 
 // Desktop host lifecycle.
 
@@ -69,6 +70,10 @@ DesktopApp::~DesktopApp()
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
 {
+    CancelSettingsUpdateCheck();
+    if (settingsUpdateHttpService_)
+        settingsUpdateHttpService_->Stop();
+    settingsUpdateHttpService_.reset();
     settingsWindow_.reset();
     if (widgetSettingsService_)
     {

@@ -37,8 +37,8 @@ int main(int argc, char** argv)
     state.Request();
     Check(state.Pending() && state.RetryCount() == 0,
         "request becomes pending and resets retry count");
-    Check(state.Route().page == snowdesktop::SettingsPage::Home,
-        "default request targets the settings home page");
+    Check(state.Route().page == snowdesktop::SettingsPage::General,
+        "default request targets the legacy General settings page");
     Check(state.RecordFailure(3) && state.RetryCount() == 1,
         "first failure schedules a retry");
     Check(state.RecordFailure(3) && state.RetryCount() == 2,

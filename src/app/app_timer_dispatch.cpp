@@ -19,14 +19,55 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     }
     if (ready)
     {
+        const bool hostReloadWouldDefer =
+            shellFileOperationInFlight_ > 0 || reloading_ ||
+            snowdesktop::drag_input_rules::ShouldDeferModelReload(
+                dragSession_.HasContext(),
+                dragDropController_.IsTransportActive());
+        bool settingsCompletionReady = false;
+        if (hostReloadWouldDefer)
+        {
+            std::lock_guard lock(
+                steamWorkshopSubscriptionPollState_->mutex);
+            settingsCompletionReady = std::any_of(
+                steamWorkshopSubscriptionPollState_->settingsCompletions.
+                    begin(),
+                steamWorkshopSubscriptionPollState_->settingsCompletions.
+                    end(),
+                [&ready](const auto& completion) {
+                    return completion.queryId <= ready->queryId;
+                });
+            if (settingsCompletionReady &&
+                (!steamWorkshopSubscriptionPollState_->ready ||
+                    steamWorkshopSubscriptionPollState_->ready->queryId <
+                        ready->queryId))
+            {
+                steamWorkshopSubscriptionPollState_->ready =
+                    std::move(*ready);
+            }
+        }
+        if (settingsCompletionReady)
+        {
+            // A settings operation is complete only after ReloadItems has
+            // actually reconciled the persistent desktop instance table.
+            // Retain the authoritative query while drag/Shell/reload state
+            // would make ReloadItems defer or return early.
+            return;
+        }
+
         bool synchronizationSucceeded = false;
+        bool hostReloaded = false;
         std::wstring synchronizationMessage;
         if (ready->snapshot.authoritative)
         {
             const auto result =
                 widgetEngine_->ApplySteamWorkshopSubscriptions(
                     ready->snapshot);
-            if (result.Changed()) ReloadItems(false);
+            if (result.Changed())
+            {
+                ReloadItems(false);
+                hostReloaded = true;
+            }
             if (result.errors.empty())
             {
                 steamWorkshopSubscriptionLastError_.clear();
@@ -69,9 +110,6 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         if (synchronizationMessage.empty())
             synchronizationMessage = _LW(
                 "settings.widgets.source.syncFailed");
-        if (settingsWindow_)
-            settingsWindow_->RefreshWidgetsPage();
-
         std::vector<SteamWorkshopSubscriptionPollState::
             SettingsCompletion> completions;
         {
@@ -93,15 +131,76 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 }
             }
         }
+        const bool hasUnsubscribeCompletion = std::any_of(
+            completions.begin(), completions.end(), [](const auto& value) {
+                return !value.expectedUnsubscribedPublishedFileId.empty();
+            });
+        if (synchronizationSucceeded && hasUnsubscribeCompletion &&
+            !hostReloaded)
+        {
+            // Run the same host reconciliation pass even if the managed
+            // package was already absent. Completion means both the package
+            // registry have been coordinated. Persisted desktop instances are
+            // intentionally retained as placeholders, matching local package
+            // uninstall semantics so reinstalling can restore their layout.
+            ReloadItems(false);
+            hostReloaded = true;
+        }
+        if (settingsWindow_)
+            settingsWindow_->RefreshWidgetsPage();
+
+        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
         for (auto& completion : completions)
         {
             if (!completion.done)
                 continue;
-            completion.done(synchronizationSucceeded
+            bool completionSucceeded = synchronizationSucceeded;
+            std::wstring completionMessage = synchronizationMessage;
+            if (completionSucceeded &&
+                !completion.expectedUnsubscribedPublishedFileId.empty())
+            {
+                const std::string& expectedPublishedFileId =
+                    completion.expectedUnsubscribedPublishedFileId;
+                const bool stillSubscribed = std::any_of(
+                    ready->snapshot.subscribedPublishedFileIds.begin(),
+                    ready->snapshot.subscribedPublishedFileIds.end(),
+                    [&expectedPublishedFileId](const auto& value) {
+                        return snowdesktop::widget::SteamPublishedFileId(
+                                   value) == expectedPublishedFileId;
+                    });
+                const bool managedPackageRemains = std::any_of(
+                    reconciledPackages.begin(), reconciledPackages.end(),
+                    [&expectedPublishedFileId](const auto& package) {
+                        return !package.builtin && !package.development &&
+                            package.source.providerId == "steam-workshop" &&
+                            snowdesktop::widget::SteamPublishedFileId(
+                                package.source.externalItemId) ==
+                                expectedPublishedFileId;
+                    });
+                const bool expectedPackageRemains = std::any_of(
+                    reconciledPackages.begin(), reconciledPackages.end(),
+                    [&completion](const auto& package) {
+                        if (package.builtin || package.development)
+                            return false;
+                        return std::find(
+                            completion.expectedRemovedPackageIds.begin(),
+                            completion.expectedRemovedPackageIds.end(),
+                            package.manifest.id) !=
+                            completion.expectedRemovedPackageIds.end();
+                    });
+                completionSucceeded = !stillSubscribed &&
+                    !managedPackageRemains && !expectedPackageRemains;
+                if (!completionSucceeded)
+                {
+                    completionMessage = _LW(
+                        "settings.widgets.workshop.unsubscribeNotReconciled");
+                }
+            }
+            completion.done(completionSucceeded
                     ? snowdesktop::winui::WidgetsPageHostOperationResult::
-                          Success(true, synchronizationMessage)
+                          Success(true, completionMessage)
                     : snowdesktop::winui::WidgetsPageHostOperationResult::
-                          Failure(synchronizationMessage));
+                          Failure(completionMessage));
         }
     }
 
@@ -299,6 +398,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
         PollDisplayTopology();
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
+        PollSettingsUpdateCheck();
+        if (uiAnimationScheduler_.DiagnosticsEnabled())
+            PublishSettingsUpdateStatus();
         PollSteamWorkshopSubscriptions();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =

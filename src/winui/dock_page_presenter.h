@@ -73,6 +73,15 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         Content() const noexcept;
+    /** Dock enable row, placed before GeneralPagePresenter's hotkey block. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        DockEnableContent() const noexcept;
+    /** Remaining non-taskbar Dock controls, owned by General. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        DockContent() const noexcept;
+    /** Taskbar appearance and Windows shell controls, owned by Appearance. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        TaskbarContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
 

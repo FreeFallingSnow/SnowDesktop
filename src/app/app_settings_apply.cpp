@@ -1,9 +1,649 @@
 #include "app.h"
 #include "../atomic_file.h"
 #include "../deployment_context.h"
+#include "../http_runtime.h"
 #include "../layout_storage.h"
+#include "../page_navigation_rules.h"
+#include "../settings_update_rules.h"
+
+#include <cwctype>
+
+namespace
+{
+constexpr wchar_t kAutoStartRunSubKey[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
+constexpr wchar_t kAutoStartApprovalSubKey[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\"
+    L"StartupApproved\\Run";
+constexpr wchar_t kSettingsUpdateRequestOwner[] =
+    L"snowdesktop.settings.update";
+
+std::wstring CurrentExecutablePath() noexcept
+{
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(
+        nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) return {};
+    path.resize(length);
+    return path;
+}
+
+std::wstring RegisteredExecutablePath(std::wstring_view command) noexcept
+{
+    while (!command.empty() && iswspace(command.front()))
+        command.remove_prefix(1);
+    if (command.empty()) return {};
+    std::wstring path;
+    if (command.front() == L'"')
+    {
+        command.remove_prefix(1);
+        const std::size_t end = command.find(L'"');
+        if (end == std::wstring_view::npos) return {};
+        path.assign(command.substr(0, end));
+    }
+    else
+    {
+        const std::size_t end = command.find_first_of(L" \t\r\n");
+        path.assign(command.substr(0, end));
+    }
+    if (path.empty()) return {};
+    std::wstring expanded(32768, L'\0');
+    const DWORD expandedLength = ExpandEnvironmentStringsW(
+        path.c_str(), expanded.data(), static_cast<DWORD>(expanded.size()));
+    if (expandedLength > 0 && expandedLength <= expanded.size())
+    {
+        expanded.resize(expandedLength - 1);
+        path = std::move(expanded);
+    }
+    return path;
+}
+
+bool SameExecutablePath(
+    const std::wstring& left, const std::wstring& right) noexcept
+{
+    if (left.empty() || right.empty()) return false;
+    std::error_code error;
+    if (std::filesystem::equivalent(left, right, error)) return true;
+    error.clear();
+    const auto absoluteLeft = std::filesystem::absolute(left, error)
+                                  .lexically_normal().wstring();
+    if (error) return false;
+    const auto absoluteRight = std::filesystem::absolute(right, error)
+                                   .lexically_normal().wstring();
+    return !error && CompareStringOrdinal(
+        absoluteLeft.c_str(), static_cast<int>(absoluteLeft.size()),
+        absoluteRight.c_str(), static_cast<int>(absoluteRight.size()),
+        TRUE) == CSTR_EQUAL;
+}
+
+bool RegistryValueMissing(LONG result) noexcept
+{
+    return result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND;
+}
+
+struct PortableAutoStartRegistration
+{
+    snowdesktop::PortableAutoStartRegistrationOwner owner =
+        snowdesktop::PortableAutoStartRegistrationOwner::Error;
+    std::wstring command;
+};
+
+PortableAutoStartRegistration QueryPortableAutoStartRegistration() noexcept
+{
+    using snowdesktop::PortableAutoStartRegistrationOwner;
+
+    HKEY key = nullptr;
+    const LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER,
+        kAutoStartRunSubKey, 0, KEY_QUERY_VALUE, &key);
+    if (RegistryValueMissing(openResult))
+        return {PortableAutoStartRegistrationOwner::Missing, {}};
+    if (openResult != ERROR_SUCCESS)
+        return {PortableAutoStartRegistrationOwner::Error, {}};
+
+    DWORD type = 0;
+    DWORD size = 0;
+    LONG result = RegQueryValueExW(key, kAutoStartRunValue, nullptr,
+        &type, nullptr, &size);
+    if (RegistryValueMissing(result))
+    {
+        RegCloseKey(key);
+        return {PortableAutoStartRegistrationOwner::Missing, {}};
+    }
+    if (result != ERROR_SUCCESS ||
+        (type != REG_SZ && type != REG_EXPAND_SZ) ||
+        size <= sizeof(wchar_t) || size % sizeof(wchar_t) != 0)
+    {
+        RegCloseKey(key);
+        return {PortableAutoStartRegistrationOwner::Error, {}};
+    }
+
+    std::wstring command;
+    command.resize(size / sizeof(wchar_t));
+    result = RegQueryValueExW(key, kAutoStartRunValue, nullptr,
+        &type, reinterpret_cast<BYTE*>(command.data()), &size);
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS)
+        return {PortableAutoStartRegistrationOwner::Error, {}};
+    while (!command.empty() && command.back() == L'\0')
+        command.pop_back();
+    if (command.empty())
+        return {PortableAutoStartRegistrationOwner::Error, {}};
+
+    const bool owned = SameExecutablePath(
+        RegisteredExecutablePath(command), CurrentExecutablePath());
+    return {
+        owned ? PortableAutoStartRegistrationOwner::CurrentExecutable
+              : PortableAutoStartRegistrationOwner::OtherExecutable,
+        std::move(command)};
+}
+
+snowdesktop::PortableAutoStartApprovalState
+QueryPortableAutoStartApproval() noexcept
+{
+    using snowdesktop::PortableAutoStartApprovalState;
+
+    HKEY key = nullptr;
+    const LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER,
+        kAutoStartApprovalSubKey, 0, KEY_QUERY_VALUE, &key);
+    if (RegistryValueMissing(openResult))
+        return PortableAutoStartApprovalState::Missing;
+    if (openResult != ERROR_SUCCESS)
+        return PortableAutoStartApprovalState::Error;
+
+    std::array<BYTE, 32> data{};
+    DWORD type = 0;
+    DWORD size = static_cast<DWORD>(data.size());
+    const LONG result = RegQueryValueExW(key, kAutoStartRunValue, nullptr,
+        &type, data.data(), &size);
+    RegCloseKey(key);
+    if (RegistryValueMissing(result))
+        return PortableAutoStartApprovalState::Missing;
+    if (result != ERROR_SUCCESS || type != REG_BINARY || size == 0)
+        return PortableAutoStartApprovalState::Error;
+    if (data[0] == 0x02)
+        return PortableAutoStartApprovalState::Enabled;
+    if (data[0] == 0x03)
+        return PortableAutoStartApprovalState::Disabled;
+    return PortableAutoStartApprovalState::Error;
+}
+
+bool PortableAutoStartApprovalIsActive(
+    snowdesktop::PortableAutoStartApprovalState state) noexcept
+{
+    return state == snowdesktop::PortableAutoStartApprovalState::Missing ||
+        state == snowdesktop::PortableAutoStartApprovalState::Enabled;
+}
+
+bool ClearPortableAutoStartApproval() noexcept
+{
+    HKEY key = nullptr;
+    const LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER,
+        kAutoStartApprovalSubKey, 0, KEY_SET_VALUE, &key);
+    if (RegistryValueMissing(openResult)) return true;
+    if (openResult != ERROR_SUCCESS) return false;
+    LONG result = RegDeleteValueW(key, kAutoStartRunValue);
+    RegCloseKey(key);
+    if (RegistryValueMissing(result)) result = ERROR_SUCCESS;
+    return result == ERROR_SUCCESS;
+}
+
+bool WritePortableAutoStart(bool enabled) noexcept
+{
+    using snowdesktop::PortableAutoStartRegistrationOwner;
+
+    const PortableAutoStartRegistration existing =
+        QueryPortableAutoStartRegistration();
+    if (existing.owner == PortableAutoStartRegistrationOwner::Error)
+        return false;
+    if (existing.owner ==
+        PortableAutoStartRegistrationOwner::OtherExecutable)
+    {
+        return !enabled;
+    }
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kAutoStartRunSubKey, 0,
+            nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) !=
+        ERROR_SUCCESS)
+    {
+        return false;
+    }
+
+    LONG result = ERROR_SUCCESS;
+    if (enabled)
+    {
+        const std::wstring executable = CurrentExecutablePath();
+        const std::wstring command = L"\"" + executable + L"\"";
+        // Windows limits Run/RunOnce command lines to MAX_PATH characters.
+        if (executable.empty() || command.size() >= MAX_PATH)
+        {
+            RegCloseKey(key);
+            return false;
+        }
+        result = RegSetValueExW(key, kAutoStartRunValue, 0, REG_SZ,
+            reinterpret_cast<const BYTE*>(command.c_str()),
+            static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+    }
+    else
+    {
+        result = RegDeleteValueW(key, kAutoStartRunValue);
+        if (result == ERROR_FILE_NOT_FOUND) result = ERROR_SUCCESS;
+    }
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS) return false;
+    if (!enabled)
+    {
+        (void)ClearPortableAutoStartApproval();
+        return true;
+    }
+    return ClearPortableAutoStartApproval();
+}
+} // namespace
 
 // Settings application, desktop passthrough and retained-surface visibility.
+
+snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
+    const noexcept
+{
+    using snowdesktop::PortableAutoStartApprovalState;
+    using snowdesktop::PortableAutoStartRegistrationOwner;
+    using snowdesktop::deployment::PackagedAutoStartState;
+
+    snowdesktop::AutoStartQueryResult result;
+    result.packaged = snowdesktop::deployment::IsPackaged();
+    const PortableAutoStartRegistration portable =
+        QueryPortableAutoStartRegistration();
+    result.portableOwner = portable.owner;
+    result.portableCommand = portable.command;
+    result.portableApproval = QueryPortableAutoStartApproval();
+
+    if (result.packaged)
+    {
+        const PackagedAutoStartState state =
+            snowdesktop::deployment::GetPackagedAutoStartState();
+        result.stateKnown = state != PackagedAutoStartState::Unavailable;
+        result.enabled = result.stateKnown &&
+            snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state);
+        return result;
+    }
+
+    result.installedPackageEnabled =
+        snowdesktop::deployment::IsPackagedAutoStartStateEnabled(
+            snowdesktop::deployment::GetInstalledPackagedAutoStartState());
+    if (result.portableOwner ==
+        PortableAutoStartRegistrationOwner::CurrentExecutable)
+    {
+        result.stateKnown = result.portableApproval !=
+            PortableAutoStartApprovalState::Error;
+        result.enabled = result.stateKnown &&
+            PortableAutoStartApprovalIsActive(result.portableApproval);
+    }
+    else
+    {
+        result.stateKnown = result.portableOwner !=
+            PortableAutoStartRegistrationOwner::Error;
+        result.enabled = false;
+    }
+    return result;
+}
+
+bool DesktopApp::QueryAutoStartEnabled() const noexcept
+{
+    const snowdesktop::AutoStartQueryResult result = QueryAutoStartState();
+    return result.stateKnown && result.enabled;
+}
+
+snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
+    bool enabled)
+{
+    using snowdesktop::AutoStartApplyResult;
+    using snowdesktop::AutoStartApplyStatus;
+    using snowdesktop::PortableAutoStartApprovalState;
+    using snowdesktop::PortableAutoStartRegistrationOwner;
+    using snowdesktop::deployment::PackagedAutoStartState;
+
+    const auto finish = [this](AutoStartApplyStatus status,
+                            std::wstring message = {})
+    {
+        AutoStartApplyResult result;
+        result.status = status;
+        result.state = QueryAutoStartState();
+        result.message = std::move(message);
+        return result;
+    };
+
+    const snowdesktop::AutoStartQueryResult before = QueryAutoStartState();
+    if (before.packaged)
+    {
+        if (enabled && before.portableOwner !=
+                PortableAutoStartRegistrationOwner::Missing)
+        {
+            if (before.portableOwner ==
+                    PortableAutoStartRegistrationOwner::Error ||
+                before.portableApproval ==
+                    PortableAutoStartApprovalState::Error)
+            {
+                return finish(AutoStartApplyStatus::StateUnavailable,
+                    _LW("app.settings.auto_start_enable_failed"));
+            }
+            // Keep the legacy ownership rule: the packaged version must not
+            // enable its StartupTask while any portable Run entry still owns
+            // the shared SnowDesktop registration, even if Task Manager has
+            // currently marked that entry disabled.
+            return finish(
+                AutoStartApplyStatus::PortableRegistrationConflict,
+                _LFW("app.settings.auto_start_portable_conflict",
+                    before.portableCommand));
+        }
+
+        const PackagedAutoStartState state =
+            snowdesktop::deployment::SetPackagedAutoStartEnabled(enabled);
+        const bool actual =
+            snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state);
+        if (state != PackagedAutoStartState::Unavailable &&
+            actual == enabled)
+            return finish(AutoStartApplyStatus::Applied);
+
+        const char* key = nullptr;
+        AutoStartApplyStatus status = AutoStartApplyStatus::Failed;
+        if (enabled && state == PackagedAutoStartState::DisabledByUser)
+        {
+            key = "app.settings.auto_start_manual_required";
+            status = AutoStartApplyStatus::ManualEnableRequired;
+        }
+        else if (state == PackagedAutoStartState::DisabledByPolicy ||
+            state == PackagedAutoStartState::EnabledByPolicy)
+        {
+            key = enabled ? "app.settings.auto_start_policy_disabled"
+                          : "app.settings.auto_start_policy_enabled";
+            status = AutoStartApplyStatus::BlockedByPolicy;
+        }
+        else
+        {
+            key = enabled
+                ? "app.settings.auto_start_enable_failed"
+                : "app.settings.auto_start_disable_failed";
+            status = state == PackagedAutoStartState::Unavailable
+                ? AutoStartApplyStatus::StateUnavailable
+                : AutoStartApplyStatus::Failed;
+        }
+        return finish(status, _LW(key));
+    }
+
+    if (before.portableOwner ==
+        PortableAutoStartRegistrationOwner::Error)
+    {
+        return finish(AutoStartApplyStatus::StateUnavailable,
+            _LW(enabled
+                ? "app.settings.auto_start_enable_failed"
+                : "app.settings.auto_start_disable_failed"));
+    }
+    if (enabled && before.portableOwner ==
+            PortableAutoStartRegistrationOwner::OtherExecutable)
+    {
+        // Even a Task Manager-disabled entry belongs to the other executable.
+        // Never overwrite it merely because it is currently inactive.
+        return finish(AutoStartApplyStatus::PortableRegistrationConflict,
+            _LFW("app.settings.auto_start_portable_conflict",
+                before.portableCommand));
+    }
+    if (enabled && before.portableApproval ==
+            PortableAutoStartApprovalState::Error)
+    {
+        return finish(AutoStartApplyStatus::StateUnavailable,
+            _LW("app.settings.auto_start_enable_failed"));
+    }
+    if (enabled && before.installedPackageEnabled)
+    {
+        return finish(AutoStartApplyStatus::InstalledRegistrationConflict,
+            _LW("app.settings.auto_start_installed_conflict"));
+    }
+    if (!enabled && before.portableOwner ==
+            PortableAutoStartRegistrationOwner::OtherExecutable)
+    {
+        return finish(AutoStartApplyStatus::Applied);
+    }
+    if (!WritePortableAutoStart(enabled))
+    {
+        return finish(AutoStartApplyStatus::Failed,
+            _LW(enabled
+                ? "app.settings.auto_start_enable_failed"
+                : "app.settings.auto_start_disable_failed"));
+    }
+    const snowdesktop::AutoStartQueryResult after = QueryAutoStartState();
+    if (after.stateKnown && after.enabled == enabled)
+        return finish(AutoStartApplyStatus::Applied);
+    return finish(
+        after.stateKnown ? AutoStartApplyStatus::Failed
+                         : AutoStartApplyStatus::StateUnavailable,
+        _LW(enabled
+            ? "app.settings.auto_start_enable_failed"
+            : "app.settings.auto_start_disable_failed"));
+}
+
+snowdesktop::SettingsActionResult DesktopApp::StartSettingsUpdateCheck()
+{
+    using snowdesktop::SettingsActionResult;
+    using snowdesktop::winui::SettingsUpdateState;
+
+    if (snowdesktop::deployment::IsPackaged())
+    {
+        const std::wstring target =
+            snowdesktop::deployment::GetStoreProductPageUri();
+        if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
+                controlHwnd_, L"open", target.c_str(), nullptr, nullptr,
+                SW_SHOWNORMAL)) <= 32)
+        {
+            return SettingsActionResult::Failure(
+                _LW("app.settings.update_connect_failed"));
+        }
+        settingsUpdateState_ = SettingsUpdateState::ManagedByStore;
+        PublishSettingsUpdateStatus();
+        return SettingsActionResult::Success();
+    }
+
+    const auto snapshot = settingsController_
+        ? settingsController_->Snapshot() : nullptr;
+    if (!snapshot || !snapshot->sessionActive)
+    {
+        return SettingsActionResult::Failure(
+            _LW("app.settings.update_http_init_failed"));
+    }
+
+    CancelSettingsUpdateCheck();
+    if (!settingsUpdateHttpService_)
+        settingsUpdateHttpService_ = std::make_unique<AsyncHttpService>();
+
+    HttpRequestOptions request;
+    request.widgetId = kSettingsUpdateRequestOwner;
+    request.url = L"https://api.github.com/repos/FreeFallingSnow/"
+        L"SnowDesktop_Release/releases/latest";
+    request.headers =
+        L"Accept: application/vnd.github+json\r\n"
+        L"X-GitHub-Api-Version: 2022-11-28\r\n";
+    request.timeoutMs = 8000;
+    request.cacheSeconds = 60;
+    request.maximumResponseBytes = 512 * 1024;
+    request.allowedDomains = {"api.github.com"};
+    settingsUpdateRequestId_ =
+        settingsUpdateHttpService_->Submit(std::move(request));
+    if (settingsUpdateRequestId_ == 0)
+    {
+        settingsUpdateState_ = SettingsUpdateState::Failed;
+        settingsUpdateDetailKey_ =
+            "app.settings.update_http_init_failed";
+        PublishSettingsUpdateStatus();
+        return SettingsActionResult::Failure(
+            _LW(settingsUpdateDetailKey_.c_str()));
+    }
+
+    settingsUpdateRequestGeneration_ = snapshot->generation;
+    settingsUpdateState_ = SettingsUpdateState::Checking;
+    settingsUpdateAvailableVersion_.clear();
+    settingsUpdateDetailKey_.clear();
+    settingsUpdateDownloadUrl_.clear();
+    PublishSettingsUpdateStatus();
+    return SettingsActionResult::Success();
+}
+
+void DesktopApp::CancelSettingsUpdateCheck() noexcept
+{
+    if (settingsUpdateRequestId_ != 0 && settingsUpdateHttpService_)
+    {
+        (void)settingsUpdateHttpService_->Cancel(
+            kSettingsUpdateRequestOwner, settingsUpdateRequestId_);
+    }
+    settingsUpdateRequestId_ = 0;
+    settingsUpdateRequestGeneration_ = 0;
+    if (settingsUpdateState_ ==
+        snowdesktop::winui::SettingsUpdateState::Checking)
+    {
+        settingsUpdateState_ =
+            snowdesktop::winui::SettingsUpdateState::Unknown;
+        settingsUpdateDetailKey_.clear();
+        PublishSettingsUpdateStatus();
+    }
+}
+
+void DesktopApp::PrepareSettingsUpdateSession(std::uint64_t generation)
+{
+    if (generation == 0 || generation == settingsUpdateSessionGeneration_)
+        return;
+    CancelSettingsUpdateCheck();
+    settingsUpdateSessionGeneration_ = generation;
+    settingsUpdateAvailableVersion_.clear();
+    settingsUpdateDownloadUrl_.clear();
+    settingsUpdateDetailKey_.clear();
+    settingsUpdateState_ = snowdesktop::deployment::IsPackaged()
+        ? snowdesktop::winui::SettingsUpdateState::ManagedByStore
+        : snowdesktop::winui::SettingsUpdateState::Unknown;
+    PublishSettingsUpdateStatus();
+}
+
+void DesktopApp::PollSettingsUpdateCheck()
+{
+    if (!settingsUpdateHttpService_) return;
+
+    const auto snapshot = settingsController_
+        ? settingsController_->Snapshot() : nullptr;
+    if (settingsUpdateRequestId_ != 0 &&
+        (!snapshot || !snapshot->sessionActive ||
+            snapshot->generation != settingsUpdateRequestGeneration_))
+    {
+        CancelSettingsUpdateCheck();
+    }
+
+    for (HttpResponse& response : settingsUpdateHttpService_->Drain())
+    {
+        if (response.id != settingsUpdateRequestId_) continue;
+        const std::uint64_t generation = settingsUpdateRequestGeneration_;
+        settingsUpdateRequestId_ = 0;
+        settingsUpdateRequestGeneration_ = 0;
+        if (!snapshot || !snapshot->sessionActive ||
+            snapshot->generation != generation)
+        {
+            continue;
+        }
+
+        settingsUpdateDetailKey_.clear();
+        if (!response.error.empty() || response.status < 200 ||
+            response.status >= 300)
+        {
+            settingsUpdateState_ =
+                snowdesktop::winui::SettingsUpdateState::Failed;
+            settingsUpdateDetailKey_ =
+                "app.settings.update_receive_failed";
+        }
+        else if (response.body.empty())
+        {
+            settingsUpdateState_ =
+                snowdesktop::winui::SettingsUpdateState::Failed;
+            settingsUpdateDetailKey_ =
+                "app.settings.update_empty_response";
+        }
+        else
+        {
+            const auto release =
+                snowdesktop::settings_update_rules::ParseGitHubRelease(
+                    response.body, SNOWDESKTOP_VERSION);
+            if (!release.parsed)
+            {
+                settingsUpdateState_ =
+                    snowdesktop::winui::SettingsUpdateState::Failed;
+                settingsUpdateDetailKey_ =
+                    "app.settings.update_parse_failed";
+            }
+            else
+            {
+                settingsUpdateState_ = release.updateAvailable
+                    ? snowdesktop::winui::SettingsUpdateState::UpdateAvailable
+                    : snowdesktop::winui::SettingsUpdateState::UpToDate;
+                settingsUpdateAvailableVersion_ =
+                    Utf8ToWide(release.version);
+                settingsUpdateDownloadUrl_ = release.updateAvailable
+                    ? Utf8ToWide(release.downloadUrl)
+                    : std::wstring{};
+            }
+        }
+        PublishSettingsUpdateStatus();
+    }
+}
+
+void DesktopApp::PublishSettingsUpdateStatus()
+{
+    const auto snapshot = settingsController_
+        ? settingsController_->Snapshot() : nullptr;
+    if (!snapshot || !snapshot->sessionActive || !settingsWindow_) return;
+    snowdesktop::winui::HomeAboutStatusPatch patch;
+    patch.generation = snapshot->generation;
+    settingsUpdateStatusRevision_ = std::max(
+        settingsUpdateStatusRevision_ + 1, snapshot->revision + 1);
+    patch.revision = settingsUpdateStatusRevision_;
+    patch.updateState = settingsUpdateState_;
+    patch.availableVersion = settingsUpdateAvailableVersion_;
+    patch.updateDetail = settingsUpdateDetailKey_.empty()
+        ? std::wstring{} : _LW(settingsUpdateDetailKey_.c_str());
+    patch.animationDiagnosticsEnabled =
+        uiAnimationScheduler_.DiagnosticsEnabled();
+    patch.animationDiagnosticsStatus =
+        BuildAnimationDiagnosticsStatus();
+    (void)settingsWindow_->PublishHomeAboutStatus(std::move(patch));
+}
+
+std::wstring DesktopApp::BuildAnimationDiagnosticsStatus() const
+{
+    if (!uiAnimationScheduler_.DiagnosticsEnabled())
+        return {};
+    const auto metrics = uiAnimationScheduler_.Metrics();
+    const auto decimal = [](double value, int precision) {
+        wchar_t text[64]{};
+        swprintf_s(text, L"%.*f", precision, value);
+        return std::wstring(text);
+    };
+    return _LFW(
+        "app.settings.animation_diagnostics_status",
+        decimal(metrics.targetRefreshHz, 1),
+        decimal(metrics.effectiveRefreshHz, 1),
+        std::to_wstring(static_cast<unsigned long long>(
+            metrics.requestedFrames)),
+        std::to_wstring(static_cast<unsigned long long>(
+            metrics.deliveredFrames)),
+        std::to_wstring(static_cast<unsigned long long>(
+            metrics.skippedFrames)),
+        std::to_wstring(static_cast<unsigned long long>(
+            metrics.activeAnimations)),
+        std::to_wstring(static_cast<unsigned long long>(
+            metrics.activeTimers)),
+        decimal(metrics.frameIntervalP50Ms, 2),
+        decimal(metrics.frameIntervalP95Ms, 2),
+        decimal(metrics.frameIntervalP99Ms, 2),
+        decimal(metrics.uiWorkP50Ms, 2),
+        decimal(metrics.uiWorkP95Ms, 2),
+        decimal(metrics.uiWorkP99Ms, 2),
+        decimal(metrics.commitP50Ms, 2),
+        decimal(metrics.commitP95Ms, 2),
+        decimal(metrics.commitP99Ms, 2));
+}
 
 snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     snowdesktop::winui::LayoutRestorePayload payload)
@@ -169,6 +809,11 @@ public:
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
             app_.InvalidateDragStaticScene();
+            // Taskbar color, opacity, blur, and dynamic-rule sliders are
+            // continuous controls.  Apply their coalesced preview immediately
+            // while keeping the Windows-owned auto-hide/alignment values at
+            // their last committed state above.
+            app_.RefreshSystemTaskbarAppearance(false);
             if (app_.hwnd_)
                 InvalidateRect(app_.hwnd_, nullptr, TRUE);
         }
@@ -178,6 +823,15 @@ public:
                 snapshot.values.desktop.iconSpacingScale);
             app_.PreviewItemIconSize(
                 snapshot.values.desktop.itemIconSizeScale);
+            app_.PreviewItemFontSize(
+                snapshot.values.desktop.itemFontSizeCu);
+            app_.PreviewListItemFontSize(
+                snapshot.values.desktop.listItemFontSizeCu);
+            app_.PreviewItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
+                snapshot.values.desktop.itemFontWeight));
+            app_.SetIconBeautifySettings(
+                snapshot.values.desktop.iconBeautify,
+                snowdesktop::IconBeautifyUpdateKind::Preview);
         }
         return snowdesktop::SettingsActionResult::Success(domains);
     }
@@ -208,7 +862,7 @@ public:
                     requestedDockSettings.systemTaskbarAutoHide))
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"The system taskbar auto-hide change could not be queued.",
+                    _LW("settings.taskbar.autoHide.queueFailed"),
                     SettingsDomain::Dock);
             }
             if (alignmentChanged &&
@@ -216,7 +870,7 @@ public:
                     requestedDockSettings.systemTaskbarAlignment == 1))
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"The system taskbar alignment change could not be queued.",
+                    _LW("settings.taskbar.alignment.queueFailed"),
                     SettingsDomain::Dock);
             }
         }
@@ -388,7 +1042,7 @@ public:
             if (!RestartWindowsExplorer())
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"Windows Explorer could not be restarted.");
+                    _LW("app.interact.restart_explorer_fail"));
             }
             break;
         case Action::RestartApplication:
@@ -409,25 +1063,47 @@ public:
                     nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"The data directory could not be opened.");
+                    _LW("settings.backup.error.openLocation"));
             }
             break;
         }
-        case Action::CheckForUpdates:
+        case Action::SetAutoStartEnabled:
         {
-            const std::wstring target = snowdesktop::deployment::IsPackaged()
-                ? snowdesktop::deployment::GetStoreProductPageUri()
-                : L"https://github.com/FreeFallingSnow/"
-                  L"SnowDesktop_Release/releases/latest";
-            if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
-                    app_.controlHwnd_, L"open", target.c_str(),
+            const snowdesktop::AutoStartApplyResult result =
+                app_.ApplyAutoStartEnabled(request.boolValue);
+
+            // The registry/MSIX StartupTask is authoritative. Publish the
+            // actual state even when Windows rejected the requested value so
+            // the toggle never remains optimistically out of sync and the
+            // General JSON domain never becomes dirty for a system setting.
+            app_.generalSettings_.autoStartEnabled =
+                result.state.stateKnown && result.state.enabled;
+            if (app_.settingsController_)
+            {
+                (void)app_.settingsController_->SynchronizeGeneral(
+                    app_.generalSettings_);
+            }
+            if (!result.Succeeded())
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    result.message);
+            }
+            break;
+        }
+        case Action::OpenStartupAppsSettings:
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    app_.controlHwnd_, L"open", L"ms-settings:startupapps",
                     nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"The update page could not be opened.");
+                    _LW("app.settings.auto_start_enable_failed"));
             }
             break;
-        }
+        case Action::CheckForUpdates:
+            return app_.StartSettingsUpdateCheck();
+        case Action::CancelUpdateCheck:
+            app_.CancelSettingsUpdateCheck();
+            break;
         case Action::OpenProject:
             if (reinterpret_cast<INT_PTR>(ShellExecuteW(
                     app_.controlHwnd_, L"open",
@@ -435,7 +1111,7 @@ public:
                     nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"The project page could not be opened.");
+                    _LW("settings.about.link.openFailed"));
             }
             break;
         case Action::OpenLicense:
@@ -459,37 +1135,82 @@ public:
                     nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"The requested project notice could not be opened.");
+                    _LW("settings.about.link.openFailed"));
             }
             break;
         }
+        case Action::SetAnimationDiagnostics:
+            app_.uiAnimationScheduler_.SetDiagnosticsEnabled(
+                request.boolValue);
+            app_.PublishSettingsUpdateStatus();
+            break;
+        case Action::TriggerCrashTest:
+            TriggerCrashForTesting();
+            break;
         case Action::ProbeHotkeyAvailability:
             if (request.hotkeyTarget == HotkeyTarget::None)
             {
                 return snowdesktop::SettingsActionResult::Failure(
-                    L"Hotkey probes require a typed capture target.");
+                    std::wstring(_LW("app.settings.hotkey_status_in_use")) + L" — " +
+                        _LW("app.settings.hotkey_conflict_system"));
             }
-            if (ProbeHotkeyAvailability(
-                    request.hotkeyTarget,
-                    request.modifiers,
-                    request.virtualKey))
+            const HotkeyProbeResult hotkeyProbe = ProbeHotkeyAvailability(
+                request.hotkeyTarget,
+                request.modifiers,
+                request.virtualKey);
+            if (hotkeyProbe.available)
             {
                 return snowdesktop::SettingsActionResult::Success();
             }
+            if (hotkeyProbe.conflictTarget != HotkeyTarget::None)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    std::wstring(_LW("app.settings.hotkey_status_conflict")) + L" — " +
+                    _LFW("app.settings.hotkey_conflict_with",
+                        _LW(HotkeyTargetLabelKey(
+                            hotkeyProbe.conflictTarget))));
+            }
             return snowdesktop::SettingsActionResult::Failure(
-                L"The hotkey is unavailable.");
+                std::wstring(_LW("app.settings.hotkey_status_in_use")) + L" — " +
+                    _LW("app.settings.hotkey_conflict_system"));
         }
         return snowdesktop::SettingsActionResult::Success();
     }
 
 private:
-    bool ProbeHotkeyAvailability(
+    struct HotkeyProbeResult
+    {
+        bool available = false;
+        HotkeyTarget conflictTarget = HotkeyTarget::None;
+    };
+
+    static const char* HotkeyTargetLabelKey(HotkeyTarget target) noexcept
+    {
+        switch (target)
+        {
+        case HotkeyTarget::QuickNavigation:
+            return "app.settings.quick_navigation";
+        case HotkeyTarget::DesktopPassthrough:
+            return "app.settings.desktop_passthrough_hotkey";
+        case HotkeyTarget::FloatingDock:
+            return "app.settings.dock_bar";
+        case HotkeyTarget::PagePrevious:
+            return "app.settings.page_navigation_previous";
+        case HotkeyTarget::PageNext:
+            return "app.settings.page_navigation_next";
+        case HotkeyTarget::None:
+        default:
+            return "app.settings.hotkey";
+        }
+    }
+
+    HotkeyProbeResult ProbeHotkeyAvailability(
         HotkeyTarget target,
         UINT modifiers,
         UINT virtualKey) const
     {
         if (virtualKey == 0)
-            return false;
+            return {};
 
         const UINT normalizedModifiers = modifiers &
             (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
@@ -502,6 +1223,50 @@ private:
                 virtualKey == configuredVirtualKey;
         };
 
+        const auto conflictsWith = [target, &matches](
+            HotkeyTarget configuredTarget,
+            bool enabled,
+            UINT configuredModifiers,
+            UINT configuredVirtualKey) {
+            return target != configuredTarget && enabled &&
+                matches(configuredModifiers, configuredVirtualKey);
+        };
+        if (conflictsWith(HotkeyTarget::QuickNavigation,
+                app_.navigationSettings_.enabled,
+                app_.navigationSettings_.modifiers,
+                app_.navigationSettings_.virtualKey))
+            return { false, HotkeyTarget::QuickNavigation };
+        if (conflictsWith(HotkeyTarget::DesktopPassthrough,
+                app_.generalSettings_.desktopPassthroughHotkeyEnabled,
+                app_.generalSettings_.desktopPassthroughHotkeyModifiers,
+                app_.generalSettings_.desktopPassthroughHotkeyVirtualKey))
+            return { false, HotkeyTarget::DesktopPassthrough };
+        if (conflictsWith(HotkeyTarget::FloatingDock,
+                app_.generalSettings_.dockEnabled &&
+                    app_.dockSettings_.floatingShortcutMode,
+                app_.dockSettings_.floatingHotkeyModifiers,
+                app_.dockSettings_.floatingHotkeyVirtualKey))
+            return { false, HotkeyTarget::FloatingDock };
+        if (conflictsWith(HotkeyTarget::PagePrevious,
+                app_.generalSettings_.pageNavigationKeyboardEnabled,
+                app_.generalSettings_.pageNavigationPreviousModifiers,
+                app_.generalSettings_.pageNavigationPreviousVirtualKey))
+            return { false, HotkeyTarget::PagePrevious };
+        if (conflictsWith(HotkeyTarget::PageNext,
+                app_.generalSettings_.pageNavigationKeyboardEnabled,
+                app_.generalSettings_.pageNavigationNextModifiers,
+                app_.generalSettings_.pageNavigationNextVirtualKey))
+            return { false, HotkeyTarget::PageNext };
+
+        if ((target == HotkeyTarget::PagePrevious ||
+                target == HotkeyTarget::PageNext) &&
+            snowdesktop::page_navigation_rules::
+                IsReservedDesktopSingleKey(
+                    normalizedModifiers, virtualKey))
+        {
+            return {};
+        }
+
         switch (target)
         {
         case HotkeyTarget::QuickNavigation:
@@ -509,7 +1274,8 @@ private:
                 matches(app_.navigationSettings_.modifiers,
                     app_.navigationSettings_.virtualKey))
             {
-                return app_.navigationHotkeyRegistered_;
+                return { app_.navigationHotkeyRegistered_,
+                    HotkeyTarget::None };
             }
             break;
         case HotkeyTarget::DesktopPassthrough:
@@ -520,7 +1286,8 @@ private:
                     app_.generalSettings_.
                         desktopPassthroughHotkeyVirtualKey))
             {
-                return app_.desktopPassthroughHotkeyRegistered_;
+                return { app_.desktopPassthroughHotkeyRegistered_,
+                    HotkeyTarget::None };
             }
             break;
         case HotkeyTarget::FloatingDock:
@@ -529,14 +1296,15 @@ private:
                 matches(app_.dockSettings_.floatingHotkeyModifiers,
                     app_.dockSettings_.floatingHotkeyVirtualKey))
             {
-                return app_.floatingDockHotkeyRegistered_;
+                return { app_.floatingDockHotkeyRegistered_,
+                    HotkeyTarget::None };
             }
             break;
         case HotkeyTarget::PagePrevious:
         case HotkeyTarget::PageNext:
-            return true;
+            break;
         case HotkeyTarget::None:
-            return false;
+            return {};
         }
 
         HWND probeWindow =
@@ -545,7 +1313,7 @@ private:
                 : (app_.inputHwnd_ && IsWindow(app_.inputHwnd_)
                     ? app_.inputHwnd_ : app_.hwnd_);
         if (!probeWindow || !IsWindow(probeWindow))
-            return false;
+            return {};
 
         const BOOL registered = RegisterHotKey(
             probeWindow,
@@ -553,10 +1321,10 @@ private:
             normalizedModifiers | MOD_NOREPEAT,
             virtualKey);
         if (!registered)
-            return false;
+            return {};
 
         UnregisterHotKey(probeWindow, kSettingsHotkeyProbeId);
-        return true;
+        return { true, HotkeyTarget::None };
     }
 
     DesktopApp& app_;
@@ -580,7 +1348,12 @@ void DesktopApp::InitializeSettingsController()
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
         categorySettings_ = snapshot->values.category;
+        generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
+        (void)settingsController_->SynchronizeGeneral(generalSettings_);
     }
+    settingsUpdateState_ = snowdesktop::deployment::IsPackaged()
+        ? snowdesktop::winui::SettingsUpdateState::ManagedByStore
+        : snowdesktop::winui::SettingsUpdateState::Unknown;
     if (!result.Succeeded())
     {
         std::wstring message =
@@ -960,6 +1733,7 @@ void DesktopApp::ApplyLanguageChange()
     LoadCategorySettingsAndApply();
     if (settingsWindow_)
         settingsWindow_->ApplyLanguageChange();
+    PublishSettingsUpdateStatus();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))

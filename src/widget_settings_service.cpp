@@ -1,6 +1,8 @@
 #include "widget_settings_service.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <mutex>
 #include <unordered_map>
@@ -197,6 +199,7 @@ WidgetSettingsBackendResult BuildSnapshot(
     snapshot.generation = descriptor.generation;
     snapshot.preview = descriptor.preview;
     snapshot.customStyle = descriptor.customStyle;
+    snapshot.hostAppearance = descriptor.hostAppearance;
 
     std::vector<WidgetSettingSourceField> declarations =
         descriptor.manifestFields;
@@ -623,6 +626,90 @@ std::vector<std::string> SearchSettingKeys(
     return keys;
 }
 
+bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
+    std::string_view key, std::string_view encoded, std::string& error)
+{
+    error.clear();
+    const std::string value(encoded);
+    if (key == "followPersonalization")
+    {
+        patch.followPersonalization = value == "1" || value == "true";
+        return true;
+    }
+    if (key == "glassEnabled")
+    {
+        patch.glassEnabled = value == "1" || value == "true";
+        return true;
+    }
+    if (key == "acrylicEnabled")
+    {
+        patch.acrylicEnabled = value == "1" || value == "true";
+        return true;
+    }
+    if (key == "bg" || key == "border")
+    {
+        char* end = nullptr;
+        const long parsed = std::strtol(value.c_str(), &end, 0);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            parsed < 0 || parsed > 0xFFFFFF)
+        {
+            error = "invalidAppearanceColor";
+            return false;
+        }
+        if (key == "bg")
+            patch.backgroundColor = static_cast<int>(parsed);
+        else
+            patch.borderColor = static_cast<int>(parsed);
+        return true;
+    }
+    if (key == "alpha" || key == "borderAlpha" ||
+        key == "gradientEndA")
+    {
+        char* end = nullptr;
+        const float parsed = std::strtof(value.c_str(), &end);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            !std::isfinite(parsed) || parsed < 0.0f || parsed > 1.0f)
+        {
+            error = "invalidAppearanceOpacity";
+            return false;
+        }
+        if (key == "alpha") patch.backgroundOpacity = parsed;
+        else if (key == "borderAlpha") patch.borderOpacity = parsed;
+        else patch.gradientEndOpacity = parsed;
+        return true;
+    }
+    if (key == "__contentTheme")
+    {
+        char* end = nullptr;
+        const long parsed = std::strtol(value.c_str(), &end, 10);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            parsed < 0 || parsed > 1)
+        {
+            error = "invalidContentTheme";
+            return false;
+        }
+        patch.contentTheme = static_cast<int>(parsed);
+        return true;
+    }
+    if (key == "glassBlurRadius")
+    {
+        // Component blur is host-shared. The legacy editor accepted this key
+        // in a preset but its setStorage path deliberately ignored it.
+        return true;
+    }
+    if (key == "shadowAlpha" || key == "shadowBlur" ||
+        key == "shadowOffsetY" || key == "highlightAlpha" ||
+        key == "noiseAlpha")
+    {
+        // These retired panel-effect keys are filtered by the current runtime
+        // and storage loader.  Accept and ignore them so an older package's
+        // preset does not make the whole settings surface unavailable.
+        return true;
+    }
+    error = "unknownAppearancePresetValue";
+    return false;
+}
+
 WidgetSettingMutationResult ReloadAfterMutation(
     WidgetSettingsService& service, const SessionCopy& before,
     const WidgetSettingsBackendResult& backendResult)
@@ -944,11 +1031,13 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
     for (const auto& [key, value] : preset->values)
     {
         const auto* field = FindField(session.snapshot, key);
-        if (!field || field->schema.Channel() !=
-                WidgetSettingValueChannel::Ordinary)
+        if (!field)
             return { WidgetSettingMutationStatus::InvalidValue,
                 session.snapshot.generation, session.snapshot.revision,
-                "opaquePresetValue", {} };
+                "settingNotFound", {} };
+        if (field->schema.Channel() !=
+                WidgetSettingValueChannel::Ordinary)
+            continue;
         WidgetSettingOrdinaryWrite write{ key, value,
             WidgetSettingUsesTypedStorage(field->schema.Kind()) };
         if (field->schema.Kind() == WidgetSettingKind::AppSearch)
@@ -957,20 +1046,65 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
         }
         writes.push_back(std::move(write));
     }
-    if (writes.empty())
+    WidgetHostAppearancePatch appearance;
+    appearance.presetId = preset->id;
+    if (session.snapshot.customStyle)
     {
-        InvalidateSearches(state_, session.snapshot.widgetId,
-            invalidatedSearchKeys);
-        return { WidgetSettingMutationStatus::Unchanged,
-            session.snapshot.generation, session.snapshot.revision, {}, {} };
+        // Component themes default both effects off when a preset omits them,
+        // exactly as the legacy editor did before applying its values.
+        appearance.glassEnabled = false;
+        appearance.acrylicEnabled = false;
+    }
+    std::string appearanceError;
+    for (const auto& [key, value] : preset->hostAppearanceValues)
+    {
+        if (key == "__preset" ||
+            (session.snapshot.customStyle &&
+                (key == "followPersonalization" ||
+                    key == "__contentTheme")))
+            continue;
+        if (!ApplyHostAppearancePresetValue(
+                appearance, key, value, appearanceError))
+        {
+            return { WidgetSettingMutationStatus::InvalidValue,
+                session.snapshot.generation, session.snapshot.revision,
+                std::move(appearanceError), {} };
+        }
+    }
+    if (session.snapshot.customStyle)
+    {
+        // A component preset inherits the current global content theme until
+        // the user explicitly chooses Light or Dark again.
+        appearance.contentTheme.reset();
+        appearance.clearContentTheme = true;
     }
     WidgetSettingsBackendResult backendResult =
-        state_->backend.ApplyOrdinaryTransaction(
-            session.descriptor, guard, writes);
+        state_->backend.ApplyHostAppearanceTransaction(
+            session.descriptor, guard, appearance, writes);
     if (backendResult.Succeeded())
         InvalidateSearches(state_, session.snapshot.widgetId,
             invalidatedSearchKeys);
     return ReloadAfterMutation(*this, session, backendResult);
+}
+
+WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
+    const WidgetSettingMutationGuard& guard,
+    const WidgetHostAppearancePatch& patch)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    if (patch.Empty())
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+    if (!session.snapshot.customStyle)
+        return { WidgetSettingMutationStatus::Unavailable,
+            session.snapshot.generation, session.snapshot.revision,
+            "customStyleUnavailable", {} };
+    return ReloadAfterMutation(*this, session,
+        state_->backend.ApplyHostAppearanceTransaction(
+            session.descriptor, guard, patch, {}));
 }
 
 WidgetSettingMutationResult WidgetSettingsService::Reset(

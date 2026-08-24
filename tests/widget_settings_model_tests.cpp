@@ -237,10 +237,14 @@ int main()
             presetNormalized.values.at("scale").number == 10.0,
         "ordinary typed preset values are normalized by their schema");
     preset.values.emplace("token", MakeWidgetSettingString("leak"));
-    Check(!NormalizeWidgetSettingPreset(presetFields, preset,
+    preset.hostAppearanceValues.emplace("glassBlurRadius", "18.5");
+    Check(NormalizeWidgetSettingPreset(presetFields, preset,
                 presetNormalized, error) &&
-            error == "opaquePresetValue",
-        "presets cannot assign secret, handle, or reference fields");
+            presetNormalized.values.contains("scale") &&
+            !presetNormalized.values.contains("token") &&
+            presetNormalized.hostAppearanceValues ==
+                preset.hostAppearanceValues,
+        "opaque preset entries are skipped while ordinary and host-owned preset values still apply");
 
     WidgetSettingsSnapshot snapshot;
     snapshot.widgetId = L"weather-instance";

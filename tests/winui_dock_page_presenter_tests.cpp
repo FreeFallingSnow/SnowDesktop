@@ -79,8 +79,18 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("PointerReleased") != std::string::npos &&
             source.find("LostFocus") != std::string::npos &&
-            source.find("IsEnter(args)") != std::string::npos,
-        "continuous controls preview and commit at interaction boundaries");
+            source.find("IsEnter(args)") != std::string::npos &&
+            source.find("mux::DispatcherTimer") != std::string::npos &&
+            source.find("std::chrono::milliseconds(650)") !=
+                std::string::npos,
+        "continuous controls preview and commit on release, focus, Enter, or keyboard idle");
+    Check(source.find("SetUnit(control, L\"%\")") !=
+                std::string::npos &&
+            source.find("SetUnit(control, L\"px\")") !=
+                std::string::npos &&
+            source.find("ExtractNumericUnit(") != std::string::npos &&
+            source.find("app.settings.items_unit") != std::string::npos,
+        "Dock percentages, blur pixels, and localized item-count units match the legacy surface");
 
     Check(source.find("actions.confirm") != std::string::npos &&
             source.find("Action::RestartExplorer") != std::string::npos &&
@@ -100,6 +110,31 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("PrepareDynamicRuleTheme") != std::string::npos &&
             source.find("contentTheme =") != std::string::npos,
         "all three dynamic rules share enabled, theme, and content-theme bindings");
+    Check(source.find("taskbarRoot.Children().RemoveAt(0)") !=
+                std::string::npos &&
+            source.find("taskbarRoot.Children().Append(taskbarCard.root)") !=
+                std::string::npos,
+        "system taskbar controls follow appearance and dynamic rules as in the legacy page");
+    Check(source.find("edgeSwipeCard.root.IsEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("layoutCard.root.IsEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("behaviorCard.root.IsEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("taskbarCard.root.IsEnabled(dockEnabled)") ==
+                std::string::npos &&
+            source.find("edgeSwipeCard.root.IsHitTestVisible(dockEnabled)") !=
+                std::string::npos &&
+            source.find("taskbarContentThemeRow.root.Visibility(taskbarStyled") !=
+                std::string::npos &&
+            source.find("ReplaceMainContentThemeItems") !=
+                std::string::npos,
+        "Dock descendants leave pointer and keyboard input when disabled while the independent taskbar controls retain legacy semantics");
+    Check(source.find("taskbarHookRequired = settings.systemTaskbarBackdropEnabled") !=
+                std::string::npos &&
+            source.find("if (taskbarHookRequired)") !=
+                std::string::npos,
+        "taskbar runtime status is shown only when a visual hook is requested");
     Check(source.find("ColorChanged(control.changed)") !=
                 std::string::npos &&
             source.find("ValueChanged(control.sliderChanged)") !=

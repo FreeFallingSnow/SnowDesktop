@@ -3536,18 +3536,49 @@ bool WidgetPackageManager::SetDevelopmentOverride(
             developmentOverrides_.erase(packageId);
         return false;
     }
-    if (Refresh(error)) return true;
+    const auto rollbackOverride = [&](std::string originalError) {
+        if (previous)
+            developmentOverrides_.insert(packageId);
+        else
+            developmentOverrides_.erase(packageId);
+        std::string rollbackError;
+        const bool saved = SaveRegistry(rollbackError);
+        if (saved) Refresh(rollbackError);
+        error = std::move(originalError);
+        if (!rollbackError.empty())
+            error += "; development override rollback failed: " +
+                rollbackError;
+        return false;
+    };
 
-    const std::string refreshError = error;
-    if (previous)
-        developmentOverrides_.insert(packageId);
-    else
-        developmentOverrides_.erase(packageId);
-    std::string rollbackError;
-    SaveRegistry(rollbackError);
-    Refresh(rollbackError);
-    error = refreshError;
-    return false;
+    if (!Refresh(error))
+        return rollbackOverride(error);
+
+    if (active)
+    {
+        const auto resolved = Resolve(packageId);
+        if (!resolved || !resolved->development)
+        {
+            return rollbackOverride(
+                "development package could not be activated");
+        }
+        const std::vector<std::string> declaredPermissions =
+            DeclaredPermissions(resolved->manifest);
+        const bool sensitive = !PermissionsRequiringConsent(
+            declaredPermissions).empty();
+        if (sensitive && resolved->permissionState ==
+                PermissionDecisionState::LegacyImplicit)
+        {
+            std::string permissionError;
+            if (!SetPermissionDecision(packageId,
+                    PermissionDecisionState::Pending, {}, {},
+                    permissionError))
+            {
+                return rollbackOverride(std::move(permissionError));
+            }
+        }
+    }
+    return true;
 }
 
 bool WidgetPackageManager::Rollback(const std::string& packageId,
@@ -3610,8 +3641,9 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
 std::string WidgetPackageManager::Sha256File(
     const std::filesystem::path& path)
 {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return {};
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     DWORD objectSize = 0;
@@ -3627,6 +3659,7 @@ std::string WidgetPackageManager::Sha256File(
             &resultSize, 0) < 0)
     {
         if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
+        CloseHandle(file);
         return {};
     }
     std::vector<UCHAR> object(objectSize);
@@ -3635,25 +3668,34 @@ std::string WidgetPackageManager::Sha256File(
         nullptr, 0, 0) < 0)
     {
         BCryptCloseAlgorithmProvider(algorithm, 0);
+        CloseHandle(file);
         return {};
     }
-    std::array<char, 64 * 1024> buffer{};
-    while (file)
+    std::array<UCHAR, 64 * 1024> buffer{};
+    bool readSucceeded = true;
+    for (;;)
     {
-        file.read(buffer.data(), buffer.size());
-        const auto count = file.gcount();
-        if (count > 0 && BCryptHashData(hash,
-            reinterpret_cast<PUCHAR>(buffer.data()),
-            static_cast<ULONG>(count), 0) < 0)
+        DWORD count = 0;
+        if (!::ReadFile(file, buffer.data(),
+                static_cast<DWORD>(buffer.size()), &count, nullptr))
         {
-            BCryptDestroyHash(hash);
-            BCryptCloseAlgorithmProvider(algorithm, 0);
-            return {};
+            // Read errors (for example a disconnected device/pipe) are not
+            // EOF. Never return the digest of a successfully read prefix.
+            readSucceeded = false;
+            break;
+        }
+        if (count == 0) break;
+        if (BCryptHashData(hash, buffer.data(), count, 0) < 0)
+        {
+            readSucceeded = false;
+            break;
         }
     }
-    const bool ok = BCryptFinishHash(hash, digest.data(), hashSize, 0) >= 0;
+    const bool ok = readSucceeded &&
+        BCryptFinishHash(hash, digest.data(), hashSize, 0) >= 0;
     BCryptDestroyHash(hash);
     BCryptCloseAlgorithmProvider(algorithm, 0);
+    CloseHandle(file);
     if (!ok) return {};
     std::ostringstream out;
     out << std::hex << std::setfill('0');

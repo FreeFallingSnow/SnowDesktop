@@ -63,7 +63,27 @@ int main(int argc, char** argv)
     const std::filesystem::path root(argv[1]);
     const std::string source = ReadFile(
         root / "src" / "app" / "app_settings_apply.cpp");
-    Check(!source.empty(), "settings host actions source is readable");
+    const std::string run = ReadFile(
+        root / "src" / "app" / "app_run.cpp");
+    const std::string controllerHeader = ReadFile(
+        root / "src" / "settings_controller.h");
+    const std::string hostHeader = ReadFile(
+        root / "src" / "winui" / "settings_window_host.h");
+    const std::string host = ReadFile(
+        root / "src" / "winui" / "settings_window_host.cpp");
+    Check(!source.empty() && !run.empty() && !controllerHeader.empty() &&
+            !hostHeader.empty() && !host.empty(),
+        "settings host action sources are readable");
+
+    const std::string_view layoutProjection = Between(run,
+        "LoadLayoutSlots();", "UpdateLayoutWorkArea();");
+    Check(AppearsBefore(layoutProjection,
+            "SynchronizeGeneral(generalSettings_)",
+            "SynchronizeDesktop(") &&
+            layoutProjection.find(
+                "desktopSettings.dockEnabled = generalSettings_.dockEnabled;") !=
+                std::string_view::npos,
+        "layout-owned Dock enablement reaches General and Desktop snapshots before WinUI observes them");
 
     const std::string_view preview = Between(source,
         "snowdesktop::SettingsActionResult OnSettingsPreview(",
@@ -86,6 +106,22 @@ int main(int argc, char** argv)
         "Dock previews retain the committed system taskbar mirrors");
     Check(preview.find("RequestSystemTaskbar") == std::string_view::npos,
         "Dock previews never request Windows-owned taskbar changes");
+    Check(preview.find("app_.RefreshSystemTaskbarAppearance(false);") !=
+                std::string_view::npos,
+        "Dock appearance sliders repaint the system taskbar during preview");
+    Check(preview.find(
+              "snowdesktop::IconBeautifyUpdateKind::Preview") !=
+                std::string_view::npos &&
+            preview.find("app_.SetIconBeautifySettings(") !=
+                std::string_view::npos,
+        "desktop icon beautification colors and sliders reach the live preview path");
+    Check(preview.find("app_.PreviewItemFontSize(") !=
+                std::string_view::npos &&
+            preview.find("app_.PreviewListItemFontSize(") !=
+                std::string_view::npos &&
+            preview.find("app_.PreviewItemFontWeight(") !=
+                std::string_view::npos,
+        "desktop typography sliders repaint without persisting each drag step");
 
     const std::size_t dockAssignment = commit.find(
         "app_.dockSettings_ = requestedDockSettings;");
@@ -105,14 +141,14 @@ int main(int argc, char** argv)
                 std::string_view::npos,
         "system taskbar requests are issued only for changed values");
     Check(commit.find(
-            "L\"The system taskbar auto-hide change could not be queued.\"") !=
+            "_LW(\"settings.taskbar.autoHide.queueFailed\")") !=
                 std::string_view::npos &&
             commit.find(
-                "L\"The system taskbar alignment change could not be queued.\"") !=
+                "_LW(\"settings.taskbar.alignment.queueFailed\")") !=
                 std::string_view::npos &&
             commit.find("SettingsDomain::Dock);") !=
                 std::string_view::npos,
-        "rejected system taskbar requests return explicit Dock-domain failures");
+        "rejected system taskbar requests return localized explicit Dock-domain failures");
     Check(commit.find("SyncSystemTaskbarSettingsFromWindows();") ==
             std::string_view::npos,
         "a successful Dock commit keeps requested values instead of rereading Windows");
@@ -148,6 +184,127 @@ int main(int argc, char** argv)
     Check(general.find("if (!app_.generalSettings_.dockEnabled)\n") !=
                 std::string_view::npos,
         "disabling the Dock restores its entries to the desktop before saving");
+
+    Check(general.find("ApplyAutoStartEnabled") == std::string_view::npos,
+        "General JSON commits never mutate the Windows auto-start registration");
+    Check(controllerHeader.find("SetAutoStartEnabled") !=
+                std::string::npos &&
+            controllerHeader.find("OpenStartupAppsSettings") !=
+                std::string::npos &&
+            controllerHeader.find("bool boolValue = false;") !=
+                std::string::npos,
+        "auto-start uses explicit structured host actions");
+    const std::string_view autoStartAction = Between(source,
+        "case Action::SetAutoStartEnabled:",
+        "case Action::OpenStartupAppsSettings:");
+    Check(!autoStartAction.empty() &&
+            AppearsBefore(autoStartAction,
+                "app_.ApplyAutoStartEnabled(request.boolValue)",
+                "SynchronizeGeneral(") &&
+            autoStartAction.find("result.state.stateKnown &&") !=
+                std::string_view::npos,
+        "auto-start publishes the authoritative Windows result even after a rejected request");
+    Check(hostHeader.find("startupConflict") != std::string::npos &&
+            host.find("general.setAutoStart") != std::string::npos &&
+            host.find("general.openStartupAppsSettings") !=
+                std::string::npos &&
+            host.find("general.queryStartupConflict") !=
+                std::string::npos &&
+            host.find("Action::SetAutoStartEnabled") !=
+                std::string::npos &&
+            host.find("Action::OpenStartupAppsSettings") !=
+                std::string::npos,
+        "the General WinUI presenter is wired to the explicit auto-start host actions and runtime conflict provider");
+    Check(run.find("settingsHostOptions.startupConflict") !=
+                std::string::npos &&
+            run.find("QueryAutoStartState()") != std::string::npos &&
+            run.find("PortableVersionOwnsStartup") != std::string::npos &&
+            run.find("InstalledVersionOwnsStartup") != std::string::npos,
+        "DesktopApp projects portable and installed startup ownership into the WinUI warning state");
+    Check(host.find("personalization.updateGeneral") !=
+                std::string::npos &&
+            host.find("actions.setDeveloperToolsEnabled") !=
+                std::string::npos &&
+            run.find("snapshot->values.general.") !=
+                std::string::npos,
+        "legacy General-owned appearance choices and the developer-tools switch use the current controller snapshot");
+    Check(controllerHeader.find("SetAnimationDiagnostics") !=
+                std::string::npos &&
+            controllerHeader.find("TriggerCrashTest") !=
+                std::string::npos &&
+            host.find("homeAbout.openLink") != std::string::npos &&
+            host.find("HomeAboutLinkUri(link)") != std::string::npos &&
+            host.find("settings.about.link.openFailed") !=
+                std::string::npos &&
+            host.find("homeAbout.setAnimationDiagnostics") !=
+                std::string::npos &&
+            host.find("Action::SetAnimationDiagnostics") !=
+                std::string::npos &&
+            host.find("homeAbout.unlockDebug") != std::string::npos &&
+            host.find("debugUnlocked = true") != std::string::npos &&
+            host.find("RebuildSearchIndex();") != std::string::npos &&
+            host.find("homeAbout.requestCrashTestConfirmation") !=
+                std::string::npos &&
+            host.find("ShowGenerationConfirmation(") !=
+                std::string::npos &&
+            host.find("Action::TriggerCrashTest") !=
+                std::string::npos,
+        "About links and legacy Debug controls use localized generation-gated host actions and confirmation");
+    Check(run.find("widgetsPage.agentSkillTargetMask") !=
+                std::string::npos &&
+            run.find("widgetsPage.setAgentSkillTargetMask") !=
+                std::string::npos &&
+            run.find("general.agentSkillTargetMask = mask") !=
+                std::string::npos &&
+            run.find("widgetsPage.openDevelopmentFolder") !=
+                std::string::npos &&
+            run.find("WidgetEngine::GetWidgetPackagePaths()") !=
+                std::string::npos,
+        "Developer Tools reads and persists the controller-owned Agent Skill selection and opens the authoritative workspace");
+    Check(run.find("WidgetSettingsService searchReader(") !=
+                std::string::npos &&
+            run.find("searchReader.Load(widget.id)") !=
+                std::string::npos &&
+            run.find("fieldState.visible") != std::string::npos,
+        "settings search evaluates visible v2 fields without mutating live widget-settings sessions");
+    const std::string_view hotkeyProbe = Between(source,
+        "HotkeyProbeResult ProbeHotkeyAvailability(", "DesktopApp& app_");
+    Check(hotkeyProbe.find("conflictsWith(HotkeyTarget::PagePrevious") !=
+                std::string_view::npos &&
+            hotkeyProbe.find("conflictsWith(HotkeyTarget::PageNext") !=
+                std::string_view::npos &&
+            hotkeyProbe.find(
+                "return { false, HotkeyTarget::QuickNavigation }") !=
+                std::string_view::npos &&
+            hotkeyProbe.find(
+                "return { false, HotkeyTarget::DesktopPassthrough }") !=
+                std::string_view::npos &&
+            hotkeyProbe.find(
+                "return { false, HotkeyTarget::FloatingDock }") !=
+                std::string_view::npos &&
+            hotkeyProbe.find("IsReservedDesktopSingleKey(") !=
+                std::string_view::npos &&
+            hotkeyProbe.find("case HotkeyTarget::PageNext:\n            return true;") ==
+                std::string_view::npos &&
+            hotkeyProbe.find("RegisterHotKey(") != std::string_view::npos,
+        "hotkey probes preserve the specific legacy internal-conflict target before the system availability probe");
+    Check(source.find("HotkeyTargetLabelKey(") != std::string::npos &&
+            source.find("_LFW(\"app.settings.hotkey_conflict_with\"") !=
+                std::string::npos &&
+            source.find("_LW(\"app.settings.hotkey_status_conflict\"") !=
+                std::string::npos &&
+            source.find("_LW(\"app.settings.hotkey_status_in_use\"") !=
+                std::string::npos &&
+            source.find("_LW(\"app.settings.hotkey_conflict_system\"") !=
+                std::string::npos &&
+            source.find("The hotkey is unavailable.") ==
+                std::string::npos &&
+            source.find("Hotkey probes require a typed capture target.") ==
+                std::string::npos &&
+            host.find(
+                "completion(result.Succeeded(), result.message)") !=
+                std::string::npos,
+        "hotkey probe failures cross the host boundary as existing localized status/detail text instead of generic raw English");
 
     if (failures == 0)
         std::cout << "Settings host action semantics tests passed\n";

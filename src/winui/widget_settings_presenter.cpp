@@ -2,12 +2,16 @@
 
 #include "widget_settings_presenter.h"
 
+#include "../personalization.h"
+#include "settings_presenter_controls.h"
+
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -210,8 +214,8 @@ struct WidgetFieldControl
     wr::WidgetSettingFieldSchema schema;
     muxc::Border root{nullptr};
     muxc::StackPanel content{nullptr};
-    muxc::TextBlock label{nullptr};
-    muxc::TextBlock description{nullptr};
+    presenter_controls::SettingRow row;
+    muxc::StackPanel editorHost{nullptr};
     muxc::TextBlock validation{nullptr};
     muxc::TextBlock diagnostic{nullptr};
 
@@ -221,7 +225,7 @@ struct WidgetFieldControl
     muxc::StackPanel numericEditors{nullptr};
     muxc::Slider slider{nullptr};
     muxc::NumberBox number{nullptr};
-    muxc::ColorPicker color{nullptr};
+    std::unique_ptr<presenter_controls::ColorFlyoutEditor> colorEditor;
     muxc::ComboBox select{nullptr};
     muxc::ListView multiSelect{nullptr};
     std::vector<MultiSelectOptionControl> multiOptions;
@@ -244,7 +248,6 @@ struct WidgetFieldControl
     winrt::event_token toggled{};
     winrt::event_token sliderChanged{};
     winrt::event_token numberChanged{};
-    winrt::event_token colorChanged{};
     winrt::event_token selectionChanged{};
     winrt::event_token dateChanged{};
     winrt::event_token timeChanged{};
@@ -268,6 +271,32 @@ struct WidgetGroupControl
     muxc::Border root{nullptr};
     muxc::Expander expander{nullptr};
     muxc::StackPanel content{nullptr};
+};
+
+struct AppearanceScalarControl
+{
+    presenter_controls::SettingRow row;
+    muxc::StackPanel editors{nullptr};
+    muxc::Slider slider{nullptr};
+    muxc::NumberBox number{nullptr};
+    winrt::event_token sliderChanged{};
+    winrt::event_token numberChanged{};
+    bool synchronizing = false;
+};
+
+enum class AppearanceThemeKind
+{
+    BuiltIn,
+    Custom,
+    Component,
+};
+
+struct AppearanceThemeChoice
+{
+    AppearanceThemeKind kind = AppearanceThemeKind::Custom;
+    std::string id;
+    int builtInPresetId = kAppearancePresetCustom;
+    std::size_t componentPresetIndex = 0;
 };
 
 struct WidgetSettingsDispatchBridge
@@ -344,11 +373,38 @@ struct WidgetSettingsPresenter::Impl
 
     muxc::StackPanel root{nullptr};
     muxc::TextBlock widgetHeading{nullptr};
-    SettingsCard commandsCard;
+    SettingsCard appearanceCard;
+    muxc::TextBlock appearanceTitle{nullptr};
+    presenter_controls::SettingRow followGlobalRow;
+    muxc::ToggleSwitch followGlobal{nullptr};
+    presenter_controls::SettingRow appearanceThemeRow;
+    muxc::ComboBox appearanceTheme{nullptr};
+    muxc::StackPanel customAppearanceHost{nullptr};
+    std::unique_ptr<presenter_controls::ColorFlyoutEditor>
+        backgroundColorEditor;
+    AppearanceScalarControl backgroundOpacity;
+    std::unique_ptr<presenter_controls::ColorFlyoutEditor>
+        borderColorEditor;
+    AppearanceScalarControl borderOpacity;
+    AppearanceScalarControl gradientEndOpacity;
+    presenter_controls::SettingRow glassRow;
+    muxc::ToggleSwitch glassEnabled{nullptr};
+    presenter_controls::SettingRow acrylicRow;
+    muxc::ToggleSwitch acrylicEnabled{nullptr};
+    presenter_controls::SettingRow contentThemeRow;
+    muxc::ComboBox contentTheme{nullptr};
+
+    SettingsCard stylePreviewCard;
+    muxc::TextBlock stylePreviewTitle{nullptr};
+    presenter_controls::SettingRow presetRow;
     muxc::ComboBox presetCombo{nullptr};
-    muxc::Button applyPreset{nullptr};
-    muxc::Button reset{nullptr};
+    presenter_controls::SettingRow restoreScriptDefaultRow;
+    muxc::Button restoreScriptDefault{nullptr};
+    muxc::TextBlock scriptSettingsTitle{nullptr};
     muxc::StackPanel fieldsHost{nullptr};
+    SettingsCard resetCard;
+    presenter_controls::SettingRow resetRow;
+    muxc::Button reset{nullptr};
 
     std::vector<std::unique_ptr<WidgetFieldControl>> fields;
     std::vector<WidgetGroupControl> groups;
@@ -359,17 +415,26 @@ struct WidgetSettingsPresenter::Impl
     std::vector<wr::WidgetSettingFieldSchema> cachedSchemas;
     std::vector<wr::WidgetSettingGroupSchema> cachedGroups;
     std::vector<wr::WidgetSettingPresetSchema> cachedPresets;
+    std::vector<AppearanceThemeChoice> appearanceThemeChoices;
     std::string defaultPresetId;
+    wr::WidgetHostAppearanceState currentHostAppearance;
     std::wstring widgetId;
     std::string widgetName;
     std::uint64_t generation = 0;
     std::uint64_t revision = 0;
+    bool cachedCustomStyle = false;
     bool hasSnapshot = false;
     bool active = false;
     bool updatingControls = false;
     bool closed = false;
 
-    winrt::event_token applyPresetClicked{};
+    winrt::event_token followGlobalToggled{};
+    winrt::event_token appearanceThemeChanged{};
+    winrt::event_token glassToggled{};
+    winrt::event_token acrylicToggled{};
+    winrt::event_token contentThemeChanged{};
+    winrt::event_token presetChanged{};
+    winrt::event_token restoreScriptDefaultClicked{};
     winrt::event_token resetClicked{};
 
     [[nodiscard]] std::wstring L(
@@ -404,6 +469,83 @@ struct WidgetSettingsPresenter::Impl
         card.root.Child(card.content);
     }
 
+    muxc::TextBlock MakeSectionTitle()
+    {
+        muxc::TextBlock title{};
+        title.FontSize(18.0);
+        title.FontWeight(
+            winrt::Windows::UI::Text::FontWeights::SemiBold());
+        title.TextWrapping(mux::TextWrapping::Wrap);
+        return title;
+    }
+
+    void InitializeAppearanceScalar(AppearanceScalarControl& control)
+    {
+        control.editors = muxc::StackPanel{};
+        control.editors.Orientation(muxc::Orientation::Horizontal);
+        control.editors.Spacing(12.0);
+        control.editors.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        control.slider = muxc::Slider{};
+        control.slider.Minimum(0.0);
+        control.slider.Maximum(1.0);
+        control.slider.StepFrequency(0.01);
+        control.slider.Width(350.0);
+        control.slider.VerticalAlignment(mux::VerticalAlignment::Center);
+        control.number = muxc::NumberBox{};
+        control.number.Minimum(0.0);
+        control.number.Maximum(1.0);
+        control.number.SmallChange(0.01);
+        control.number.Width(110.0);
+        control.number.SpinButtonPlacementMode(
+            muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        control.number.ValidationMode(
+            muxc::NumberBoxValidationMode::InvalidInputOverwritten);
+        control.editors.Children().Append(control.slider);
+        control.editors.Children().Append(control.number);
+        control.row.Initialize(control.editors);
+    }
+
+    void RunAppearancePatch(wr::WidgetHostAppearancePatch patch)
+    {
+        RunMutation("__appearance",
+            [this, patch = std::move(patch)](const auto& guard) {
+                return service.UpdateHostAppearance(guard, patch);
+            });
+    }
+
+    void HookAppearanceScalar(
+        AppearanceScalarControl& control,
+        std::function<void(wr::WidgetHostAppearancePatch&, float)> assign)
+    {
+        control.sliderChanged = control.slider.ValueChanged(
+            [this, &control, assign](const auto&, const auto&) {
+                if (!CanMutate() || control.synchronizing) return;
+                const float value = static_cast<float>(
+                    std::clamp(control.slider.Value(), 0.0, 1.0));
+                control.synchronizing = true;
+                control.number.Value(value);
+                control.synchronizing = false;
+                wr::WidgetHostAppearancePatch patch;
+                assign(patch, value);
+                RunAppearancePatch(std::move(patch));
+            });
+        control.numberChanged = control.number.ValueChanged(
+            [this, &control, assign](const auto&, const auto&) {
+                if (!CanMutate() || control.synchronizing ||
+                    std::isnan(control.number.Value()))
+                    return;
+                const float value = static_cast<float>(
+                    std::clamp(control.number.Value(), 0.0, 1.0));
+                control.synchronizing = true;
+                control.slider.Value(value);
+                control.synchronizing = false;
+                wr::WidgetHostAppearancePatch patch;
+                assign(patch, value);
+                RunAppearancePatch(std::move(patch));
+            });
+    }
+
     void BuildStaticControls()
     {
         root = muxc::StackPanel{};
@@ -417,40 +559,226 @@ struct WidgetSettingsPresenter::Impl
         widgetHeading.Margin({4.0, 4.0, 4.0, 8.0});
         root.Children().Append(widgetHeading);
 
-        InitializeCard(commandsCard);
+        InitializeCard(appearanceCard);
+        appearanceTitle = MakeSectionTitle();
+        appearanceCard.content.Children().Append(appearanceTitle);
+
+        followGlobal = muxc::ToggleSwitch{};
+        followGlobal.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        followGlobalRow.Initialize(followGlobal);
+        appearanceCard.content.Children().Append(followGlobalRow.root);
+
+        appearanceTheme = muxc::ComboBox{};
+        appearanceTheme.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        appearanceTheme.MaxWidth(520.0);
+        appearanceThemeRow.Initialize(appearanceTheme);
+        appearanceCard.content.Children().Append(appearanceThemeRow.root);
+
+        customAppearanceHost = muxc::StackPanel{};
+        customAppearanceHost.Spacing(10.0);
+        appearanceCard.content.Children().Append(customAppearanceHost);
+
+        backgroundColorEditor =
+            std::make_unique<presenter_controls::ColorFlyoutEditor>();
+        backgroundColorEditor->Initialize(
+            [this](const wui::Color& color, SettingsUpdateMode) {
+                if (!CanMutate()) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.backgroundColor = static_cast<int>(FromColor(color));
+                RunAppearancePatch(std::move(patch));
+            });
+        customAppearanceHost.Children().Append(
+            backgroundColorEditor->row.root);
+
+        InitializeAppearanceScalar(backgroundOpacity);
+        customAppearanceHost.Children().Append(backgroundOpacity.row.root);
+
+        borderColorEditor =
+            std::make_unique<presenter_controls::ColorFlyoutEditor>();
+        borderColorEditor->Initialize(
+            [this](const wui::Color& color, SettingsUpdateMode) {
+                if (!CanMutate()) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.borderColor = static_cast<int>(FromColor(color));
+                RunAppearancePatch(std::move(patch));
+            });
+        customAppearanceHost.Children().Append(borderColorEditor->row.root);
+
+        InitializeAppearanceScalar(borderOpacity);
+        customAppearanceHost.Children().Append(borderOpacity.row.root);
+        InitializeAppearanceScalar(gradientEndOpacity);
+        customAppearanceHost.Children().Append(gradientEndOpacity.row.root);
+
+        glassEnabled = muxc::ToggleSwitch{};
+        glassEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        glassRow.Initialize(glassEnabled);
+        customAppearanceHost.Children().Append(glassRow.root);
+
+        acrylicEnabled = muxc::ToggleSwitch{};
+        acrylicEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        acrylicRow.Initialize(acrylicEnabled);
+        customAppearanceHost.Children().Append(acrylicRow.root);
+
+        contentTheme = muxc::ComboBox{};
+        contentTheme.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        contentTheme.MaxWidth(520.0);
+        contentThemeRow.Initialize(contentTheme);
+        customAppearanceHost.Children().Append(contentThemeRow.root);
+        root.Children().Append(appearanceCard.root);
+
+        InitializeCard(stylePreviewCard);
+        stylePreviewTitle = MakeSectionTitle();
+        stylePreviewCard.content.Children().Append(stylePreviewTitle);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
-        commandsCard.content.Children().Append(presetCombo);
+        presetRow.Initialize(presetCombo);
+        stylePreviewCard.content.Children().Append(presetRow.root);
+        restoreScriptDefault = muxc::Button{};
+        restoreScriptDefault.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        restoreScriptDefaultRow.Initialize(restoreScriptDefault);
+        stylePreviewCard.content.Children().Append(
+            restoreScriptDefaultRow.root);
+        root.Children().Append(stylePreviewCard.root);
 
-        muxc::StackPanel buttons;
-        buttons.Orientation(muxc::Orientation::Horizontal);
-        buttons.Spacing(8.0);
-        applyPreset = muxc::Button{};
-        reset = muxc::Button{};
-        buttons.Children().Append(applyPreset);
-        buttons.Children().Append(reset);
-        commandsCard.content.Children().Append(buttons);
-        root.Children().Append(commandsCard.root);
-
+        scriptSettingsTitle = MakeSectionTitle();
+        scriptSettingsTitle.Margin({4.0, 8.0, 4.0, 0.0});
+        root.Children().Append(scriptSettingsTitle);
         fieldsHost = muxc::StackPanel{};
         fieldsHost.Spacing(8.0);
         root.Children().Append(fieldsHost);
+
+        InitializeCard(resetCard);
+        reset = muxc::Button{};
+        reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        resetRow.Initialize(reset);
+        resetCard.content.Children().Append(resetRow.root);
+        root.Children().Append(resetCard.root);
+
+        appearanceCard.root.Visibility(mux::Visibility::Collapsed);
+        stylePreviewCard.root.Visibility(mux::Visibility::Collapsed);
+        scriptSettingsTitle.Visibility(mux::Visibility::Collapsed);
+        resetCard.root.Visibility(mux::Visibility::Collapsed);
     }
 
     void HookStaticEvents()
     {
-        applyPresetClicked = applyPreset.Click(
+        followGlobalToggled = followGlobal.Toggled(
+            [this](const auto&, const auto&) {
+                if (!CanMutate()) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.followPersonalization = followGlobal.IsOn();
+                RunAppearancePatch(std::move(patch));
+            });
+        appearanceThemeChanged = appearanceTheme.SelectionChanged(
+            [this](const auto&, const auto&) {
+                if (!CanMutate()) return;
+                const int index = appearanceTheme.SelectedIndex();
+                if (index < 0 ||
+                    static_cast<std::size_t>(index) >=
+                        appearanceThemeChoices.size())
+                    return;
+                const auto choice = appearanceThemeChoices[
+                    static_cast<std::size_t>(index)];
+                if (choice.kind == AppearanceThemeKind::Component)
+                {
+                    if (choice.componentPresetIndex >= cachedPresets.size())
+                        return;
+                    const std::string id = cachedPresets[
+                        choice.componentPresetIndex].id;
+                    RunMutation("__preset",
+                        [this, id](const auto& guard) {
+                            return service.ApplyPreset(guard, id);
+                        });
+                    return;
+                }
+                wr::WidgetHostAppearancePatch patch;
+                patch.presetId = choice.id;
+                if (choice.kind == AppearanceThemeKind::BuiltIn)
+                {
+                    const auto preset = MakeAppearancePreset(
+                        choice.builtInPresetId);
+                    const auto rgb = [](float red, float green, float blue) {
+                        const auto channel = [](float value) {
+                            return std::clamp(static_cast<int>(
+                                std::lround(value * 255.0f)), 0, 255);
+                        };
+                        return (channel(red) << 16) |
+                            (channel(green) << 8) | channel(blue);
+                    };
+                    patch.backgroundColor = rgb(preset.widgetBgR,
+                        preset.widgetBgG, preset.widgetBgB);
+                    patch.borderColor = rgb(preset.widgetBorderR,
+                        preset.widgetBorderG, preset.widgetBorderB);
+                    patch.backgroundOpacity = preset.widgetAlpha;
+                    patch.borderOpacity = preset.widgetBorderAlpha;
+                    patch.gradientEndOpacity = preset.gradientEndA;
+                    patch.glassEnabled = preset.glassEnabled;
+                    patch.acrylicEnabled = preset.acrylicEnabled;
+                    patch.contentTheme = preset.contentTheme;
+                }
+                RunAppearancePatch(std::move(patch));
+            });
+        HookAppearanceScalar(backgroundOpacity,
+            [](auto& patch, float value) {
+                patch.backgroundOpacity = value;
+            });
+        HookAppearanceScalar(borderOpacity,
+            [](auto& patch, float value) {
+                patch.borderOpacity = value;
+            });
+        HookAppearanceScalar(gradientEndOpacity,
+            [](auto& patch, float value) {
+                patch.gradientEndOpacity = value;
+            });
+        glassToggled = glassEnabled.Toggled(
+            [this](const auto&, const auto&) {
+                if (!CanMutate()) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.glassEnabled = glassEnabled.IsOn();
+                if (!glassEnabled.IsOn() && acrylicEnabled.IsOn())
+                    patch.acrylicEnabled = false;
+                RunAppearancePatch(std::move(patch));
+            });
+        acrylicToggled = acrylicEnabled.Toggled(
+            [this](const auto&, const auto&) {
+                if (!CanMutate()) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.acrylicEnabled = acrylicEnabled.IsOn();
+                if (acrylicEnabled.IsOn() && !glassEnabled.IsOn())
+                    patch.glassEnabled = true;
+                RunAppearancePatch(std::move(patch));
+            });
+        contentThemeChanged = contentTheme.SelectionChanged(
+            [this](const auto&, const auto&) {
+                if (!CanMutate()) return;
+                const int selection = contentTheme.SelectedIndex();
+                if (selection < 0 || selection > 1) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.contentTheme = selection;
+                RunAppearancePatch(std::move(patch));
+            });
+        presetChanged = presetCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 if (!CanMutate()) return;
                 const int index = presetCombo.SelectedIndex();
                 if (index < 0 ||
                     static_cast<std::size_t>(index) >= cachedPresets.size())
                     return;
-                const std::string presetId =
-                    cachedPresets[static_cast<std::size_t>(index)].id;
-                RunMutation({}, [this, presetId](const auto& guard) {
-                    return service.ApplyPreset(guard, presetId);
+                const std::string id = cachedPresets[
+                    static_cast<std::size_t>(index)].id;
+                RunMutation("__preset", [this, id](const auto& guard) {
+                    return service.ApplyPreset(guard, id);
+                });
+            });
+        restoreScriptDefaultClicked = restoreScriptDefault.Click(
+            [this](const auto&, const auto&) {
+                if (!CanMutate() || defaultPresetId.empty()) return;
+                const std::string id = defaultPresetId;
+                RunMutation("__preset", [this, id](const auto& guard) {
+                    return service.ApplyPreset(guard, id);
                 });
             });
         resetClicked = reset.Click(
@@ -542,7 +870,6 @@ struct WidgetSettingsPresenter::Impl
             }
             muxa::AutomationProperties::SetName(
                 group.root, ToText(schema.label));
-            fieldsHost.Children().Append(group.root);
             groupPanels.emplace(schema.id, group.content);
             groups.push_back(std::move(group));
         }
@@ -554,21 +881,17 @@ struct WidgetSettingsPresenter::Impl
         if (cardStyle) field.root.Style(cardStyle);
         field.content = muxc::StackPanel{};
         field.content.Spacing(7.0);
-        field.label = muxc::TextBlock{};
-        field.label.Text(ToText(field.schema.label));
-        field.label.FontWeight(
+        field.editorHost = muxc::StackPanel{};
+        field.editorHost.Spacing(7.0);
+        field.editorHost.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        field.row.Initialize(field.editorHost);
+        field.row.SetText(
+            ToWide(field.schema.label),
+            ToWide(field.schema.description));
+        field.row.label.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
-        field.label.TextWrapping(mux::TextWrapping::Wrap);
-        field.content.Children().Append(field.label);
-
-        field.description = muxc::TextBlock{};
-        field.description.Text(ToText(field.schema.description));
-        field.description.Opacity(0.72);
-        field.description.TextWrapping(mux::TextWrapping::Wrap);
-        field.description.Visibility(field.schema.description.empty()
-            ? mux::Visibility::Collapsed
-            : mux::Visibility::Visible);
-        field.content.Children().Append(field.description);
+        field.content.Children().Append(field.row.root);
         field.root.Child(field.content);
         muxa::AutomationProperties::SetName(
             field.root, ToText(field.schema.label));
@@ -596,7 +919,6 @@ struct WidgetSettingsPresenter::Impl
     {
         field.text = muxc::TextBox{};
         field.text.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        field.text.Header(winrt::box_value(ToText(field.schema.label)));
         field.textChanged = field.text.TextChanged(
             [&field](const auto&, const auto&) {
                 if (!field.synchronizing) field.textDirty = true;
@@ -614,7 +936,7 @@ struct WidgetSettingsPresenter::Impl
                     args.Handled(true);
                 }
             });
-        field.content.Children().Append(field.text);
+        field.editorHost.Children().Append(field.text);
     }
 
     void BuildPasswordEditor(WidgetFieldControl& field)
@@ -622,7 +944,6 @@ struct WidgetSettingsPresenter::Impl
         field.password = muxc::PasswordBox{};
         field.password.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        field.password.Header(winrt::box_value(ToText(field.schema.label)));
         field.password.PasswordRevealMode(
             muxc::PasswordRevealMode::Peek);
         field.passwordChanged = field.password.PasswordChanged(
@@ -642,15 +963,14 @@ struct WidgetSettingsPresenter::Impl
                     args.Handled(true);
                 }
             });
-        field.content.Children().Append(field.password);
+        field.editorHost.Children().Append(field.password);
         BuildOpaqueActions(field, false, true);
     }
 
     void BuildBooleanEditor(WidgetFieldControl& field)
     {
         field.toggle = muxc::ToggleSwitch{};
-        field.toggle.Header(winrt::box_value(ToText(field.schema.label)));
-        field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         field.toggled = field.toggle.Toggled(
             [this, &field](const auto&, const auto&) {
                 if (!CanMutateField(field)) return;
@@ -661,7 +981,7 @@ struct WidgetSettingsPresenter::Impl
                             wr::MakeWidgetSettingBoolean(value));
                     });
             });
-        field.content.Children().Append(field.toggle);
+        field.editorHost.Children().Append(field.toggle);
     }
 
     void BuildNumericEditor(WidgetFieldControl& field)
@@ -684,6 +1004,8 @@ struct WidgetSettingsPresenter::Impl
         field.numericEditors = muxc::StackPanel{};
         field.numericEditors.Orientation(muxc::Orientation::Horizontal);
         field.numericEditors.Spacing(12.0);
+        field.numericEditors.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
         field.slider = muxc::Slider{};
         field.slider.Minimum(minimum);
         field.slider.Maximum(maximum);
@@ -702,7 +1024,7 @@ struct WidgetSettingsPresenter::Impl
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
         field.numericEditors.Children().Append(field.slider);
         field.numericEditors.Children().Append(field.number);
-        field.content.Children().Append(field.numericEditors);
+        field.editorHost.Children().Append(field.numericEditors);
 
         field.sliderChanged = field.slider.ValueChanged(
             [this, &field](const auto&, const auto&) {
@@ -727,27 +1049,35 @@ struct WidgetSettingsPresenter::Impl
 
     void BuildColorEditor(WidgetFieldControl& field)
     {
-        field.color = muxc::ColorPicker{};
-        field.color.IsAlphaEnabled(false);
-        field.color.IsMoreButtonVisible(false);
-        field.color.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        field.colorChanged = field.color.ColorChanged(
-            [this, &field](const auto&, const auto&) {
+        field.colorEditor =
+            std::make_unique<presenter_controls::ColorFlyoutEditor>();
+        field.colorEditor->Initialize(
+            [this, &field](
+                const wui::Color& color,
+                SettingsUpdateMode mode) {
+                // WidgetSettingsService intentionally has no transient
+                // preview channel: both picker drag and final acceptance are
+                // persisted. ColorFlyoutEditor writes the opening value back
+                // through this same typed path on cancel/light-dismiss.
+                (void)mode;
                 if (!CanMutateField(field)) return;
-                const long long value = FromColor(field.color.Color());
+                const long long value = FromColor(color);
                 RunMutation(field.schema.key,
                     [this, key = field.schema.key, value](const auto& guard) {
                         return service.SetOrdinary(guard, key,
                             wr::MakeWidgetSettingInteger(value));
                     });
             });
-        field.content.Children().Append(field.color);
+        // ColorFlyoutEditor normally owns a complete SettingRow. This
+        // presenter already supplies the common field row, so move only its
+        // compact swatch button into that row's editor host.
+        field.colorEditor->row.controlHost.Content(nullptr);
+        field.editorHost.Children().Append(field.colorEditor->button);
     }
 
     void BuildSelectEditor(WidgetFieldControl& field)
     {
         field.select = muxc::ComboBox{};
-        field.select.Header(winrt::box_value(ToText(field.schema.label)));
         field.select.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.select.MaxWidth(520.0);
         for (const auto& option : field.schema.options)
@@ -768,7 +1098,7 @@ struct WidgetSettingsPresenter::Impl
                             wr::MakeWidgetSettingString(value));
                     });
             });
-        field.content.Children().Append(field.select);
+        field.editorHost.Children().Append(field.select);
     }
 
     void BuildMultiSelectEditor(WidgetFieldControl& field)
@@ -797,13 +1127,12 @@ struct WidgetSettingsPresenter::Impl
             field.multiSelect.Items().Append(item.checkBox);
             field.multiOptions.push_back(std::move(item));
         }
-        field.content.Children().Append(field.multiSelect);
+        field.editorHost.Children().Append(field.multiSelect);
     }
 
     void BuildDateEditor(WidgetFieldControl& field)
     {
         field.date = muxc::CalendarDatePicker{};
-        field.date.Header(winrt::box_value(ToText(field.schema.label)));
         field.date.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.date.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
         field.dateChanged = field.date.DateChanged(
@@ -820,13 +1149,12 @@ struct WidgetSettingsPresenter::Impl
                             wr::MakeWidgetSettingString(value));
                     });
             });
-        field.content.Children().Append(field.date);
+        field.editorHost.Children().Append(field.date);
     }
 
     void BuildTimeEditor(WidgetFieldControl& field)
     {
         field.time = muxc::TimePicker{};
-        field.time.Header(winrt::box_value(ToText(field.schema.label)));
         field.time.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.time.ClockIdentifier(L"24HourClock");
         field.time.MinuteIncrement(1);
@@ -844,7 +1172,7 @@ struct WidgetSettingsPresenter::Impl
                             wr::MakeWidgetSettingString(value));
                     });
             });
-        field.content.Children().Append(field.time);
+        field.editorHost.Children().Append(field.time);
     }
 
     void BuildSearchEditor(WidgetFieldControl& field)
@@ -891,10 +1219,10 @@ struct WidgetSettingsPresenter::Impl
                         CommitSearchResult(
                             field, static_cast<std::size_t>(index));
                 });
-        field.content.Children().Append(field.search);
-        field.content.Children().Append(field.searchProgress);
-        field.content.Children().Append(field.searchError);
-        field.content.Children().Append(field.searchResults);
+        field.editorHost.Children().Append(field.search);
+        field.editorHost.Children().Append(field.searchProgress);
+        field.editorHost.Children().Append(field.searchError);
+        field.editorHost.Children().Append(field.searchResults);
 
         if (field.schema.Kind() == wr::WidgetSettingKind::AppReference)
             BuildOpaqueActions(field, true, true);
@@ -907,10 +1235,12 @@ struct WidgetSettingsPresenter::Impl
     {
         field.opaqueValue = muxc::TextBlock{};
         field.opaqueValue.TextWrapping(mux::TextWrapping::Wrap);
-        field.content.Children().Append(field.opaqueValue);
+        field.editorHost.Children().Append(field.opaqueValue);
         field.opaqueActions = muxc::StackPanel{};
         field.opaqueActions.Orientation(muxc::Orientation::Horizontal);
         field.opaqueActions.Spacing(8.0);
+        field.opaqueActions.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
         if (allowChoose)
         {
             field.choose = muxc::Button{};
@@ -929,7 +1259,7 @@ struct WidgetSettingsPresenter::Impl
                 });
             field.opaqueActions.Children().Append(field.clear);
         }
-        field.content.Children().Append(field.opaqueActions);
+        field.editorHost.Children().Append(field.opaqueActions);
     }
 
     void BuildReferenceEditor(WidgetFieldControl& field)
@@ -1023,6 +1353,10 @@ struct WidgetSettingsPresenter::Impl
         }
         if (hasUngrouped)
             fieldsHost.Children().Append(ungrouped);
+        // Match the legacy editor: fields without a group always
+        // precede authored groups, and groups retain their declaration order.
+        for (auto& group : groups)
+            fieldsHost.Children().Append(group.root);
 
         cachedSchemas.clear();
         cachedSchemas.reserve(snapshot.fields.size());
@@ -1031,6 +1365,8 @@ struct WidgetSettingsPresenter::Impl
         cachedGroups = snapshot.groups;
         cachedPresets = snapshot.presets;
         defaultPresetId = snapshot.defaultPresetId;
+        cachedCustomStyle = snapshot.customStyle;
+        currentHostAppearance = snapshot.hostAppearance;
         RebuildPresetItems();
     }
 
@@ -1040,7 +1376,8 @@ struct WidgetSettingsPresenter::Impl
         if (snapshot.fields.size() != cachedSchemas.size() ||
             snapshot.groups != cachedGroups ||
             snapshot.presets != cachedPresets ||
-            snapshot.defaultPresetId != defaultPresetId)
+            snapshot.defaultPresetId != defaultPresetId ||
+            snapshot.customStyle != cachedCustomStyle)
             return true;
         for (std::size_t index = 0; index < snapshot.fields.size(); ++index)
             if (snapshot.fields[index].schema != cachedSchemas[index])
@@ -1052,22 +1389,70 @@ struct WidgetSettingsPresenter::Impl
     {
         const bool oldUpdating = updatingControls;
         updatingControls = true;
+        appearanceThemeChoices.clear();
+        appearanceTheme.Items().Clear();
+        constexpr std::array<const char*, 6> ids = {
+            "__global_dark", "__global_light",
+            "__global_glass_dark", "__global_glass_light",
+            "__global_acrylic_dark", "__global_acrylic_light",
+        };
+        constexpr std::array<int, 6> presetIds = {
+            kAppearancePresetDark, kAppearancePresetLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+            kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight,
+        };
+        constexpr std::array<const char*, 6> labelKeys = {
+            "app.settings.dark", "app.settings.light",
+            "app.settings.dark_glass", "app.settings.light_glass",
+            "app.settings.dark_acrylic", "app.settings.light_acrylic",
+        };
+        constexpr std::array<const wchar_t*, 6> labelFallbacks = {
+            L"Dark", L"Light", L"Dark glass", L"Light glass",
+            L"Dark acrylic", L"Light acrylic",
+        };
+        for (std::size_t index = 0; index < ids.size(); ++index)
+        {
+            std::wstring formatted = L("engine.editor.global_theme_format",
+                L"Global - {0}");
+            const std::wstring name = L(labelKeys[index],
+                labelFallbacks[index]);
+            const auto marker = formatted.find(L"{0}");
+            if (marker == std::wstring::npos)
+                formatted += L" " + name;
+            else
+                formatted.replace(marker, 3, name);
+            appearanceTheme.Items().Append(winrt::box_value(formatted));
+            appearanceThemeChoices.push_back({
+                AppearanceThemeKind::BuiltIn, ids[index],
+                presetIds[index], 0});
+        }
+        appearanceTheme.Items().Append(winrt::box_value(
+            L("app.settings.custom", L"Custom")));
+        appearanceThemeChoices.push_back({
+            AppearanceThemeKind::Custom, "__custom",
+            kAppearancePresetCustom, 0});
+        for (std::size_t index = 0; index < cachedPresets.size(); ++index)
+        {
+            const auto& preset = cachedPresets[index];
+            appearanceTheme.Items().Append(winrt::box_value(ToText(
+                preset.label.empty() ? preset.id : preset.label)));
+            appearanceThemeChoices.push_back({
+                AppearanceThemeKind::Component, preset.id,
+                kAppearancePresetCustom, index});
+        }
+
         presetCombo.Items().Clear();
-        int selected = -1;
         for (std::size_t index = 0; index < cachedPresets.size(); ++index)
         {
             const auto& preset = cachedPresets[index];
             presetCombo.Items().Append(winrt::box_value(ToText(
                 preset.label.empty() ? preset.id : preset.label)));
-            if ((!defaultPresetId.empty() &&
-                    preset.id == defaultPresetId) ||
-                (defaultPresetId.empty() && preset.isDefault))
-                selected = static_cast<int>(index);
         }
-        if (selected < 0 && !cachedPresets.empty()) selected = 0;
-        presetCombo.SelectedIndex(selected);
+        appearanceTheme.SelectedIndex(-1);
+        presetCombo.SelectedIndex(-1);
+        appearanceTheme.IsEnabled(cachedCustomStyle);
         presetCombo.IsEnabled(!cachedPresets.empty());
-        applyPreset.IsEnabled(!cachedPresets.empty());
+        restoreScriptDefault.IsEnabled(!defaultPresetId.empty());
         updatingControls = oldUpdating;
     }
 
@@ -1103,14 +1488,103 @@ struct WidgetSettingsPresenter::Impl
         revision = snapshot.revision;
         hasSnapshot = true;
         if (rebuild) RebuildFields(snapshot, !newIdentity);
+        PatchAppearance(snapshot);
         PatchFields(snapshot);
-        commandsCard.root.Visibility(mux::Visibility::Visible);
         widgetHeading.Text(ToText(widgetName));
         muxa::AutomationProperties::SetName(
             widgetHeading, ToText(widgetName));
         updatingControls = oldUpdating;
         if (rebuild) ReportDiagnostics();
         return true;
+    }
+
+    void PatchAppearanceScalar(
+        AppearanceScalarControl& control, float value)
+    {
+        control.synchronizing = true;
+        const double normalized = std::clamp(
+            static_cast<double>(value), 0.0, 1.0);
+        control.slider.Value(normalized);
+        control.number.Value(normalized);
+        control.synchronizing = false;
+    }
+
+    void PatchAppearance(const wr::WidgetSettingsSnapshot& snapshot)
+    {
+        currentHostAppearance = snapshot.hostAppearance;
+        appearanceCard.root.Visibility(snapshot.customStyle
+            ? mux::Visibility::Visible
+            : mux::Visibility::Collapsed);
+        stylePreviewCard.root.Visibility(
+            !snapshot.customStyle && !cachedPresets.empty()
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+        fieldsHost.Visibility(snapshot.fields.empty()
+            ? mux::Visibility::Collapsed
+            : mux::Visibility::Visible);
+        scriptSettingsTitle.Visibility(snapshot.fields.empty()
+            ? mux::Visibility::Collapsed
+            : mux::Visibility::Visible);
+        resetCard.root.Visibility(snapshot.fields.empty()
+            ? mux::Visibility::Collapsed
+            : mux::Visibility::Visible);
+
+        followGlobal.IsOn(snapshot.hostAppearance.followPersonalization);
+        int selectedTheme = -1;
+        for (std::size_t index = 0;
+            index < appearanceThemeChoices.size(); ++index)
+        {
+            if (appearanceThemeChoices[index].id ==
+                snapshot.hostAppearance.presetId)
+            {
+                selectedTheme = static_cast<int>(index);
+                break;
+            }
+        }
+        constexpr int customThemeIndex = 6;
+        if (selectedTheme < 0 && snapshot.customStyle)
+            selectedTheme = customThemeIndex;
+        appearanceTheme.SelectedIndex(selectedTheme);
+        appearanceTheme.IsEnabled(snapshot.customStyle &&
+            !snapshot.hostAppearance.followPersonalization);
+        customAppearanceHost.Visibility(
+            snapshot.customStyle &&
+                !snapshot.hostAppearance.followPersonalization &&
+                selectedTheme == customThemeIndex
+            ? mux::Visibility::Visible
+            : mux::Visibility::Collapsed);
+
+        if (backgroundColorEditor)
+            backgroundColorEditor->SetColor(ToColor(
+                snapshot.hostAppearance.backgroundColor));
+        PatchAppearanceScalar(backgroundOpacity,
+            snapshot.hostAppearance.backgroundOpacity);
+        if (borderColorEditor)
+            borderColorEditor->SetColor(ToColor(
+                snapshot.hostAppearance.borderColor));
+        PatchAppearanceScalar(borderOpacity,
+            snapshot.hostAppearance.borderOpacity);
+        PatchAppearanceScalar(gradientEndOpacity,
+            snapshot.hostAppearance.gradientEndOpacity);
+        glassEnabled.IsOn(snapshot.hostAppearance.glassEnabled);
+        acrylicEnabled.IsOn(snapshot.hostAppearance.acrylicEnabled);
+        contentTheme.SelectedIndex(std::clamp(
+            snapshot.hostAppearance.contentTheme, 0, 1));
+
+        int selectedPreset = -1;
+        for (std::size_t index = 0; index < cachedPresets.size(); ++index)
+            if (cachedPresets[index].id ==
+                snapshot.hostAppearance.presetId)
+            {
+                selectedPreset = static_cast<int>(index);
+                break;
+        }
+        if (selectedPreset < 0 && !cachedPresets.empty())
+            selectedPreset = 0;
+        presetCombo.SelectedIndex(selectedPreset);
+        restoreScriptDefaultRow.root.Visibility(defaultPresetId.empty()
+            ? mux::Visibility::Collapsed
+            : mux::Visibility::Visible);
     }
 
     void PatchFields(const wr::WidgetSettingsSnapshot& snapshot)
@@ -1172,13 +1646,13 @@ struct WidgetSettingsPresenter::Impl
             field.number.Value(value);
             field.synchronizing = false;
         }
-        if (field.color)
+        if (field.colorEditor)
         {
             const long long value = state.currentValue.type ==
                     wr::InteractionValue::Type::Integer
                 ? state.currentValue.integer
                 : 0;
-            field.color.Color(ToColor(value));
+            field.colorEditor->SetColor(ToColor(value));
         }
         if (field.select)
         {
@@ -1278,7 +1752,8 @@ struct WidgetSettingsPresenter::Impl
         if (field.toggle) field.toggle.IsEnabled(enabled);
         if (field.slider) field.slider.IsEnabled(enabled);
         if (field.number) field.number.IsEnabled(enabled);
-        if (field.color) field.color.IsEnabled(enabled);
+        if (field.colorEditor)
+            field.colorEditor->button.IsEnabled(enabled);
         if (field.select) field.select.IsEnabled(enabled);
         if (field.multiSelect) field.multiSelect.IsEnabled(enabled);
         for (auto& option : field.multiOptions)
@@ -1641,6 +2116,9 @@ struct WidgetSettingsPresenter::Impl
 
     void SetFieldLocalizedText(WidgetFieldControl& field)
     {
+        field.row.SetText(
+            ToWide(field.schema.label),
+            ToWide(field.schema.description));
         if (field.search)
         {
             field.search.PlaceholderText(field.schema.emptyLabel.empty()
@@ -1674,8 +2152,24 @@ struct WidgetSettingsPresenter::Impl
             muxa::AutomationProperties::SetName(field.slider, name);
         if (field.number)
             muxa::AutomationProperties::SetName(field.number, name);
-        if (field.color)
-            muxa::AutomationProperties::SetName(field.color, name);
+        if (field.colorEditor)
+        {
+            const auto applyText = L("app.settings.apply", L"Apply");
+            const auto cancelText = L("app.settings.cancel", L"Cancel");
+            field.colorEditor->apply.Content(
+                winrt::box_value(applyText));
+            field.colorEditor->cancel.Content(
+                winrt::box_value(cancelText));
+            muxa::AutomationProperties::SetName(
+                field.colorEditor->button, name);
+            muxa::AutomationProperties::SetHelpText(
+                field.colorEditor->button,
+                ToText(field.schema.description));
+            muxa::AutomationProperties::SetName(
+                field.colorEditor->apply, applyText);
+            muxa::AutomationProperties::SetName(
+                field.colorEditor->cancel, cancelText);
+        }
         if (field.select)
             muxa::AutomationProperties::SetName(field.select, name);
         if (field.multiSelect)
@@ -1689,24 +2183,104 @@ struct WidgetSettingsPresenter::Impl
     void RefreshLocalizedText()
     {
         if (closed) return;
-        commandsCard.root.Visibility(cachedPresets.empty() &&
-                !hasSnapshot
-            ? mux::Visibility::Collapsed
-            : mux::Visibility::Visible);
-        presetCombo.Header(winrt::box_value(
-            L("app.settings.widget.preset", L"Preset")));
-        applyPreset.Content(winrt::box_value(
-            L("app.settings.widget.apply_preset", L"Apply preset")));
-        reset.Content(winrt::box_value(
-            L("app.settings.widget.reset", L"Reset ordinary settings")));
-        muxa::AutomationProperties::SetName(presetCombo,
-            L("app.settings.widget.preset", L"Preset"));
-        muxa::AutomationProperties::SetName(applyPreset,
-            L("app.settings.widget.apply_preset", L"Apply preset"));
-        muxa::AutomationProperties::SetName(reset,
-            L("app.settings.widget.reset", L"Reset ordinary settings"));
+        const bool oldUpdating = updatingControls;
+        updatingControls = true;
+        appearanceTitle.Text(L("app.settings.appearance", L"Appearance"));
+        followGlobalRow.SetText(
+            L("engine.editor.follow_global", L"Follow global settings"));
+        appearanceThemeRow.SetText(
+            L("app.settings.theme", L"Theme"));
+        const auto applyText = L("app.settings.apply", L"Apply");
+        const auto cancelText = L("app.settings.cancel", L"Cancel");
+        backgroundColorEditor->SetText(
+            L("app.settings.bg_color", L"Background color"), {},
+            applyText, cancelText);
+        backgroundOpacity.row.SetText(
+            L("app.settings.bg_opacity", L"Background opacity"));
+        borderColorEditor->SetText(
+            L("app.settings.border_color", L"Border color"), {},
+            applyText, cancelText);
+        borderOpacity.row.SetText(
+            L("app.settings.border_opacity", L"Border opacity"));
+        gradientEndOpacity.row.SetText(L(
+            "app.settings.gradient_end_alpha", L"Gradient end opacity"));
+        glassRow.SetText(
+            L("app.settings.glass_bg", L"Glass background"));
+        acrylicRow.SetText(
+            L("app.settings.acrylic_enable", L"Enable acrylic"));
+        contentThemeRow.SetText(L(
+            "app.settings.widget_content_theme", L"Widget content theme"));
+        contentTheme.Items().Clear();
+        contentTheme.Items().Append(winrt::box_value(
+            L("app.settings.light", L"Light")));
+        contentTheme.Items().Append(winrt::box_value(
+            L("app.settings.dark", L"Dark")));
+
+        stylePreviewTitle.Text(
+            L("app.settings.style_preview", L"Style preview"));
+        presetRow.SetText(
+            L("app.settings.current_preview", L"Current preview"));
+        restoreScriptDefaultRow.SetText(
+            L("app.settings.preview_default", L"Preview default"));
+        const auto restoreScriptDefaultText = L(
+            "app.settings.restore_script_default",
+            L"Restore script default");
+        restoreScriptDefault.Content(
+            winrt::box_value(restoreScriptDefaultText));
+        scriptSettingsTitle.Text(
+            L("app.settings.script_settings", L"Script settings"));
+        resetRow.SetText(
+            L("app.settings.set_as_default", L"Set as default"));
+        const auto resetText = L(
+            "app.settings.restore_default_settings",
+            L"Restore default settings");
+        reset.Content(winrt::box_value(resetText));
+        muxa::AutomationProperties::SetName(
+            appearanceTitle, appearanceTitle.Text());
+        muxa::AutomationProperties::SetName(
+            followGlobal, followGlobalRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            appearanceTheme, appearanceThemeRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            backgroundOpacity.slider, backgroundOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            backgroundOpacity.number, backgroundOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderOpacity.slider, borderOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderOpacity.number, borderOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            gradientEndOpacity.slider,
+            gradientEndOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            gradientEndOpacity.number,
+            gradientEndOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            glassEnabled, glassRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            acrylicEnabled, acrylicRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            contentTheme, contentThemeRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            stylePreviewTitle, stylePreviewTitle.Text());
+        muxa::AutomationProperties::SetName(
+            presetCombo, presetRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            restoreScriptDefault, restoreScriptDefaultText);
+        muxa::AutomationProperties::SetName(
+            scriptSettingsTitle, scriptSettingsTitle.Text());
+        muxa::AutomationProperties::SetName(
+            reset, resetText);
+
+        RebuildPresetItems();
         for (auto& field : fields)
             SetFieldLocalizedText(*field);
+        if (hasSnapshot)
+        {
+            if (const auto current = service.Snapshot(widgetId))
+                PatchAppearance(*current);
+        }
+        updatingControls = oldUpdating;
     }
 
     void ReportDiagnostics()
@@ -1780,8 +2354,53 @@ struct WidgetSettingsPresenter::Impl
         }
     }
 
+    void RollbackOpenColorEditors() noexcept
+    {
+        try
+        {
+            const auto rollbackAppearance = [](auto& editor) {
+                if (!editor || !editor->open || editor->accepted)
+                    return;
+                editor->Rollback();
+                editor->Dismiss();
+            };
+            rollbackAppearance(backgroundColorEditor);
+            rollbackAppearance(borderColorEditor);
+            for (auto& field : fields)
+            {
+                if (!field->colorEditor ||
+                    !field->colorEditor->open ||
+                    field->colorEditor->accepted)
+                    continue;
+                // Rollback must run while the presenter is still active so
+                // the opening value reaches the service before route/window
+                // shutdown disables guarded mutations.
+                field->colorEditor->Rollback();
+                field->colorEditor->Dismiss();
+            }
+        }
+        catch (...)
+        {
+        }
+    }
+
     void UnhookField(WidgetFieldControl& field) noexcept
     {
+        if (field.colorEditor)
+        {
+            try
+            {
+                // Rebuild teardown must not mutate a possibly newer service
+                // generation. Deactivate/Close explicitly roll back while
+                // the old identity and guard are still authoritative.
+                field.colorEditor->changed = {};
+                field.colorEditor->Dismiss();
+                field.colorEditor->Close();
+            }
+            catch (...)
+            {
+            }
+        }
         try
         {
             if (field.text && HasToken(field.textChanged))
@@ -1802,8 +2421,6 @@ struct WidgetSettingsPresenter::Impl
                 field.slider.ValueChanged(field.sliderChanged);
             if (field.number && HasToken(field.numberChanged))
                 field.number.ValueChanged(field.numberChanged);
-            if (field.color && HasToken(field.colorChanged))
-                field.color.ColorChanged(field.colorChanged);
             if (field.select && HasToken(field.selectionChanged))
                 field.select.SelectionChanged(field.selectionChanged);
             for (auto& option : field.multiOptions)
@@ -1851,7 +2468,7 @@ struct WidgetSettingsPresenter::Impl
         if (field.password) return field.password;
         if (field.toggle) return field.toggle;
         if (field.slider) return field.slider;
-        if (field.color) return field.color;
+        if (field.colorEditor) return field.colorEditor->button;
         if (field.select) return field.select;
         if (field.multiSelect) return field.multiSelect;
         if (field.date) return field.date;
@@ -1867,6 +2484,7 @@ struct WidgetSettingsPresenter::Impl
         if (closed) return;
         try
         {
+            RollbackOpenColorEditors();
             (void)FlushPendingEdits();
             CancelSearches();
         }
@@ -1885,10 +2503,44 @@ struct WidgetSettingsPresenter::Impl
         }
         try
         {
-            if (applyPreset && HasToken(applyPresetClicked))
-                applyPreset.Click(applyPresetClicked);
+            if (followGlobal && HasToken(followGlobalToggled))
+                followGlobal.Toggled(followGlobalToggled);
+            if (appearanceTheme && HasToken(appearanceThemeChanged))
+                appearanceTheme.SelectionChanged(appearanceThemeChanged);
+            if (glassEnabled && HasToken(glassToggled))
+                glassEnabled.Toggled(glassToggled);
+            if (acrylicEnabled && HasToken(acrylicToggled))
+                acrylicEnabled.Toggled(acrylicToggled);
+            if (contentTheme && HasToken(contentThemeChanged))
+                contentTheme.SelectionChanged(contentThemeChanged);
+            if (presetCombo && HasToken(presetChanged))
+                presetCombo.SelectionChanged(presetChanged);
+            if (restoreScriptDefault &&
+                HasToken(restoreScriptDefaultClicked))
+                restoreScriptDefault.Click(restoreScriptDefaultClicked);
             if (reset && HasToken(resetClicked))
                 reset.Click(resetClicked);
+            const auto unhookScalar = [](AppearanceScalarControl& scalar) {
+                if (scalar.slider && HasToken(scalar.sliderChanged))
+                    scalar.slider.ValueChanged(scalar.sliderChanged);
+                if (scalar.number && HasToken(scalar.numberChanged))
+                    scalar.number.ValueChanged(scalar.numberChanged);
+            };
+            unhookScalar(backgroundOpacity);
+            unhookScalar(borderOpacity);
+            unhookScalar(gradientEndOpacity);
+            if (backgroundColorEditor)
+            {
+                backgroundColorEditor->changed = {};
+                backgroundColorEditor->Dismiss();
+                backgroundColorEditor->Close();
+            }
+            if (borderColorEditor)
+            {
+                borderColorEditor->changed = {};
+                borderColorEditor->Dismiss();
+                borderColorEditor->Close();
+            }
         }
         catch (...)
         {
@@ -1970,6 +2622,7 @@ void WidgetSettingsPresenter::Deactivate() noexcept
     if (!impl_ || impl_->closed) return;
     try
     {
+        impl_->RollbackOpenColorEditors();
         const auto result = impl_->FlushPendingEdits();
         if (!result.Succeeded())
             return;

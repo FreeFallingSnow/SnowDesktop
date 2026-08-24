@@ -49,11 +49,17 @@ void TestPresenterAdapterBoundary(const std::string& header,
                 std::string::npos &&
             source.find("revision == snapshot.revision") !=
                 std::string::npos &&
+            source.find("expectedActivationId == activationId") !=
+                std::string::npos &&
+            source.find("completion.context.activationId == activationId") !=
+                std::string::npos &&
             source.find("snapshot.operation.requestId") !=
+                std::string::npos &&
+            source.find("inFlightTaskId == completion.context.requestId") !=
                 std::string::npos &&
             source.find("pendingCompletion->context.requestId") !=
                 std::string::npos,
-        "generation revision and request identity gate async completion");
+        "generation activation revision and task identity gate async completion");
 }
 
 void TestWorkerAndPickerOwnership(const std::string& header,
@@ -71,8 +77,50 @@ void TestWorkerAndPickerOwnership(const std::string& header,
             source.find("std::stop_token") != std::string::npos &&
             source.find("stop.stop_requested()") != std::string::npos &&
             source.find("worker.request_stop()") != std::string::npos &&
+            source.find("worker.detach()") != std::string::npos &&
             source.find("DrainAnyCompletion") != std::string::npos,
         "storage work is marshalled and has cooperative cancellation points");
+
+    const auto deactivate = source.find("void Deactivate() noexcept");
+    const auto close = source.find("void Close() noexcept", deactivate);
+    const auto stateEnd = source.find("};", close);
+    const std::string lifecycle =
+        deactivate != std::string::npos && stateEnd != std::string::npos
+        ? source.substr(deactivate, stateEnd - deactivate)
+        : std::string{};
+    Check(!lifecycle.empty() &&
+            lifecycle.find("RequestWorkerStop()") != std::string::npos &&
+            lifecycle.find("worker.join(") == std::string::npos &&
+            lifecycle.find(".join()") == std::string::npos &&
+            lifecycle.find("snapshot.operation = {}") != std::string::npos,
+        "deactivation and close request stop and invalidate view state without joining on the STA");
+
+    Check(source.find("ListLayoutBackups(context.paths, stop)") !=
+                std::string::npos &&
+            source.find("BuildInventory(context, stop") !=
+                std::string::npos &&
+            source.find("storageLock.try_lock_for("
+                        "std::chrono::milliseconds(25))") !=
+                std::string::npos &&
+            source.find("gExternalReplacementQueued.load("
+                        "std::memory_order_acquire)") !=
+                std::string::npos &&
+            source.find("FindFullBackup(\n"
+                        "            manager, context.request.subjectId, "
+                        "stop, cancelled)") != std::string::npos,
+        "enumeration and pre-storage lookup observe cancellation between cooperative stages");
+
+    const auto startWork = source.find("bool StartWork(");
+    const auto taskIdentity = source.find(
+        "inFlightTaskId = context.requestId", startWork);
+    const auto workerDetach = source.find("worker.detach()", taskIdentity);
+    const auto publishRunning = source.find("Publish();", workerDetach);
+    Check(startWork != std::string::npos &&
+            taskIdentity != std::string::npos &&
+            workerDetach != std::string::npos &&
+            publishRunning != std::string::npos &&
+            taskIdentity < workerDetach && workerDetach < publishRunning,
+        "worker identity and stop source exist before running state is published");
 }
 
 void TestExistingStorageFormatsAreReused(const std::string& source)
@@ -104,6 +152,35 @@ void TestExistingStorageFormatsAreReused(const std::string& source)
         "backend does not define a competing complete-backup format");
 }
 
+void TestOperationFeedbackIsLocalized(const std::string& source)
+{
+    for (const char* key : {
+             "settings.backup.progress.createLayout",
+             "settings.backup.progress.restoreLayout",
+             "settings.backup.progress.deleteLayout",
+             "settings.backup.progress.createFull",
+             "settings.backup.progress.importFull",
+             "settings.backup.progress.exportFull",
+             "settings.backup.progress.restoreFull",
+             "settings.backup.progress.deleteFull",
+             "settings.backup.progress.migrate",
+             "settings.backup.progress.refresh",
+             "settings.backup.success.createLayout",
+             "settings.backup.success.restoreLayout",
+             "settings.backup.success.deleteLayout",
+             "settings.backup.success.deleteFull",
+             "settings.backup.success.generic",
+             "settings.backup.error.layoutOperation",
+             "settings.backup.error.dispatcherUnavailable",
+             "settings.backup.error.openLocation",
+             "settings.backup.error.missing",
+             "settings.backup.error.restoreServiceUnavailable"})
+    {
+        Check(source.find(key) != std::string::npos,
+            "backup operation feedback uses a localization key");
+    }
+}
+
 void TestReplacementNeverFlushesOldMemory(const std::string& header,
     const std::string& source)
 {
@@ -126,11 +203,27 @@ void TestReplacementNeverFlushesOldMemory(const std::string& header,
         "replacement completion never flushes the pre-restore snapshot");
     Check(source.find("completion.result.replacementQueued") !=
                 std::string::npos &&
-            source.find("CompleteQueuedReplacement(completion)") !=
+            source.find("replacementLifecycleTaskId == "
+                        "completion.context.requestId") !=
                 std::string::npos &&
-            source.find("Drain before marking closed") !=
+            source.find("replacementLifecycleGeneration ==") !=
+                std::string::npos &&
+            source.find("replacementLifecycleActivationId ==") !=
+                std::string::npos &&
+            source.find("CompleteQueuedReplacement("
+                        "completion, matchingRequest)") !=
+                std::string::npos &&
+            source.find("if (publishToCurrentActivation)") !=
                 std::string::npos,
         "a late cancel or page close cannot abandon an already queued replacement");
+    Check(source.find("CanFinalizeClosedLifecycle()") !=
+                std::string::npos &&
+            source.find("IsWindow(owner) != FALSE") !=
+                std::string::npos &&
+            source.find("lifecycleReplacement && "
+                        "CanFinalizeClosedLifecycle()") !=
+                std::string::npos,
+        "closed-view replacement completion requires a live hidden host before touching controller state");
     Check(source.find("snapshot.replacementPending = true") !=
                 std::string::npos &&
             source.find("snapshot.replacementPending") !=
@@ -151,6 +244,19 @@ void TestReplacementNeverFlushesOldMemory(const std::string& header,
     Check(header.find("LayoutRestorePayload") != std::string::npos &&
             header.find("commitLayoutRestore") != std::string::npos,
         "layout replacement is committed through an application-owned STA seam");
+
+    const auto finish = source.find("void Finish(");
+    const auto activationGate = source.find(
+        "completion.context.activationId == activationId", finish);
+    const auto staleReturn = source.find("if (!matchingRequest)", finish);
+    const auto layoutCommit = source.find(
+        "options.commitLayoutRestore", finish);
+    Check(finish != std::string::npos &&
+            activationGate != std::string::npos &&
+            staleReturn != std::string::npos &&
+            layoutCommit != std::string::npos &&
+            activationGate < staleReturn && staleReturn < layoutCommit,
+        "a stale layout payload is rejected before the STA live-layout commit seam");
 }
 
 void TestApplicationOwnedLayoutCommit(const std::string& application,
@@ -211,6 +317,7 @@ void TestBackendContract(const std::filesystem::path& repository)
     TestPresenterAdapterBoundary(header, source);
     TestWorkerAndPickerOwnership(header, source);
     TestExistingStorageFormatsAreReused(source);
+    TestOperationFeedbackIsLocalized(source);
     TestReplacementNeverFlushesOldMemory(header, source);
     TestApplicationOwnedLayoutCommit(application, compositionRoot);
 }

@@ -138,8 +138,57 @@ struct WidgetSettingPresetSchema
     std::string label;
     std::map<std::string, InteractionValue, std::less<>> values;
     bool isDefault = false;
+    /**
+     * Legacy host-owned appearance values are kept separate from declarative
+     * fields.  They continue to use the established per-instance storage keys
+     * and never become part of the public v2 schema.
+     */
+    std::map<std::string, std::string, std::less<>> hostAppearanceValues;
 
     bool operator==(const WidgetSettingPresetSchema&) const = default;
+};
+
+/** Effective host-owned appearance state for one component instance. */
+struct WidgetHostAppearanceState
+{
+    bool followPersonalization = false;
+    std::string presetId;
+    int backgroundColor = 0x151A21;
+    int borderColor = 0xFFFFFF;
+    float backgroundOpacity = 0.36f;
+    float borderOpacity = 0.40f;
+    float gradientEndOpacity = 0.0f;
+    bool glassEnabled = false;
+    bool acrylicEnabled = false;
+    int contentTheme = 0;
+
+    bool operator==(const WidgetHostAppearanceState&) const = default;
+};
+
+/** Atomic partial update for the established host appearance storage keys. */
+struct WidgetHostAppearancePatch
+{
+    std::optional<bool> followPersonalization;
+    std::optional<std::string> presetId;
+    std::optional<int> backgroundColor;
+    std::optional<int> borderColor;
+    std::optional<float> backgroundOpacity;
+    std::optional<float> borderOpacity;
+    std::optional<float> gradientEndOpacity;
+    std::optional<bool> glassEnabled;
+    std::optional<bool> acrylicEnabled;
+    std::optional<int> contentTheme;
+    bool clearContentTheme = false;
+
+    [[nodiscard]] bool Empty() const noexcept
+    {
+        return !followPersonalization && !presetId && !backgroundColor &&
+            !borderColor && !backgroundOpacity && !borderOpacity &&
+            !gradientEndOpacity && !glassEnabled && !acrylicEnabled &&
+            !contentTheme && !clearContentTheme;
+    }
+
+    bool operator==(const WidgetHostAppearancePatch&) const = default;
 };
 
 /** State for values that must never be exposed as ordinary storage strings. */
@@ -184,6 +233,7 @@ struct WidgetSettingsSnapshot
     std::vector<WidgetSettingGroupSchema> groups;
     std::vector<WidgetSettingPresetSchema> presets;
     std::string defaultPresetId;
+    WidgetHostAppearanceState hostAppearance;
 
     bool operator==(const WidgetSettingsSnapshot&) const = default;
 };
@@ -774,6 +824,7 @@ inline bool NormalizeWidgetSettingPreset(
     WidgetSettingPresetSchema normalized;
     normalized.id = input.id;
     normalized.label = input.label;
+    normalized.hostAppearanceValues = input.hostAppearanceValues;
     normalized.isDefault = input.isDefault;
     errorCode.clear();
 
@@ -790,8 +841,9 @@ inline bool NormalizeWidgetSettingPreset(
         }
         if (field->Channel() != WidgetSettingValueChannel::Ordinary)
         {
-            errorCode = "opaquePresetValue";
-            return false;
+            // The legacy editor skipped secret, handle, and logical-reference
+            // entries while still applying the preset's ordinary values.
+            continue;
         }
         InteractionValue valueNormalized;
         if (!NormalizeWidgetSettingValue(

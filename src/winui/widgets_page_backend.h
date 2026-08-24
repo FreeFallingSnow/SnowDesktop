@@ -76,6 +76,11 @@ struct WidgetsPageBackendOptions
     std::function<std::string()> locale;
     std::function<std::vector<WidgetsPageHostInstance>()> instances;
     std::function<bool()> developerOverridesVisible;
+    /** Controller-owned persistence for the legacy Agent Skill target mask. */
+    std::function<int()> agentSkillTargetMask;
+    std::function<bool(int mask)> setAgentSkillTargetMask;
+    /** Do not capture runtime paths/logs while both gated pages are hidden. */
+    std::function<bool()> diagnosticsVisible;
     SnapshotChangedCallback snapshotChanged;
 
     /** Required for source-search and other completions made off-thread. */
@@ -89,15 +94,37 @@ struct WidgetsPageBackendOptions
     /** Used only for package source/scope expansion after a rejected attempt. */
     std::function<void(
         std::uint64_t generation,
-        std::wstring title,
-        std::wstring message,
+        WidgetInstallConfirmationRequest request,
         ConfirmationCompletion completion)> confirmInstall;
 
     /** Shell work stays outside the backend and remains HWND/process owned. */
     std::function<WidgetsPageHostOperationResult(
         std::string_view sourceId)> openWorkshop;
+    /** Opens one bound Workshop item. The backend validates the published
+     * item identity against its immutable package snapshot before invoking
+     * this shell-owned callback. */
+    std::function<WidgetsPageHostOperationResult(
+        std::string_view externalItemId)> openWorkshopItem;
     std::function<WidgetsPageHostOperationResult(
         std::wstring_view packageId)> addPackageToDesktop;
+    /** Opens the package manager's authoritative development workspace. */
+    std::function<WidgetsPageHostOperationResult()>
+        openDevelopmentFolder;
+
+    /**
+     * Development project creation, rollback and snapshot installation use
+     * WidgetEngine directly. These callbacks retain the process-owned parts
+     * of the legacy workflow: reveal/navigate after creating a project and
+     * launch the separately deployed Workshop Creator Manager.
+     */
+    /** Best-effort post-success hook; typically reveals the folder, enables
+     * Developer Tools, and navigates there after the new snapshot is live. */
+    std::function<void(const std::filesystem::path& projectRoot)>
+        developmentProjectCreated;
+    std::function<bool()> canPublishDevelopmentPackage;
+    std::function<WidgetsPageHostOperationResult(
+        const std::filesystem::path& projectDirectory)>
+        publishDevelopmentPackage;
 
     /**
      * The Steam watcher/poll bridge is DesktopApp-owned. A source advertises a
@@ -162,7 +189,9 @@ namespace widgets_page_backend_detail
  * Public methods are owner-thread affine. Source discovery/query runs on one
  * private worker; every completion is marshalled through dispatchToOwner and
  * validated against generation, activation epoch, task id, and (for search)
- * searchRevision before it can publish a snapshot.
+ * searchRevision before it can publish a snapshot. Deactivate invalidates page
+ * publication only; search, Workshop, and source-sync operations retain their
+ * mutation gate until the exact terminal callback arrives.
  */
 class WidgetsPageBackend final
 {
@@ -180,8 +209,9 @@ public:
     void SetSnapshotChangedCallback(
         WidgetsPageBackendOptions::SnapshotChangedCallback callback);
 
-    /** Starts a page session and immediately requests the initial source list. */
-    [[nodiscard]] bool Activate(std::uint64_t generation);
+    /** Starts a page session; source discovery is needed only on Widgets. */
+    [[nodiscard]] bool Activate(
+        std::uint64_t generation, bool discoverSources = true);
     void Deactivate() noexcept;
 
     /** Re-captures packages and the host instance table without source IO. */

@@ -39,6 +39,7 @@ struct WidgetSettingsBackendDescriptor
     std::vector<WidgetSettingGroupSchema> scriptGroups;
     std::vector<WidgetSettingPresetSchema> manifestPresets;
     std::vector<WidgetSettingPresetSchema> scriptPresets;
+    WidgetHostAppearanceState hostAppearance;
 };
 
 enum class WidgetSettingsBackendStatus
@@ -156,6 +157,17 @@ public:
     virtual WidgetSettingsBackendResult ApplyOrdinaryTransaction(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,
+        const std::vector<WidgetSettingOrdinaryWrite>& writes) = 0;
+
+    /**
+     * Applies host-owned appearance keys and optional declarative preset
+     * values in one storage transaction.  This preserves the legacy storage
+     * format without exposing those host keys as v2 fields.
+     */
+    virtual WidgetSettingsBackendResult ApplyHostAppearanceTransaction(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& appearance,
         const std::vector<WidgetSettingOrdinaryWrite>& writes) = 0;
 
     virtual WidgetSettingsBackendResult SetSecret(
@@ -298,6 +310,9 @@ public:
     WidgetSettingMutationResult ApplyPreset(
         const WidgetSettingMutationGuard& guard,
         std::string_view presetId);
+    WidgetSettingMutationResult UpdateHostAppearance(
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& patch);
     WidgetSettingMutationResult Reset(
         const WidgetSettingMutationGuard& guard);
 

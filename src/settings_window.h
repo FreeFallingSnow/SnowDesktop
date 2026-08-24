@@ -64,6 +64,8 @@ public:
     void SetWidgetEngine(WidgetEngine* engine);
     void RefreshWidgetsPage();
     void ApplyLanguageChange();
+    [[nodiscard]] bool PublishHomeAboutStatus(
+        snowdesktop::winui::HomeAboutStatusPatch patch);
 
     [[nodiscard]] bool PreTranslateMessage(MSG* message) noexcept;
     [[nodiscard]] bool ProcessTabNavigation(MSG* message) noexcept;

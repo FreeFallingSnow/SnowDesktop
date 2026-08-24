@@ -7,11 +7,13 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -226,6 +228,52 @@ int main()
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
+
+    const auto hashInput = root / L"sha256-input.bin";
+    Write(hashInput, "abc");
+    Expect(WidgetPackageManager::Sha256File(hashInput) ==
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "package fingerprinting hashes a complete disk file");
+
+    const std::wstring brokenPipeName =
+        L"\\\\.\\pipe\\SnowDesktop-Sha256ReadError-" +
+        std::to_wstring(GetCurrentProcessId());
+    HANDLE brokenPipe = CreateNamedPipeW(brokenPipeName.c_str(),
+        PIPE_ACCESS_OUTBOUND,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1, 4096, 4096, 0, nullptr);
+    Expect(brokenPipe != INVALID_HANDLE_VALUE,
+        "read-error fingerprint test creates its named pipe");
+    if (brokenPipe != INVALID_HANDLE_VALUE)
+    {
+        std::atomic_bool pipeConnected{false};
+        std::atomic_bool pipeWrote{false};
+        std::jthread writer([brokenPipe, &pipeConnected, &pipeWrote] {
+            const bool connected = ConnectNamedPipe(brokenPipe, nullptr) ||
+                GetLastError() == ERROR_PIPE_CONNECTED;
+            pipeConnected.store(connected);
+            if (connected)
+            {
+                static constexpr char partial[] = "partial package";
+                DWORD written = 0;
+                pipeWrote.store(WriteFile(brokenPipe, partial,
+                    static_cast<DWORD>(sizeof(partial) - 1), &written,
+                    nullptr) && written == sizeof(partial) - 1);
+                if (pipeWrote.load())
+                    (void)FlushFileBuffers(brokenPipe);
+                (void)DisconnectNamedPipe(brokenPipe);
+            }
+        });
+        const std::string brokenDigest =
+            WidgetPackageManager::Sha256File(brokenPipeName);
+        (void)CancelIoEx(brokenPipe, nullptr);
+        writer.join();
+        CloseHandle(brokenPipe);
+        Expect(pipeConnected.load() && pipeWrote.load(),
+            "read-error fingerprint test reaches an opened partial stream");
+        Expect(brokenDigest.empty(),
+            "package fingerprinting rejects a read error instead of hashing a prefix");
+    }
 
     const auto layoutPath =
         root / L"layout-storage" / L"SnowDesktop.layout.json";
@@ -1099,8 +1147,9 @@ int main()
     Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
             manager.Resolve(manifest.id)->development &&
             manager.Resolve(manifest.id)->permissionState ==
-                PermissionDecisionState::LegacyImplicit,
-        "development source activation does not inherit a built-in grant");
+                PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "sensitive development source activation requires explicit consent");
     Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
             manager.Resolve(manifest.id)->builtin &&
             manager.Resolve(manifest.id)->permissionState ==

@@ -40,7 +40,9 @@
             OpenPaneLength="260"
             IsPaneToggleButtonVisible="True">
             <NavigationView.MenuItems>
-                <NavigationViewItem x:Name="HomeItem" Tag="home">
+                <NavigationViewItem x:Name="HomeItem"
+                                    Tag="home"
+                                    Visibility="Collapsed">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="GeneralItem" Tag="general">
@@ -52,31 +54,31 @@
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="DockItem" Tag="dock-and-taskbar">
+                <NavigationViewItem x:Name="DockItem"
+                                    Tag="dock-and-taskbar"
+                                    Visibility="Collapsed">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xEBC8;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xECA5;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE74E;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-            </NavigationView.MenuItems>
-            <NavigationView.FooterMenuItems>
                 <NavigationViewItem x:Name="DeveloperItem"
                                     Tag="developer-tools"
                                     Visibility="Collapsed">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xEC7A;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="DebugItem"
-                                    Tag="debug"
-                                    Visibility="Collapsed">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7BA;" /></NavigationViewItem.Icon>
+                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE74E;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="AboutItem" Tag="about">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-            </NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="DebugItem"
+                                    Tag="debug"
+                    Visibility="Collapsed">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7BA;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
 
             <Grid>
                 <Grid.RowDefinitions>

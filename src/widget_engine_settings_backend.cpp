@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <array>
 #include <condition_variable>
+#include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -51,7 +53,20 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
         key == "shadowOffsetY" || key == "highlightAlpha" ||
         key == "noiseAlpha" || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
-        key == "followPersonalization";
+        key == "followPersonalization" || key == "__preset" ||
+        key == "__contentTheme";
+}
+
+bool IsHostAppearancePresetKey(std::string_view key) noexcept
+{
+    return key == "followPersonalization" || key == "bg" ||
+        key == "border" || key == "alpha" || key == "borderAlpha" ||
+        key == "gradientEndA" || key == "shadowAlpha" ||
+        key == "shadowBlur" || key == "shadowOffsetY" ||
+        key == "highlightAlpha" || key == "noiseAlpha" ||
+        key == "glassEnabled" || key == "glassBlurRadius" ||
+        key == "acrylicEnabled" || key == "__preset" ||
+        key == "__contentTheme";
 }
 
 bool IsEntityReferenceType(std::string_view type) noexcept
@@ -137,6 +152,11 @@ WidgetSettingPresetSchema ConvertPreset(
     result.isDefault = source.isDefault;
     for (const auto& [key, encoded] : source.values)
     {
+        if (IsHostAppearancePresetKey(key))
+        {
+            result.hostAppearanceValues.emplace(key, encoded);
+            continue;
+        }
         const auto* declaration = FindDeclaredSetting(widget, key);
         if (!declaration)
         {
@@ -468,6 +488,97 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     for (const auto& preset : widget.scriptPresets)
         descriptor.scriptPresets.push_back(
             ConvertPreset(preset, widget));
+
+    WidgetHostAppearanceState& appearance = descriptor.hostAppearance;
+    float bgR = 21.0f / 255.0f;
+    float bgG = 26.0f / 255.0f;
+    float bgB = 33.0f / 255.0f;
+    float borderR = 1.0f;
+    float borderG = 1.0f;
+    float borderB = 1.0f;
+    float backgroundOpacity = 0.36f;
+    float borderOpacity = 0.40f;
+    float gradientEndOpacity = 0.0f;
+    bool glassEnabled = false;
+    bool acrylicEnabled = false;
+    (void)engine_.ReadCustomColors(widget.widgetId,
+        bgR, bgG, bgB, backgroundOpacity,
+        borderR, borderG, borderB, borderOpacity,
+        gradientEndOpacity, glassEnabled, acrylicEnabled);
+    const auto colorToInteger = [](float red, float green, float blue) {
+        const auto channel = [](float value) {
+            if (!std::isfinite(value)) value = 0.0f;
+            value = std::clamp(value, 0.0f, 1.0f);
+            return std::clamp(static_cast<int>(
+                std::lround(value * 255.0f)), 0, 255);
+        };
+        return (channel(red) << 16) | (channel(green) << 8) |
+            channel(blue);
+    };
+    appearance.backgroundColor = colorToInteger(bgR, bgG, bgB);
+    appearance.borderColor = colorToInteger(borderR, borderG, borderB);
+    const auto finiteOpacity = [](float value, float fallback) {
+        return std::isfinite(value)
+            ? std::clamp(value, 0.0f, 1.0f) : fallback;
+    };
+    appearance.backgroundOpacity = finiteOpacity(
+        backgroundOpacity, 0.36f);
+    appearance.borderOpacity = finiteOpacity(borderOpacity, 0.40f);
+    appearance.gradientEndOpacity = finiteOpacity(
+        gradientEndOpacity, 0.0f);
+    appearance.glassEnabled = glassEnabled;
+    appearance.acrylicEnabled = acrylicEnabled;
+    appearance.contentTheme = std::clamp(
+        engine_.RuntimeGetWidgetTheme(widget.widgetId).contentTheme, 0, 1);
+
+    const auto& storage = widget.preview
+        ? widget.previewStorage
+        : engine_.WidgetSettingsPersistentStorageForBackend();
+    const std::string prefix = WideToUtf8(widget.widgetId) + ".";
+    const auto stored = [&](std::string_view key) -> std::string_view {
+        const auto value = storage.find(prefix + std::string(key));
+        return value == storage.end()
+            ? std::string_view{} : std::string_view(value->second);
+    };
+    const std::string_view follow = stored("followPersonalization");
+    appearance.followPersonalization = follow.empty()
+        ? widget.followPersonalizationDefault
+        : follow == "1" || follow == "true";
+    appearance.presetId = std::string(stored("__preset"));
+    const std::string_view contentTheme = stored("__contentTheme");
+    if (!contentTheme.empty())
+    {
+        const std::string encodedTheme(contentTheme);
+        char* end = nullptr;
+        const long parsed = std::strtol(encodedTheme.c_str(), &end, 10);
+        if (end && *end == '\0')
+            appearance.contentTheme = std::clamp(
+                static_cast<int>(parsed), 0, 1);
+    }
+
+    if (appearance.presetId.empty())
+    {
+        const WidgetSettingPresetSchema* defaultPreset = nullptr;
+        const WidgetSettingPresetSchema* firstPreset = nullptr;
+        const auto inspectPresets = [&](const auto& presets) {
+            for (const auto& preset : presets)
+            {
+                if (!firstPreset) firstPreset = &preset;
+                if (!defaultPreset &&
+                    (preset.isDefault || preset.id == "default"))
+                {
+                    defaultPreset = &preset;
+                }
+            }
+        };
+        inspectPresets(descriptor.manifestPresets);
+        inspectPresets(descriptor.scriptPresets);
+        const auto* fallback = defaultPreset
+            ? defaultPreset : (descriptor.customStyle ? nullptr : firstPreset);
+        appearance.presetId = fallback
+            ? fallback->id
+            : (descriptor.customStyle ? "__custom" : std::string{});
+    }
     return Success(false);
 }
 
@@ -719,6 +830,17 @@ WidgetEngineSettingsBackend::ApplyOrdinaryTransaction(
     const WidgetSettingMutationGuard& guard,
     const std::vector<WidgetSettingOrdinaryWrite>& writes)
 {
+    return ApplyHostAppearanceTransaction(
+        descriptor, guard, {}, writes);
+}
+
+WidgetSettingsBackendResult
+WidgetEngineSettingsBackend::ApplyHostAppearanceTransaction(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard,
+    const WidgetHostAppearancePatch& appearance,
+    const std::vector<WidgetSettingOrdinaryWrite>& writes)
+{
     if (GetCurrentThreadId() != ownerThreadId_) return WrongThread();
     const int index = engine_.FindWidget(descriptor.widgetId);
     if (index < 0)
@@ -733,12 +855,97 @@ WidgetEngineSettingsBackend::ApplyOrdinaryTransaction(
     if (widget.preview || HasStorageOverlay())
         return BackendResult(WidgetSettingsBackendStatus::Unavailable,
             "persistentStorageUnavailable");
-    if (writes.empty()) return Success(false);
+    if (writes.empty() && appearance.Empty()) return Success(false);
+    if (appearance.contentTheme && appearance.clearContentTheme)
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "ambiguousContentThemeWrite");
 
     auto& storage = engine_.WidgetSettingsPersistentStorageForBackend();
     WidgetStorageTransaction transaction(storage,
         WideToUtf8(widget.widgetId));
     std::unordered_set<std::string> keys;
+    const auto setAppearance = [&](std::string key, std::string value,
+                                   std::string& error) {
+        if (!keys.emplace(key).second)
+        {
+            error = "duplicateSettingWrite";
+            return false;
+        }
+        bool changed = false;
+        if (!transaction.Set(key, std::move(value), changed, error))
+            return false;
+        // Legacy setStorage always removed a stale typed-storage marker for
+        // these host-owned raw keys in the same save operation.
+        bool metadataChanged = false;
+        return transaction.RemoveHostMetadata(
+            TypedStorageMetadataKey(key), metadataChanged, error);
+    };
+    std::string appearanceError;
+    if (appearance.followPersonalization &&
+        !setAppearance("followPersonalization",
+            *appearance.followPersonalization ? "1" : "0",
+            appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
+    if (appearance.presetId &&
+        !setAppearance("__preset", *appearance.presetId, appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
+    const auto setColor = [&](std::string key,
+                              const std::optional<int>& value) {
+        if (!value) return true;
+        if (*value < 0 || *value > 0xFFFFFF)
+        {
+            appearanceError = "appearance color is outside 0x000000-0xFFFFFF";
+            return false;
+        }
+        return setAppearance(std::move(key), std::to_string(*value),
+            appearanceError);
+    };
+    if (!setColor("bg", appearance.backgroundColor) ||
+        !setColor("border", appearance.borderColor))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "invalidAppearanceColor", std::move(appearanceError));
+    const auto setOpacity = [&](std::string key,
+                                const std::optional<float>& value) {
+        if (!value) return true;
+        if (!std::isfinite(*value) || *value < 0.0f || *value > 1.0f)
+        {
+            appearanceError = "appearance opacity is outside 0-1";
+            return false;
+        }
+        return setAppearance(std::move(key), std::to_string(*value),
+            appearanceError);
+    };
+    if (!setOpacity("alpha", appearance.backgroundOpacity) ||
+        !setOpacity("borderAlpha", appearance.borderOpacity) ||
+        !setOpacity("gradientEndA", appearance.gradientEndOpacity))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "invalidAppearanceOpacity", std::move(appearanceError));
+    if (appearance.glassEnabled &&
+        !setAppearance("glassEnabled",
+            *appearance.glassEnabled ? "1" : "0", appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
+    if (appearance.acrylicEnabled &&
+        !setAppearance("acrylicEnabled",
+            *appearance.acrylicEnabled ? "1" : "0", appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
+    if (appearance.contentTheme)
+    {
+        if (*appearance.contentTheme < 0 || *appearance.contentTheme > 1)
+            return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                "invalidContentTheme");
+        if (!setAppearance("__contentTheme",
+                std::to_string(*appearance.contentTheme), appearanceError))
+            return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                "appearanceWriteRejected", std::move(appearanceError));
+    }
+    else if (appearance.clearContentTheme &&
+        !setAppearance("__contentTheme", "", appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
     for (const auto& write : writes)
     {
         if (!keys.emplace(write.key).second)

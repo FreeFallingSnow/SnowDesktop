@@ -34,7 +34,7 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
 
 SettingsShellNavigationState::SettingsShellNavigationState()
 {
-    history_.push_back(SettingsRoute::ForPage(SettingsPage::Home));
+    history_.push_back(SettingsRoute::ForPage(SettingsPage::General));
 }
 
 const SettingsRoute& SettingsShellNavigationState::Route() const noexcept
@@ -155,7 +155,7 @@ std::optional<SettingsRoute> SettingsShellNavigationState::SetVisibility(
     visibility_ = visibility;
     if (!IsRouteAvailable(active))
     {
-        history_.assign(1, SettingsRoute::ForPage(SettingsPage::Home));
+        history_.assign(1, SettingsRoute::ForPage(SettingsPage::General));
         historyIndex_ = 0;
         return Route();
     }
@@ -212,7 +212,7 @@ void SettingsShellNavigationState::CompactHistory()
 
     if (compacted.empty())
     {
-        compacted.push_back(SettingsRoute::ForPage(SettingsPage::Home));
+        compacted.push_back(SettingsRoute::ForPage(SettingsPage::General));
         activeIndex = 0;
     }
     else

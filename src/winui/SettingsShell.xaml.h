@@ -14,6 +14,8 @@
 #include "widget_settings_presenter.h"
 #include "widgets_page_presenter.h"
 
+#include <winrt/Microsoft.UI.Xaml.Media.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -85,6 +87,9 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 
     void SetLocalizer(LocalizeCallback localizer);
     void RefreshLocalizedText();
+
+    /** Keep the root transparent only while the Island backdrop is active. */
+    void SetSystemBackdropActive(bool active) noexcept;
 
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
@@ -181,6 +186,15 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void ShowConfirmation(
         SettingsShellDialogRequest request,
         DialogCompletedCallback completed);
+    void ShowWidgetInstallConfirmation(
+        std::uint64_t generation,
+        snowdesktop::winui::WidgetInstallConfirmationRequest request,
+        DialogCompletedCallback completed);
+    void ShowWidgetPermissionEditor(
+        std::uint64_t generation,
+        snowdesktop::winui::WidgetPermissionEditorRequest request,
+        snowdesktop::winui::WidgetsPageActions::PermissionEditorCompletion
+            completed);
 
 private:
     void HookEvents();
@@ -217,6 +231,17 @@ private:
     winrt::fire_and_forget ShowConfirmationAsync(
         SettingsShellDialogRequest request,
         DialogCompletedCallback completed);
+    winrt::fire_and_forget ShowWidgetInstallConfirmationAsync(
+        std::uint64_t generation,
+        snowdesktop::SettingsRoute route,
+        snowdesktop::winui::WidgetInstallConfirmationRequest request,
+        DialogCompletedCallback completed);
+    winrt::fire_and_forget ShowWidgetPermissionEditorAsync(
+        std::uint64_t generation,
+        snowdesktop::SettingsRoute route,
+        snowdesktop::winui::WidgetPermissionEditorRequest request,
+        snowdesktop::winui::WidgetsPageActions::PermissionEditorCompletion
+            completed);
 
     LocalizeCallback localizer_;
     RouteRequestedCallback routeRequested_;
@@ -249,6 +274,8 @@ private:
         focusTargets_;
 
     winrt::Microsoft::UI::Xaml::Controls::ContentDialog activeDialog_{nullptr};
+    winrt::Microsoft::UI::Xaml::Media::Brush
+        solidFallbackBackground_{nullptr};
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;

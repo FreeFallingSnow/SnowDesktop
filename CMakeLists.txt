@@ -1304,6 +1304,13 @@ if (BUILD_TESTING)
         LABELS about backup contract settings ui update winui)
 
     snowdesktop_add_test(
+        SnowDesktopSettingsUpdateRulesTests
+        settings_update_rules
+        SOURCES tests/settings_update_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract settings update)
+
+    snowdesktop_add_test(
         SnowDesktopWinUiWidgetSettingsPresenterTests
         winui_widget_settings_presenter
         SOURCES tests/winui_widget_settings_presenter_tests.cpp

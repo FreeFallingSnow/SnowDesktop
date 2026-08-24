@@ -1,11 +1,15 @@
 #include "pch.h"
 
 #include "backup_data_page_presenter.h"
+#include "settings_presenter_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
 #include <algorithm>
 #include <atomic>
+#include <array>
+#include <cwchar>
+#include <initializer_list>
 #include <utility>
 
 namespace snowdesktop::winui
@@ -13,6 +17,7 @@ namespace snowdesktop::winui
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace controls = presenter_controls;
 
 namespace
 {
@@ -72,7 +77,19 @@ muxc::Button NewButton()
     muxc::Button button{};
     button.HorizontalAlignment(mux::HorizontalAlignment::Left);
     button.UseSystemFocusVisuals(true);
+    muxc::TextBlock label{};
+    label.TextAlignment(mux::TextAlignment::Center);
+    label.TextWrapping(mux::TextWrapping::Wrap);
+    button.Content(label);
     return button;
+}
+
+void SetButtonText(
+    const muxc::Button& button,
+    const winrt::param::hstring& text)
+{
+    if (const auto label = button.Content().try_as<muxc::TextBlock>())
+        label.Text(text);
 }
 
 muxc::TextBlock NewEmptyMessage()
@@ -83,17 +100,49 @@ muxc::TextBlock NewEmptyMessage()
     return message;
 }
 
-muxc::Grid NewTwoColumnGrid()
+[[nodiscard]] std::wstring FormatBackupSize(std::uint64_t bytes)
 {
-    muxc::Grid grid{};
-    muxc::ColumnDefinition contentColumn{};
-    contentColumn.Width(mux::GridLengthHelper::FromValueAndType(
-        1.0, mux::GridUnitType::Star));
-    muxc::ColumnDefinition actionColumn{};
-    actionColumn.Width(mux::GridLengthHelper::Auto());
-    grid.ColumnDefinitions().Append(contentColumn);
-    grid.ColumnDefinitions().Append(actionColumn);
-    return grid;
+    static constexpr std::array<std::wstring_view, 4> units = {
+        L"B", L"KiB", L"MiB", L"GiB"};
+    double value = static_cast<double>(bytes);
+    std::size_t unit = 0;
+    while (value >= 1024.0 && unit + 1 < units.size())
+    {
+        value /= 1024.0;
+        ++unit;
+    }
+
+    wchar_t buffer[64]{};
+    if (unit == 0)
+    {
+        swprintf_s(buffer, L"%llu %ls",
+            static_cast<unsigned long long>(bytes), units[unit].data());
+    }
+    else
+    {
+        swprintf_s(buffer, L"%.1f %ls", value, units[unit].data());
+    }
+    return buffer;
+}
+
+[[nodiscard]] std::wstring FormatLocalizedText(
+    std::wstring text,
+    const std::initializer_list<std::wstring>& arguments)
+{
+    std::size_t index = 0;
+    for (const std::wstring& argument : arguments)
+    {
+        const std::wstring marker =
+            L"{" + std::to_wstring(index++) + L"}";
+        std::size_t position = 0;
+        while ((position = text.find(marker, position)) !=
+            std::wstring::npos)
+        {
+            text.replace(position, marker.size(), argument);
+            position += argument.size();
+        }
+    }
+    return text;
 }
 
 muxc::InfoBarSeverity ToInfoBarSeverity(
@@ -121,8 +170,7 @@ struct BackupDataPagePresenter::Impl
     {
         LayoutBackupEntry entry;
         muxc::ListViewItem item{nullptr};
-        muxc::TextBlock title{nullptr};
-        muxc::TextBlock metadata{nullptr};
+        controls::SettingRow settingRow;
         muxc::Button restore{nullptr};
         muxc::Button remove{nullptr};
         winrt::event_token restoreToken{};
@@ -133,8 +181,7 @@ struct BackupDataPagePresenter::Impl
     {
         FullDataBackupEntry entry;
         muxc::ListViewItem item{nullptr};
-        muxc::TextBlock title{nullptr};
-        muxc::TextBlock metadata{nullptr};
+        controls::SettingRow settingRow;
         muxc::Button restore{nullptr};
         muxc::Button exportArchive{nullptr};
         muxc::Button open{nullptr};
@@ -169,22 +216,23 @@ struct BackupDataPagePresenter::Impl
     muxc::Button cancelButton{nullptr};
 
     SettingsCard layoutCard;
+    controls::SettingRow layoutCreateRow;
     muxc::TextBox layoutName{nullptr};
     muxc::Button createLayoutButton{nullptr};
-    muxc::TextBox dataDirectoryPath{nullptr};
     muxc::Button openDataDirectoryButton{nullptr};
     muxc::TextBlock noLayoutBackups{nullptr};
     muxc::ListView layoutList{nullptr};
 
     SettingsCard fullBackupCard;
+    controls::SettingRow fullBackupActionsRow;
     muxc::Button createFullBackupButton{nullptr};
     muxc::Button importFullBackupButton{nullptr};
-    muxc::TextBox fullBackupDirectoryPath{nullptr};
     muxc::Button openFullBackupDirectoryButton{nullptr};
     muxc::TextBlock noFullBackups{nullptr};
     muxc::ListView fullBackupList{nullptr};
 
     SettingsCard migrationCard;
+    controls::SettingRow migrationActionRow;
     muxc::Button migrateButton{nullptr};
 
     std::vector<LayoutBackupEntry> layoutEntries;
@@ -193,14 +241,13 @@ struct BackupDataPagePresenter::Impl
     std::vector<FullBackupRow> fullRows;
     BackupDataOperationState operation;
     std::optional<BackupDataNotice> notice;
-    std::wstring dataDirectory;
-    std::wstring fullBackupDirectory;
     std::uint64_t generation = 0;
     std::uint64_t revision = 0;
     bool replacementPending = false;
     bool hasSnapshot = false;
     bool active = false;
     bool closed = false;
+    bool layoutBackupSaveRunning = false;
 
     winrt::event_token createLayoutToken{};
     winrt::event_token openDataDirectoryToken{};
@@ -260,57 +307,85 @@ struct BackupDataPagePresenter::Impl
         root.Children().Append(progressCard);
 
         InitializeCard(layoutCard, cardStyle, root);
-        muxc::Grid createLayoutRow = NewTwoColumnGrid();
+        layoutCard.description.Visibility(mux::Visibility::Collapsed);
+        muxc::Grid layoutActions{};
+        layoutActions.ColumnSpacing(8.0);
+        muxc::ColumnDefinition nameColumn{};
+        nameColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition saveColumn{};
+        saveColumn.Width(mux::GridLengthHelper::Auto());
+        muxc::ColumnDefinition openColumn{};
+        openColumn.Width(mux::GridLengthHelper::Auto());
+        layoutActions.ColumnDefinitions().Append(nameColumn);
+        layoutActions.ColumnDefinitions().Append(saveColumn);
+        layoutActions.ColumnDefinitions().Append(openColumn);
         layoutName = muxc::TextBox{};
         layoutName.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         layoutName.UseSystemFocusVisuals(true);
         createLayoutButton = NewButton();
-        createLayoutButton.Margin({12.0, 0.0, 0.0, 0.0});
         muxc::Grid::SetColumn(createLayoutButton, 1);
-        createLayoutRow.Children().Append(layoutName);
-        createLayoutRow.Children().Append(createLayoutButton);
-        dataDirectoryPath = muxc::TextBox{};
-        dataDirectoryPath.IsReadOnly(true);
-        dataDirectoryPath.TextWrapping(mux::TextWrapping::Wrap);
-        dataDirectoryPath.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
         openDataDirectoryButton = NewButton();
+        muxc::Grid::SetColumn(openDataDirectoryButton, 2);
+        layoutActions.Children().Append(layoutName);
+        layoutActions.Children().Append(createLayoutButton);
+        layoutActions.Children().Append(openDataDirectoryButton);
+        layoutCreateRow.Initialize(layoutActions);
         noLayoutBackups = NewEmptyMessage();
+        noLayoutBackups.MinHeight(48.0);
+        noLayoutBackups.VerticalAlignment(mux::VerticalAlignment::Center);
         layoutList = muxc::ListView{};
         layoutList.SelectionMode(muxc::ListViewSelectionMode::None);
         layoutList.IsItemClickEnabled(false);
-        layoutList.MaxHeight(280.0);
-        layoutCard.content.Children().Append(createLayoutRow);
-        layoutCard.content.Children().Append(dataDirectoryPath);
-        layoutCard.content.Children().Append(openDataDirectoryButton);
+        layoutList.MinHeight(48.0);
+        layoutList.MaxHeight(132.0);
+        layoutCard.content.Children().Append(layoutCreateRow.root);
         layoutCard.content.Children().Append(noLayoutBackups);
         layoutCard.content.Children().Append(layoutList);
 
         InitializeCard(fullBackupCard, cardStyle, root);
+        fullBackupCard.description.Visibility(mux::Visibility::Collapsed);
+        muxc::Grid fullActions{};
+        fullActions.ColumnSpacing(8.0);
+        for (int index = 0; index < 3; ++index)
+        {
+            muxc::ColumnDefinition column{};
+            column.Width(mux::GridLengthHelper::FromValueAndType(
+                1.0, mux::GridUnitType::Star));
+            fullActions.ColumnDefinitions().Append(column);
+        }
         createFullBackupButton = NewButton();
         importFullBackupButton = NewButton();
-        fullBackupDirectoryPath = muxc::TextBox{};
-        fullBackupDirectoryPath.IsReadOnly(true);
-        fullBackupDirectoryPath.TextWrapping(mux::TextWrapping::Wrap);
-        fullBackupDirectoryPath.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
         openFullBackupDirectoryButton = NewButton();
+        createFullBackupButton.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        importFullBackupButton.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        openFullBackupDirectoryButton.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        muxc::Grid::SetColumn(importFullBackupButton, 1);
+        muxc::Grid::SetColumn(openFullBackupDirectoryButton, 2);
+        fullActions.Children().Append(createFullBackupButton);
+        fullActions.Children().Append(importFullBackupButton);
+        fullActions.Children().Append(openFullBackupDirectoryButton);
+        fullBackupActionsRow.Initialize(fullActions);
         noFullBackups = NewEmptyMessage();
+        noFullBackups.MinHeight(48.0);
+        noFullBackups.VerticalAlignment(mux::VerticalAlignment::Center);
         fullBackupList = muxc::ListView{};
         fullBackupList.SelectionMode(muxc::ListViewSelectionMode::None);
         fullBackupList.IsItemClickEnabled(false);
-        fullBackupList.MaxHeight(360.0);
-        fullBackupCard.content.Children().Append(createFullBackupButton);
-        fullBackupCard.content.Children().Append(importFullBackupButton);
-        fullBackupCard.content.Children().Append(fullBackupDirectoryPath);
-        fullBackupCard.content.Children().Append(
-            openFullBackupDirectoryButton);
+        fullBackupList.MinHeight(48.0);
+        fullBackupList.MaxHeight(172.0);
+        fullBackupCard.content.Children().Append(fullBackupActionsRow.root);
         fullBackupCard.content.Children().Append(noFullBackups);
         fullBackupCard.content.Children().Append(fullBackupList);
 
         InitializeCard(migrationCard, cardStyle, root);
+        migrationCard.description.Visibility(mux::Visibility::Collapsed);
         migrateButton = NewButton();
-        migrationCard.content.Children().Append(migrateButton);
+        migrationActionRow.Initialize(migrateButton);
+        migrationCard.content.Children().Append(migrationActionRow.root);
     }
 
     void HookEvents()
@@ -519,31 +594,15 @@ struct BackupDataPagePresenter::Impl
                 mux::HorizontalAlignment::Stretch);
             row.item.IsTabStop(false);
 
-            muxc::Grid grid = NewTwoColumnGrid();
-            muxc::StackPanel text{};
-            text.Spacing(3.0);
-            row.title = muxc::TextBlock{};
-            row.title.FontWeight(
-                winrt::Windows::UI::Text::FontWeights::SemiBold());
-            row.title.TextWrapping(mux::TextWrapping::Wrap);
-            row.metadata = muxc::TextBlock{};
-            row.metadata.Opacity(0.66);
-            row.metadata.TextWrapping(mux::TextWrapping::Wrap);
-            text.Children().Append(row.title);
-            text.Children().Append(row.metadata);
-
             muxc::StackPanel buttons{};
             buttons.Orientation(muxc::Orientation::Horizontal);
             buttons.Spacing(8.0);
-            buttons.Margin({12.0, 0.0, 0.0, 0.0});
             row.restore = NewButton();
             row.remove = NewButton();
             buttons.Children().Append(row.restore);
             buttons.Children().Append(row.remove);
-            muxc::Grid::SetColumn(buttons, 1);
-            grid.Children().Append(text);
-            grid.Children().Append(buttons);
-            row.item.Content(grid);
+            row.settingRow.Initialize(buttons);
+            row.item.Content(row.settingRow.root);
 
             const std::wstring id = row.entry.id;
             const std::wstring label = row.entry.displayName;
@@ -596,19 +655,8 @@ struct BackupDataPagePresenter::Impl
                 mux::HorizontalAlignment::Stretch);
             row.item.IsTabStop(false);
 
-            muxc::StackPanel container{};
-            container.Spacing(8.0);
-            row.title = muxc::TextBlock{};
-            row.title.FontWeight(
-                winrt::Windows::UI::Text::FontWeights::SemiBold());
-            row.title.TextWrapping(mux::TextWrapping::Wrap);
-            row.metadata = muxc::TextBlock{};
-            row.metadata.Opacity(0.66);
-            row.metadata.TextWrapping(mux::TextWrapping::Wrap);
             muxc::StackPanel buttons{};
-            // A vertical action stack remains usable when the settings
-            // content column narrows under high DPI or a snapped window.
-            buttons.Orientation(muxc::Orientation::Vertical);
+            buttons.Orientation(muxc::Orientation::Horizontal);
             buttons.Spacing(8.0);
             row.restore = NewButton();
             row.exportArchive = NewButton();
@@ -618,10 +666,8 @@ struct BackupDataPagePresenter::Impl
             buttons.Children().Append(row.exportArchive);
             buttons.Children().Append(row.open);
             buttons.Children().Append(row.remove);
-            container.Children().Append(row.title);
-            container.Children().Append(row.metadata);
-            container.Children().Append(buttons);
-            row.item.Content(container);
+            row.settingRow.Initialize(buttons);
+            row.item.Content(row.settingRow.root);
 
             const std::wstring id = row.entry.id;
             const std::wstring label = row.entry.displayName;
@@ -698,13 +744,9 @@ struct BackupDataPagePresenter::Impl
             L("app.settings.delete", L"Delete");
         for (auto& row : layoutRows)
         {
-            row.title.Text(row.entry.displayName);
-            row.metadata.Text(row.entry.createdAt);
-            row.metadata.Visibility(row.entry.createdAt.empty()
-                ? mux::Visibility::Collapsed
-                : mux::Visibility::Visible);
-            row.restore.Content(winrt::box_value(restoreText));
-            row.remove.Content(winrt::box_value(deleteText));
+            row.settingRow.SetText(row.entry.displayName);
+            SetButtonText(row.restore, restoreText);
+            SetButtonText(row.remove, deleteText);
             muxa::AutomationProperties::SetName(row.item,
                 row.entry.displayName);
             muxa::AutomationProperties::SetName(row.restore,
@@ -729,17 +771,24 @@ struct BackupDataPagePresenter::Impl
             L("app.settings.delete", L"Delete");
         for (auto& row : fullRows)
         {
-            row.title.Text(row.entry.displayName);
-            row.metadata.Text(row.entry.createdAt);
-            row.metadata.Visibility(row.entry.createdAt.empty()
-                ? mux::Visibility::Collapsed
-                : mux::Visibility::Visible);
-            row.restore.Content(winrt::box_value(restoreText));
-            row.exportArchive.Content(winrt::box_value(exportText));
-            row.open.Content(winrt::box_value(openText));
-            row.remove.Content(winrt::box_value(deleteText));
-            muxa::AutomationProperties::SetName(row.item,
-                row.entry.displayName);
+            const std::wstring timestamp = row.entry.createdAt.empty()
+                ? L("app.settings.full_backup_unknown_time", L"Unknown time")
+                : row.entry.createdAt;
+            const std::wstring label = row.entry.migrationRollback
+                ? FormatLocalizedText(L(
+                      "app.settings.migration_backup_item",
+                      L"{0} (Before Migration)"), {timestamp})
+                : FormatLocalizedText(L(
+                      "app.settings.full_backup_item",
+                      L"{0} · {1} files · {2}"),
+                      {timestamp, std::to_wstring(row.entry.fileCount),
+                          FormatBackupSize(row.entry.totalBytes)});
+            row.settingRow.SetText(label);
+            SetButtonText(row.restore, restoreText);
+            SetButtonText(row.exportArchive, exportText);
+            SetButtonText(row.open, openText);
+            SetButtonText(row.remove, deleteText);
+            muxa::AutomationProperties::SetName(row.item, label);
             for (const auto& [button, text] :
                  std::initializer_list<std::pair<muxc::Button, std::wstring>>{
                      {row.restore, restoreText},
@@ -748,7 +797,7 @@ struct BackupDataPagePresenter::Impl
                      {row.remove, deleteText}})
             {
                 muxa::AutomationProperties::SetName(button,
-                    text + L" " + row.entry.displayName);
+                    text + L" " + label);
                 muxa::AutomationProperties::SetHelpText(button,
                     fullBackupCard.description.Text());
             }
@@ -764,12 +813,14 @@ struct BackupDataPagePresenter::Impl
         layoutCard.description.Text(L(
             "settings.backup.layout.description",
             L"Create and restore desktop-layout backups."));
+        layoutCreateRow.SetText(L(
+            "app.settings.save_current_layout", L"Save current layout"));
         layoutName.PlaceholderText(L(
             "app.settings.backup_name_hint", L"Backup name (optional)"));
-        createLayoutButton.Content(winrt::box_value(L(
-            "app.settings.save_backup", L"Save backup")));
-        openDataDirectoryButton.Content(winrt::box_value(L(
-            "app.settings.open_data_folder", L"Open data folder")));
+        SetButtonText(createLayoutButton,
+            L("app.settings.save_backup", L"Save backup"));
+        SetButtonText(openDataDirectoryButton,
+            L("app.settings.open_data_folder", L"Open data folder"));
         noLayoutBackups.Text(
             L("app.settings.no_backups", L"No backups yet"));
 
@@ -778,14 +829,16 @@ struct BackupDataPagePresenter::Impl
         fullBackupCard.description.Text(L(
             "app.settings.full_data_backup_description",
             L"Back up layouts, settings, widgets, and widget storage."));
-        createFullBackupButton.Content(winrt::box_value(L(
-            "app.settings.create_full_backup", L"Create complete backup")));
-        importFullBackupButton.Content(winrt::box_value(L(
+        fullBackupActionsRow.SetText(
+            std::wstring(fullBackupCard.description.Text().c_str()));
+        SetButtonText(createFullBackupButton, L(
+            "app.settings.create_full_backup", L"Create complete backup"));
+        SetButtonText(importFullBackupButton, L(
             "app.settings.restore_from_backup_file",
-            L"Restore from backup file…")));
-        openFullBackupDirectoryButton.Content(winrt::box_value(L(
+            L"Restore from backup file…"));
+        SetButtonText(openFullBackupDirectoryButton, L(
             "app.settings.open_full_backup_folder",
-            L"Open complete backup folder")));
+            L"Open complete backup folder"));
         noFullBackups.Text(L(
             "app.settings.no_full_data_backups",
             L"No complete or pre-migration backups"));
@@ -795,10 +848,12 @@ struct BackupDataPagePresenter::Impl
         migrationCard.description.Text(L(
             "app.settings.data_migration_description",
             L"Move complete data from another SnowDesktop copy."));
-        migrateButton.Content(winrt::box_value(L(
-            "app.settings.migrate_all_data", L"Move in complete data…")));
-        cancelButton.Content(winrt::box_value(
-            L("app.settings.cancel", L"Cancel")));
+        migrationActionRow.SetText(
+            std::wstring(migrationCard.description.Text().c_str()));
+        SetButtonText(migrateButton,
+            L("app.settings.migrate_all_data", L"Move in complete data…"));
+        SetButtonText(cancelButton,
+            L("app.settings.cancel", L"Cancel"));
 
         SetCardAutomation(layoutCard);
         SetCardAutomation(fullBackupCard);
@@ -830,16 +885,6 @@ struct BackupDataPagePresenter::Impl
             L("app.settings.backup_name_hint", L"Backup name (optional)"));
         muxa::AutomationProperties::SetHelpText(layoutName,
             layoutCard.description.Text());
-        muxa::AutomationProperties::SetName(dataDirectoryPath,
-            L("settings.backup.directory", L"Data directory"));
-        muxa::AutomationProperties::SetHelpText(dataDirectoryPath,
-            L("settings.backup.directory.description",
-                L"Open the current SnowDesktop data directory."));
-        muxa::AutomationProperties::SetName(fullBackupDirectoryPath,
-            L("app.settings.open_full_backup_folder",
-                L"Open complete backup folder"));
-        muxa::AutomationProperties::SetHelpText(fullBackupDirectoryPath,
-            fullBackupCard.description.Text());
 
         RefreshLayoutRows();
         RefreshFullRows();
@@ -867,14 +912,6 @@ struct BackupDataPagePresenter::Impl
         if (closed)
             return;
         const bool running = operation.running;
-        dataDirectoryPath.Text(dataDirectory);
-        dataDirectoryPath.Visibility(dataDirectory.empty()
-            ? mux::Visibility::Collapsed
-            : mux::Visibility::Visible);
-        fullBackupDirectoryPath.Text(fullBackupDirectory);
-        fullBackupDirectoryPath.Visibility(fullBackupDirectory.empty()
-            ? mux::Visibility::Collapsed
-            : mux::Visibility::Visible);
         progressCard.Visibility(running
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
@@ -962,14 +999,21 @@ struct BackupDataPagePresenter::Impl
             layoutEntries != snapshot.layoutBackups;
         const bool fullListChanged = !hasSnapshot ||
             fullEntries != snapshot.fullBackups;
+        const bool sameGeneration = !hasSnapshot ||
+            snapshot.generation == generation;
         generation = snapshot.generation;
         revision = snapshot.revision;
         if (layoutListChanged)
             layoutEntries = snapshot.layoutBackups;
         if (fullListChanged)
             fullEntries = snapshot.fullBackups;
-        dataDirectory = snapshot.dataDirectory;
-        fullBackupDirectory = snapshot.fullBackupDirectory;
+        const bool layoutBackupSaved = sameGeneration &&
+            layoutBackupSaveRunning &&
+            !snapshot.operation.running && snapshot.notice &&
+            snapshot.notice->severity == BackupDataNoticeSeverity::Success;
+        layoutBackupSaveRunning = snapshot.operation.running &&
+            snapshot.operation.operation ==
+                BackupDataOperation::CreateLayoutBackup;
         replacementPending = snapshot.replacementPending;
         operation = snapshot.operation;
         notice = snapshot.notice;
@@ -980,6 +1024,8 @@ struct BackupDataPagePresenter::Impl
             BuildLayoutRows();
         if (fullListChanged)
             BuildFullBackupRows();
+        if (layoutBackupSaved)
+            layoutName.Text(L"");
         RenderState();
         return true;
     }

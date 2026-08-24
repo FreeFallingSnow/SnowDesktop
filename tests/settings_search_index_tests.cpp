@@ -72,12 +72,24 @@ void TestConditionalPagesAndNoLeaks()
         "disabled, hidden, and unknown static items never enter the index");
 
     input.developerToolsVisible = true;
+    index.Rebuild(input);
+    Check(index.EntryCount() == 1 &&
+            index.Search(L"developer").size() == 1 &&
+            index.Search(L"trace").empty(),
+        "the Developer Tools gate cannot leak hidden Debug search entries");
+
+    input.developerToolsVisible = false;
     input.debugVisible = true;
     index.Rebuild(input);
-    Check(index.EntryCount() == 2 &&
-            index.Search(L"developer").size() == 1 &&
+    Check(index.EntryCount() == 1 &&
+            index.Search(L"developer").empty() &&
             index.Search(L"trace").size() == 1,
-        "Developer Tools and Debug enter the index only when enabled");
+        "Debug search entries require their independent unlock state");
+
+    input.developerToolsVisible = true;
+    index.Rebuild(input);
+    Check(index.EntryCount() == 2,
+        "both conditional pages enter the index only when both gates open");
 }
 
 void TestWidgetFields()

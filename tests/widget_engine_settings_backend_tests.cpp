@@ -232,6 +232,21 @@ int main(int argc, char* argv[])
         Check(source.find("RuntimeSetStorageValue") == std::string::npos,
             "backend never routes settings through ordinary runtime writes");
         Check(source.find("WidgetStorageTransaction") != std::string::npos &&
+                source.find("ApplyHostAppearanceTransaction") !=
+                    std::string::npos &&
+                source.find("if (IsHostAppearancePresetKey(key))") !=
+                    std::string::npos &&
+                source.find("hostAppearanceValues.emplace(key, encoded)") !=
+                    std::string::npos &&
+                source.find("followPersonalization") != std::string::npos &&
+                source.find("__preset") != std::string::npos &&
+                source.find("__contentTheme") != std::string::npos &&
+                source.find("gradientEndA") != std::string::npos &&
+                source.find("glassBlurRadius") != std::string::npos &&
+                source.find("glassEnabled") != std::string::npos &&
+                source.find("acrylicEnabled") != std::string::npos &&
+                source.find("PersistWidgetSettingsStorageForBackend") !=
+                    std::string::npos &&
                 source.find("TypedStorageMetadataKey") !=
                     std::string::npos &&
                 source.find("ReadSearchQuery") != std::string::npos &&
@@ -251,7 +266,7 @@ int main(int argc, char* argv[])
                     std::string::npos &&
                 source.find("RuntimeBindHostLogicalSlot") !=
                     std::string::npos,
-            "source keeps typed, secret, handle, and reference channels distinct");
+            "source keeps host appearance transactional and typed, secret, handle, and reference channels distinct");
     }
 
     if (failures == 0)

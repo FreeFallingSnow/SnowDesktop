@@ -300,7 +300,11 @@ void SettingsController::UpdateCategory(
     SettingsUpdateMode mode)
 {
     if (externalReplacementPending_) return;
-    NormalizeCategorySettings(settings);
+    // Category text boxes are intentionally draft buffers.  Normalizing on
+    // every keystroke rewrites the text under the caret; the legacy settings
+    // page normalized only when Apply (or window close) committed the draft.
+    if (HasUpdateFlag(mode, SettingsUpdateMode::Commit))
+        NormalizeCategorySettings(settings);
     values_.category = std::move(settings);
     MarkChanged(SettingsDomain::Category, mode);
 }
@@ -322,8 +326,14 @@ void SettingsController::RequestCommit(SettingsDomain domains)
     if (requested == SettingsDomain::None) return;
 
     const bool previouslyPending = HasPendingWork();
+    if (HasSettingsDomain(requested, SettingsDomain::Category))
+        NormalizeCategorySettings(values_.category);
     pendingCommitDomains_ |= requested;
     ++revision_;
+    if (HasSettingsDomain(requested, SettingsDomain::Category))
+    {
+        domainRevisions_[DomainIndex(SettingsDomain::Category)] = revision_;
+    }
     PublishSnapshot();
     SchedulePendingWorkIfNeeded(previouslyPending);
 }

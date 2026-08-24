@@ -150,6 +150,58 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("x:Uid") == std::string::npos,
         "all static page text uses the dynamic JSON localizer");
+    Check(source.find("settings_presenter_controls.h") !=
+                std::string::npos &&
+            source.find("controls::SettingRow layoutCreateRow") !=
+                std::string::npos &&
+            source.find("controls::SettingRow fullBackupActionsRow") !=
+                std::string::npos &&
+            source.find("controls::SettingRow migrationActionRow") !=
+                std::string::npos &&
+            source.find("row.settingRow.Initialize(buttons)") !=
+                std::string::npos,
+        "wide backup rows align descriptions left and controls right while the shared row stacks them when narrow");
+    Check(source.find("app.settings.save_current_layout") !=
+                std::string::npos &&
+            source.find("layoutActions.Children().Append(layoutName)") !=
+                std::string::npos &&
+            source.find("layoutActions.Children().Append(createLayoutButton)") !=
+                std::string::npos &&
+            source.find("layoutActions.Children().Append(openDataDirectoryButton)") !=
+                std::string::npos &&
+            source.find("layoutList.MaxHeight(132.0)") !=
+                std::string::npos &&
+            source.find("layoutBackupSaveRunning") != std::string::npos &&
+            source.find("layoutName.Text(L\"\")") != std::string::npos,
+        "layout backup section reproduces the legacy label, input/save/open row, compact list and successful-name reset");
+    Check(source.find("muxc::Grid fullActions") !=
+                std::string::npos &&
+            source.find("fullActions.ColumnDefinitions().Append(column)") !=
+                std::string::npos &&
+            source.find("fullActions.Children().Append("
+                        "createFullBackupButton)") != std::string::npos &&
+            source.find("fullActions.Children().Append("
+                        "importFullBackupButton)") != std::string::npos &&
+            source.find("fullActions.Children().Append("
+                        "openFullBackupDirectoryButton)") !=
+                std::string::npos &&
+            source.find("fullBackupList.MaxHeight(172.0)") !=
+                std::string::npos &&
+            source.find("app.settings.full_backup_unknown_time") !=
+                std::string::npos &&
+            source.find("app.settings.migration_backup_item") !=
+                std::string::npos &&
+            source.find("app.settings.full_backup_item") !=
+                std::string::npos &&
+            source.find("FormatBackupSize") != std::string::npos,
+        "complete-backup description, horizontal toolbar, compact list and legacy item labels retain their original order and information");
+    Check(source.find("buttons.Orientation("
+                      "muxc::Orientation::Vertical)") ==
+                std::string::npos &&
+            source.find("row.metadata") == std::string::npos &&
+            source.find("dataDirectoryPath") == std::string::npos &&
+            source.find("fullBackupDirectoryPath") == std::string::npos,
+        "backup parity does not introduce path fields or vertically reorder legacy action buttons");
     Check(source.find("AutomationProperties::SetName") !=
                 std::string::npos &&
             source.find("AutomationProperties::SetHelpText") !=

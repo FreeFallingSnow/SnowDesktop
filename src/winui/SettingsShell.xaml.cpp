@@ -14,12 +14,21 @@ namespace winrt::SnowDesktop::implementation
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace wfc = winrt::Windows::Foundation::Collections;
 
 namespace
 {
 using snowdesktop::SettingsPage;
 using snowdesktop::SettingsRoute;
+using snowdesktop::SettingsSearchEntryKind;
+
+[[nodiscard]] muxm::Brush CreateSystemWindowFallbackBrush()
+{
+    const COLORREF color = GetSysColor(COLOR_WINDOW);
+    return muxm::SolidColorBrush{winrt::Windows::UI::Color{
+        0xFF, GetRValue(color), GetGValue(color), GetBValue(color)}};
+}
 
 struct LocalizedFallback
 {
@@ -135,6 +144,23 @@ std::wstring SearchDisplayText(
     return result.label + L" — " + result.context;
 }
 
+std::wstring FormatSingleValue(
+    std::wstring format, std::wstring_view value)
+{
+    if (const std::size_t marker = format.find(L"%s");
+        marker != std::wstring::npos)
+    {
+        format.replace(marker, 2, value.data(), value.size());
+    }
+    return format;
+}
+
+bool IsWidgetsBackendPage(SettingsPage page) noexcept
+{
+    return page == SettingsPage::Widgets ||
+        page == SettingsPage::DeveloperTools;
+}
+
 muxc::InfoBarSeverity ToInfoBarSeverity(SettingsShellInfoSeverity severity)
 {
     switch (severity)
@@ -156,6 +182,9 @@ SettingsShell::SettingsShell()
     : ownerThreadId_(GetCurrentThreadId())
 {
     InitializeComponent();
+    solidFallbackBackground_ = ShellRoot().Background();
+    if (!solidFallbackBackground_)
+        solidFallbackBackground_ = CreateSystemWindowFallbackBrush();
     generalPage_ =
         std::make_unique<snowdesktop::winui::GeneralPagePresenter>(
             [this](std::string_view key) { return Localize(key); },
@@ -298,17 +327,17 @@ void SettingsShell::RefreshLocalizedText()
 
     NavigationRoot().PaneTitle(Localize("settings.shell.title"));
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
-    GeneralItem().Content(winrt::box_value(Localize("settings.nav.general")));
+    GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     PersonalizationItem().Content(
-        winrt::box_value(Localize("settings.nav.personalization")));
-    DesktopItem().Content(winrt::box_value(Localize("settings.nav.desktop")));
+        winrt::box_value(Localize("app.settings.appearance")));
+    DesktopItem().Content(winrt::box_value(Localize("app.settings.category")));
     DockItem().Content(winrt::box_value(Localize("settings.nav.dock")));
-    WidgetsItem().Content(winrt::box_value(Localize("settings.nav.widgets")));
-    BackupItem().Content(winrt::box_value(Localize("settings.nav.backup")));
-    AboutItem().Content(winrt::box_value(Localize("settings.nav.about")));
+    WidgetsItem().Content(winrt::box_value(Localize("app.settings.widgets")));
+    BackupItem().Content(winrt::box_value(Localize("app.settings.backup")));
+    AboutItem().Content(winrt::box_value(Localize("app.settings.about")));
     DeveloperItem().Content(
-        winrt::box_value(Localize("settings.nav.developer")));
-    DebugItem().Content(winrt::box_value(Localize("settings.nav.debug")));
+        winrt::box_value(Localize("app.settings.widgets_developer_tools")));
+    DebugItem().Content(winrt::box_value(Localize("app.settings.debug")));
     SettingsSearchBox().PlaceholderText(
         Localize("settings.search.placeholder"));
     CancelOperationButton().Content(
@@ -346,6 +375,52 @@ void SettingsShell::RefreshLocalizedText()
         auto results = searchResults_;
         (void)SetSearchResults(
             std::move(results), navigation_.Generation(), searchRequestId_);
+    }
+}
+
+void SettingsShell::SetSystemBackdropActive(bool active) noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    try
+    {
+        if (active)
+        {
+            // The DesktopWindowXamlSource owns the material. Any opaque root
+            // brush would cover it completely.
+            ShellRoot().Background(muxm::Brush{nullptr});
+            return;
+        }
+
+        // Re-resolve the theme resource when possible so Windows 10 and high
+        // contrast changes get the current solid color rather than a stale
+        // brush cached at shell construction.
+        muxm::Brush fallback = solidFallbackBackground_;
+        if (const auto application = mux::Application::Current())
+        {
+            if (const auto resource = application.Resources().TryLookup(
+                    winrt::box_value(
+                        L"ApplicationPageBackgroundThemeBrush")))
+            {
+                if (const auto brush = resource.try_as<muxm::Brush>())
+                    fallback = brush;
+            }
+        }
+        if (!fallback)
+            fallback = CreateSystemWindowFallbackBrush();
+        ShellRoot().Background(fallback);
+    }
+    catch (...)
+    {
+        // Backdrop decoration must never make the settings session unusable.
+        try
+        {
+            ShellRoot().Background(solidFallbackBackground_);
+        }
+        catch (...)
+        {
+        }
     }
 }
 
@@ -528,7 +603,7 @@ bool SettingsShell::ApplyWidgetsPageSnapshot(
 {
     return !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
         widgetsPage_ &&
-        navigation_.Route().page == SettingsPage::Widgets &&
+        IsWidgetsBackendPage(navigation_.Route().page) &&
         navigation_.Generation() == snapshot.generation &&
         widgetsPage_->ApplySnapshot(snapshot);
 }
@@ -723,6 +798,12 @@ void SettingsShell::SetConditionalPagesVisible(
     const auto replacement = navigation_.SetVisibility(
         {developerToolsVisible, debugVisible});
     RenderConditionalPages();
+    if (!searchResults_.empty())
+    {
+        auto visibleResults = searchResults_;
+        (void)SetSearchResults(std::move(visibleResults),
+            navigation_.Generation(), searchRequestId_);
+    }
     if (replacement)
     {
         RenderRoute();
@@ -746,6 +827,27 @@ bool SettingsShell::SetSearchResults(
     try
     {
         updatingSearch_ = true;
+        for (auto& result : results)
+        {
+            if (result.kind != SettingsSearchEntryKind::StaticSetting)
+                continue;
+            if (result.route.page == SettingsPage::DockAndTaskbar)
+            {
+                result.route.page = result.focusId.starts_with("taskbar.")
+                    ? SettingsPage::Personalization
+                    : SettingsPage::General;
+            }
+            else if (result.route.page == SettingsPage::Desktop &&
+                     result.focusId != "desktop.categories" &&
+                     result.focusId != "desktop.categoryRules" &&
+                     result.focusId != "desktop.category.add")
+            {
+                result.route.page = SettingsPage::Personalization;
+            }
+        }
+        std::erase_if(results, [this](const auto& result) {
+            return !navigation_.IsRouteAvailable(result.route);
+        });
         searchResults_ = std::move(results);
         searchItems_.Clear();
         for (const auto& result : searchResults_)
@@ -885,6 +987,39 @@ void SettingsShell::ShowConfirmation(
         return;
     }
     ShowConfirmationAsync(std::move(request), std::move(completed));
+}
+
+void SettingsShell::ShowWidgetInstallConfirmation(
+    std::uint64_t generation,
+    snowdesktop::winui::WidgetInstallConfirmationRequest request,
+    DialogCompletedCallback completed)
+{
+    if (closed_ || generation != navigation_.Generation() ||
+        !IsWidgetsBackendPage(navigation_.Route().page))
+    {
+        if (completed)
+            completed(false);
+        return;
+    }
+    ShowWidgetInstallConfirmationAsync(generation, navigation_.Route(),
+        std::move(request), std::move(completed));
+}
+
+void SettingsShell::ShowWidgetPermissionEditor(
+    std::uint64_t generation,
+    snowdesktop::winui::WidgetPermissionEditorRequest request,
+    snowdesktop::winui::WidgetsPageActions::PermissionEditorCompletion
+        completed)
+{
+    if (closed_ || generation != navigation_.Generation() ||
+        navigation_.Route().page != SettingsPage::Widgets)
+    {
+        if (completed)
+            completed({});
+        return;
+    }
+    ShowWidgetPermissionEditorAsync(generation, navigation_.Route(),
+        std::move(request), std::move(completed));
 }
 
 void SettingsShell::HookEvents()
@@ -1082,31 +1217,49 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         return;
     }
 
+    const auto usesGeneralPresenter = [](SettingsPage page) {
+        return page == SettingsPage::General ||
+            page == SettingsPage::DockAndTaskbar;
+    };
+    const auto usesPersonalizationPresenter = [](SettingsPage page) {
+        return page == SettingsPage::Personalization;
+    };
+    const auto usesDesktopPresenter = [](SettingsPage page) {
+        return page == SettingsPage::Personalization ||
+            page == SettingsPage::Desktop;
+    };
+    const auto usesDockPresenter = [](SettingsPage page) {
+        return page == SettingsPage::General ||
+            page == SettingsPage::Personalization ||
+            page == SettingsPage::DockAndTaskbar;
+    };
     const bool leavingGeneral = renderedPageRoute_ &&
-        renderedPageRoute_->page == SettingsPage::General &&
-        pageRoute.page != SettingsPage::General;
+        usesGeneralPresenter(renderedPageRoute_->page) &&
+        renderedPageRoute_->page != pageRoute.page;
     if (leavingGeneral && generalPage_)
         generalPage_->Deactivate();
     const bool leavingPersonalization = renderedPageRoute_ &&
-        renderedPageRoute_->page == SettingsPage::Personalization &&
-        pageRoute.page != SettingsPage::Personalization;
+        usesPersonalizationPresenter(renderedPageRoute_->page) &&
+        renderedPageRoute_->page != pageRoute.page;
     if (leavingPersonalization && personalizationPage_)
         personalizationPage_->Deactivate();
     const bool leavingDesktop = renderedPageRoute_ &&
-        renderedPageRoute_->page == SettingsPage::Desktop &&
-        pageRoute.page != SettingsPage::Desktop;
+        usesDesktopPresenter(renderedPageRoute_->page) &&
+        renderedPageRoute_->page != pageRoute.page;
     if (leavingDesktop && desktopPage_)
         desktopPage_->Deactivate();
     const bool leavingDock = renderedPageRoute_ &&
-        renderedPageRoute_->page == SettingsPage::DockAndTaskbar &&
-        pageRoute.page != SettingsPage::DockAndTaskbar;
+        usesDockPresenter(renderedPageRoute_->page) &&
+        renderedPageRoute_->page != pageRoute.page;
     if (leavingDock && dockPage_)
         dockPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
-            renderedPageRoute_->page == SettingsPage::About) &&
+            renderedPageRoute_->page == SettingsPage::About ||
+            renderedPageRoute_->page == SettingsPage::Debug) &&
         pageRoute.page != SettingsPage::Home &&
-        pageRoute.page != SettingsPage::About;
+        pageRoute.page != SettingsPage::About &&
+        pageRoute.page != SettingsPage::Debug;
     if (leavingHomeAbout && homeAboutPage_)
         homeAboutPage_->Deactivate();
     const bool leavingWidgetSettings = renderedPageRoute_ &&
@@ -1115,8 +1268,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     if (leavingWidgetSettings && widgetSettingsPage_)
         widgetSettingsPage_->Deactivate();
     const bool leavingWidgets = renderedPageRoute_ &&
-        renderedPageRoute_->page == SettingsPage::Widgets &&
-        pageRoute.page != SettingsPage::Widgets;
+        IsWidgetsBackendPage(renderedPageRoute_->page) &&
+        !IsWidgetsBackendPage(pageRoute.page);
     if (leavingWidgets && widgetsPage_)
         widgetsPage_->Deactivate();
     const bool leavingBackup = renderedPageRoute_ &&
@@ -1134,6 +1287,26 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                                     std::string_view description) {
         PageCards().Children().Append(CreatePlaceholderCard(
             std::move(focusId), title, description));
+    };
+    const auto registerDockFocus = [this](
+                                       std::initializer_list<
+                                           std::string_view> ids) {
+        if (!dockPage_) return;
+        for (const std::string_view id : ids)
+        {
+            RegisterFocusTarget(
+                std::string(id), dockPage_->FocusTarget(id));
+        }
+    };
+    const auto registerDesktopFocus = [this](
+                                          std::initializer_list<
+                                              std::string_view> ids) {
+        if (!desktopPage_) return;
+        for (const std::string_view id : ids)
+        {
+            RegisterFocusTarget(
+                std::string(id), desktopPage_->FocusTarget(id));
+        }
     };
     switch (navigation_.Route().page)
     {
@@ -1153,28 +1326,44 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::General:
-        if (generalPage_)
+        if (generalPage_ && dockPage_)
         {
             PageCards().Children().Append(generalPage_->Root());
+            PageCards().Children().Append(dockPage_->DockEnableContent());
+            PageCards().Children().Append(
+                generalPage_->DockShortcutContent());
+            PageCards().Children().Append(dockPage_->DockContent());
             generalPage_->RegisterFocusTargets(
                 [this](std::string focusId,
                        const mux::FrameworkElement& element) {
                     RegisterFocusTarget(std::move(focusId), element);
                 });
+            registerDockFocus({
+                "dock.enable", "dock.position", "dock.layout",
+                "dock.monitor", "dock.thickness",
+                "dock.floatingEdgeSwipe", "dock.showWindowsButton",
+                "dock.showFrequentItems", "dock.frequentItemCount"});
             generalPage_->Activate();
+            dockPage_->Activate();
         }
         break;
     case SettingsPage::Personalization:
-        if (personalizationPage_)
+        if (personalizationPage_ && desktopPage_ && dockPage_)
         {
             PageCards().Children().Append(personalizationPage_->Content());
+            PageCards().Children().Append(
+                desktopPage_->AppearanceContent());
+            PageCards().Children().Append(dockPage_->TaskbarContent());
             for (const std::string_view focusId : {
                      "personalization.theme",
                      "personalization.globalTheme",
                      "personalization.backgroundColor",
                      "personalization.borderColor",
                      "personalization.widgetAlpha",
-                     "personalization.borderAlpha",
+                      "personalization.borderAlpha",
+                      "personalization.quickNavigationTheme",
+                      "personalization.collectionPopupTheme",
+                      "personalization.enableGradient",
                      "personalization.gradientEndAlpha",
                      "personalization.glass",
                      "personalization.blurRadius",
@@ -1190,26 +1379,59 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                     std::string(focusId),
                     personalizationPage_->FocusTarget(focusId));
             }
+            registerDesktopFocus({
+                "desktop.spacing", "desktop.iconSize",
+                "desktop.itemFontSize", "desktop.listFontSize",
+                "desktop.fontWeight", "desktop.shortcutArrow",
+                "desktop.iconBeautify",
+                "desktop.iconBeautify.mode",
+                "desktop.iconBeautify.backgroundColor",
+                "desktop.iconBeautify.backgroundOpacity",
+                "desktop.iconBeautify.gradient",
+                "desktop.iconBeautify.gradientEndColor",
+                "desktop.iconBeautify.gradientDirection",
+                "desktop.iconBeautify.shape",
+                "desktop.iconBeautify.contentScale",
+                "desktop.iconBeautify.highlightStrength",
+                "desktop.iconBeautify.highlightSize",
+                "desktop.iconBeautify.highlightAngle",
+                "desktop.iconBeautify.shadeStrength",
+                "desktop.iconBeautify.edgeHighlight",
+                "desktop.iconBeautify.filter",
+                "desktop.iconBeautify.filterColor",
+                "desktop.iconBeautify.filterStrength",
+                "desktop.iconBeautify.shadowStrength",
+                "desktop.iconBeautify.outline",
+                "desktop.iconBeautify.outlineWidth",
+                "desktop.iconBeautify.outlineOpacity",
+                "desktop.iconBeautify.outlineColor"});
+            RegisterFocusTarget("desktop.categoryLayout",
+                personalizationPage_->FocusTarget(
+                    "personalization.tabHeight"));
+            registerDockFocus({
+                "taskbar.autoHide", "taskbar.alignment",
+                "taskbar.systemTheme", "taskbar.theme",
+                "taskbar.contentTheme", "taskbar.backgroundColor",
+                "taskbar.borderColor", "taskbar.backgroundOpacity",
+                "taskbar.borderOpacity", "taskbar.glass",
+                "taskbar.blurRadius", "taskbar.acrylic",
+                "taskbar.restartExplorer",
+                "taskbar.dynamic.visibleWindow",
+                "taskbar.dynamic.maximizedWindow",
+                "taskbar.dynamic.shellUi"});
             personalizationPage_->Activate();
+            desktopPage_->Activate();
+            dockPage_->Activate();
         }
         break;
     case SettingsPage::Desktop:
         if (desktopPage_)
         {
-            PageCards().Children().Append(desktopPage_->Content());
+            PageCards().Children().Append(desktopPage_->CategoryContent());
             for (const std::string_view focusId : {
-                     "desktop.spacing",
-                     "desktop.iconSize",
-                     "desktop.itemFontSize",
-                     "desktop.listFontSize",
-                     "desktop.fontWeight",
-                     "desktop.shortcutArrow",
-                     "desktop.categoryLayout",
-                     "desktop.tabFontSize",
-                     "desktop.categoryCounts",
-                     "desktop.iconBeautify",
-                     "desktop.categories",
-                     "desktop.category.add"})
+                      "desktop.categories",
+                      "desktop.categoryRules",
+                      "desktop.category.add"})
             {
                 RegisterFocusTarget(
                     std::string(focusId),
@@ -1219,9 +1441,18 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::DockAndTaskbar:
-        if (dockPage_)
+        if (dockPage_ && generalPage_)
         {
-            PageCards().Children().Append(dockPage_->Content());
+            PageCards().Children().Append(dockPage_->DockEnableContent());
+            PageCards().Children().Append(
+                generalPage_->DockShortcutContent());
+            PageCards().Children().Append(dockPage_->DockContent());
+            PageCards().Children().Append(dockPage_->TaskbarContent());
+            generalPage_->RegisterFocusTargets(
+                [this](std::string focusId,
+                       const mux::FrameworkElement& element) {
+                    RegisterFocusTarget(std::move(focusId), element);
+                });
             for (const std::string_view focusId : {
                      "dock.enable",
                      "dock.position",
@@ -1246,14 +1477,15 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                      "taskbar.blurRadius",
                      "taskbar.acrylic",
                      "taskbar.restartExplorer",
-                     "taskbar.visibleWindow",
-                     "taskbar.maximizedWindow",
-                     "taskbar.shellUi"})
+                      "taskbar.dynamic.visibleWindow",
+                      "taskbar.dynamic.maximizedWindow",
+                      "taskbar.dynamic.shellUi"})
             {
                 RegisterFocusTarget(
                     std::string(focusId),
                     dockPage_->FocusTarget(focusId));
             }
+            generalPage_->Activate();
             dockPage_->Activate();
         }
         break;
@@ -1263,8 +1495,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(widgetsPage_->Content());
             widgetsPage_->Activate(navigation_.Generation());
             for (const std::string_view focusId : {
-                     "widgets.installed", "widgets.sources",
-                     "widgets.permissions"})
+                     "widgets.search", "widgets.install",
+                     "widgets.workshop", "widgets.developer",
+                     "widgets.installed", "widgets.included",
+                     "widgets.sources", "widgets.permissions"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     widgetsPage_->FocusTarget(focusId));
@@ -1317,8 +1551,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(homeAboutPage_->AboutContent());
             for (const std::string_view focusId : {
-                     "about.version", "about.project", "about.license",
-                     "about.thirdparty"})
+                     "about.version", "about.profile", "about.project",
+                     "about.community", "about.thirdparty"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     homeAboutPage_->FocusTarget(
@@ -1328,14 +1562,36 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::DeveloperTools:
-        addPlaceholder("developer.overrides", "settings.developer.overrides",
-            "settings.developer.overrides.description");
-        addPlaceholder("developer.tools", "settings.developer.tools",
-            "settings.developer.tools.description");
+        if (widgetsPage_)
+        {
+            PageCards().Children().Append(
+                widgetsPage_->DeveloperToolsContent());
+            widgetsPage_->Activate(navigation_.Generation());
+            for (const std::string_view focusId : {
+                     "developer.overrides", "developer.agentSkill",
+                     "developer.workspace", "developer.cli",
+                     "developer.publish", "developer.reference",
+                     "developer.runtime", "developer.tools"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    widgetsPage_->DeveloperToolsFocusTarget(focusId));
+            }
+        }
         break;
     case SettingsPage::Debug:
-        addPlaceholder("debug.runtime", "settings.debug.runtime",
-            "settings.debug.runtime.description");
+        if (homeAboutPage_)
+        {
+            PageCards().Children().Append(homeAboutPage_->DebugContent());
+            for (const std::string_view focusId : {
+                     "debug.demo_mode", "debug.animation",
+                     "debug.crash"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    homeAboutPage_->FocusTarget(
+                        SettingsPage::Debug, focusId));
+            }
+            homeAboutPage_->Activate(SettingsPage::Debug);
+        }
         break;
     default:
         break;
@@ -1437,18 +1693,18 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     switch (page)
     {
     case SettingsPage::Home: return Localize("settings.nav.home");
-    case SettingsPage::General: return Localize("settings.nav.general");
+    case SettingsPage::General: return Localize("app.settings.general");
     case SettingsPage::Personalization:
-        return Localize("settings.nav.personalization");
-    case SettingsPage::Desktop: return Localize("settings.nav.desktop");
+        return Localize("app.settings.appearance");
+    case SettingsPage::Desktop: return Localize("app.settings.category");
     case SettingsPage::DockAndTaskbar: return Localize("settings.nav.dock");
-    case SettingsPage::Widgets: return Localize("settings.nav.widgets");
-    case SettingsPage::WidgetSettings: return Localize("settings.nav.widgets");
-    case SettingsPage::BackupAndData: return Localize("settings.nav.backup");
-    case SettingsPage::About: return Localize("settings.nav.about");
+    case SettingsPage::Widgets: return Localize("app.settings.widgets");
+    case SettingsPage::WidgetSettings: return Localize("app.settings.widgets");
+    case SettingsPage::BackupAndData: return Localize("app.settings.backup");
+    case SettingsPage::About: return Localize("app.settings.about");
     case SettingsPage::DeveloperTools:
-        return Localize("settings.nav.developer");
-    case SettingsPage::Debug: return Localize("settings.nav.debug");
+        return Localize("app.settings.widgets_developer_tools");
+    case SettingsPage::Debug: return Localize("app.settings.debug");
     default: return {};
     }
 }
@@ -1507,15 +1763,17 @@ bool SettingsShell::TrySelectSearchResult(
 {
     if (!selectedItem)
         return false;
-    const auto selectedText = winrt::unbox_value_or<hstring>(
-        selectedItem, hstring{});
-    if (selectedText.empty())
-        return false;
-    for (const auto& result : searchResults_)
+    const std::size_t count = (std::min)(
+        searchResults_.size(), static_cast<std::size_t>(searchItems_.Size()));
+    for (std::size_t index = 0; index < count; ++index)
     {
-        if (SearchDisplayText(result) == selectedText.c_str())
+        // AutoSuggestBox returns the exact boxed ItemsSource entry. Match that
+        // identity instead of its display text so two widgets/settings with
+        // the same localized label can never navigate to the first match.
+        if (searchItems_.GetAt(static_cast<std::uint32_t>(index)) ==
+            selectedItem)
         {
-            RequestRoute(result.route);
+            RequestRoute(searchResults_[index].route);
             return true;
         }
     }
@@ -1588,6 +1846,293 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         {
             completed(false);
         }
+    }
+}
+
+winrt::fire_and_forget SettingsShell::ShowWidgetInstallConfirmationAsync(
+    std::uint64_t generation,
+    SettingsRoute route,
+    snowdesktop::winui::WidgetInstallConfirmationRequest request,
+    DialogCompletedCallback completed)
+{
+    auto lifetime = get_strong();
+    try
+    {
+        if (activeDialog_)
+            activeDialog_.Hide();
+
+        muxc::ContentDialog dialog;
+        activeDialog_ = dialog;
+        dialog.XamlRoot(XamlRoot());
+        dialog.Title(winrt::box_value(Localize(
+            "app.settings.widgets_confirm_install")));
+        dialog.PrimaryButtonText(Localize(
+            "app.settings.widgets_confirm_install"));
+        dialog.CloseButtonText(Localize("app.settings.cancel"));
+        dialog.DefaultButton(muxc::ContentDialogButton::Primary);
+
+        muxc::StackPanel content;
+        content.Spacing(8.0);
+        content.MaxWidth(620.0);
+        const auto appendText = [&](std::wstring text,
+                                    bool emphasized = false) {
+            muxc::TextBlock block;
+            block.Text(std::move(text));
+            block.TextWrapping(mux::TextWrapping::Wrap);
+            if (emphasized)
+            {
+                block.FontWeight(
+                    winrt::Windows::UI::Text::FontWeights::SemiBold());
+            }
+            content.Children().Append(block);
+        };
+
+        appendText(Localize(request.reasons.empty()
+                ? "settings.widgets.install.reviewPrompt"
+                : "app.settings.widgets_install_confirm"));
+        if (!request.packageName.empty())
+            appendText(request.packageName, true);
+        if (!request.version.empty())
+        {
+            appendText(Localize("app.settings.version") + L": " +
+                request.version);
+        }
+        if (!request.packageId.empty())
+        {
+            appendText(Localize("app.settings.widgets_package_id") +
+                L": " + request.packageId);
+        }
+        if (!request.sha256.empty())
+        {
+            appendText(Localize("settings.widgets.install.fingerprint") +
+                L":\n" + request.sha256);
+        }
+
+        for (const auto& reason : request.reasons)
+        {
+            std::wstring description;
+            switch (reason.kind)
+            {
+            case snowdesktop::winui::
+                    WidgetInstallConfirmationReasonKind::NewPermission:
+            {
+                std::wstring value = reason.value;
+                if (!reason.valueLabelKey.empty())
+                    value = Localize(reason.valueLabelKey);
+                description = FormatSingleValue(Localize(
+                    "app.settings.widgets_new_permission"), value);
+                break;
+            }
+            case snowdesktop::winui::
+                    WidgetInstallConfirmationReasonKind::NewWebsite:
+                description = FormatSingleValue(Localize(
+                    "app.settings.widgets_new_website"), reason.value);
+                break;
+            case snowdesktop::winui::
+                    WidgetInstallConfirmationReasonKind::SourceChange:
+                description = Localize(
+                    "app.settings.widgets_source_change");
+                break;
+            case snowdesktop::winui::
+                    WidgetInstallConfirmationReasonKind::Other:
+            default:
+                break;
+            }
+            if (!description.empty())
+                appendText(L"• " + description);
+        }
+
+        if (!request.technicalDetails.empty())
+        {
+            muxc::Expander technicalDetails;
+            technicalDetails.HorizontalAlignment(
+                mux::HorizontalAlignment::Stretch);
+            technicalDetails.Header(winrt::box_value(Localize(
+                "app.settings.widgets_technical_details")));
+            muxc::TextBlock details;
+            details.Text(request.technicalDetails);
+            details.TextWrapping(mux::TextWrapping::Wrap);
+            details.IsTextSelectionEnabled(true);
+            technicalDetails.Content(details);
+            muxa::AutomationProperties::SetName(technicalDetails,
+                Localize("app.settings.widgets_technical_details"));
+            content.Children().Append(technicalDetails);
+        }
+
+        muxc::ScrollViewer scroller;
+        scroller.MaxHeight(560.0);
+        scroller.VerticalScrollBarVisibility(
+            muxc::ScrollBarVisibility::Auto);
+        scroller.Content(content);
+        dialog.Content(scroller);
+
+        const auto result = co_await dialog.ShowAsync();
+        if (activeDialog_ == dialog)
+            activeDialog_ = nullptr;
+        if (!closed_ && generation == navigation_.Generation() &&
+            navigation_.Route() == route && completed)
+        {
+            completed(result == muxc::ContentDialogResult::Primary);
+        }
+    }
+    catch (...)
+    {
+        activeDialog_ = nullptr;
+        if (!closed_ && generation == navigation_.Generation() &&
+            navigation_.Route() == route && completed)
+        {
+            completed(false);
+        }
+    }
+}
+
+winrt::fire_and_forget SettingsShell::ShowWidgetPermissionEditorAsync(
+    std::uint64_t generation,
+    SettingsRoute route,
+    snowdesktop::winui::WidgetPermissionEditorRequest request,
+    snowdesktop::winui::WidgetsPageActions::PermissionEditorCompletion
+        completed)
+{
+    auto lifetime = get_strong();
+    try
+    {
+        if (activeDialog_)
+            activeDialog_.Hide();
+
+        muxc::ContentDialog dialog;
+        activeDialog_ = dialog;
+        dialog.XamlRoot(XamlRoot());
+        std::wstring title = Localize(
+            "app.settings.widgets_manage_permissions");
+        if (!request.packageName.empty())
+            title += L" — " + request.packageName;
+        dialog.Title(winrt::box_value(title));
+        dialog.PrimaryButtonText(Localize("app.settings.apply"));
+        if (request.canRevoke)
+        {
+            dialog.SecondaryButtonText(Localize(
+                "app.settings.widgets_revoke_permissions"));
+        }
+        dialog.CloseButtonText(Localize("app.settings.cancel"));
+        dialog.DefaultButton(muxc::ContentDialogButton::Primary);
+
+        muxc::StackPanel content;
+        content.Spacing(8.0);
+        content.MaxWidth(620.0);
+        std::vector<std::pair<std::wstring, muxc::CheckBox>> editors;
+        editors.reserve(request.permissions.size());
+        const auto appendHeading = [&](std::string_view key) {
+            muxc::TextBlock heading;
+            heading.Text(Localize(key));
+            heading.FontWeight(
+                winrt::Windows::UI::Text::FontWeights::SemiBold());
+            heading.TextWrapping(mux::TextWrapping::Wrap);
+            content.Children().Append(heading);
+        };
+        const auto appendPermission = [&](const auto& permission) {
+            std::wstring label = permission.label;
+            if (!permission.labelKey.empty())
+                label = Localize(permission.labelKey);
+            if (label.empty()) label = permission.id;
+            muxc::CheckBox check;
+            check.Content(winrt::box_value(label));
+            check.IsChecked(permission.granted);
+            check.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            check.UseSystemFocusVisuals(true);
+            muxa::AutomationProperties::SetName(check, label);
+            content.Children().Append(check);
+            editors.emplace_back(permission.id, check);
+        };
+
+        const bool hasRequired = std::any_of(request.permissions.begin(),
+            request.permissions.end(), [](const auto& permission) {
+                return permission.required;
+            });
+        if (hasRequired)
+        {
+            appendHeading(
+                "app.widget_permission.permissions_required_heading");
+            muxc::TextBlock notice;
+            notice.Text(Localize(
+                "app.settings.widgets_permission_required_notice"));
+            notice.Opacity(0.72);
+            notice.TextWrapping(mux::TextWrapping::Wrap);
+            content.Children().Append(notice);
+            for (const auto& permission : request.permissions)
+                if (permission.required) appendPermission(permission);
+        }
+        const bool hasOptional = std::any_of(request.permissions.begin(),
+            request.permissions.end(), [](const auto& permission) {
+                return !permission.required;
+            });
+        if (hasOptional)
+        {
+            appendHeading(
+                "app.widget_permission.permissions_optional_heading");
+            for (const auto& permission : request.permissions)
+                if (!permission.required) appendPermission(permission);
+        }
+        if (!request.declaredNetworkDomains.empty())
+        {
+            appendHeading("app.widget_permission.domains_heading");
+            for (const std::wstring& domain :
+                 request.declaredNetworkDomains)
+            {
+                muxc::TextBlock item;
+                item.Text(L"• " + domain);
+                item.TextWrapping(mux::TextWrapping::Wrap);
+                content.Children().Append(item);
+            }
+        }
+        muxc::ScrollViewer scroller;
+        scroller.MaxHeight(560.0);
+        scroller.VerticalScrollBarVisibility(
+            muxc::ScrollBarVisibility::Auto);
+        scroller.Content(content);
+        dialog.Content(scroller);
+
+        const auto result = co_await dialog.ShowAsync();
+        if (activeDialog_ == dialog)
+            activeDialog_ = nullptr;
+        if (closed_ || generation != navigation_.Generation() ||
+            navigation_.Route() != route || !completed)
+            co_return;
+
+        snowdesktop::winui::WidgetPermissionEditorResult answer;
+        if (result == muxc::ContentDialogResult::Primary)
+        {
+            answer.action =
+                snowdesktop::winui::WidgetPermissionEditorAction::Apply;
+            for (const auto& [permissionId, check] : editors)
+            {
+                const auto checked = check.IsChecked();
+                if (checked && checked.Value())
+                    answer.grantedPermissions.push_back(permissionId);
+            }
+            const bool networkGranted = std::any_of(
+                answer.grantedPermissions.begin(),
+                answer.grantedPermissions.end(),
+                [](const std::wstring& permission) {
+                    return permission == L"network.http" ||
+                        permission == L"network.internet";
+                });
+            if (networkGranted)
+                answer.grantedNetworkDomains =
+                    request.declaredNetworkDomains;
+        }
+        else if (result == muxc::ContentDialogResult::Secondary)
+        {
+            answer.action =
+                snowdesktop::winui::WidgetPermissionEditorAction::Revoke;
+        }
+        completed(std::move(answer));
+    }
+    catch (...)
+    {
+        activeDialog_ = nullptr;
+        if (!closed_ && generation == navigation_.Generation() &&
+            navigation_.Route() == route && completed)
+            completed({});
     }
 }
 
