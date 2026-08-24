@@ -255,6 +255,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/SettingsShell.xaml
     src/winui/SettingsShell.xaml.cpp
     src/winui/SettingsShell.xaml.h
+    src/winui/general_page_presenter.cpp
+    src/winui/general_page_presenter.h
     src/winui/hotkey_recorder.cpp
     src/winui/hotkey_recorder.h
     src/winui/hotkey_recorder_rules.h
@@ -1211,6 +1213,7 @@ if (BUILD_TESTING)
             src/winui/settings_shell_navigation.cpp
             src/settings_route.cpp
         INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract navigation settings ui winui)
 
     snowdesktop_add_test(

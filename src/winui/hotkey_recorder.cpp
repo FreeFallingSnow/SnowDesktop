@@ -305,6 +305,11 @@ muxc::UserControl HotkeyRecorder::Root() const noexcept
     return state_ ? state_->root : nullptr;
 }
 
+mux::FrameworkElement HotkeyRecorder::FocusTarget() const noexcept
+{
+    return state_ ? state_->button : nullptr;
+}
+
 void HotkeyRecorder::SetText(HotkeyRecorderText text)
 {
     if (!state_ || !state_->alive) return;

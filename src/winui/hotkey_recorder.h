@@ -61,6 +61,9 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::UserControl
         Root() const noexcept;
+    /** Actual keyboard-focus target used by search-result navigation. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        FocusTarget() const noexcept;
 
     void SetText(HotkeyRecorderText text);
     void SetAvailabilityProbe(AvailabilityProbe probe);

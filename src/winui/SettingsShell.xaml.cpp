@@ -156,6 +156,11 @@ SettingsShell::SettingsShell()
     : ownerThreadId_(GetCurrentThreadId())
 {
     InitializeComponent();
+    generalPage_ =
+        std::make_unique<snowdesktop::winui::GeneralPagePresenter>(
+            [this](std::string_view key) { return Localize(key); },
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -178,6 +183,11 @@ void SettingsShell::Close() noexcept
     try
     {
         UnhookEvents();
+        if (generalPage_)
+        {
+            generalPage_->Deactivate();
+            generalPage_->Close();
+        }
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -188,6 +198,7 @@ void SettingsShell::Close() noexcept
     routeRequested_ = {};
     searchRequested_ = {};
     cancelOperation_ = {};
+    generalPage_.reset();
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -233,7 +244,9 @@ void SettingsShell::RefreshLocalizedText()
         ClearSearchButton(),
         winrt::box_value(Localize("settings.search.clear")));
 
-    RenderRoute();
+    if (generalPage_)
+        generalPage_->RefreshLocalizedText();
+    RenderRoute(true, false);
     if (!searchResults_.empty())
     {
         auto results = searchResults_;
@@ -260,6 +273,26 @@ void SettingsShell::SetCancelOperationCallback(
     cancelOperation_ = std::move(callback);
 }
 
+void SettingsShell::SetGeneralPageActions(
+    snowdesktop::winui::GeneralPageActions actions)
+{
+    if (generalPage_)
+        generalPage_->SetActions(std::move(actions));
+}
+
+bool SettingsShell::IsHotkeyCaptureActive() const noexcept
+{
+    return generalPage_ && generalPage_->IsHotkeyCaptureActive();
+}
+
+void SettingsShell::CaptureRegisteredHotkey(
+    UINT modifiers,
+    UINT virtualKey)
+{
+    if (generalPage_)
+        generalPage_->CaptureRegisteredHotkey(modifiers, virtualKey);
+}
+
 bool SettingsShell::ApplySnapshot(
     const snowdesktop::SettingsSnapshot& snapshot) noexcept
 {
@@ -267,12 +300,20 @@ bool SettingsShell::ApplySnapshot(
         return false;
     try
     {
+        const SettingsRoute previousRoute = navigation_.Route();
+        const std::uint64_t previousGeneration = navigation_.Generation();
         if (!navigation_.ApplyControllerUpdate(
                 snapshot.route, snapshot.revision, snapshot.generation))
         {
             return false;
         }
-        RenderRoute();
+        if (generalPage_)
+            generalPage_->ApplySnapshot(snapshot);
+        const bool routeChanged = previousRoute != navigation_.Route();
+        const bool generationChanged =
+            previousGeneration != navigation_.Generation();
+        if (routeChanged || generationChanged || !renderedPageRoute_)
+            RenderRoute(false, true);
         RenderControllerStatus(snapshot);
         return true;
     }
@@ -626,7 +667,9 @@ void SettingsShell::UnhookEvents() noexcept
     cancelOperationToken_ = {};
 }
 
-void SettingsShell::RenderRoute()
+void SettingsShell::RenderRoute(
+    bool forcePageCards,
+    bool scheduleFocus)
 {
     RenderNavigationSelection();
     RenderBreadcrumb();
@@ -641,9 +684,10 @@ void SettingsShell::RenderRoute()
     PageTitle().Text(title);
     PageSubtitle().Text(PageDescriptionText(route.page));
     muxa::AutomationProperties::SetName(PageTitle(), title);
-    RenderPageCards();
+    RenderPageCards(forcePageCards);
     NavigationRoot().IsBackEnabled(navigation_.CanGoBack());
-    ScheduleFocus();
+    if (scheduleFocus)
+        ScheduleFocus();
 }
 
 void SettingsShell::RenderNavigationSelection()
@@ -681,8 +725,22 @@ void SettingsShell::RenderBreadcrumb()
     PageBreadcrumb().ItemsSource(items);
 }
 
-void SettingsShell::RenderPageCards()
+void SettingsShell::RenderPageCards(bool forcePageCards)
 {
+    SettingsRoute pageRoute = navigation_.Route();
+    pageRoute.focusId.clear();
+    if (!forcePageCards && renderedPageRoute_ &&
+        *renderedPageRoute_ == pageRoute)
+    {
+        return;
+    }
+
+    const bool leavingGeneral = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::General &&
+        pageRoute.page != SettingsPage::General;
+    if (leavingGeneral && generalPage_)
+        generalPage_->Deactivate();
+
     PageCards().Children().Clear();
     focusTargets_.clear();
 
@@ -716,14 +774,16 @@ void SettingsShell::RenderPageCards()
             "settings.home.backup.description", SettingsPage::BackupAndData);
         break;
     case SettingsPage::General:
-        addPlaceholder("general.startup", "settings.general.startup",
-            "settings.general.startup.description");
-        addPlaceholder("general.language", "settings.general.language",
-            "settings.general.language.description");
-        addPlaceholder("general.hotkeys", "settings.general.hotkeys",
-            "settings.general.hotkeys.description");
-        addPlaceholder("general.navigation", "settings.general.navigation",
-            "settings.general.navigation.description");
+        if (generalPage_)
+        {
+            PageCards().Children().Append(generalPage_->Root());
+            generalPage_->RegisterFocusTargets(
+                [this](std::string focusId,
+                       const mux::FrameworkElement& element) {
+                    RegisterFocusTarget(std::move(focusId), element);
+                });
+            generalPage_->Activate();
+        }
         break;
     case SettingsPage::Personalization:
         addPlaceholder("personalization.theme",
@@ -796,6 +856,7 @@ void SettingsShell::RenderPageCards()
     default:
         break;
     }
+    renderedPageRoute_ = std::move(pageRoute);
 }
 
 void SettingsShell::RenderConditionalPages()

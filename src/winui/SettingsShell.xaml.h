@@ -4,10 +4,13 @@
 
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
+#include "general_page_presenter.h"
 #include "settings_shell_navigation.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -79,6 +82,11 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
     void SetCancelOperationCallback(CancelOperationCallback callback);
+    void SetGeneralPageActions(
+        snowdesktop::winui::GeneralPageActions actions);
+
+    [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
+    void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
 
     /**
      * Applies an immutable controller publication.  Returns false for an
@@ -139,10 +147,12 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 private:
     void HookEvents();
     void UnhookEvents() noexcept;
-    void RenderRoute();
+    void RenderRoute(
+        bool forcePageCards = false,
+        bool scheduleFocus = true);
     void RenderNavigationSelection();
     void RenderBreadcrumb();
-    void RenderPageCards();
+    void RenderPageCards(bool forcePageCards = false);
     void RenderConditionalPages();
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
@@ -180,6 +190,8 @@ private:
     SearchRequestedCallback searchRequested_;
     CancelOperationCallback cancelOperation_;
 
+    std::unique_ptr<snowdesktop::winui::GeneralPagePresenter> generalPage_;
+
     snowdesktop::winui::SettingsShellNavigationState navigation_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;
     std::vector<snowdesktop::SettingsRoute> breadcrumbRoutes_;
@@ -192,6 +204,7 @@ private:
     winrt::Microsoft::UI::Xaml::Controls::ContentDialog activeDialog_{nullptr};
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
+    std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
