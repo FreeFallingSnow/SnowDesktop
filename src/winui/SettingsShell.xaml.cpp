@@ -546,7 +546,8 @@ void SettingsShell::UpdateIntegratedTitleBarTextAppearance() noexcept
                 foreground = resource.try_as<muxm::Brush>();
             }
         }
-        IntegratedTitleBarText().Foreground(foreground);
+        if (foreground)
+            IntegratedTitleBarText().Foreground(foreground);
         IntegratedTitleBarText().Opacity(
             integratedTitleBarWindowActive_ ? 1.0 : 0.72);
     }
@@ -554,7 +555,6 @@ void SettingsShell::UpdateIntegratedTitleBarTextAppearance() noexcept
     {
         try
         {
-            IntegratedTitleBarText().Foreground(muxm::Brush{nullptr});
             IntegratedTitleBarText().Opacity(
                 integratedTitleBarWindowActive_ ? 1.0 : 0.72);
         }

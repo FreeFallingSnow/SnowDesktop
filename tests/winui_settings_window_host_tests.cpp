@@ -103,6 +103,8 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("AppWindow::GetFromWindowId(windowId)") !=
                 std::string::npos &&
+            source.find("appWindow.AssociateWithDispatcherQueue(dispatcher)") !=
+                std::string::npos &&
             source.find("AppWindowTitleBar::IsCustomizationSupported()") !=
                 std::string::npos &&
             source.find("ExtendsContentIntoTitleBar(true)") !=
@@ -121,6 +123,15 @@ void TestHostContract(const std::filesystem::path& repository)
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
         "AppWindow overlays the system caption buttons and Snap on the client without custom caption hit testing");
+    Check(source.find("const HWND titleBarWindow = window;") !=
+                std::string::npos &&
+            source.find("[titleBarWindow](const muw::AppWindow&") !=
+                std::string::npos &&
+            source.find("[this](const muw::AppWindow&") ==
+                std::string::npos &&
+            source.find("PostMessageW(titleBarWindow,") !=
+                std::string::npos,
+        "AppWindow changes post back to the owner HWND without capturing host lifetime state");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
@@ -140,6 +151,11 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("static_cast<double>(leftInsetPixels) / scale") !=
                 std::string::npos &&
             shell.find("static_cast<double>(rightInsetPixels) / scale") !=
+                std::string::npos &&
+            shell.find("if (foreground)") != std::string::npos &&
+            shell.find("IntegratedTitleBarText().Foreground(foreground)") !=
+                std::string::npos &&
+            shell.find("IntegratedTitleBarText().Foreground(muxm::Brush{nullptr})") ==
                 std::string::npos,
         "the non-interactive XAML title row mirrors AppWindow pixel metrics at the XamlRoot scale");
     Check(source.find("constexpr int kMinimumClientWidth = 840;") !=

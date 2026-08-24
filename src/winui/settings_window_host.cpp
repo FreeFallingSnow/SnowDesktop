@@ -837,6 +837,17 @@ struct SettingsWindowHost::Impl
             appWindow = muw::AppWindow::GetFromWindowId(windowId);
             if (!appWindow)
                 return;
+            if (!appWindow.DispatcherQueue())
+            {
+                const mud::DispatcherQueue dispatcher =
+                    mud::DispatcherQueue::GetForCurrentThread();
+                if (!dispatcher)
+                {
+                    appWindow = nullptr;
+                    return;
+                }
+                appWindow.AssociateWithDispatcherQueue(dispatcher);
+            }
             appWindowTitleBar = appWindow.TitleBar();
             if (!appWindowTitleBar)
             {
@@ -853,13 +864,15 @@ struct SettingsWindowHost::Impl
             integratedTitleBarActive = true;
             runtime.ResizeToClient();
             ApplyIntegratedTitleBarTheme();
+            const HWND titleBarWindow = window;
             appWindowChangedToken = appWindow.Changed(
-                [this](const muw::AppWindow&,
+                [titleBarWindow](const muw::AppWindow&,
                     const muw::AppWindowChangedEventArgs& args) {
                     if (args.DidSizeChange() || args.DidPresenterChange() ||
                         args.DidVisibilityChange())
                     {
-                        QueueIntegratedTitleBarLayoutUpdate();
+                        PostMessageW(titleBarWindow,
+                            kRefreshIntegratedTitleBarMessage, 0, 0);
                     }
                 });
             windowActive = GetForegroundWindow() == window;
