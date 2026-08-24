@@ -169,9 +169,74 @@ bool StartsWithPath(const std::filesystem::path& child,
 
 bool HasReparsePoint(const std::filesystem::path& path)
 {
+    const HANDLE handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        FILE_ATTRIBUTE_TAG_INFO information{};
+        const bool isReparsePoint = GetFileInformationByHandleEx(handle,
+            FileAttributeTagInfo, &information, sizeof(information)) &&
+            (information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        CloseHandle(handle);
+        if (isReparsePoint) return true;
+    }
     const DWORD attributes = GetFileAttributesW(path.c_str());
     return attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool PathContainsReparsePoint(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(path, ec);
+    if (ec) return false;
+    const auto normalized = absolute.lexically_normal();
+    auto current = normalized.root_path();
+    if (!current.empty() && HasReparsePoint(current)) return true;
+    for (const auto& component : normalized.relative_path())
+    {
+        current /= component;
+        if (HasReparsePoint(current)) return true;
+    }
+    return false;
+}
+
+struct PermissionExpansion
+{
+    std::vector<std::string> required;
+    std::vector<std::string> optional;
+    std::vector<std::string> networkDomains;
+
+    bool Empty() const
+    {
+        return required.empty() && optional.empty() && networkDomains.empty();
+    }
+};
+
+std::string DescribePermissionExpansion(const PermissionExpansion& expansion)
+{
+    std::vector<std::string> descriptions;
+    descriptions.reserve(expansion.required.size() + expansion.optional.size() +
+        expansion.networkDomains.size());
+    for (const auto& permission : expansion.required)
+        descriptions.push_back(
+            "update requests a new required permission: " + permission);
+    for (const auto& permission : expansion.optional)
+        descriptions.push_back(
+            "update requests a new optional permission: " + permission);
+    for (const auto& domain : expansion.networkDomains)
+        descriptions.push_back(
+            "update requests a new network domain: " + domain);
+
+    std::ostringstream output;
+    for (std::size_t index = 0; index < descriptions.size(); ++index)
+    {
+        if (index != 0) output << "; ";
+        output << descriptions[index];
+    }
+    return output.str();
 }
 
 bool IsResourceName(std::string_view value)
@@ -1970,6 +2035,12 @@ ValidationReport WidgetPackageValidator::ValidateArchive(
     const std::filesystem::path& archive) const
 {
     ValidationReport report;
+    if (PathContainsReparsePoint(archive))
+    {
+        report.Add(ValidationSeverity::Error, "archive.reparse", archive,
+            "package archive and its path cannot contain reparse points");
+        return report;
+    }
     std::error_code ec;
     const auto size = std::filesystem::file_size(archive, ec);
     if (ec || size > kMaxArchiveBytes)
@@ -2751,33 +2822,28 @@ bool WidgetPackageManager::CommitStagedPackage(
             currentRequired.begin(), currentRequired.end());
         const std::set<std::string> previouslyRequested(
             currentDeclared.begin(), currentDeclared.end());
+        PermissionExpansion expansion;
         for (const auto& permission : manifest.permissions)
         {
             if (!previouslyRequired.contains(permission))
-            {
-                error = "update requests a new required permission: " +
-                    permission;
-                return false;
-            }
+                expansion.required.push_back(permission);
         }
         for (const auto& permission : manifest.optionalPermissions)
         {
             if (!previouslyRequested.contains(permission))
-            {
-                error = "update requests a new optional permission: " +
-                    permission;
-                return false;
-            }
+                expansion.optional.push_back(permission);
         }
         const std::set<std::string> previouslyRequestedDomains(
             currentDomains.begin(), currentDomains.end());
         for (const auto& domain : manifest.networkDomains)
         {
             if (!previouslyRequestedDomains.contains(domain))
-            {
-                error = "update requests a new network domain: " + domain;
-                return false;
-            }
+                expansion.networkDomains.push_back(domain);
+        }
+        if (!expansion.Empty())
+        {
+            error = DescribePermissionExpansion(expansion);
+            return false;
         }
     }
     const auto target = paths_.installed / Utf8ToWide(manifest.id) /

@@ -1281,7 +1281,9 @@ int main()
     const auto sourceV3 = root / L"source-v3";
     MakePackage(sourceV3, "1.2.0",
         "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
-        "\"ui.input\", \"ui.notify\"");
+        "\"ui.input\", \"network.http\", \"ui.notify\", \"calendar.write\"",
+        "\"feeds.example.net\", \"api.example.net\"", "main.lua",
+        "\"calendar.read\"");
     LocalDirectorySource localSource(root);
     PackageQuery page;
     page.offset = 1;
@@ -1292,6 +1294,15 @@ int main()
     Expect(!manager.InstallDirectory(sourceV3, { "local", "package-test" },
         false, installed, report, error),
         "permission expansion requires confirmation");
+    Expect(error.find("new required permission: ui.notify") !=
+            std::string::npos &&
+            error.find("new required permission: calendar.write") !=
+                std::string::npos &&
+            error.find("new optional permission: calendar.read") !=
+                std::string::npos &&
+            error.find("new network domain: api.example.net") !=
+                std::string::npos,
+        "permission expansion reports every newly requested scope together");
     error.clear();
     Expect(manager.InstallDirectory(sourceV3, { "local", "package-test" },
         false, installed, report, error, true),
@@ -1317,6 +1328,47 @@ int main()
     Expect(archiveManifest.id == manifest.id &&
         archiveManifest.version == "1.0.0",
         "full archive validation returns the package identity and version");
+    const auto linkedArchive =
+        root / L"exports" / L"linked-package.snowwidget";
+    ec.clear();
+    std::filesystem::create_symlink(archive, linkedArchive, ec);
+    if (!ec)
+    {
+        const auto linkedReport = manager.ValidateArchive(linkedArchive);
+        Expect(!linkedReport.Ok() &&
+                std::any_of(linkedReport.issues.begin(),
+                    linkedReport.issues.end(), [](const auto& issue)
+                    {
+                        return issue.code == "archive.reparse";
+                    }),
+            "an archive file reparse point is rejected");
+    }
+    else
+    {
+        std::cout << "SKIPPED: archive file reparse-point validation ("
+                  << ec.message() << ")\n";
+    }
+    const auto linkedExports = root / L"linked-exports";
+    ec.clear();
+    std::filesystem::create_directory_symlink(
+        archive.parent_path(), linkedExports, ec);
+    if (!ec)
+    {
+        const auto linkedPathReport = manager.ValidateArchive(
+            linkedExports / archive.filename());
+        Expect(!linkedPathReport.Ok() &&
+                std::any_of(linkedPathReport.issues.begin(),
+                    linkedPathReport.issues.end(), [](const auto& issue)
+                    {
+                        return issue.code == "archive.reparse";
+                    }),
+            "an archive parent-path reparse point is rejected");
+    }
+    else
+    {
+        std::cout << "SKIPPED: archive parent reparse-point validation ("
+                  << ec.message() << ")\n";
+    }
     const auto corruptArchive = root / L"exports" / L"corrupt.snowwidget";
     std::filesystem::copy_file(archive, corruptArchive,
         std::filesystem::copy_options::overwrite_existing, ec);
