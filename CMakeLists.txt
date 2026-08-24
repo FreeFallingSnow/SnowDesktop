@@ -239,6 +239,12 @@ set(SNOWDESKTOP_SOURCES
     src/single_instance.cpp
     src/deployment_context.cpp
     src/utils.cpp
+    src/desktop_display_settings.h
+    src/settings_controller.cpp
+    src/settings_controller.h
+    src/settings_route.cpp
+    src/settings_route.h
+    src/settings_store_native.cpp
     src/settings_window.cpp
     src/winui/App.idl
     src/winui/App.xaml
@@ -1154,6 +1160,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract settings)
+
+    snowdesktop_add_test(
+        SnowDesktopSettingsControllerTests
+        settings_controller
+        SOURCES
+            tests/settings_controller_tests.cpp
+            src/settings_controller.cpp
+            src/settings_route.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS core contract settings)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests

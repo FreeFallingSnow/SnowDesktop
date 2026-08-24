@@ -26,6 +26,7 @@ struct CategorySettings
 std::wstring GetCategorySettingsPath();
 bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings);
 bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings);
+void NormalizeCategorySettings(CategorySettings& settings);
 bool IsBuiltinCategoryRuleId(const std::wstring& categoryId);
 std::vector<std::wstring> ParseCategoryExtensionList(const std::wstring& text);
 std::wstring NormalizeCategoryExtensionText(const std::wstring& text);

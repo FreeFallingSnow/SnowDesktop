@@ -313,6 +313,11 @@ namespace
     }
 }
 
+void NormalizeCategorySettings(CategorySettings& settings)
+{
+    NormalizeRules(settings);
+}
+
 bool IsBuiltinCategoryRuleId(const std::wstring& categoryId)
 {
     return FindBuiltinRule(categoryId) != nullptr;
@@ -417,14 +422,14 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
         settings = std::move(migrated);
     }
 
-    NormalizeRules(settings);
+    NormalizeCategorySettings(settings);
     return true;
 }
 
 bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
 {
     CategorySettings normalized = settings;
-    NormalizeRules(normalized);
+    NormalizeCategorySettings(normalized);
 
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
