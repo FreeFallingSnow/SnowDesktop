@@ -107,11 +107,18 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("NavigationRoot().PaneTitle(shellTitle)") !=
                 std::string::npos,
         "the Island starts below the native caption and contains no integrated XAML title-bar row or inset bookkeeping");
-    Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
+    Check(source.find("constexpr int kMinimumClientWidth = 500;") !=
                 std::string::npos &&
-            shellMarkup.find("NarrowState") == std::string::npos &&
-            shellMarkup.find("AdaptiveTrigger") == std::string::npos,
-        "the host enforces the supported wide settings layout instead of retaining an incomplete narrow state");
+            source.find("constexpr int kMinimumClientHeight = 350;") !=
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"NarrowState\"") !=
+                std::string::npos &&
+            shellMarkup.find("<AdaptiveTrigger MinWindowWidth=\"0\"") !=
+                std::string::npos &&
+            shellMarkup.find(
+                "Target=\"PageSurface.Margin\" Value=\"16,10,16,32\"") !=
+                std::string::npos,
+        "the host retains the legacy minimum size while the XAML surface adapts margins and typography for narrow windows");
     Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
             source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
                 std::string::npos &&
