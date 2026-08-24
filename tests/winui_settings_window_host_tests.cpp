@@ -383,7 +383,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos,
         "widget settings snapshots, service events, native content, and close flush are wired through the WinUI shell");
     const std::size_t languagePrepare = source.find(
-        "bool SettingsWindowHost::PrepareLanguageChange()");
+        "[[nodiscard]] bool PrepareLanguageChange()");
     const std::size_t languageApply = source.find(
         "void SettingsWindowHost::ApplyLanguageChange(");
     const std::string_view languageFunctions =
