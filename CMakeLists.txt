@@ -405,17 +405,17 @@ set(MINHOOK64_SOURCES
     third_party/minhook/src/hde/hde64.c
 )
 
-add_library(SnowDesktopImgui STATIC ${IMGUI_SOURCES})
-target_compile_features(SnowDesktopImgui PRIVATE cxx_std_20)
-target_include_directories(SnowDesktopImgui PUBLIC
+add_library(SnowDesktopWorkshopImgui STATIC ${IMGUI_SOURCES})
+target_compile_features(SnowDesktopWorkshopImgui PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopWorkshopImgui PUBLIC
     third_party/imgui
     third_party/imgui/backends
 )
 if(MSVC)
-    set_property(TARGET SnowDesktopImgui PROPERTY
+    set_property(TARGET SnowDesktopWorkshopImgui PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopImgui PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
-    target_compile_definitions(SnowDesktopImgui PRIVATE
+    target_compile_options(SnowDesktopWorkshopImgui PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_definitions(SnowDesktopWorkshopImgui PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
 
@@ -717,7 +717,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
-    SnowDesktopImgui SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
+    SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
     advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
@@ -1302,6 +1302,13 @@ if (BUILD_TESTING)
         SOURCES tests/winui_settings_window_host_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract integration lifecycle navigation settings ui winui)
+
+    snowdesktop_add_test(
+        SnowDesktopSettingsNoImguiContractTests
+        settings_no_imgui_contract
+        SOURCES tests/settings_no_imgui_contract_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS build contract lua settings steam ui widget winui)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests

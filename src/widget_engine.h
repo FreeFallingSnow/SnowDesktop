@@ -58,8 +58,6 @@
 #include "widget_storage_write_budget.h"
 #include "widget_secret_store.h"
 
-struct ImGuiContext;
-struct PersonalizationSettings;
 namespace snowdesktop::widget_runtime
 {
 struct PackageImageSource;
@@ -1045,26 +1043,12 @@ public:
      */
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
-    /**
-     * @brief 读取小部件的自定义颜色值
-     * @param widgetId 小部件实例 ID
-     * @param bgR 输出：背景色红色分量
-     * @param bgG 输出：背景色绿色分量
-     * @param bgB 输出：背景色蓝色分量
-     * @param alpha 输出：透明度
-     * @param borderR 输出：边框色红色分量
-     * @param borderG 输出：边框色绿色分量
-     * @param borderB 输出：边框色蓝色分量
-     * @param borderAlpha 输出：边框透明度
-     * @param gradientEndA 输出：渐变末端透明度
-     * @param glassEnabled 输出：毛玻璃背景开关
-     * @param acrylicEnabled 输出：亚克力颗粒开关
-     * @return 成功读取返回 true
-     */
+    /** Reads the effective widget appearance used by desktop host menus. */
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
-        float& gradientEndA, bool& glassEnabled, bool& acrylicEnabled) const;
+        float& gradientEndA, bool& glassEnabled,
+        bool& acrylicEnabled) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表
@@ -1205,20 +1189,6 @@ public:
         const std::string& version, std::string& error);
     static bool UninstallWidgetPackage(const std::string& packageId,
         std::string& error);
-
-    /**
-     * @brief 渲染指定小部件的 ImGui 编辑器界面
-     * @param widgetId 小部件实例 ID
-     * @param widgetName 小部件名称
-     * @param mainPersonalization 当前宿主个性化设置；原生毛玻璃控件直接修改其中参数
-     * @param sharedGlassSettingsChanged 输出：共享模糊半径已变化
-     * @param sharedGlassSettingsSaveRequested 输出：模糊半径需要持久化
-     * @return 渲染成功返回 true
-     */
-    bool RenderWidgetEditor(const std::wstring& widgetId, const std::wstring& widgetName,
-        PersonalizationSettings& mainPersonalization,
-        bool& sharedGlassSettingsChanged,
-        bool& sharedGlassSettingsSaveRequested);
 
     /**
      * @brief 检查小部件是否拥有指定运行时权限
@@ -1853,36 +1823,6 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor>
         externalItemTaskExecutor_;
-    struct SettingsAppSearchState
-    {
-        std::uint64_t taskId = 0;
-        std::string input;
-        std::string query;
-        std::string error;
-        bool completed = false;
-        std::vector<snowdesktop::widget_runtime::WidgetAppSearchResult>
-            results;
-    };
-    snowdesktop::widget_runtime::WidgetAppTaskExecutor
-        settingsAppTaskExecutor_;
-    std::unordered_map<std::string, SettingsAppSearchState>
-        settingsAppSearchStates_;
-    struct SecretSettingDraft
-    {
-        std::string value;
-        bool dirty = false;
-    };
-    std::unordered_map<std::string, SecretSettingDraft>
-        secretSettingDrafts_;
-    struct ValidatedSettingDraft
-    {
-        std::string value;
-        std::string sourceValue;
-        bool dirty = false;
-    };
-    std::unordered_map<std::string, ValidatedSettingDraft>
-        validatedSettingDrafts_;
-    std::uint64_t nextSettingsAppSearchTaskId_ = 0;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetAppSearchCompletion>
         appSearchCompletions_;

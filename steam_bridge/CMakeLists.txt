@@ -43,7 +43,7 @@ add_executable(SnowDesktopWorkshopManager WIN32
 target_link_libraries(SnowDesktopWorkshopManager PRIVATE
     SnowDesktopSteamWorkshopCore
     SnowDesktopWorkshopManagerSupport
-    SnowDesktopImgui
+    SnowDesktopWorkshopImgui
     d3d11 dxgi ole32 shell32 shlwapi user32 windowscodecs winhttp)
 
 if (MSVC)
