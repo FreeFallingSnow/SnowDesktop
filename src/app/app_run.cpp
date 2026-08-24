@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../deployment_context.h"
 #include "../drag_input_rules.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
@@ -417,6 +418,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::SettingsSearchIndexInput input;
         input.languageTag = Locale::Instance().GetEffectiveLanguage();
         return input;
+    };
+    settingsHostOptions.homeAboutStatus = [this](
+        std::uint64_t generation,
+        std::uint64_t revision) {
+        snowdesktop::winui::HomeAboutStatusPatch patch;
+        patch.generation = generation;
+        patch.revision = revision;
+        patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
+        patch.installedWidgetCount = widgets_.size();
+        patch.updateState = snowdesktop::deployment::IsPackaged()
+            ? snowdesktop::winui::SettingsUpdateState::ManagedByStore
+            : snowdesktop::winui::SettingsUpdateState::Unknown;
+        return patch;
     };
     settingsHostOptions.refreshExternalState = [this]() {
         if (!settingsController_)

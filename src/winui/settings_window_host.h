@@ -2,6 +2,7 @@
 
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
+#include "home_about_page_model.h"
 
 #include <windows.h>
 
@@ -29,10 +30,14 @@ struct SettingsWindowHostOptions
         std::vector<std::pair<std::string, std::wstring>>() >;
     using SearchInputProvider =
         std::function<SettingsSearchIndexInput()>;
+    using HomeAboutStatusProvider = std::function<HomeAboutStatusPatch(
+        std::uint64_t generation,
+        std::uint64_t revision)>;
 
     LocalizeCallback localize;
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;
+    HomeAboutStatusProvider homeAboutStatus;
 
     /** Reconcile host-owned system state after a persisted-state reload. */
     std::function<void()> refreshExternalState;
@@ -76,6 +81,8 @@ public:
     void SetWidgetSettingsService(
         widget_runtime::WidgetSettingsService* service) noexcept;
     void ApplyLanguageChange();
+    [[nodiscard]] bool PublishHomeAboutStatus(
+        HomeAboutStatusPatch patch);
 
     [[nodiscard]] bool PreTranslateMessage(MSG* message) noexcept;
     [[nodiscard]] bool ProcessTabNavigation(MSG* message) noexcept;

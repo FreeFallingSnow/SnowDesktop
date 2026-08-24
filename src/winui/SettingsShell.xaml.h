@@ -7,6 +7,7 @@
 #include "desktop_page_presenter.h"
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
+#include "home_about_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 
@@ -93,6 +94,10 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::DesktopPageActions actions);
     void SetDockPageActions(
         snowdesktop::winui::DockPageActions actions);
+    void SetHomeAboutPageActions(
+        snowdesktop::winui::HomeAboutPageActions actions);
+    [[nodiscard]] bool ApplyHomeAboutStatusPatch(
+        const snowdesktop::winui::HomeAboutStatusPatch& patch);
 
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
@@ -185,11 +190,6 @@ private:
     [[nodiscard]] bool TrySelectSearchResult(
         const winrt::Windows::Foundation::IInspectable& selectedItem);
 
-    winrt::Microsoft::UI::Xaml::Controls::Button CreateNavigationCard(
-        std::string focusId,
-        std::string_view titleKey,
-        std::string_view descriptionKey,
-        const snowdesktop::SettingsRoute& route);
     winrt::Microsoft::UI::Xaml::Controls::Border CreatePlaceholderCard(
         std::string focusId,
         std::string_view titleKey,
@@ -209,6 +209,8 @@ private:
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
+    std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
+        homeAboutPage_;
 
     snowdesktop::winui::SettingsShellNavigationState navigation_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;

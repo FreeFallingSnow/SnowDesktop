@@ -357,6 +357,14 @@ struct SettingsWindowHost::Impl
         if (!Visible() && !snapshot->sessionActive)
             return;
         (void)shell->ApplySnapshot(*snapshot);
+        if (options.homeAboutStatus)
+        {
+            HomeAboutStatusPatch patch = options.homeAboutStatus(
+                snapshot->generation, snapshot->revision);
+            patch.generation = snapshot->generation;
+            patch.revision = snapshot->revision;
+            (void)shell->ApplyHomeAboutStatusPatch(patch);
+        }
     }
 
     void QueuePendingFlush()
@@ -602,6 +610,48 @@ struct SettingsWindowHost::Impl
                 std::move(request), std::move(completion));
         };
         shell->SetDockPageActions(std::move(dock));
+
+        HomeAboutPageActions homeAbout;
+        homeAbout.navigate = [weak](const SettingsRoute& route) {
+            if (const auto state = weak.lock();
+                state && state->alive.load() && state->owner)
+            {
+                state->owner->RequestRoute(route);
+            }
+        };
+        homeAbout.invoke = [weak](
+            std::uint64_t generation,
+            HomeAboutCommand command) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return;
+            }
+
+            SettingsHostActions::Request request;
+            switch (command)
+            {
+            case HomeAboutCommand::CheckForUpdates:
+                request.action = SettingsHostActions::Action::CheckForUpdates;
+                break;
+            case HomeAboutCommand::OpenProject:
+                request.action = SettingsHostActions::Action::OpenProject;
+                break;
+            case HomeAboutCommand::OpenLicense:
+                request.action = SettingsHostActions::Action::OpenLicense;
+                break;
+            case HomeAboutCommand::OpenThirdPartyNotices:
+                request.action =
+                    SettingsHostActions::Action::OpenThirdPartyNotices;
+                break;
+            }
+            const SettingsActionResult result =
+                state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+        };
+        shell->SetHomeAboutPageActions(std::move(homeAbout));
     }
 
     void EditGeneral(std::uint64_t generation, SettingsUpdateMode mode,
@@ -1128,6 +1178,15 @@ void SettingsWindowHost::ApplyLanguageChange()
 {
     if (impl_->initialized && impl_->OnOwnerThread())
         impl_->RefreshLocalizedPresentation();
+}
+
+bool SettingsWindowHost::PublishHomeAboutStatus(
+    HomeAboutStatusPatch patch)
+{
+    return impl_->initialized && impl_->OnOwnerThread() && impl_->shell &&
+        impl_->controller &&
+        impl_->controller->IsGenerationCurrent(patch.generation) &&
+        impl_->shell->ApplyHomeAboutStatusPatch(patch);
 }
 
 bool SettingsWindowHost::PreTranslateMessage(MSG* message) noexcept

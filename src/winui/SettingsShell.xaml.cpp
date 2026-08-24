@@ -175,6 +175,15 @@ SettingsShell::SettingsShell()
         [this](std::string_view key) { return Localize(key); },
         Resources().Lookup(
             winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
+    homeAboutPage_ =
+        std::make_unique<snowdesktop::winui::HomeAboutPagePresenter>(
+            [this](std::string_view key) { return Localize(key); },
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardStyle"))
+                .as<mux::Style>(),
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellCardButtonStyle"))
+                .as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -217,6 +226,11 @@ void SettingsShell::Close() noexcept
             dockPage_->Deactivate();
             dockPage_->Close();
         }
+        if (homeAboutPage_)
+        {
+            homeAboutPage_->Deactivate();
+            homeAboutPage_->Close();
+        }
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -231,6 +245,7 @@ void SettingsShell::Close() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    homeAboutPage_.reset();
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -284,6 +299,8 @@ void SettingsShell::RefreshLocalizedText()
         desktopPage_->RefreshLocalizedText();
     if (dockPage_)
         dockPage_->RefreshLocalizedText();
+    if (homeAboutPage_)
+        homeAboutPage_->RefreshLocalizedText();
     RenderRoute(true, false);
     if (!searchResults_.empty())
     {
@@ -339,6 +356,19 @@ void SettingsShell::SetDockPageActions(
         dockPage_->SetActions(std::move(actions));
 }
 
+void SettingsShell::SetHomeAboutPageActions(
+    snowdesktop::winui::HomeAboutPageActions actions)
+{
+    if (homeAboutPage_)
+        homeAboutPage_->SetActions(std::move(actions));
+}
+
+bool SettingsShell::ApplyHomeAboutStatusPatch(
+    const snowdesktop::winui::HomeAboutStatusPatch& patch)
+{
+    return homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
+}
+
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
     return generalPage_ && generalPage_->IsHotkeyCaptureActive();
@@ -366,6 +396,8 @@ void SettingsShell::SuspendInteraction() noexcept
             desktopPage_->Deactivate();
         if (dockPage_)
             dockPage_->Deactivate();
+        if (homeAboutPage_)
+            homeAboutPage_->Deactivate();
     }
     catch (...)
     {
@@ -409,6 +441,8 @@ bool SettingsShell::ApplySnapshot(
             desktopPage_->ApplySnapshot(snapshot);
         if (dockPage_)
             dockPage_->ApplySnapshot(snapshot);
+        if (homeAboutPage_)
+            homeAboutPage_->ApplySnapshot(snapshot);
         const bool routeChanged = previousRoute != navigation_.Route();
         const bool generationChanged =
             previousGeneration != navigation_.Generation();
@@ -855,6 +889,13 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::DockAndTaskbar;
     if (leavingDock && dockPage_)
         dockPage_->Deactivate();
+    const bool leavingHomeAbout = renderedPageRoute_ &&
+        (renderedPageRoute_->page == SettingsPage::Home ||
+            renderedPageRoute_->page == SettingsPage::About) &&
+        pageRoute.page != SettingsPage::Home &&
+        pageRoute.page != SettingsPage::About;
+    if (leavingHomeAbout && homeAboutPage_)
+        homeAboutPage_->Deactivate();
 
     PageCards().Children().Clear();
     focusTargets_.clear();
@@ -866,27 +907,22 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         PageCards().Children().Append(CreatePlaceholderCard(
             std::move(focusId), title, description));
     };
-    const auto addNavigation = [this](
-                                   std::string focusId,
-                                   std::string_view title,
-                                   std::string_view description,
-                                   SettingsPage page) {
-        PageCards().Children().Append(CreateNavigationCard(
-            std::move(focusId), title, description,
-            SettingsRoute::ForPage(page)));
-    };
-
     switch (navigation_.Route().page)
     {
     case SettingsPage::Home:
-        addNavigation("home.theme", "settings.home.theme",
-            "settings.home.theme.description", SettingsPage::Personalization);
-        addNavigation("home.dock", "settings.home.dock",
-            "settings.home.dock.description", SettingsPage::DockAndTaskbar);
-        addNavigation("home.widgets", "settings.home.widgets",
-            "settings.home.widgets.description", SettingsPage::Widgets);
-        addNavigation("home.backup", "settings.home.backup",
-            "settings.home.backup.description", SettingsPage::BackupAndData);
+        if (homeAboutPage_)
+        {
+            PageCards().Children().Append(homeAboutPage_->HomeContent());
+            for (const std::string_view focusId : {
+                     "home.theme", "home.dock", "home.widgets",
+                     "home.update", "home.backup"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    homeAboutPage_->FocusTarget(
+                        SettingsPage::Home, focusId));
+            }
+            homeAboutPage_->Activate(SettingsPage::Home);
+        }
         break;
     case SettingsPage::General:
         if (generalPage_)
@@ -1014,12 +1050,19 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             "settings.backup.directory.description");
         break;
     case SettingsPage::About:
-        addPlaceholder("about.version", "settings.about.version",
-            "settings.about.version.description");
-        addPlaceholder("about.project", "settings.about.project",
-            "settings.about.project.description");
-        addPlaceholder("about.thirdparty", "settings.about.thirdparty",
-            "settings.about.thirdparty.description");
+        if (homeAboutPage_)
+        {
+            PageCards().Children().Append(homeAboutPage_->AboutContent());
+            for (const std::string_view focusId : {
+                     "about.version", "about.project", "about.license",
+                     "about.thirdparty"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    homeAboutPage_->FocusTarget(
+                        SettingsPage::About, focusId));
+            }
+            homeAboutPage_->Activate(SettingsPage::About);
+        }
         break;
     case SettingsPage::DeveloperTools:
         addPlaceholder("developer.overrides", "settings.developer.overrides",
@@ -1203,39 +1246,6 @@ bool SettingsShell::TrySelectSearchResult(
         }
     }
     return false;
-}
-
-muxc::Button SettingsShell::CreateNavigationCard(
-    std::string focusId,
-    std::string_view titleKey,
-    std::string_view descriptionKey,
-    const SettingsRoute& route)
-{
-    muxc::Button card;
-    card.Style(Resources().Lookup(
-        winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>());
-    card.Tag(winrt::box_value(winrt::to_hstring(focusId)));
-
-    muxc::StackPanel content;
-    content.Spacing(3);
-    muxc::TextBlock title;
-    title.Text(Localize(titleKey));
-    title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-    title.TextWrapping(mux::TextWrapping::Wrap);
-    muxc::TextBlock description;
-    description.Text(Localize(descriptionKey));
-    description.Opacity(0.72);
-    description.TextWrapping(mux::TextWrapping::Wrap);
-    content.Children().Append(title);
-    content.Children().Append(description);
-    card.Content(content);
-    muxa::AutomationProperties::SetName(card, title.Text());
-    card.Click([this, route](const winrt::Windows::Foundation::IInspectable&,
-                            const mux::RoutedEventArgs&) {
-        RequestRoute(route);
-    });
-    RegisterFocusTarget(std::move(focusId), card);
-    return card;
 }
 
 muxc::Border SettingsShell::CreatePlaceholderCard(

@@ -210,6 +210,10 @@ public:
         RestartApplication,
         ExitApplication,
         OpenDataDirectory,
+        CheckForUpdates,
+        OpenProject,
+        OpenLicense,
+        OpenThirdPartyNotices,
         ProbeHotkeyAvailability,
     };
 

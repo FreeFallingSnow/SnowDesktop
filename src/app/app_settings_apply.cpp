@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../deployment_context.h"
 
 // Settings application, desktop passthrough and retained-surface visibility.
 
@@ -283,6 +284,56 @@ public:
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     L"The data directory could not be opened.");
+            }
+            break;
+        }
+        case Action::CheckForUpdates:
+        {
+            const std::wstring target = snowdesktop::deployment::IsPackaged()
+                ? snowdesktop::deployment::GetStoreProductPageUri()
+                : L"https://github.com/FreeFallingSnow/"
+                  L"SnowDesktop_Release/releases/latest";
+            if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    app_.controlHwnd_, L"open", target.c_str(),
+                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The update page could not be opened.");
+            }
+            break;
+        }
+        case Action::OpenProject:
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    app_.controlHwnd_, L"open",
+                    L"https://github.com/FreeFallingSnow/SnowDesktop",
+                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The project page could not be opened.");
+            }
+            break;
+        case Action::OpenLicense:
+        case Action::OpenThirdPartyNotices:
+        {
+            const wchar_t* filename = request.action == Action::OpenLicense
+                ? L"LICENSE" : L"THIRD_PARTY_NOTICES.md";
+            std::filesystem::path target =
+                std::filesystem::path(GetExecutableDirectoryPath()) /
+                filename;
+            if (!std::filesystem::exists(target))
+            {
+                target = request.action == Action::OpenLicense
+                    ? L"https://github.com/FreeFallingSnow/"
+                      L"SnowDesktop/blob/main/LICENSE"
+                    : L"https://github.com/FreeFallingSnow/"
+                      L"SnowDesktop/blob/main/THIRD_PARTY_NOTICES.md";
+            }
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    app_.controlHwnd_, L"open", target.c_str(),
+                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                return snowdesktop::SettingsActionResult::Failure(
+                    L"The requested project notice could not be opened.");
             }
             break;
         }
