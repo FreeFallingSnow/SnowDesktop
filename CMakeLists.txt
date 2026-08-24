@@ -244,6 +244,8 @@ set(SNOWDESKTOP_SOURCES
     src/settings_controller.h
     src/settings_route.cpp
     src/settings_route.h
+    src/settings_search_index.cpp
+    src/settings_search_index.h
     src/settings_store_native.cpp
     src/settings_window.cpp
     src/winui/App.idl
@@ -1171,6 +1173,16 @@ if (BUILD_TESTING)
             src/settings_route.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract settings)
+
+    snowdesktop_add_test(
+        SnowDesktopSettingsSearchIndexTests
+        settings_search_index
+        SOURCES
+            tests/settings_search_index_tests.cpp
+            src/settings_search_index.cpp
+            src/settings_route.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS core contract l10n navigation settings)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests
