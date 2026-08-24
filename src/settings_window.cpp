@@ -855,18 +855,18 @@ void DrawSettingSection(const char* label, const char* description = nullptr)
     }
     ImGui::Dummy(ImVec2(0.0f, 4.0f * g_settingsUi.dpi));
 
-    ImGui::PushID(g_settingsUi.sectionIndex);
+    const std::string cardId = "##SettingsCard_" +
+        std::to_string(g_settingsUi.sectionIndex);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_settingsUi.colors.card);
     ImGui::PushStyleColor(ImGuiCol_Border,
         g_settingsUi.colors.cardBorder);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
         ImVec2(16.0f * g_settingsUi.dpi, 14.0f * g_settingsUi.dpi));
-    ImGui::BeginChild("##SettingsCard", ImVec2(0.0f, 0.0f),
+    ImGui::BeginChild(cardId.c_str(), ImVec2(0.0f, 0.0f),
         ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding |
         ImGuiChildFlags_AutoResizeY);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
-    ImGui::PopID();
     g_settingsUi.cardOpen = true;
     ++g_settingsUi.sectionIndex;
 }
