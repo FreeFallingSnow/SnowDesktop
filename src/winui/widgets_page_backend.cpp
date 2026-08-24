@@ -96,6 +96,15 @@ std::wstring FormatAgentSkillCounts(
     return format;
 }
 
+std::wstring FormatLocalizedValue(
+    std::wstring format, std::wstring_view value)
+{
+    const std::size_t marker = format.find(L"{0}");
+    if (marker != std::wstring::npos)
+        format.replace(marker, 3, value.data(), value.size());
+    return format;
+}
+
 std::wstring TrimInstallReasonValue(std::wstring_view value)
 {
     const std::size_t first = value.find_first_not_of(L" \t\r\n");
@@ -200,6 +209,7 @@ struct SourceSearchResult
 {
     std::vector<SourceQueryRecord> sources;
     std::string error;
+    bool localizeError = false;
     bool cancelled = false;
 };
 
@@ -351,7 +361,7 @@ SourceSearchResult QuerySources(SourceSearchWork& work)
     }
     catch (...)
     {
-        result.error = "component source query failed";
+        result.localizeError = true;
     }
     return result;
 }
@@ -1691,7 +1701,8 @@ struct WidgetsPageBackend::Impl final
         catch (...)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"Component state could not be read.",
+                L("app.settings.widgets_error_state_read",
+                    L"Component state could not be read."),
                 "settings.status.error");
         }
         return false;
@@ -1710,7 +1721,7 @@ struct WidgetsPageBackend::Impl final
                 record.source.providerId);
             source.nameKey = widgets_page_backend_detail::SourceNameKeyFor(
                 record.source.providerId);
-            source.name = SourceFallbackName(record.source.providerId);
+            source.name = SourceDisplayName(record.source.providerId);
             source.available = record.source.status.available &&
                 record.error.empty();
             const std::string status = record.error.empty()
@@ -1780,10 +1791,14 @@ struct WidgetsPageBackend::Impl final
 
         activeTaskId = 0;
         state->task = {};
-        if (!result.error.empty())
+        if (result.localizeError || !result.error.empty())
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                Utf8ToWide(result.error), "settings.status.error");
+                result.localizeError
+                    ? L("app.settings.widgets_error_source_query",
+                          L"Component source search failed.")
+                    : Utf8ToWide(result.error),
+                "settings.status.error");
         }
         state->sources = ConvertSources(result);
         state->searchRevision = work.searchRevision;
@@ -1800,7 +1815,9 @@ struct WidgetsPageBackend::Impl final
         if (!options.dispatchToOwner)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"Component source search requires an owner-thread dispatcher.",
+                L("app.settings.widgets_error_search_dispatcher",
+                    L"Component source search requires an owner-thread "
+                    L"dispatcher."),
                 "settings.status.error");
             Publish();
             return false;
@@ -1809,7 +1826,8 @@ struct WidgetsPageBackend::Impl final
             state->task.kind != WidgetsPageTaskKind::Searching)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Warning,
-                L"Another component operation is still running.");
+                L("app.settings.widgets_error_operation_busy",
+                    L"Another component operation is still running."));
             Publish();
             return false;
         }
@@ -1888,7 +1906,8 @@ struct WidgetsPageBackend::Impl final
             activeTaskId = 0;
             state->task = {};
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"Component source search could not be started.",
+                L("app.settings.widgets_error_search_start",
+                    L"Component source search could not be started."),
                 "settings.status.error");
             Publish();
         }
@@ -1918,7 +1937,8 @@ struct WidgetsPageBackend::Impl final
     bool ReportBusy()
     {
         SetFeedback(WidgetsPageFeedbackSeverity::Warning,
-            L"Another component operation is still running.");
+            L("app.settings.widgets_error_operation_busy",
+                L"Another component operation is still running."));
         Publish();
         return false;
     }
@@ -2018,7 +2038,9 @@ struct WidgetsPageBackend::Impl final
         else
         {
             if (result.message.empty())
-                result.message = L"The component operation failed.";
+                result.message = L(
+                    "app.settings.widgets_error_operation_failed",
+                    L"The component operation failed.");
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
                 std::move(result.message), "settings.status.error");
         }
@@ -2059,11 +2081,12 @@ struct WidgetsPageBackend::Impl final
             const auto identityChanged = [&](std::wstring message = {}) {
                 if (message.empty())
                 {
-                    message = L"The selected component package changed after "
-                        L"review. Choose the package again.";
+                    message = L("settings.widgets.install.identityChanged",
+                        L"The selected component package changed after review. "
+                        L"Choose the package again.");
                 }
-                return WidgetsPageHostOperationResult::Failure(L(
-                    "settings.widgets.install.identityChanged", message));
+                return WidgetsPageHostOperationResult::Failure(
+                    std::move(message));
             };
             if (!install.localSnapshot ||
                 install.path != install.localSnapshot->path)
@@ -2116,8 +2139,9 @@ struct WidgetsPageBackend::Impl final
             if (!packageLock.MatchesPathIdentity())
             {
                 return identityChanged(
-                    L"The selected component package changed while it was "
-                    L"being installed. Choose the package again.");
+                    L("app.settings.widgets_error_install_identity_changed",
+                        L"The selected component package changed while it was "
+                        L"being installed. Choose the package again."));
             }
         }
         else
@@ -2140,7 +2164,9 @@ struct WidgetsPageBackend::Impl final
         if (!options.confirmInstall)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                std::move(reason), "settings.status.error");
+                L("app.settings.widgets_error_install_confirmation",
+                    L"The install confirmation could not be shown."),
+                "settings.status.error");
             Publish();
             return;
         }
@@ -2195,7 +2221,9 @@ struct WidgetsPageBackend::Impl final
 
         awaitingConfirmation = true;
         confirmationRequestId = NextTaskId();
-        SetFeedback(WidgetsPageFeedbackSeverity::Warning, reason);
+        SetFeedback(WidgetsPageFeedbackSeverity::Warning,
+            L("app.settings.widgets_install_confirm",
+                L"Confirm the component installation to continue."));
         Publish();
         const std::uint64_t requestGeneration = generation;
         const std::uint64_t requestActivation = activation;
@@ -2239,7 +2267,8 @@ struct WidgetsPageBackend::Impl final
             awaitingConfirmation = false;
             confirmationRequestId = 0;
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The install confirmation could not be shown.",
+                L("app.settings.widgets_error_install_confirmation",
+                    L"The install confirmation could not be shown."),
                 "settings.status.error");
             Publish();
         }
@@ -2262,8 +2291,10 @@ struct WidgetsPageBackend::Impl final
         std::filesystem::create_directories(stagingRoot, filesystemError);
         if (filesystemError)
         {
-            error = L"The selected package could not be copied for review: " +
-                Utf8ToWide(filesystemError.message());
+            error = FormatLocalizedValue(L(
+                "app.settings.widgets_error_package_copy_review",
+                L"The selected package could not be copied for review: {0}"),
+                Utf8ToWide(filesystemError.message()));
             return {};
         }
         auto snapshot = std::make_shared<LocalPackageSnapshot>();
@@ -2275,8 +2306,10 @@ struct WidgetsPageBackend::Impl final
             std::filesystem::copy_options::none, filesystemError);
         if (filesystemError)
         {
-            error = L"The selected package could not be copied for review: " +
-                Utf8ToWide(filesystemError.message());
+            error = FormatLocalizedValue(L(
+                "app.settings.widgets_error_package_copy_review",
+                L"The selected package could not be copied for review: {0}"),
+                Utf8ToWide(filesystemError.message()));
             return {};
         }
 
@@ -2287,7 +2320,8 @@ struct WidgetsPageBackend::Impl final
         if (!packageLock.Acquired() ||
             !packageLock.MatchesPathIdentity())
         {
-            error = L"The selected package could not be locked for review.";
+            error = L("app.settings.widgets_error_package_lock_review",
+                L"The selected package could not be locked for review.");
             return {};
         }
         snapshot->identity = packageLock.Identity();
@@ -2296,14 +2330,16 @@ struct WidgetsPageBackend::Impl final
             WidgetEngine::GetWidgetPackagePaths());
         if (!packageLock.MatchesPathIdentity())
         {
-            error = L"The selected package identity changed during review.";
+            error = L("app.settings.widgets_error_package_identity_changed",
+                L"The selected package identity changed during review.");
             return {};
         }
         const auto report = validator.ValidateArchive(
             snapshot->path, &snapshot->manifest);
         if (!packageLock.MatchesPathIdentity())
         {
-            error = L"The selected package identity changed during review.";
+            error = L("app.settings.widgets_error_package_identity_changed",
+                L"The selected package identity changed during review.");
             return {};
         }
         snapshot->sha256 =
@@ -2315,7 +2351,8 @@ struct WidgetsPageBackend::Impl final
             snapshot->manifest.version.empty())
         {
             error = report.Ok()
-                ? L"The selected package identity could not be read."
+                ? L("app.settings.widgets_error_package_identity_read",
+                      L"The selected package identity could not be read.")
                 : Utf8ToWide(report.ToJson());
             return {};
         }
@@ -2328,7 +2365,8 @@ struct WidgetsPageBackend::Impl final
         if (!development.development || development.manifest.id.empty() ||
             development.manifest.version.empty())
         {
-            error = L"The development component is unavailable.";
+            error = L("app.settings.widgets_error_development_unavailable",
+                L"The development component is unavailable.");
             return {};
         }
 
@@ -2338,8 +2376,10 @@ struct WidgetsPageBackend::Impl final
             packagePaths.staging, filesystemError);
         if (filesystemError)
         {
-            error = L"The development component could not be prepared: " +
-                Utf8ToWide(filesystemError.message());
+            error = FormatLocalizedValue(L(
+                "app.settings.widgets_error_development_prepare",
+                L"The development component could not be prepared: {0}"),
+                Utf8ToWide(filesystemError.message()));
             return {};
         }
 
@@ -2350,8 +2390,10 @@ struct WidgetsPageBackend::Impl final
             packagePaths.development, std::nullopt, true);
         if (!sourceLock.Acquired() || !sourceLock.MatchesPathIdentity())
         {
-            error = L"The development component directory is unsafe or "
-                L"changed before it could be prepared.";
+            error = L(
+                "app.settings.widgets_error_development_directory_changed",
+                L"The development component directory is unsafe or changed "
+                L"before it could be prepared.");
             return {};
         }
 
@@ -2368,9 +2410,11 @@ struct WidgetsPageBackend::Impl final
                 artifact, exportReport, exportError) ||
             !sourceLock.MatchesPathIdentity())
         {
-            error = Utf8ToWide(exportError.empty()
-                ? "the development component changed while it was exported"
-                : exportError);
+            error = exportError.empty()
+                ? L("app.settings.widgets_error_development_export_changed",
+                      L"The development component changed while it was "
+                      L"exported.")
+                : Utf8ToWide(exportError);
             return {};
         }
 
@@ -2379,8 +2423,10 @@ struct WidgetsPageBackend::Impl final
         if (!archiveLock.Acquired() ||
             !archiveLock.MatchesPathIdentity())
         {
-            error = L"The prepared development snapshot could not be "
-                L"locked for review.";
+            error = L(
+                "app.settings.widgets_error_development_snapshot_lock",
+                L"The prepared development snapshot could not be locked for "
+                L"review.");
             return {};
         }
         snapshot->identity = archiveLock.Identity();
@@ -2388,8 +2434,9 @@ struct WidgetsPageBackend::Impl final
             snapshot->path, &snapshot->manifest);
         if (!archiveLock.MatchesPathIdentity())
         {
-            error = L"The prepared development snapshot changed during "
-                L"review.";
+            error = L(
+                "app.settings.widgets_error_development_snapshot_changed",
+                L"The prepared development snapshot changed during review.");
             return {};
         }
         snapshot->sha256 =
@@ -2403,8 +2450,10 @@ struct WidgetsPageBackend::Impl final
             artifact.version != development.manifest.version ||
             artifact.sha256 != snapshot->sha256)
         {
-            error = L"The prepared development snapshot did not match the "
-                L"selected development component.";
+            error = L(
+                "app.settings.widgets_error_development_snapshot_mismatch",
+                L"The prepared development snapshot did not match the "
+                L"selected development component.");
             return {};
         }
         return snapshot;
@@ -2427,7 +2476,8 @@ struct WidgetsPageBackend::Impl final
         catch (...)
         {
             result = WidgetsPageHostOperationResult::Failure(
-                L"The component could not be installed.");
+                L("app.settings.widgets_error_install_failed",
+                    L"The component could not be installed."));
         }
 
         const bool packageInstalled = result.succeeded;
@@ -2477,9 +2527,10 @@ struct WidgetsPageBackend::Impl final
                 }
                 if (!reloadFailures.empty())
                 {
-                    std::wstring message = L"The development snapshot was "
-                        L"installed, but one or more component instances "
-                        L"could not be reloaded.";
+                    std::wstring message = L(
+                        "app.settings.widgets_error_development_reload",
+                        L"The development snapshot was installed, but one or "
+                        L"more component instances could not be reloaded.");
                     if (install.developmentOverrideWasActive)
                     {
                         std::string rollbackError;
@@ -2489,14 +2540,18 @@ struct WidgetsPageBackend::Impl final
                         {
                             for (const std::wstring& instance : instances)
                                 (void)engine.ReloadWidget(instance);
-                            message += L" The previous development override "
-                                L"was restored.";
+                            message += L" " + L(
+                                "app.settings.widgets_error_development_override_restored",
+                                L"The previous development override was "
+                                L"restored.");
                         }
                         else
                         {
-                            message += L" Restoring the previous development "
-                                L"override also failed: " +
-                                Utf8ToWide(rollbackError);
+                            message += L" " + FormatLocalizedValue(L(
+                                "app.settings.widgets_error_development_override_restore_failed",
+                                L"Restoring the previous development override "
+                                L"also failed: {0}"),
+                                Utf8ToWide(rollbackError));
                         }
                     }
                     result = WidgetsPageHostOperationResult::Failure(
@@ -2547,7 +2602,8 @@ struct WidgetsPageBackend::Impl final
         if (!options.pickPackage)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The package picker is unavailable.",
+                L("app.settings.widgets_error_package_picker_unavailable",
+                    L"The package picker is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2610,7 +2666,8 @@ struct WidgetsPageBackend::Impl final
             awaitingPicker = false;
             pickerRequestId = 0;
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The package picker could not be opened.",
+                L("app.settings.widgets_error_package_picker_open",
+                    L"The package picker could not be opened."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2628,7 +2685,8 @@ struct WidgetsPageBackend::Impl final
             !source->supportsInstall)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The selected component source is unavailable.",
+                L("app.settings.widgets_error_source_unavailable",
+                    L"The selected component source is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2642,7 +2700,8 @@ struct WidgetsPageBackend::Impl final
         if (item == source->results.end() || !item->installAllowed)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The selected component result is stale or unavailable.",
+                L("app.settings.widgets_error_result_stale",
+                    L"The selected component result is stale or unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2658,7 +2717,8 @@ struct WidgetsPageBackend::Impl final
             install.externalItemId.empty())
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The selected component identity is invalid.",
+                L("app.settings.widgets_error_identity_invalid",
+                    L"The selected component identity is invalid."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2723,7 +2783,8 @@ struct WidgetsPageBackend::Impl final
         if (!managed)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"This component cannot be enabled or disabled.",
+                L("app.settings.widgets_error_toggle_unavailable",
+                    L"This component cannot be enabled or disabled."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2763,7 +2824,8 @@ struct WidgetsPageBackend::Impl final
         if (!package)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The component package is unavailable.",
+                L("app.settings.widgets_error_package_unavailable",
+                    L"The component package is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2808,7 +2870,8 @@ struct WidgetsPageBackend::Impl final
             break;
         default:
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The requested permission decision is invalid.",
+                L("app.settings.widgets_error_permission_invalid",
+                    L"The requested permission decision is invalid."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2875,7 +2938,8 @@ struct WidgetsPageBackend::Impl final
             !options.developerOverridesVisible())
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"Development overrides are disabled.",
+                L("app.settings.widgets_error_development_disabled",
+                    L"Development overrides are disabled."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2886,7 +2950,8 @@ struct WidgetsPageBackend::Impl final
         if (!snapshotPackage)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The component package is unavailable.",
+                L("app.settings.widgets_error_package_unavailable",
+                    L"The component package is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2901,7 +2966,8 @@ struct WidgetsPageBackend::Impl final
         if (request.enabled && !developmentExists)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The development package is unavailable.",
+                L("app.settings.widgets_error_development_unavailable",
+                    L"The development package is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -2974,18 +3040,23 @@ struct WidgetsPageBackend::Impl final
             }
 
             std::wstring message =
-                L"One or more component instances could not be reloaded; "
-                L"the development override was rolled back.";
+                L("app.settings.widgets_error_override_reload_rolled_back",
+                    L"One or more component instances could not be reloaded; "
+                    L"the development override was rolled back.");
             if (!overrideRolledBack)
             {
-                message = L"One or more component instances could not be "
-                    L"reloaded, and the development override rollback also "
-                    L"failed: " + Utf8ToWide(rollbackError);
+                message = FormatLocalizedValue(L(
+                    "app.settings.widgets_error_override_rollback_failed",
+                    L"One or more component instances could not be reloaded, "
+                    L"and the development override rollback also failed: {0}"),
+                    Utf8ToWide(rollbackError));
             }
             else if (!rollbackReloadFailures.empty())
             {
-                message += L" Some instances could not be restored and need "
-                    L"an application restart.";
+                message += L" " + L(
+                    "app.settings.widgets_error_instances_need_restart",
+                    L"Some instances could not be restored and need an "
+                    L"application restart.");
             }
             NotifyHostStateChanged();
             FinishTask(WidgetsPageHostOperationResult::Failure(
@@ -3011,8 +3082,9 @@ struct WidgetsPageBackend::Impl final
             FindDevelopmentPackage(packageId))
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"A development project cannot be created for this "
-                L"component.",
+                L("app.settings.widgets_error_development_create",
+                    L"A development project cannot be created for this "
+                    L"component."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3068,8 +3140,9 @@ struct WidgetsPageBackend::Impl final
             !development)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The development component cannot be installed as a "
-                L"managed snapshot.",
+                L("app.settings.widgets_error_development_install_managed",
+                    L"The development component cannot be installed as a "
+                    L"managed snapshot."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3117,7 +3190,9 @@ struct WidgetsPageBackend::Impl final
             !advertisedVersion)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The requested component version is stale or unavailable.",
+                L("app.settings.widgets_error_version_stale",
+                    L"The requested component version is stale or "
+                    L"unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3178,11 +3253,14 @@ struct WidgetsPageBackend::Impl final
             NotifyHostStateChanged();
             (void)CaptureInstalledState();
             std::wstring message = restored
-                ? L"The selected version could not reload every instance; "
-                    L"the previous package version was restored."
-                : L"The selected version could not reload every instance, "
-                    L"and restoring the previous version also failed: " +
-                    Utf8ToWide(rollbackError);
+                ? L("app.settings.widgets_error_version_reload_restored",
+                      L"The selected version could not reload every instance; "
+                      L"the previous package version was restored.")
+                : FormatLocalizedValue(L(
+                      "app.settings.widgets_error_version_restore_failed",
+                      L"The selected version could not reload every instance, "
+                      L"and restoring the previous version also failed: {0}"),
+                      Utf8ToWide(rollbackError));
             FinishTask(WidgetsPageHostOperationResult::Failure(
                 std::move(message)));
             return false;
@@ -3205,7 +3283,8 @@ struct WidgetsPageBackend::Impl final
             !development || !options.publishDevelopmentPackage)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The Workshop Creator Manager is unavailable.",
+                L("app.settings.widgets_error_publisher_unavailable",
+                    L"The Workshop Creator Manager is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3250,7 +3329,8 @@ struct WidgetsPageBackend::Impl final
         if (!options.setAgentSkillTargetMask)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The Agent Skill selection cannot be saved.",
+                L("app.settings.widgets_error_skill_selection_save",
+                    L"The Agent Skill selection cannot be saved."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3266,7 +3346,8 @@ struct WidgetsPageBackend::Impl final
         if (!applied)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The Agent Skill selection could not be saved.",
+                L("app.settings.widgets_error_skill_selection_save",
+                    L"The Agent Skill selection could not be saved."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3347,7 +3428,8 @@ struct WidgetsPageBackend::Impl final
         if (!options.openDevelopmentFolder)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The development components folder cannot be opened.",
+                L("app.settings.widgets_error_development_folder_open",
+                    L"The development components folder cannot be opened."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3360,7 +3442,8 @@ struct WidgetsPageBackend::Impl final
         catch (...)
         {
             result = WidgetsPageHostOperationResult::Failure(
-                L"The development components folder cannot be opened.");
+                L("app.settings.widgets_error_development_folder_open",
+                    L"The development components folder cannot be opened."));
         }
         if (!result.succeeded)
         {
@@ -3433,7 +3516,8 @@ struct WidgetsPageBackend::Impl final
             request.externalItemId.empty() || !options.openWorkshopItem)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"The Workshop item is stale or unavailable.",
+                L("app.settings.widgets_error_workshop_item_stale",
+                    L"The Workshop item is stale or unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3448,7 +3532,8 @@ struct WidgetsPageBackend::Impl final
         catch (...)
         {
             result = WidgetsPageHostOperationResult::Failure(
-                L"The Workshop item could not be opened.");
+                L("settings.widgets.workshop.openFailed",
+                    L"The Workshop item could not be opened."));
         }
         if (!result.succeeded)
         {
@@ -3467,7 +3552,8 @@ struct WidgetsPageBackend::Impl final
             !HasInvalidManagedPackage(packageId))
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"This component cannot be uninstalled.",
+                L("app.settings.widgets_error_uninstall_unavailable",
+                    L"This component cannot be uninstalled."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3491,7 +3577,8 @@ struct WidgetsPageBackend::Impl final
             if (!options.unsubscribeWorkshop)
             {
                 FinishTask(WidgetsPageHostOperationResult::Failure(
-                    L"Steam Workshop unsubscription is unavailable."));
+                    L("app.settings.widgets_error_unsubscribe_unavailable",
+                        L"Steam Workshop unsubscription is unavailable.")));
                 return false;
             }
             const std::uint64_t taskId = activeTaskId;
@@ -3504,7 +3591,8 @@ struct WidgetsPageBackend::Impl final
             if (!outstandingOperations.Begin(operation))
             {
                 FinishTask(WidgetsPageHostOperationResult::Failure(
-                    L"The component operation could not be tracked."));
+                    L("app.settings.widgets_error_operation_tracking",
+                        L"The component operation could not be tracked.")));
                 return false;
             }
             const std::weak_ptr<Impl> weak = weak_from_this();
@@ -3533,7 +3621,8 @@ struct WidgetsPageBackend::Impl final
             {
                 (void)outstandingOperations.Complete(operation);
                 FinishTask(WidgetsPageHostOperationResult::Failure(
-                    L"Steam Workshop could not be unsubscribed."));
+                    L("app.settings.widgets_error_unsubscribe_failed",
+                        L"Steam Workshop could not be unsubscribed.")));
                 return false;
             }
         }
@@ -3567,7 +3656,8 @@ struct WidgetsPageBackend::Impl final
         if (!options.openWorkshop)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"Steam Workshop is unavailable.",
+                L("app.settings.widgets_error_workshop_unavailable",
+                    L"Steam Workshop is unavailable."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3582,7 +3672,8 @@ struct WidgetsPageBackend::Impl final
         catch (...)
         {
             result = WidgetsPageHostOperationResult::Failure(
-                L"Steam Workshop could not be opened.");
+                L("settings.widgets.workshop.openFailed",
+                    L"Steam Workshop could not be opened."));
         }
         if (!result.succeeded)
         {
@@ -3631,7 +3722,8 @@ struct WidgetsPageBackend::Impl final
         if (!options.synchronizeSource || !options.canSynchronizeSource)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"This component source cannot be synchronized.",
+                L("app.settings.widgets_error_source_sync_unavailable",
+                    L"This component source cannot be synchronized."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3646,7 +3738,8 @@ struct WidgetsPageBackend::Impl final
             !options.canSynchronizeSource(sourceId))
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L"This component source cannot be synchronized.",
+                L("app.settings.widgets_error_source_sync_unavailable",
+                    L"This component source cannot be synchronized."),
                 "settings.status.error");
             Publish();
             return false;
@@ -3665,7 +3758,8 @@ struct WidgetsPageBackend::Impl final
         if (!outstandingOperations.Begin(operation))
         {
             FinishTask(WidgetsPageHostOperationResult::Failure(
-                L"The component operation could not be tracked."));
+                L("app.settings.widgets_error_operation_tracking",
+                    L"The component operation could not be tracked.")));
             return false;
         }
         const std::weak_ptr<Impl> weak = weak_from_this();
@@ -3691,7 +3785,8 @@ struct WidgetsPageBackend::Impl final
         {
             (void)outstandingOperations.Complete(operation);
             FinishTask(WidgetsPageHostOperationResult::Failure(
-                L"The component source could not be synchronized."));
+                L("settings.widgets.source.syncFailed",
+                    L"The component source could not be synchronized.")));
             return false;
         }
     }

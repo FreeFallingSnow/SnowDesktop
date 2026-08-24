@@ -343,6 +343,72 @@ void TestOutstandingOperationLedgerBehavior()
         "the mutation gate opens only after every background operation is terminal");
 }
 
+void TestUserVisibleFeedbackLocalization(const std::string& source)
+{
+    for (const char* key : {
+             "app.settings.widgets_error_state_read",
+             "app.settings.widgets_error_source_query",
+             "app.settings.widgets_error_search_dispatcher",
+             "app.settings.widgets_error_operation_busy",
+             "app.settings.widgets_error_search_start",
+             "app.settings.widgets_error_operation_failed",
+             "app.settings.widgets_error_install_identity_changed",
+             "app.settings.widgets_error_install_confirmation",
+             "app.settings.widgets_error_package_copy_review",
+             "app.settings.widgets_error_package_lock_review",
+             "app.settings.widgets_error_package_identity_changed",
+             "app.settings.widgets_error_package_identity_read",
+             "app.settings.widgets_error_development_unavailable",
+             "app.settings.widgets_error_development_prepare",
+             "app.settings.widgets_error_development_directory_changed",
+             "app.settings.widgets_error_development_export_changed",
+             "app.settings.widgets_error_development_snapshot_lock",
+             "app.settings.widgets_error_development_snapshot_changed",
+             "app.settings.widgets_error_development_snapshot_mismatch",
+             "app.settings.widgets_error_install_failed",
+             "app.settings.widgets_error_development_reload",
+             "app.settings.widgets_error_development_override_restored",
+             "app.settings.widgets_error_development_override_restore_failed",
+             "app.settings.widgets_error_package_picker_unavailable",
+             "app.settings.widgets_error_package_picker_open",
+             "app.settings.widgets_error_source_unavailable",
+             "app.settings.widgets_error_result_stale",
+             "app.settings.widgets_error_identity_invalid",
+             "app.settings.widgets_error_toggle_unavailable",
+             "app.settings.widgets_error_package_unavailable",
+             "app.settings.widgets_error_permission_invalid",
+             "app.settings.widgets_error_development_disabled",
+             "app.settings.widgets_error_override_reload_rolled_back",
+             "app.settings.widgets_error_override_rollback_failed",
+             "app.settings.widgets_error_instances_need_restart",
+             "app.settings.widgets_error_development_create",
+             "app.settings.widgets_error_development_install_managed",
+             "app.settings.widgets_error_version_stale",
+             "app.settings.widgets_error_version_reload_restored",
+             "app.settings.widgets_error_version_restore_failed",
+             "app.settings.widgets_error_publisher_unavailable",
+             "app.settings.widgets_error_skill_selection_save",
+             "app.settings.widgets_error_development_folder_open",
+             "app.settings.widgets_error_workshop_item_stale",
+             "app.settings.widgets_error_uninstall_unavailable",
+             "app.settings.widgets_error_unsubscribe_unavailable",
+             "app.settings.widgets_error_operation_tracking",
+             "app.settings.widgets_error_unsubscribe_failed",
+             "app.settings.widgets_error_workshop_unavailable",
+             "app.settings.widgets_error_source_sync_unavailable"})
+    {
+        Check(source.find(std::string{"\""} + key + "\"") !=
+                std::string::npos,
+            "every backend-authored user-visible failure uses a dynamic JSON key");
+    }
+
+    Check(source.find("result.error = \"component source query failed\"") ==
+                std::string::npos &&
+            source.find("FormatLocalizedValue(L(") != std::string::npos &&
+            source.find("{0}") != std::string::npos,
+        "background and detail-bearing backend failures localize before publication");
+}
+
 void TestV2OnlyContract(const std::string& source)
 {
     Check(source.find("IsExecutablePackageContract(") !=
@@ -510,6 +576,7 @@ void TestBackendContract(const std::filesystem::path& repository)
     TestInjectedHostCapabilities(header, source);
     TestAsyncIdentityAndStaleResultRejection(header, source);
     TestOutstandingOperationLedgerBehavior();
+    TestUserVisibleFeedbackLocalization(source);
     TestV2OnlyContract(source);
     TestLocalInstallIdentityBinding(source);
     TestStructuredInstallConfirmation(header, source);

@@ -409,7 +409,7 @@ References CollectReferences(
 {
     const std::regex pattern(lua
         ? R"KEY(\bl10n\.tr\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY"
-        : R"KEY(\b(?:_L(?:FW|F|W)?|L10N_KEY)\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY");
+        : R"KEY(\b(?:_L(?:FW|F|W)?|L10N_KEY|L)\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY");
     References references;
     for (const fs::path& path : files)
     {
