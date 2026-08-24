@@ -44,6 +44,21 @@ int main()
     Check(ResolveNavigationMode(719.9f) == NavigationMode::Compact &&
             ResolveNavigationMode(720.0f) == NavigationMode::Expanded,
         "navigation switches at the 720 DIP breakpoint");
+    Check(ResolvePreferredCjkFont("zh-CN") ==
+            CjkFontFamily::MicrosoftYaHei &&
+            ResolvePreferredCjkFont("zh-Hans-SG") ==
+            CjkFontFamily::MicrosoftYaHei,
+        "simplified Chinese uses Microsoft YaHei");
+    Check(ResolvePreferredCjkFont("zh-TW") ==
+            CjkFontFamily::MicrosoftJhengHei &&
+            ResolvePreferredCjkFont("zh-Hant-HK") ==
+            CjkFontFamily::MicrosoftJhengHei,
+        "traditional Chinese uses Microsoft JhengHei");
+    Check(ResolvePreferredCjkFont("ja-JP") ==
+            CjkFontFamily::YuGothic &&
+            ResolvePreferredCjkFont("ko-KR") ==
+            CjkFontFamily::MalgunGothic,
+        "Japanese and Korean use their matching system fonts");
 
     const auto lightAccent = MakeAccentPalette(0xf7e8a0, true);
     const auto darkAccent = MakeAccentPalette(0x183a75, false);

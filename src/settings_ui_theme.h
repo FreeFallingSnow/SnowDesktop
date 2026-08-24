@@ -3,6 +3,7 @@
 #include "general_settings.h"
 
 #include <cstdint>
+#include <string_view>
 
 namespace snowdesktop::settings_ui
 {
@@ -18,6 +19,14 @@ enum class NavigationMode
 {
     Expanded,
     Compact,
+};
+
+enum class CjkFontFamily
+{
+    MicrosoftYaHei,
+    MicrosoftJhengHei,
+    YuGothic,
+    MalgunGothic,
 };
 
 struct AccentPalette
@@ -43,6 +52,9 @@ bool ShouldAnimate(
     bool highContrast) noexcept;
 
 NavigationMode ResolveNavigationMode(float clientWidthDip) noexcept;
+
+CjkFontFamily ResolvePreferredCjkFont(
+    std::string_view effectiveLanguage) noexcept;
 
 std::uint32_t BlendRgb(
     std::uint32_t first,

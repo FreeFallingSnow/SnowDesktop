@@ -1,7 +1,9 @@
 #include "settings_ui_theme.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
 
 namespace snowdesktop::settings_ui
 {
@@ -62,6 +64,33 @@ NavigationMode ResolveNavigationMode(float clientWidthDip) noexcept
     return clientWidthDip < 720.0f
         ? NavigationMode::Compact
         : NavigationMode::Expanded;
+}
+
+CjkFontFamily ResolvePreferredCjkFont(
+    std::string_view effectiveLanguage) noexcept
+{
+    std::string language(effectiveLanguage);
+    std::transform(language.begin(), language.end(), language.begin(),
+        [](unsigned char value) {
+            return static_cast<char>(std::tolower(value));
+        });
+
+    if (language == "ja" || language.starts_with("ja-"))
+        return CjkFontFamily::YuGothic;
+    if (language == "ko" || language.starts_with("ko-"))
+        return CjkFontFamily::MalgunGothic;
+    if (language == "zh" || language.starts_with("zh-"))
+    {
+        const bool traditional =
+            language.find("hant") != std::string::npos ||
+            language.find("-tw") != std::string::npos ||
+            language.find("-hk") != std::string::npos ||
+            language.find("-mo") != std::string::npos;
+        return traditional
+            ? CjkFontFamily::MicrosoftJhengHei
+            : CjkFontFamily::MicrosoftYaHei;
+    }
+    return CjkFontFamily::MicrosoftYaHei;
 }
 
 std::uint32_t BlendRgb(

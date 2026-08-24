@@ -2856,6 +2856,7 @@ void SettingsWindow::DrawGeneralPage()
             generalSettings_.language[sizeof(generalSettings_.language) - 1] = '\0';
             Locale::Instance().SetLanguage(generalSettings_.language);
             generalSettingsDirty_ = true;
+            QueueFontRebuild();
             if (languageChangedCallback_)
                 languageChangedCallback_();
             renderRequested_ = true;
@@ -7954,17 +7955,46 @@ void SettingsWindow::SetupFonts()
         strcpy_s(config.Name, name);
         io.Fonts->AddFontFromFileTTF(path, bodySize, &config, ranges);
     };
-    mergeFont("C:\\Windows\\Fonts\\msjh.ttc",
-        io.Fonts->GetGlyphRangesChineseFull(), "Microsoft JhengHei merge");
-    mergeFont("C:\\Windows\\Fonts\\YuGothM.ttc",
-        io.Fonts->GetGlyphRangesJapanese(), "Yu Gothic merge");
-    mergeFont("C:\\Windows\\Fonts\\malgun.ttf",
-        io.Fonts->GetGlyphRangesKorean(), "Malgun Gothic merge");
-    if (!fileExists("C:\\Windows\\Fonts\\msjh.ttc"))
+
+    using snowdesktop::settings_ui::CjkFontFamily;
+    const auto mergeFamily = [&](CjkFontFamily family) {
+        switch (family)
+        {
+        case CjkFontFamily::MicrosoftJhengHei:
+            mergeFont("C:\\Windows\\Fonts\\msjh.ttc",
+                io.Fonts->GetGlyphRangesChineseFull(),
+                "Microsoft JhengHei merge");
+            break;
+        case CjkFontFamily::YuGothic:
+            mergeFont("C:\\Windows\\Fonts\\YuGothM.ttc",
+                io.Fonts->GetGlyphRangesJapanese(), "Yu Gothic merge");
+            break;
+        case CjkFontFamily::MalgunGothic:
+            mergeFont("C:\\Windows\\Fonts\\malgun.ttf",
+                io.Fonts->GetGlyphRangesKorean(), "Malgun Gothic merge");
+            break;
+        case CjkFontFamily::MicrosoftYaHei:
+        default:
+            // The first merged font owns shared CJK codepoints. YaHei must
+            // therefore come first for simplified Chinese instead of JhengHei.
+            mergeFont("C:\\Windows\\Fonts\\msyh.ttc",
+                io.Fonts->GetGlyphRangesChineseFull(),
+                "Microsoft YaHei merge");
+            break;
+        }
+    };
+    const CjkFontFamily preferred =
+        snowdesktop::settings_ui::ResolvePreferredCjkFont(
+            Locale::Instance().GetEffectiveLanguage());
+    mergeFamily(preferred);
+    for (const CjkFontFamily fallback : {
+            CjkFontFamily::MicrosoftYaHei,
+            CjkFontFamily::MicrosoftJhengHei,
+            CjkFontFamily::YuGothic,
+            CjkFontFamily::MalgunGothic })
     {
-        mergeFont("C:\\Windows\\Fonts\\msyh.ttc",
-            io.Fonts->GetGlyphRangesChineseSimplifiedCommon(),
-            "Microsoft YaHei merge");
+        if (fallback != preferred)
+            mergeFamily(fallback);
     }
     io.FontDefault = bodyFont;
     g_settingsUi.bodyFont = bodyFont;
