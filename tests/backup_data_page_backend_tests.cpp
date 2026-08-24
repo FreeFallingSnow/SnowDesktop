@@ -1,12 +1,21 @@
+#include "../src/winui/backup_operation_control.h"
+
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace
 {
+using namespace std::chrono_literals;
+
 int failures = 0;
 
 void Check(bool condition, const char* message)
@@ -115,18 +124,56 @@ void TestWorkerAndPickerOwnership(const std::string& header,
         "inFlightTaskId = context.requestId", startWork);
     const auto workerDetach = source.find("worker.detach()", taskIdentity);
     const auto publishRunning = source.find("Publish();", workerDetach);
+    const auto enableCancellation = source.find(
+        "operationControl->EnableCancellation()", publishRunning);
     Check(startWork != std::string::npos &&
             taskIdentity != std::string::npos &&
             workerDetach != std::string::npos &&
             publishRunning != std::string::npos &&
-            taskIdentity < workerDetach && workerDetach < publishRunning,
-        "worker identity and stop source exist before running state is published");
+            enableCancellation != std::string::npos &&
+            taskIdentity < workerDetach && workerDetach < publishRunning &&
+            publishRunning < enableCancellation &&
+            source.find("WaitUntilStarted()", taskIdentity) !=
+                std::string::npos,
+        "worker identity and stop source exist before the running state opens its cancellation gate");
+
+    Check(source.find("std::shared_ptr<BackupOperationControl> "
+                      "operationControl") != std::string::npos &&
+            source.find("snapshot.operation.cancellable = true") !=
+                std::string::npos &&
+            source.find("operationControl->RequestCancellation()") !=
+                std::string::npos &&
+            source.find("operationControl->NonInterruptible()") !=
+                std::string::npos,
+        "every detached backup task uses the atomic cancellation/commit phase instead of a presentation boolean");
+
+    const auto cancel = source.find("void Cancel(");
+    const auto confirm = source.find("void Confirm(", cancel);
+    const std::string cancelBody =
+        cancel != std::string::npos && confirm != std::string::npos
+        ? source.substr(cancel, confirm - cancel)
+        : std::string{};
+    Check(!cancelBody.empty() &&
+            cancelBody.find("RequestCancellation()") != std::string::npos &&
+            cancelBody.find("!snapshot.operation.cancellable") ==
+                std::string::npos,
+        "Cancel arbitrates against the commit phase rather than trusting a stale UI snapshot");
+
+    Check(source.find("state->snapshot.generation != generation") !=
+                std::string::npos &&
+            source.find("state->activationId != expectedActivationId") !=
+                std::string::npos &&
+            source.find("state->inFlightTaskId != requestId") !=
+                std::string::npos &&
+            source.find("state->operationControl != control") !=
+                std::string::npos,
+        "the non-cancellable UI transition is guarded by exact generation activation task and control identity");
 }
 
 void TestExistingStorageFormatsAreReused(const std::string& source)
 {
     for (const char* operation : {
-             "manager.Create()",
+             "manager.Create(",
              "manager.ImportAndQueue(",
              "manager.Export(",
              "manager.QueueRestore(",
@@ -136,6 +183,22 @@ void TestExistingStorageFormatsAreReused(const std::string& source)
         Check(source.find(operation) != std::string::npos,
             "complete-data work reuses FullDataBackupManager");
     }
+    Check(source.find("CancellationContext cancellation") !=
+                std::string::npos &&
+            source.find("manager.Create(cancellation)") !=
+                std::string::npos &&
+            source.find("context.request.selectedPath, cancellation") !=
+                std::string::npos &&
+            source.find("*backup, context.request.selectedPath, "
+                        "cancellation") != std::string::npos &&
+            source.find("manager.QueueRestore(*backup, cancellation)") !=
+                std::string::npos &&
+            source.find("manager.Delete(*backup, cancellation)") !=
+                std::string::npos &&
+            source.find("manager.QueueDirectory(source, cancellation)") !=
+                std::string::npos &&
+            source.find("storageResult.cancelled") != std::string::npos,
+        "every complete-data command passes cooperative cancellation through the existing manager API");
 
     Check(source.find("GetDataDirectoryPath()") != std::string::npos &&
             source.find("GetDataFilePath(kLayoutFileName)") !=
@@ -321,10 +384,72 @@ void TestBackendContract(const std::filesystem::path& repository)
     TestReplacementNeverFlushesOldMemory(header, source);
     TestApplicationOwnedLayoutCommit(application, compositionRoot);
 }
+
+void TestAtomicCancellationBoundary()
+{
+    using snowdesktop::winui::BackupOperationControl;
+    using snowdesktop::winui::BackupOperationPhase;
+
+    {
+        auto control = std::make_shared<BackupOperationControl>();
+        std::promise<BackupOperationPhase> observed;
+        auto ready = observed.get_future();
+        std::jthread worker([control, &observed] {
+            control->WaitUntilStarted();
+            observed.set_value(control->Phase());
+        });
+        Check(ready.wait_for(20ms) == std::future_status::timeout,
+            "a detached worker cannot outrun publication of its initial running snapshot");
+        Check(control->RequestCancellation(),
+            "a synchronous snapshot callback can cancel during Starting");
+        Check(ready.wait_for(1s) == std::future_status::ready &&
+                ready.get() == BackupOperationPhase::CancellationRequested &&
+                !control->TryBeginNonInterruptible(),
+            "Starting cancellation wakes the worker and permanently closes the commit gate");
+    }
+
+    {
+        BackupOperationControl control;
+        Check(control.EnableCancellation() &&
+                control.TryBeginNonInterruptible() &&
+                !control.RequestCancellation() &&
+                control.NonInterruptible(),
+            "an operation that wins the commit gate cannot later report cancellation as accepted");
+        control.Finish();
+        Check(control.Phase() == BackupOperationPhase::Finished,
+            "completion seals the operation phase");
+    }
+
+    for (int attempt = 0; attempt < 64; ++attempt)
+    {
+        BackupOperationControl control;
+        Check(control.EnableCancellation(),
+            "a fresh operation enters its cancellable phase");
+        std::atomic_bool start{false};
+        bool cancelled = false;
+        bool committed = false;
+        std::jthread cancelThread([&] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            cancelled = control.RequestCancellation();
+        });
+        std::jthread commitThread([&] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            committed = control.TryBeginNonInterruptible();
+        });
+        start.store(true, std::memory_order_release);
+        cancelThread.join();
+        commitThread.join();
+        Check(cancelled != committed,
+            "exactly one side wins a concurrent cancel-versus-commit race");
+    }
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
+    TestAtomicCancellationBoundary();
     Check(argc == 2,
         "source root is supplied for the Backup/data backend contract");
     if (argc == 2)

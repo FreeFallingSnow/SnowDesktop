@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "portable_data_migration.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -36,6 +38,7 @@ struct BackupInfo
 struct OperationResult
 {
     bool ok = false;
+    bool cancelled = false;
     BackupInfo backup;
     std::string error;
 };
@@ -53,15 +56,21 @@ public:
     }
 
     std::vector<BackupInfo> List() const;
-    OperationResult Create();
+    OperationResult Create(
+        const CancellationContext& cancellation = {});
     OperationResult Export(const BackupInfo& backup,
-        const std::filesystem::path& archive) const;
-    OperationResult QueueRestore(const BackupInfo& backup) const;
+        const std::filesystem::path& archive,
+        const CancellationContext& cancellation = {}) const;
+    OperationResult QueueRestore(const BackupInfo& backup,
+        const CancellationContext& cancellation = {}) const;
     OperationResult ImportAndQueue(
-        const std::filesystem::path& archive) const;
+        const std::filesystem::path& archive,
+        const CancellationContext& cancellation = {}) const;
     OperationResult QueueDirectory(
-        const std::filesystem::path& sourceData) const;
-    OperationResult Delete(const BackupInfo& backup) const;
+        const std::filesystem::path& sourceData,
+        const CancellationContext& cancellation = {}) const;
+    OperationResult Delete(const BackupInfo& backup,
+        const CancellationContext& cancellation = {}) const;
 
 private:
     std::filesystem::path stateRoot_;

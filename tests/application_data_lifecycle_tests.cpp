@@ -1614,6 +1614,18 @@ int main()
             INVALID_FILE_ATTRIBUTES,
         "portable migration creates the long destination file");
 
+    std::stop_source cancelledCopySource;
+    cancelledCopySource.request_stop();
+    const auto cancelledCopyDestination =
+        root / L"portable-cancelled-copy-destination";
+    const auto cancelledCopy =
+        snowdesktop::migration::CopyDataTree(
+            longPathSource, cancelledCopyDestination,
+            { cancelledCopySource.get_token(), {} });
+    Expect(!cancelledCopy.ok && cancelledCopy.cancelled &&
+            !std::filesystem::exists(cancelledCopyDestination),
+        "portable migration cancellation leaves no staging destination");
+
     const auto portableState =
         root / L"restart-safe-portable-migration";
     Write(portableState / L"data" / L"SnowDesktop.layout.json",
@@ -1718,6 +1730,32 @@ int main()
 
     snowdesktop::backup::FullDataBackupManager fullBackupManager(
         fullBackupState, fullBackupData, "1.0.1.0", "portable");
+
+    int rejectedCreateGateCalls = 0;
+    const auto rejectedFullBackup = fullBackupManager.Create(
+        { {}, [&]() {
+            ++rejectedCreateGateCalls;
+            return false;
+        } });
+    Expect(!rejectedFullBackup.ok &&
+            rejectedFullBackup.cancelled &&
+            rejectedCreateGateCalls == 1 &&
+            fullBackupManager.List().empty(),
+        "a rejected backup commit gate publishes no backup destination");
+    bool rejectedCreateLeftStaging = false;
+    ec.clear();
+    for (std::filesystem::directory_iterator entry(
+            fullBackupManager.BackupRoot(), ec), end;
+        !ec && entry != end; entry.increment(ec))
+    {
+        rejectedCreateLeftStaging =
+            entry->path().filename().wstring().starts_with(L".staging-");
+        if (rejectedCreateLeftStaging)
+            break;
+    }
+    Expect(!rejectedCreateLeftStaging,
+        "a rejected backup commit gate removes its staging directory");
+
     const auto createdFullBackup = fullBackupManager.Create();
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
@@ -1780,16 +1818,67 @@ int main()
         std::filesystem::is_regular_file(exportedBackup),
         "complete backup exports as a standard snowbackup archive");
 
+    const auto rejectedExportPath =
+        root / L"exports" / L"complete-rejected.snowbackup";
+    int rejectedExportGateCalls = 0;
+    const auto rejectedExport = fullBackupManager.Export(
+        createdFullBackup.backup, rejectedExportPath,
+        { {}, [&]() {
+            ++rejectedExportGateCalls;
+            return false;
+        } });
+    Expect(!rejectedExport.ok && rejectedExport.cancelled &&
+            rejectedExportGateCalls == 1 &&
+            !std::filesystem::exists(rejectedExportPath) &&
+            !std::filesystem::exists(
+                rejectedExportPath.wstring() + L".tmp"),
+        "a rejected archive commit gate removes the temporary archive");
+
+    int rejectedRestoreGateCalls = 0;
+    const auto rejectedRestore = fullBackupManager.QueueRestore(
+        createdFullBackup.backup,
+        { {}, [&]() {
+            ++rejectedRestoreGateCalls;
+            return false;
+        } });
+    const auto fullBackupMigrationRoot = fullBackupState /
+        L"TempState" / L"PortableMigration";
+    bool rejectedRestoreLeftStaging = false;
+    ec.clear();
+    for (std::filesystem::directory_iterator entry(
+            fullBackupMigrationRoot, ec), end;
+        !ec && entry != end; entry.increment(ec))
+    {
+        rejectedRestoreLeftStaging =
+            entry->path().filename().wstring().starts_with(L"staging-");
+        if (rejectedRestoreLeftStaging)
+            break;
+    }
+    Expect(!rejectedRestore.ok && rejectedRestore.cancelled &&
+            rejectedRestoreGateCalls == 1 &&
+            !std::filesystem::exists(
+                fullBackupMigrationRoot / L"pending.txt") &&
+            !rejectedRestoreLeftStaging,
+        "a rejected restore commit gate publishes no marker or staging tree");
+
     Write(fullBackupData / L"SnowDesktop.layout.json",
         modifiedLayout);
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         "{ \"schemaVersion\": 1, \"events\": [1] }\n");
     Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
         "{ \"schemaVersion\": 1, \"entries\": [1] }\n");
-    const auto queuedRestore =
-        fullBackupManager.QueueRestore(createdFullBackup.backup);
-    Expect(queuedRestore.ok,
-        "complete backup restore is queued without touching active data");
+    std::stop_source committedRestoreStop;
+    int committedRestoreGateCalls = 0;
+    const auto queuedRestore = fullBackupManager.QueueRestore(
+        createdFullBackup.backup,
+        { committedRestoreStop.get_token(), [&]() {
+            ++committedRestoreGateCalls;
+            committedRestoreStop.request_stop();
+            return true;
+        } });
+    Expect(queuedRestore.ok && !queuedRestore.cancelled &&
+            committedRestoreGateCalls == 1,
+        "restore publication completes after entering its commit gate");
     Expect(Read(fullBackupData / L"SnowDesktop.layout.json") ==
             modifiedLayout,
         "queued complete backup restore leaves active data unchanged");
@@ -1837,6 +1926,41 @@ int main()
     snowdesktop::backup::FullDataBackupManager importBackupManager(
         importedBackupState, importedBackupData,
         "1.0.1.0", "installed");
+
+    int rejectedImportGateCalls = 0;
+    const auto rejectedImport = importBackupManager.ImportAndQueue(
+        exportedBackup,
+        { {}, [&]() {
+            ++rejectedImportGateCalls;
+            return false;
+        } });
+    const auto importMigrationRoot = importedBackupState /
+        L"TempState" / L"PortableMigration";
+    const auto importExtractionRoot = importedBackupState /
+        L"TempState" / L"BackupImport";
+    bool rejectedImportLeftStaging = false;
+    ec.clear();
+    for (std::filesystem::directory_iterator entry(
+            importMigrationRoot, ec), end;
+        !ec && entry != end; entry.increment(ec))
+    {
+        rejectedImportLeftStaging =
+            entry->path().filename().wstring().starts_with(L"staging-");
+        if (rejectedImportLeftStaging)
+            break;
+    }
+    ec.clear();
+    const bool rejectedImportLeftExtraction =
+        std::filesystem::exists(importExtractionRoot, ec) &&
+        !std::filesystem::is_empty(importExtractionRoot, ec);
+    Expect(!rejectedImport.ok && rejectedImport.cancelled &&
+            rejectedImportGateCalls == 1 &&
+            !std::filesystem::exists(
+                importMigrationRoot / L"pending.txt") &&
+            !rejectedImportLeftStaging &&
+            !rejectedImportLeftExtraction,
+        "a rejected imported restore removes extraction and staging before publishing a marker");
+
     const auto importResult =
         importBackupManager.ImportAndQueue(exportedBackup);
     if (!importResult.ok)
@@ -1876,6 +2000,19 @@ int main()
         !std::filesystem::exists(
             importedBackupState / L"escape.txt"),
         "backup archive path traversal is rejected");
+
+    int rejectedDeleteGateCalls = 0;
+    const auto rejectedDelete = fullBackupManager.Delete(
+        createdFullBackup.backup,
+        { {}, [&]() {
+            ++rejectedDeleteGateCalls;
+            return false;
+        } });
+    Expect(!rejectedDelete.ok && rejectedDelete.cancelled &&
+            rejectedDeleteGateCalls == 1 &&
+            std::filesystem::is_directory(
+                createdFullBackup.backup.root),
+        "a rejected delete commit gate preserves the managed backup");
 
     const auto deletedBackup =
         fullBackupManager.Delete(createdFullBackup.backup);

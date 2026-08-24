@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "backup_data_page_backend.h"
+#include "backup_operation_control.h"
 
 #include "../atomic_file.h"
 #include "../data_paths.h"
@@ -15,7 +16,9 @@
 #include <atomic>
 #include <chrono>
 #include <cwctype>
+#include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <stop_token>
 #include <system_error>
@@ -68,6 +71,8 @@ struct WorkContext
     std::string hostVersion;
     std::string sourceType;
     std::wstring beforeRestoreSuffix;
+    std::shared_ptr<BackupOperationControl> operationControl;
+    std::function<void()> publishNonCancellable;
 };
 
 struct WorkResult
@@ -465,7 +470,25 @@ std::optional<std::filesystem::path> FindLayoutBackup(
 WorkResult CreateLayoutBackup(
     const WorkContext& context,
     std::wstring requestedName,
-    std::stop_token stop)
+    std::stop_token stop,
+    bool finalCommit = true);
+
+bool TryBeginNonInterruptible(const WorkContext& context)
+{
+    if (!context.operationControl)
+        return true;
+    if (!context.operationControl->TryBeginNonInterruptible())
+        return false;
+    if (context.publishNonCancellable)
+        context.publishNonCancellable();
+    return true;
+}
+
+WorkResult CreateLayoutBackup(
+    const WorkContext& context,
+    std::wstring requestedName,
+    std::stop_token stop,
+    bool finalCommit)
 {
     WorkResult result;
     if (stop.stop_requested())
@@ -530,6 +553,11 @@ WorkResult CreateLayoutBackup(
 
     bool layoutCreated = false;
     bool storageCreated = false;
+    if (finalCommit && !TryBeginNonInterruptible(context))
+    {
+        result.cancelled = true;
+        return result;
+    }
     if (!CopyFileW(context.paths.layoutFile.c_str(),
             layoutDestination.c_str(), TRUE))
     {
@@ -650,13 +678,19 @@ WorkResult RestoreLayoutBackup(
     }
 
     WorkResult safetyBackup = CreateLayoutBackup(context,
-        MakeLayoutTimestampName() + context.beforeRestoreSuffix, stop);
+        MakeLayoutTimestampName() + context.beforeRestoreSuffix, stop,
+        false);
     if (!safetyBackup.ok)
         return safetyBackup;
 
     // The worker stops at a validated immutable payload. Only DesktopApp's
     // settings STA may replace live files and reconcile the in-memory model.
     if (stop.stop_requested())
+    {
+        result.cancelled = true;
+        return result;
+    }
+    if (!TryBeginNonInterruptible(context))
     {
         result.cancelled = true;
         return result;
@@ -680,6 +714,11 @@ WorkResult DeleteLayoutBackup(
         return result;
     }
     if (stop.stop_requested())
+    {
+        result.cancelled = true;
+        return result;
+    }
+    if (!TryBeginNonInterruptible(context))
     {
         result.cancelled = true;
         return result;
@@ -777,6 +816,11 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
 
     auto manager = MakeFullBackupManager(context);
     snowdesktop::backup::OperationResult storageResult;
+    const snowdesktop::CancellationContext cancellation{
+        stop,
+        [&context] {
+            return TryBeginNonInterruptible(context);
+        }};
     switch (context.request.command)
     {
     case BackupDataCommand::CreateFullBackup:
@@ -785,7 +829,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
             result.cancelled = true;
             return result;
         }
-        storageResult = manager.Create();
+        storageResult = manager.Create(cancellation);
         break;
     case BackupDataCommand::ImportAndRestoreFullBackup:
         if (context.request.selectedPath.empty())
@@ -799,7 +843,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
             return result;
         }
         storageResult = manager.ImportAndQueue(
-            context.request.selectedPath);
+            context.request.selectedPath, cancellation);
         result.replacementQueued = storageResult.ok;
         break;
     case BackupDataCommand::ExportFullBackup:
@@ -828,7 +872,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
             return result;
         }
         storageResult = manager.Export(
-            *backup, context.request.selectedPath);
+            *backup, context.request.selectedPath, cancellation);
         break;
     }
     case BackupDataCommand::RestoreFullBackup:
@@ -851,7 +895,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
             result.cancelled = true;
             return result;
         }
-        storageResult = manager.QueueRestore(*backup);
+        storageResult = manager.QueueRestore(*backup, cancellation);
         result.replacementQueued = storageResult.ok;
         break;
     }
@@ -875,7 +919,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
             result.cancelled = true;
             return result;
         }
-        storageResult = manager.Delete(*backup);
+        storageResult = manager.Delete(*backup, cancellation);
         break;
     }
     case BackupDataCommand::MigrateData:
@@ -903,7 +947,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
         // QueueDirectory reuses FullDataBackupManager's validated hand-off to
         // portable_data_migration; no second archive or migration format is
         // introduced by the WinUI backend.
-        storageResult = manager.QueueDirectory(source);
+        storageResult = manager.QueueDirectory(source, cancellation);
         result.replacementQueued = storageResult.ok;
         break;
     }
@@ -913,6 +957,7 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
     }
 
     result.ok = storageResult.ok;
+    result.cancelled = storageResult.cancelled;
     result.error = std::move(storageResult.error);
     return result;
 }
@@ -1116,6 +1161,7 @@ struct BackupDataPageBackend::State final
     SnapshotChangedCallback snapshotChanged;
     std::map<std::wstring, std::filesystem::path> fullBackupRoots;
     std::jthread worker;
+    std::shared_ptr<BackupOperationControl> operationControl;
     mutable std::mutex completionMutex;
     std::optional<WorkCompletion> pendingCompletion;
     std::uint64_t nextRequestId = 1;
@@ -1308,7 +1354,11 @@ struct BackupDataPageBackend::State final
     void RequestWorkerStop() noexcept
     {
         if (inFlightTaskId != 0)
+        {
+            if (operationControl)
+                (void)operationControl->RequestCancellation();
             (void)worker.request_stop();
+        }
     }
 
     bool CanFinalizeClosedLifecycle() const noexcept
@@ -1361,18 +1411,14 @@ struct BackupDataPageBackend::State final
         context.beforeRestoreSuffix = L(
             "app.settings.backup_before_restore_suffix",
             L" (Before restore)");
+        context.operationControl =
+            std::make_shared<BackupOperationControl>();
 
         snapshot.notice.reset();
         snapshot.operation.requestId = context.requestId;
         snapshot.operation.operation = operation;
         snapshot.operation.running = true;
-        snapshot.operation.cancellable = context.kind == WorkKind::Refresh ||
-            context.request.command ==
-                BackupDataCommand::CreateLayoutBackup ||
-            context.request.command ==
-                BackupDataCommand::RestoreLayoutBackup ||
-            context.request.command ==
-                BackupDataCommand::DeleteLayoutBackup;
+        snapshot.operation.cancellable = true;
         snapshot.operation.indeterminate = true;
         snapshot.operation.progress = 0.0;
         snapshot.operation.message = std::move(message);
@@ -1382,6 +1428,7 @@ struct BackupDataPageBackend::State final
         // that stop request and could let an inactive replacement proceed.
         context.revision = snapshot.revision + 1;
         inFlightTaskId = context.requestId;
+        operationControl = context.operationControl;
         if (context.kind == WorkKind::Action &&
             QueuesExternalReplacement(context.request.command))
         {
@@ -1392,6 +1439,48 @@ struct BackupDataPageBackend::State final
 
         const BackupDataCommand command = context.request.command;
         const auto self = shared_from_this();
+        const std::weak_ptr<State> weak = self;
+        const std::weak_ptr<BackupOperationControl> weakControl =
+            context.operationControl;
+        const auto postToUi = options.postToUi;
+        context.publishNonCancellable =
+            [weak, weakControl, postToUi,
+             generation = context.generation,
+             expectedActivationId = context.activationId,
+             requestId = context.requestId] {
+                try
+                {
+                    (void)postToUi(
+                        [weak, weakControl, generation,
+                         expectedActivationId, requestId] {
+                            const auto state = weak.lock();
+                            const auto control = weakControl.lock();
+                            if (!state || !control || state->closed ||
+                                !state->active ||
+                                state->snapshot.generation != generation ||
+                                state->activationId != expectedActivationId ||
+                                state->inFlightTaskId != requestId ||
+                                state->operationControl != control ||
+                                !state->snapshot.operation.running ||
+                                state->snapshot.operation.requestId !=
+                                    requestId ||
+                                !control->NonInterruptible())
+                            {
+                                return;
+                            }
+                            if (state->snapshot.operation.cancellable)
+                            {
+                                state->snapshot.operation.cancellable = false;
+                                state->Publish();
+                            }
+                        });
+                }
+                catch (...)
+                {
+                    // The atomic phase remains authoritative if the window's
+                    // dispatcher disappears before this visual update.
+                }
+            };
         try
         {
             worker = std::jthread(
@@ -1399,7 +1488,20 @@ struct BackupDataPageBackend::State final
                     std::stop_token stop) mutable {
                     WorkCompletion completion;
                     completion.context = std::move(context);
-                    completion.result = RunWork(completion.context, stop);
+                    completion.context.operationControl->WaitUntilStarted();
+                    if (stop.stop_requested() ||
+                        completion.context.operationControl->
+                            CancellationRequested() ||
+                        completion.context.operationControl->Phase() ==
+                            BackupOperationPhase::Finished)
+                    {
+                        completion.result.cancelled = true;
+                    }
+                    else
+                    {
+                        completion.result =
+                            RunWork(completion.context, stop);
+                    }
                     {
                         std::lock_guard lock(self->completionMutex);
                         self->pendingCompletion = std::move(completion);
@@ -1427,9 +1529,14 @@ struct BackupDataPageBackend::State final
             // jthread's retained stop source.
             worker.detach();
             Publish();
+            (void)operationControl->EnableCancellation();
         }
         catch (...)
         {
+            RequestWorkerStop();
+            if (operationControl)
+                operationControl->Finish();
+            operationControl.reset();
             inFlightTaskId = 0;
             replacementLifecycleTaskId = 0;
             replacementLifecycleGeneration = 0;
@@ -1576,11 +1683,21 @@ struct BackupDataPageBackend::State final
         if (!IsCurrent(generation, revision) ||
             !snapshot.operation.running ||
             snapshot.operation.requestId != requestId ||
-            !snapshot.operation.cancellable)
+            !operationControl)
         {
             return;
         }
-        RequestWorkerStop();
+        if (!operationControl->RequestCancellation())
+        {
+            if (operationControl->NonInterruptible() &&
+                snapshot.operation.cancellable)
+            {
+                snapshot.operation.cancellable = false;
+                Publish();
+            }
+            return;
+        }
+        (void)worker.request_stop();
         snapshot.operation.cancellable = false;
         snapshot.operation.message =
             L("settings.backup.cancelling", L"Canceling…");
@@ -1726,9 +1843,14 @@ struct BackupDataPageBackend::State final
     void Finish(WorkCompletion completion)
     {
         const bool ownsTask =
-            inFlightTaskId == completion.context.requestId;
+            inFlightTaskId == completion.context.requestId &&
+            operationControl == completion.context.operationControl;
         if (!ownsTask)
+        {
+            if (completion.context.operationControl)
+                completion.context.operationControl->Finish();
             return;
+        }
 
         const bool matchingRequest = !closed && active &&
             snapshot.initialized &&
@@ -1748,6 +1870,8 @@ struct BackupDataPageBackend::State final
 
         inFlightTaskId = 0;
         worker = std::jthread{};
+        operationControl->Finish();
+        operationControl.reset();
         if (replacementLifecycleTaskId == completion.context.requestId)
         {
             replacementLifecycleTaskId = 0;
@@ -1755,12 +1879,11 @@ struct BackupDataPageBackend::State final
             replacementLifecycleActivationId = 0;
         }
 
-        // FullDataBackupManager's queue methods are synchronous and do not
-        // accept a stop token. Once one publishes a replacement transaction,
-        // it is an application-lifecycle obligation rather than a stale page
-        // result: dirty state must be discarded and restart requested even if
-        // the originating view was hidden. UI publication still requires the
-        // exact generation, activation and task guards above.
+        // Once FullDataBackupManager passes its non-interruptible publication
+        // gate, a queued replacement is an application-lifecycle obligation
+        // rather than a stale page result: dirty state must be discarded and
+        // restart requested even if the originating view was hidden. UI
+        // publication still requires the exact guards above.
         if (completion.result.replacementQueued && completion.result.ok)
         {
             if (lifecycleReplacement && CanFinalizeClosedLifecycle())
