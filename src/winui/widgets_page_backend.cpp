@@ -3752,8 +3752,7 @@ struct WidgetsPageBackend::Impl final
         }
 
         BeginTask(WidgetsPageTaskKind::SynchronizingWorkshop, {},
-            request.sourceId,
-            static_cast<bool>(options.cancelAsyncOperation));
+            request.sourceId, true);
         const std::uint64_t taskId = activeTaskId;
         const std::uint64_t taskGeneration = generation;
         const std::uint64_t taskActivation = activation;
@@ -3817,6 +3816,21 @@ struct WidgetsPageBackend::Impl final
             state->task.cancellable = false;
             state->task.status = L(
                 "settings.backup.cancelling", L"Canceling…");
+            Publish();
+            return true;
+        }
+        const widgets_page_backend_detail::OutstandingOperationIdentity
+            sourceSynchronization{
+                generation, activation, cancelledTask,
+                widgets_page_backend_detail::OutstandingOperationKind::
+                    SourceSynchronization};
+        if (outstandingOperations.Contains(sourceSynchronization))
+        {
+            // Steam does not expose a physical query abort. Detach only the
+            // visible page task; the exact ledger entry remains busy until
+            // the authoritative callback applies host state and arrives here.
+            activeTaskId = 0;
+            state->task = {};
             Publish();
             return true;
         }

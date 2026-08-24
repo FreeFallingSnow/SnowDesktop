@@ -74,6 +74,13 @@ public:
         return operations_.contains(taskId);
     }
 
+    [[nodiscard]] bool Contains(
+        const OutstandingOperationIdentity& identity) const noexcept
+    {
+        const auto found = operations_.find(identity.taskId);
+        return found != operations_.end() && found->second == identity;
+    }
+
     [[nodiscard]] std::vector<std::uint64_t> Tasks(
         OutstandingOperationKind kind) const
     {

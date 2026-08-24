@@ -289,6 +289,30 @@ void TestAsyncIdentityAndStaleResultRejection(const std::string& header,
             source.find("result.cancelled = true") != std::string::npos,
         "search cancellation keeps the mutation gate until terminal completion");
 
+    const auto sourceSync = source.find(
+        "bool SynchronizeSource(const WidgetsPageRequest& request)");
+    const auto sourceCancel = source.find(
+        "const widgets_page_backend_detail::OutstandingOperationIdentity\n"
+        "            sourceSynchronization", sourceSync);
+    const auto detachedTask = source.find("activeTaskId = 0;", sourceCancel);
+    const auto detachedPublish = source.find("Publish();", detachedTask);
+    const auto genericCancel = source.find(
+        "else if (options.cancelAsyncOperation)", sourceCancel);
+    Check(sourceSync != std::string::npos &&
+            source.find(
+                "request.sourceId, true);", sourceSync) !=
+                std::string::npos &&
+            sourceCancel != std::string::npos &&
+            source.find("outstandingOperations.Contains("
+                        "sourceSynchronization)", sourceCancel) !=
+                std::string::npos &&
+            detachedTask != std::string::npos &&
+            detachedPublish != std::string::npos &&
+            genericCancel != std::string::npos &&
+            sourceCancel < detachedTask && detachedTask < detachedPublish &&
+            detachedPublish < genericCancel,
+        "manual source synchronization detaches its cancellable page task while retaining the exact outstanding operation");
+
     Check(header.find("CompletionIdentityMatches(") != std::string::npos &&
             source.find("work.generation, work.activation, work.taskId") !=
                 std::string::npos &&
@@ -330,9 +354,17 @@ void TestOutstandingOperationLedgerBehavior()
         7, 11, 101, OutstandingOperationKind::Search};
     const OutstandingOperationIdentity synchronization{
         7, 11, 102, OutstandingOperationKind::SourceSynchronization};
+    const OutstandingOperationIdentity unsubscribe{
+        7, 11, 103, OutstandingOperationKind::WorkshopUnsubscribe};
 
     Check(ledger.Begin(search) && ledger.Begin(synchronization) &&
-            ledger.Busy() && ledger.Contains(search.taskId),
+            ledger.Begin(unsubscribe) && ledger.Busy() &&
+            ledger.Contains(search.taskId) &&
+            ledger.Contains(synchronization) &&
+            !ledger.Contains({7, 12, synchronization.taskId,
+                OutstandingOperationKind::SourceSynchronization}) &&
+            !ledger.Contains({7, 11, synchronization.taskId,
+                OutstandingOperationKind::WorkshopUnsubscribe}),
         "nonterminal search and synchronization operations close the mutation gate");
     Check(!ledger.Complete({7, 12, search.taskId,
                 OutstandingOperationKind::Search}) &&
@@ -342,7 +374,11 @@ void TestOutstandingOperationLedgerBehavior()
             !ledger.Contains(search.taskId) &&
             ledger.Tasks(OutstandingOperationKind::Search).empty(),
         "the exact terminal search completion releases only its own ledger entry");
-    Check(ledger.Complete(synchronization) && !ledger.Busy(),
+    Check(ledger.Complete(synchronization) && ledger.Busy() &&
+            !ledger.Contains(synchronization) &&
+            ledger.Contains(unsubscribe),
+        "a late synchronization completion releases its detached page operation without releasing a concurrent unsubscribe");
+    Check(ledger.Complete(unsubscribe) && !ledger.Busy(),
         "the mutation gate opens only after every background operation is terminal");
 }
 
@@ -554,6 +590,18 @@ void TestWorkshopAuthoritativeCompletion(
             timerDispatch.find("intentionally retained as placeholders") !=
                 std::string::npos,
         "Workshop completion waits for a real host reload and retains desktop placeholders");
+    const auto applySubscriptions = timerDispatch.find(
+        "ApplySteamWorkshopSubscriptions(");
+    const auto refreshSettings = timerDispatch.find(
+        "settingsWindow_->RefreshWidgetsPage()", applySubscriptions);
+    const auto notifyPage = timerDispatch.find(
+        "completion.done(", refreshSettings);
+    Check(applySubscriptions != std::string::npos &&
+            refreshSettings != std::string::npos &&
+            notifyPage != std::string::npos &&
+            applySubscriptions < refreshSettings &&
+            refreshSettings < notifyPage,
+        "authoritative Workshop state and the host snapshot update before a detached page completion releases its ledger entry");
 }
 
 void TestBackendContract(const std::filesystem::path& repository)

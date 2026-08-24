@@ -1007,9 +1007,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         reconciliationScheduleFailure));
         }).detach();
     };
-    // Subscription queries do not expose a cooperative abort. Keep the
-    // WinUI task non-cancellable until the authoritative poll completes so a
-    // second package mutation cannot overlap an in-flight reconciliation.
+    // Subscription queries do not expose a cooperative abort. The WinUI page
+    // may detach its visible synchronization task, while its outstanding
+    // operation ledger stays busy until this authoritative poll completes;
+    // package mutations therefore cannot overlap the reconciliation.
     settingsHostOptions.widgetsPage.hostStateChanged = [this]() {
         ReloadItems(false);
         if (settingsWindow_)
