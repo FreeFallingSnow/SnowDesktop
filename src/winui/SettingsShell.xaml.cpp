@@ -231,6 +231,13 @@ void SettingsShell::Close() noexcept
             homeAboutPage_->Deactivate();
             homeAboutPage_->Close();
         }
+        if (widgetSettingsPage_)
+        {
+            widgetSettingsPage_->Deactivate();
+            widgetSettingsPage_->Close();
+        }
+        if (widgetSettingsService_)
+            widgetSettingsService_->SetEventCallbacks({}, {});
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -246,6 +253,8 @@ void SettingsShell::Close() noexcept
     desktopPage_.reset();
     dockPage_.reset();
     homeAboutPage_.reset();
+    widgetSettingsPage_.reset();
+    widgetSettingsService_ = nullptr;
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -301,6 +310,8 @@ void SettingsShell::RefreshLocalizedText()
         dockPage_->RefreshLocalizedText();
     if (homeAboutPage_)
         homeAboutPage_->RefreshLocalizedText();
+    if (widgetSettingsPage_)
+        widgetSettingsPage_->RefreshLocalizedText();
     RenderRoute(true, false);
     if (!searchResults_.empty())
     {
@@ -369,6 +380,114 @@ bool SettingsShell::ApplyHomeAboutStatusPatch(
     return homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
 }
 
+void SettingsShell::SetWidgetSettingsService(
+    snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
+{
+    if (closed_ ||
+        (widgetSettingsService_ == service && widgetSettingsPage_))
+        return;
+    try
+    {
+        if (widgetSettingsService_)
+            widgetSettingsService_->SetEventCallbacks({}, {});
+        if (widgetSettingsPage_)
+        {
+            widgetSettingsPage_->Deactivate();
+            widgetSettingsPage_->Close();
+            widgetSettingsPage_.reset();
+        }
+
+        widgetSettingsService_ = service;
+        if (!widgetSettingsService_)
+            return;
+
+        widgetSettingsPage_ = std::make_unique<
+            snowdesktop::winui::WidgetSettingsPresenter>(
+                *widgetSettingsService_,
+                [this](std::string_view key) { return Localize(key); },
+                Resources().Lookup(
+                    winrt::box_value(L"SettingsShellCardStyle"))
+                    .as<mux::Style>());
+
+        snowdesktop::winui::WidgetSettingsPresenterCallbacks callbacks;
+        callbacks.mutationCompleted =
+            [this](std::string,
+                   snowdesktop::widget_runtime::WidgetSettingMutationResult
+                       result) {
+                if (closed_ || result.Succeeded())
+                    return;
+                std::wstring message;
+                if (!result.message.empty())
+                    message = winrt::to_hstring(result.message).c_str();
+                if (message.empty())
+                    message = Localize("settings.widget.saveFailed");
+                (void)ShowInfoForGeneration(
+                    navigation_.Generation(),
+                    SettingsShellInfoSeverity::Error,
+                    Localize("settings.status.error"),
+                    std::move(message));
+            };
+        callbacks.diagnostic =
+            [](std::wstring widgetId, std::string settingKey,
+               std::string diagnosticCode) {
+                std::wstring message = L"SnowDesktop widget settings: ";
+                message += widgetId;
+                message += L" / ";
+                message += winrt::to_hstring(settingKey).c_str();
+                message += L" / ";
+                message += winrt::to_hstring(diagnosticCode).c_str();
+                message += L"\n";
+                OutputDebugStringW(message.c_str());
+            };
+        widgetSettingsPage_->SetCallbacks(std::move(callbacks));
+        auto dispatchers = widgetSettingsPage_->EventDispatchers();
+        widgetSettingsService_->SetEventCallbacks(
+            std::move(dispatchers.snapshotChanged),
+            std::move(dispatchers.searchCompleted));
+
+        const auto& route = navigation_.Route();
+        if (route.page == SettingsPage::WidgetSettings)
+        {
+            if (const auto snapshot = widgetSettingsService_->Snapshot(
+                    route.widgetInstanceId))
+            {
+                (void)ApplyWidgetSettingsSnapshot(*snapshot);
+            }
+        }
+    }
+    catch (...)
+    {
+        try
+        {
+            if (widgetSettingsService_)
+                widgetSettingsService_->SetEventCallbacks({}, {});
+        }
+        catch (...)
+        {
+        }
+        widgetSettingsPage_.reset();
+        widgetSettingsService_ = nullptr;
+    }
+}
+
+bool SettingsShell::ApplyWidgetSettingsSnapshot(
+    const snowdesktop::widget_runtime::WidgetSettingsSnapshot& snapshot)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
+        !widgetSettingsPage_ ||
+        navigation_.Route().page != SettingsPage::WidgetSettings ||
+        navigation_.Route().widgetInstanceId != snapshot.widgetId ||
+        !widgetSettingsPage_->ApplySnapshot(snapshot))
+    {
+        return false;
+    }
+
+    renderedPageRoute_.reset();
+    RenderPageCards(true);
+    ScheduleFocus();
+    return true;
+}
+
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
     return generalPage_ && generalPage_->IsHotkeyCaptureActive();
@@ -398,6 +517,8 @@ void SettingsShell::SuspendInteraction() noexcept
             dockPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
+        if (widgetSettingsPage_)
+            widgetSettingsPage_->Deactivate();
     }
     catch (...)
     {
@@ -896,6 +1017,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::About;
     if (leavingHomeAbout && homeAboutPage_)
         homeAboutPage_->Deactivate();
+    const bool leavingWidgetSettings = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::WidgetSettings &&
+        pageRoute.page != SettingsPage::WidgetSettings;
+    if (leavingWidgetSettings && widgetSettingsPage_)
+        widgetSettingsPage_->Deactivate();
 
     PageCards().Children().Clear();
     focusTargets_.clear();
@@ -1038,8 +1164,31 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             "settings.widgets.permissions.description");
         break;
     case SettingsPage::WidgetSettings:
-        addPlaceholder("widget.fields", "settings.widget.fields",
-            "settings.widget.fields.description");
+        if (widgetSettingsPage_ &&
+            widgetSettingsPage_->WidgetId() ==
+                navigation_.Route().widgetInstanceId)
+        {
+            PageCards().Children().Append(widgetSettingsPage_->Content());
+            if (widgetSettingsService_)
+            {
+                if (const auto snapshot = widgetSettingsService_->Snapshot(
+                        navigation_.Route().widgetInstanceId))
+                {
+                    for (const auto& field : snapshot->fields)
+                    {
+                        RegisterFocusTarget(field.schema.key,
+                            widgetSettingsPage_->FocusTarget(
+                                field.schema.key));
+                    }
+                }
+            }
+            widgetSettingsPage_->Activate();
+        }
+        else
+        {
+            addPlaceholder("widget.fields", "settings.widget.fields",
+                "settings.widget.fields.description");
+        }
         break;
     case SettingsPage::BackupAndData:
         addPlaceholder("backup.layout", "settings.backup.layout",
@@ -1126,6 +1275,17 @@ void SettingsShell::ScheduleFocus()
 void SettingsShell::FocusPendingTarget()
 {
     const auto& focusId = navigation_.Route().focusId;
+    if (!focusId.empty() &&
+        navigation_.Route().page == SettingsPage::WidgetSettings &&
+        widgetSettingsPage_)
+    {
+        if (auto target = widgetSettingsPage_->FocusTarget(focusId))
+        {
+            target.StartBringIntoView();
+            (void)target.Focus(mux::FocusState::Keyboard);
+            return;
+        }
+    }
     if (!focusId.empty())
     {
         const auto it = focusTargets_.find(focusId);

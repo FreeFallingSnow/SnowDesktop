@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "Paramètres du composant",
   "settings.widget.fields.description": "Les champs fournis par le schéma de paramètres v2 du composant apparaissent ici.",
   "settings.widget.loadFailed": "Impossible de charger les paramètres du composant.",
+  "settings.widget.saveFailed": "Impossible d’enregistrer les paramètres du composant.",
   "settings.backup.layout": "Sauvegarde de la disposition",
   "settings.backup.layout.description": "Créez et restaurez des sauvegardes de la disposition du bureau.",
   "settings.backup.full": "Sauvegarde complète et migration",

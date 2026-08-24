@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "구성요소 설정",
   "settings.widget.fields.description": "구성요소의 v2 설정 스키마가 제공하는 필드가 여기에 표시됩니다.",
   "settings.widget.loadFailed": "구성요소 설정을 불러올 수 없습니다.",
+  "settings.widget.saveFailed": "구성요소 설정을 저장할 수 없습니다.",
   "settings.backup.layout": "레이아웃 백업",
   "settings.backup.layout.description": "바탕 화면 레이아웃 백업을 만들고 복원합니다.",
   "settings.backup.full": "전체 백업 및 마이그레이션",

@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "コンポーネント設定",
   "settings.widget.fields.description": "コンポーネントの v2 設定スキーマで提供されるフィールドがここに表示されます。",
   "settings.widget.loadFailed": "コンポーネント設定を読み込めませんでした。",
+  "settings.widget.saveFailed": "コンポーネント設定を保存できませんでした。",
   "settings.backup.layout": "レイアウトのバックアップ",
   "settings.backup.layout.description": "デスクトップレイアウトのバックアップを作成、復元します。",
   "settings.backup.full": "完全バックアップと移行",

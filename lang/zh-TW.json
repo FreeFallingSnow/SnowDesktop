@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "元件設定",
   "settings.widget.fields.description": "此處會顯示元件 v2 設定結構描述提供的欄位。",
   "settings.widget.loadFailed": "無法載入元件設定。",
+  "settings.widget.saveFailed": "無法儲存元件設定。",
   "settings.backup.layout": "配置備份",
   "settings.backup.layout.description": "建立和還原桌面配置備份。",
   "settings.backup.full": "完整備份與移轉",

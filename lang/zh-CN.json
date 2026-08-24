@@ -1148,6 +1148,7 @@
     "settings.widget.fields": "组件设置",
     "settings.widget.fields.description": "此处显示组件 v2 设置架构提供的字段。",
     "settings.widget.loadFailed": "无法加载组件设置。",
+    "settings.widget.saveFailed": "无法保存组件设置。",
     "settings.backup.layout": "布局备份",
     "settings.backup.layout.description": "创建和恢复桌面布局备份。",
     "settings.backup.full": "完整备份与迁移",

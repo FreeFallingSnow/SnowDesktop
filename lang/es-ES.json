@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "Configuración del componente",
   "settings.widget.fields.description": "Aquí aparecen los campos proporcionados por el esquema de configuración v2 del componente.",
   "settings.widget.loadFailed": "No se pudo cargar la configuración del componente.",
+  "settings.widget.saveFailed": "No se pudo guardar la configuración del componente.",
   "settings.backup.layout": "Copia de seguridad del diseño",
   "settings.backup.layout.description": "Crea y restaura copias de seguridad del diseño del escritorio.",
   "settings.backup.full": "Copia de seguridad completa y migración",

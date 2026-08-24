@@ -915,16 +915,17 @@ struct SettingsWindowHost::Impl
         if (!controller || !window || shuttingDown)
             return false;
         ++viewEpoch;
+        SuspendInteraction();
         const SettingsActionResult result = controller->CloseSession();
         if (!result.Succeeded())
         {
             --viewEpoch;
+            ResumeInteraction();
             ShowActionError(result);
             return false;
         }
         if (widgetSettingsService)
             widgetSettingsService->CloseAll();
-        SuspendInteraction();
         ShowWindow(window, SW_HIDE);
         return true;
     }
@@ -1007,6 +1008,7 @@ bool SettingsWindowHost::Initialize(
                 }
             });
         impl_->shell->SetCancelOperationCallback([](std::uint64_t) {});
+        impl_->shell->SetWidgetSettingsService(widgetSettingsService);
         impl_->ConfigurePageActions();
         impl_->RebuildSearchIndex();
 
@@ -1061,6 +1063,8 @@ void SettingsWindowHost::Shutdown() noexcept
         return;
     impl_->shuttingDown = true;
 
+    if (impl_->shell)
+        impl_->shell->SetWidgetSettingsService(nullptr);
     if (impl_->controller)
     {
         impl_->controller->SetSnapshotChangedCallback({});
@@ -1137,6 +1141,9 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     }
 
     impl_->ApplySnapshotNow(snapshot);
+    if (widgetLoad && widgetLoad->snapshot && impl_->shell)
+        (void)impl_->shell->ApplyWidgetSettingsSnapshot(
+            *widgetLoad->snapshot);
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))
         ShowWindow(impl_->window, SW_RESTORE);
@@ -1171,6 +1178,8 @@ bool SettingsWindowHost::Hide()
 void SettingsWindowHost::SetWidgetSettingsService(
     widget_runtime::WidgetSettingsService* service) noexcept
 {
+    if (impl_->shell)
+        impl_->shell->SetWidgetSettingsService(service);
     impl_->widgetSettingsService = service;
 }
 

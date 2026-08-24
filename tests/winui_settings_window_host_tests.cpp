@@ -102,6 +102,19 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shell.find("RenderPageCards(true)") != std::string::npos,
         "hidden settings sessions suspend controls and rebind them when reopened");
+    Check(shellHeader.find("SetWidgetSettingsService(") !=
+                std::string::npos &&
+            shellHeader.find("ApplyWidgetSettingsSnapshot(") !=
+                std::string::npos &&
+            shell.find("widgetSettingsPage_->EventDispatchers()") !=
+                std::string::npos &&
+            shell.find("widgetSettingsPage_->Content()") !=
+                std::string::npos &&
+            shell.find("widgetSettingsPage_->Deactivate()") !=
+                std::string::npos &&
+            source.find("ApplyWidgetSettingsSnapshot(") !=
+                std::string::npos,
+        "widget settings snapshots, service events, native content, and close flush are wired through the WinUI shell");
 }
 } // namespace
 

@@ -274,6 +274,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/settings_shell_navigation.h
     src/winui/settings_window_host.cpp
     src/winui/settings_window_host.h
+    src/winui/widget_settings_presenter.cpp
+    src/winui/widget_settings_presenter.h
     src/winui/winui_runtime.cpp
     src/winui/winui_runtime.h
     src/winui/xaml_metadata_provider_bridge.cpp
@@ -1268,6 +1270,13 @@ if (BUILD_TESTING)
         SOURCES tests/winui_home_about_page_presenter_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS about backup contract settings ui update winui)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiWidgetSettingsPresenterTests
+        winui_widget_settings_presenter
+        SOURCES tests/winui_widget_settings_presenter_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract lua security settings storage ui widget winui)
 
     snowdesktop_add_test(
         SnowDesktopWinUiSettingsWindowHostTests

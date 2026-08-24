@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "Configurações do widget",
   "settings.widget.fields.description": "Os campos fornecidos pelo esquema de configurações v2 do widget aparecem aqui.",
   "settings.widget.loadFailed": "Não foi possível carregar as configurações do widget.",
+  "settings.widget.saveFailed": "Não foi possível salvar as configurações do widget.",
   "settings.backup.layout": "Backup do layout",
   "settings.backup.layout.description": "Crie e restaure backups do layout da área de trabalho.",
   "settings.backup.full": "Backup completo e migração",

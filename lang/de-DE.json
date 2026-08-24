@@ -1148,6 +1148,7 @@
   "settings.widget.fields": "Komponenteneinstellungen",
   "settings.widget.fields.description": "Hier erscheinen Felder aus dem v2-Einstellungsschema der Komponente.",
   "settings.widget.loadFailed": "Die Komponenteneinstellungen konnten nicht geladen werden.",
+  "settings.widget.saveFailed": "Die Komponenteneinstellungen konnten nicht gespeichert werden.",
   "settings.backup.layout": "Layoutsicherung",
   "settings.backup.layout.description": "Sicherungen des Desktoplayouts erstellen und wiederherstellen.",
   "settings.backup.full": "Vollständige Sicherung und Migration",

@@ -10,6 +10,7 @@
 #include "home_about_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
+#include "widget_settings_presenter.h"
 
 #include <cstdint>
 #include <functional>
@@ -98,6 +99,10 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::HomeAboutPageActions actions);
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
+    void SetWidgetSettingsService(
+        snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
+    [[nodiscard]] bool ApplyWidgetSettingsSnapshot(
+        const snowdesktop::widget_runtime::WidgetSettingsSnapshot& snapshot);
 
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
@@ -211,6 +216,10 @@ private:
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
     std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
         homeAboutPage_;
+    snowdesktop::widget_runtime::WidgetSettingsService*
+        widgetSettingsService_ = nullptr;
+    std::unique_ptr<snowdesktop::winui::WidgetSettingsPresenter>
+        widgetSettingsPage_;
 
     snowdesktop::winui::SettingsShellNavigationState navigation_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;

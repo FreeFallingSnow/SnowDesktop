@@ -1148,6 +1148,7 @@
     "settings.widget.fields": "Widget settings",
     "settings.widget.fields.description": "Fields supplied by the widget's v2 settings schema appear here.",
     "settings.widget.loadFailed": "Could not load widget settings.",
+    "settings.widget.saveFailed": "Could not save widget settings.",
     "settings.backup.layout": "Layout backup",
     "settings.backup.layout.description": "Create and restore desktop-layout backups.",
     "settings.backup.full": "Full backup and migration",
