@@ -5,6 +5,7 @@
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
 #include "desktop_page_presenter.h"
+#include "dock_page_presenter.h"
 #include "general_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
@@ -90,6 +91,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::PersonalizationPageActions actions);
     void SetDesktopPageActions(
         snowdesktop::winui::DesktopPageActions actions);
+    void SetDockPageActions(
+        snowdesktop::winui::DockPageActions actions);
 
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
@@ -200,6 +203,7 @@ private:
     std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
+    std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
 
     snowdesktop::winui::SettingsShellNavigationState navigation_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;

@@ -171,6 +171,10 @@ SettingsShell::SettingsShell()
             [this](std::string_view key) { return Localize(key); },
             Resources().Lookup(
                 winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
+    dockPage_ = std::make_unique<snowdesktop::winui::DockPagePresenter>(
+        [this](std::string_view key) { return Localize(key); },
+        Resources().Lookup(
+            winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -208,6 +212,11 @@ void SettingsShell::Close() noexcept
             desktopPage_->Deactivate();
             desktopPage_->Close();
         }
+        if (dockPage_)
+        {
+            dockPage_->Deactivate();
+            dockPage_->Close();
+        }
         if (activeDialog_)
             activeDialog_.Hide();
     }
@@ -221,6 +230,7 @@ void SettingsShell::Close() noexcept
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
+    dockPage_.reset();
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -272,6 +282,8 @@ void SettingsShell::RefreshLocalizedText()
         personalizationPage_->RefreshLocalizedText();
     if (desktopPage_)
         desktopPage_->RefreshLocalizedText();
+    if (dockPage_)
+        dockPage_->RefreshLocalizedText();
     RenderRoute(true, false);
     if (!searchResults_.empty())
     {
@@ -320,6 +332,13 @@ void SettingsShell::SetDesktopPageActions(
         desktopPage_->SetActions(std::move(actions));
 }
 
+void SettingsShell::SetDockPageActions(
+    snowdesktop::winui::DockPageActions actions)
+{
+    if (dockPage_)
+        dockPage_->SetActions(std::move(actions));
+}
+
 bool SettingsShell::IsHotkeyCaptureActive() const noexcept
 {
     return generalPage_ && generalPage_->IsHotkeyCaptureActive();
@@ -353,6 +372,8 @@ bool SettingsShell::ApplySnapshot(
             personalizationPage_->ApplySnapshot(snapshot);
         if (desktopPage_)
             desktopPage_->ApplySnapshot(snapshot);
+        if (dockPage_)
+            dockPage_->ApplySnapshot(snapshot);
         const bool routeChanged = previousRoute != navigation_.Route();
         const bool generationChanged =
             previousGeneration != navigation_.Generation();
@@ -794,6 +815,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::Desktop;
     if (leavingDesktop && desktopPage_)
         desktopPage_->Deactivate();
+    const bool leavingDock = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::DockAndTaskbar &&
+        pageRoute.page != SettingsPage::DockAndTaskbar;
+    if (leavingDock && dockPage_)
+        dockPage_->Deactivate();
 
     PageCards().Children().Clear();
     focusTargets_.clear();
@@ -894,12 +920,43 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::DockAndTaskbar:
-        addPlaceholder("dock.dock", "settings.dock.dock",
-            "settings.dock.dock.description");
-        addPlaceholder("dock.items", "settings.dock.items",
-            "settings.dock.items.description");
-        addPlaceholder("dock.taskbar", "settings.dock.taskbar",
-            "settings.dock.taskbar.description");
+        if (dockPage_)
+        {
+            PageCards().Children().Append(dockPage_->Content());
+            for (const std::string_view focusId : {
+                     "dock.enable",
+                     "dock.position",
+                     "dock.layout",
+                     "dock.monitor",
+                     "dock.thickness",
+                     "dock.floatingShortcutMode",
+                     "dock.floatingEdgeSwipe",
+                     "dock.showWindowsButton",
+                     "dock.showFrequentItems",
+                     "dock.frequentItemCount",
+                     "dock.keepWhenDesktopHidden",
+                     "taskbar.autoHide",
+                     "taskbar.alignment",
+                     "taskbar.theme",
+                     "taskbar.contentTheme",
+                     "taskbar.backgroundColor",
+                     "taskbar.borderColor",
+                     "taskbar.backgroundOpacity",
+                     "taskbar.borderOpacity",
+                     "taskbar.glass",
+                     "taskbar.blurRadius",
+                     "taskbar.acrylic",
+                     "taskbar.restartExplorer",
+                     "taskbar.visibleWindow",
+                     "taskbar.maximizedWindow",
+                     "taskbar.shellUi"})
+            {
+                RegisterFocusTarget(
+                    std::string(focusId),
+                    dockPage_->FocusTarget(focusId));
+            }
+            dockPage_->Activate();
+        }
         break;
     case SettingsPage::Widgets:
         addPlaceholder("widgets.installed", "settings.widgets.installed",
