@@ -140,6 +140,14 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     }
     if (ReadIntField(text, "collectionPopupTheme", theme))
         settings.collectionPopupTheme = std::clamp(theme, 0, 3);
+    int settingsWindowTheme = 0;
+    if (ReadIntField(text, "settingsWindowTheme", settingsWindowTheme) &&
+        settingsWindowTheme >= static_cast<int>(SettingsWindowTheme::System) &&
+        settingsWindowTheme <= static_cast<int>(SettingsWindowTheme::Dark))
+    {
+        settings.settingsWindowTheme =
+            static_cast<SettingsWindowTheme>(settingsWindowTheme);
+    }
     int agentSkillTargetMask = 0;
     if (ReadIntField(text, "agentSkillTargetMask", agentSkillTargetMask) &&
         agentSkillTargetMask >= 0 &&
@@ -187,6 +195,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << ",\n";
     file << "  \"agentSkillTargetMask\": "
          << settings.agentSkillTargetMask << ",\n";
+    file << "  \"settingsWindowTheme\": "
+         << static_cast<int>(settings.settingsWindowTheme) << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
     return true;
