@@ -871,21 +871,22 @@ struct SettingsWindowHost::Impl
     {
         if (!callbacks || callbacks->flushQueued.exchange(true))
             return;
-        const std::uint64_t expectedEpoch = viewEpoch;
         const std::weak_ptr<CallbackState> weak = callbacks;
         try
         {
             if (!callbacks->dispatcher.TryEnqueue(
-                    [weak, expectedEpoch]() {
+                    [weak]() {
                         const auto state = weak.lock();
                         if (!state)
                             return;
                         state->flushQueued.store(false);
-                        if (!state->alive.load() || !state->owner ||
-                            state->owner->viewEpoch != expectedEpoch)
-                        {
+                        // Controller work belongs to the application session,
+                        // not to one rendered route. A visible-window Open can
+                        // legitimately advance the rendered-view epoch first;
+                        // runs; dropping the only pending notification there
+                        // would strand preview/commit work until shutdown.
+                        if (!state->alive.load() || !state->owner)
                             return;
-                        }
                         state->owner->FlushPendingNow();
                     }))
             {

@@ -172,6 +172,29 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("Present(") == std::string::npos,
         "the new settings host has no ImGui, D3D, swap-chain, or manual-present path");
 
+    const std::size_t pendingFlushBegin = source.find(
+        "void QueuePendingFlush()");
+    const std::size_t pendingFlushEnd = source.find(
+        "void FlushPendingNow()", pendingFlushBegin);
+    const std::string_view pendingFlushFunction =
+        pendingFlushBegin != std::string::npos &&
+            pendingFlushEnd != std::string::npos
+        ? std::string_view(source).substr(
+            pendingFlushBegin, pendingFlushEnd - pendingFlushBegin)
+        : std::string_view{};
+    Check(pendingFlushFunction.find("flushQueued.exchange(true)") !=
+                std::string_view::npos &&
+            pendingFlushFunction.find("flushQueued.store(false)") !=
+                std::string_view::npos &&
+            pendingFlushFunction.find("FlushPendingNow()") !=
+                std::string_view::npos &&
+            pendingFlushFunction.find("expectedEpoch") ==
+                std::string_view::npos &&
+            pendingFlushFunction.find("viewEpoch") ==
+                std::string_view::npos &&
+            source.find("++impl_->viewEpoch;") != std::string::npos,
+        "controller pending work survives a visible-window Open that advances only the rendered-view epoch");
+
     const std::size_t commitBegin = source.find(
         "bool CommitRoute(const SettingsRoute& route");
     const std::size_t commitEnd = source.find(
