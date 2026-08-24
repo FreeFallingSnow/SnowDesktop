@@ -269,6 +269,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/pch.h
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
+    src/winui/settings_window_host.cpp
+    src/winui/settings_window_host.h
     src/winui/winui_runtime.cpp
     src/winui/winui_runtime.h
     src/winui/xaml_metadata_provider_bridge.cpp
@@ -1249,6 +1251,13 @@ if (BUILD_TESTING)
         SOURCES tests/winui_dock_page_presenter_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract dock settings taskbar ui winui)
+
+    snowdesktop_add_test(
+        SnowDesktopWinUiSettingsWindowHostTests
+        winui_settings_window_host
+        SOURCES tests/winui_settings_window_host_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract integration lifecycle navigation settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSlotContractMatrixTests

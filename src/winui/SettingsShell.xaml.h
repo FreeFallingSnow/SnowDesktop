@@ -97,6 +97,11 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
 
+    /** Pause active page input while the reusable top-level HWND is hidden. */
+    void SuspendInteraction() noexcept;
+    /** Rebind and reactivate the current route after the HWND is shown again. */
+    void ResumeInteraction() noexcept;
+
     /**
      * Applies an immutable controller publication.  Returns false for an
      * invalid route or a stale generation/revision pair.

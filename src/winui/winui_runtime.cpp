@@ -355,6 +355,20 @@ bool WinUiRuntime::PreTranslateMessage(MSG* message) noexcept
 {
     if (!impl_->initialized || !impl_->OnOwnerThread() || !message)
         return false;
+    if (!impl_->parentWindow || !impl_->islandWindow || !message->hwnd)
+        return false;
+
+    // ContentPreTranslateMessage is process-global. Feeding it input for the
+    // desktop, Dock, or helper HWNDs lets the Island consume unrelated keys.
+    // Include owned XAML popup windows through GA_ROOTOWNER while keeping the
+    // settings top-level window as the only accepted root.
+    const HWND target = message->hwnd;
+    if (target != impl_->parentWindow && target != impl_->islandWindow &&
+        !IsChild(impl_->parentWindow, target) &&
+        GetAncestor(target, GA_ROOTOWNER) != impl_->parentWindow)
+    {
+        return false;
+    }
     return ::ContentPreTranslateMessage(message);
 }
 

@@ -352,6 +352,41 @@ void SettingsShell::CaptureRegisteredHotkey(
         generalPage_->CaptureRegisteredHotkey(modifiers, virtualKey);
 }
 
+void SettingsShell::SuspendInteraction() noexcept
+{
+    if (closed_)
+        return;
+    try
+    {
+        if (generalPage_)
+            generalPage_->Deactivate();
+        if (personalizationPage_)
+            personalizationPage_->Deactivate();
+        if (desktopPage_)
+            desktopPage_->Deactivate();
+        if (dockPage_)
+            dockPage_->Deactivate();
+    }
+    catch (...)
+    {
+    }
+}
+
+void SettingsShell::ResumeInteraction() noexcept
+{
+    if (closed_)
+        return;
+    try
+    {
+        renderedPageRoute_.reset();
+        RenderPageCards(true);
+        ScheduleFocus();
+    }
+    catch (...)
+    {
+    }
+}
+
 bool SettingsShell::ApplySnapshot(
     const snowdesktop::SettingsSnapshot& snapshot) noexcept
 {
