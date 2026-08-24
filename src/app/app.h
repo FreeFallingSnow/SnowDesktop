@@ -135,6 +135,12 @@
 
 using Microsoft::WRL::ComPtr;
 
+namespace snowdesktop::widget_runtime
+{
+class IWidgetSettingsBackend;
+class WidgetSettingsService;
+}
+
 // Shared render helpers used by both the remaining inline render code and the
 // extracted rendering translation units. Keep their declarations independent
 // of DesktopApp so pure color conversion/brush-key logic stays reusable.
@@ -389,7 +395,7 @@ class DesktopApp : private OleDragDropHandler
 {
 public:
     /** @brief 默认构造函数。 */
-    DesktopApp() = default;
+    DesktopApp();
 
     /** @brief 析构函数，释放所有 COM 资源、GPU 资源和窗口资源。 */
     ~DesktopApp();
@@ -1136,6 +1142,8 @@ private:
                 snowdesktop::SettingsPage::Home));
     /** Initialize the application-lifetime settings state owner. */
     void InitializeSettingsController();
+    /** Release settings UI and services while their borrowed owners are alive. */
+    void ShutdownSettingsInfrastructure() noexcept;
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
     /** @brief 加载导航设置并应用（注册热键等）。 */
@@ -2869,8 +2877,12 @@ private:
     class SettingsHostActionsAdapter;
     std::unique_ptr<snowdesktop::SettingsHostActions> settingsHostActions_;
     std::unique_ptr<snowdesktop::SettingsController> settingsController_;
-    std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
+    std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>
+        widgetSettingsBackend_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSettingsService>
+        widgetSettingsService_;
+    std::unique_ptr<SettingsWindow> settingsWindow_;
     std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
         widgetAccessibilityProvider_;
     struct PendingLuaWidgetConsent

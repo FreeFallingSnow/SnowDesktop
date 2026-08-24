@@ -1,5 +1,7 @@
 #include "app.h"
 #include "../drag_input_rules.h"
+#include "../widget_engine_settings_backend.h"
+#include "../widget_settings_service.h"
 
 #include <commoncontrols.h>
 #include <imm.h>
@@ -1024,6 +1026,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             [this](const std::wstring& widgetId) {
                 CloseLuaWidgetPanel(widgetId, "widget");
             });
+        widgetSettingsBackend_ = snowdesktop::widget_runtime::
+            CreateWidgetEngineSettingsBackend(*widgetEngine_);
+        widgetSettingsService_ = std::make_unique<
+            snowdesktop::widget_runtime::WidgetSettingsService>(
+                *widgetSettingsBackend_);
         if (settingsWindow_)
         {
             settingsWindow_->SetWidgetEngine(widgetEngine_.get());
@@ -1031,6 +1038,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     else
     {
+        widgetSettingsService_.reset();
+        widgetSettingsBackend_.reset();
         widgetEngine_.reset();
     }
     widgetAccessibilityProvider_ = std::make_unique<
@@ -1186,6 +1195,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             settingsWindow_->Render();
     }
     widgetAccessibilityProvider_.reset();
+    ShutdownSettingsInfrastructure();
     uiAnimationScheduler_.Shutdown();
     OleUninitialize();
     return static_cast<int>(msg.wParam);

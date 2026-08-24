@@ -1,7 +1,11 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "../widget_engine_settings_backend.h"
+#include "../widget_settings_service.h"
 
 // Desktop host lifecycle.
+
+DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
@@ -36,11 +40,7 @@ DesktopApp::~DesktopApp()
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
     widgetAccessibilityProvider_.reset();
-    settingsWindow_.reset();
-    if (settingsController_)
-        (void)settingsController_->CloseSession();
-    settingsController_.reset();
-    settingsHostActions_.reset();
+    ShutdownSettingsInfrastructure();
     widgetEngine_.reset();
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
     {
@@ -65,6 +65,21 @@ DesktopApp::~DesktopApp()
     }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
+}
+
+void DesktopApp::ShutdownSettingsInfrastructure() noexcept
+{
+    settingsWindow_.reset();
+    if (widgetSettingsService_)
+    {
+        widgetSettingsService_->CloseAll();
+        widgetSettingsService_.reset();
+    }
+    widgetSettingsBackend_.reset();
+    if (settingsController_)
+        (void)settingsController_->CloseSession();
+    settingsController_.reset();
+    settingsHostActions_.reset();
 }
 
 /**
