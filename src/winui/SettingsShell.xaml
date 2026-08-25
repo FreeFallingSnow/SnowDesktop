@@ -81,10 +81,9 @@
             </NavigationView.Resources>
             <NavigationView.PaneHeader>
                 <Grid x:Name="SidebarSearchHost"
-                      Width="228"
                       Height="32"
                       Margin="16,8,16,12"
-                      HorizontalAlignment="Left"
+                      HorizontalAlignment="Stretch"
                       VerticalAlignment="Center"
                       ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
@@ -163,14 +162,13 @@
 
                 <Grid Grid.Row="1">
                     <ScrollViewer x:Name="PageScrollViewer"
-                                  HorizontalContentAlignment="Center"
-                                  HorizontalScrollMode="Disabled"
+                                  MaxWidth="1200"
+                                  HorizontalAlignment="Stretch"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
                         <Border x:Name="PageSurface"
-                                MaxWidth="1120"
                                 Margin="40,16,40,48"
-                                HorizontalAlignment="Center">
+                                HorizontalAlignment="Stretch">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
                                 <StackPanel Spacing="4">
