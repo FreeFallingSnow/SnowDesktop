@@ -1672,35 +1672,25 @@ void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
 
     const bool autoHide = IsSystemTaskbarAutoHideEnabled();
     const int alignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
-    DockSettings synchronized = dockSettings_;
+    bool dockDraftPending = false;
 
-    // A route change can race a coalesced Dock edit. Do not replace a user's
-    // draft with an external read; the next clean entry or Shell notification
-    // will reconcile it. Build from the controller snapshot so every other
-    // Dock field also keeps its authoritative value.
+    // Auto-hide and alignment belong to Windows, but the rest of Dock can have
+    // an unrelated draft. Reconcile only these two fields; the controller
+    // protects either field when the user has edited it in this session.
     if (settingsController_)
     {
         const auto snapshot = settingsController_->Snapshot();
         if (snapshot)
         {
-            if (snapshot->externalReplacementPending ||
-                snowdesktop::HasSettingsDomain(
-                    snapshot->dirtyDomains,
-                    snowdesktop::SettingsDomain::Dock))
-            {
+            if (snapshot->externalReplacementPending)
                 return;
-            }
-            synchronized = snapshot->values.dock;
+            dockDraftPending = snowdesktop::HasSettingsDomain(
+                snapshot->dirtyDomains,
+                snowdesktop::SettingsDomain::Dock);
         }
-        synchronized.systemTaskbarAutoHide = autoHide;
-        synchronized.systemTaskbarAlignment = alignment;
-        if (!settingsController_->SynchronizeDock(synchronized))
+        if (!settingsController_->SynchronizeSystemTaskbarState(
+                autoHide, alignment == 1))
             return;
-    }
-    else
-    {
-        synchronized.systemTaskbarAutoHide = autoHide;
-        synchronized.systemTaskbarAlignment = alignment;
     }
 
     const bool persistedMirrorChanged =
@@ -1708,7 +1698,9 @@ void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
         dockSettings_.systemTaskbarAlignment != alignment;
     dockSettings_.systemTaskbarAutoHide = autoHide;
     dockSettings_.systemTaskbarAlignment = alignment;
-    if (persistedMirrorChanged)
+    // Avoid persisting other in-memory Dock previews ahead of their commit.
+    // A later successful Dock commit writes the reconciled system mirror too.
+    if (persistedMirrorChanged && !dockDraftPending)
         SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
 }
 

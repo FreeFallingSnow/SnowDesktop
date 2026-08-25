@@ -124,6 +124,10 @@ struct SettingsDomainRevisions
 {
     std::uint64_t personalization = 0;
     std::uint64_t dock = 0;
+    // Windows-owned taskbar fields may change while an unrelated Dock draft
+    // is pending. Keep their presenter revision independent from the coarse
+    // Dock domain so that reconciliation does not repaint local slider drafts.
+    std::uint64_t systemTaskbar = 0;
     std::uint64_t navigation = 0;
     std::uint64_t general = 0;
     std::uint64_t category = 0;
@@ -350,6 +354,14 @@ public:
     [[nodiscard]] bool SynchronizePersonalization(
         PersonalizationSettings settings);
     [[nodiscard]] bool SynchronizeDock(DockSettings settings);
+    /**
+     * Reconcile the Windows-owned auto-hide and alignment fields without
+     * replacing unrelated Dock drafts. A field edited in the current settings
+     * session remains protected until that Dock commit succeeds.
+     */
+    [[nodiscard]] bool SynchronizeSystemTaskbarState(
+        bool autoHide,
+        bool alignmentCentered);
     [[nodiscard]] bool SynchronizeNavigation(NavigationSettings settings);
     [[nodiscard]] bool SynchronizeGeneral(GeneralSettings settings);
     [[nodiscard]] bool SynchronizeCategory(CategorySettings settings);
@@ -380,6 +392,7 @@ private:
     SettingsDomain pendingPreviewDomains_ = SettingsDomain::None;
     SettingsDomain pendingCommitDomains_ = SettingsDomain::None;
     std::array<std::uint64_t, 6> domainRevisions_{};
+    std::uint64_t systemTaskbarRevision_ = 0;
     std::uint64_t revision_ = 0;
     std::uint64_t generation_ = 0;
     bool initialized_ = false;
@@ -387,6 +400,8 @@ private:
     bool flushing_ = false;
     bool retryRequired_ = false;
     bool externalReplacementPending_ = false;
+    bool systemTaskbarAutoHideEdited_ = false;
+    bool systemTaskbarAlignmentEdited_ = false;
     std::wstring lastActionMessage_;
     SnapshotPtr snapshot_;
     SnapshotChangedCallback snapshotChangedCallback_;

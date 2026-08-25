@@ -174,11 +174,12 @@ int main(int argc, char** argv)
             taskbarSync.find("snapshot->dirtyDomains") !=
                 std::string_view::npos &&
             AppearsBefore(taskbarSync,
-                "settingsController_->SynchronizeDock(synchronized)",
+                "settingsController_->SynchronizeSystemTaskbarState(",
                 "dockSettings_.systemTaskbarAutoHide = autoHide;") &&
-            taskbarSync.find("if (persistedMirrorChanged)\n") !=
+            taskbarSync.find(
+              "if (persistedMirrorChanged && !dockDraftPending)") !=
                 std::string_view::npos,
-        "external taskbar reconciliation preserves Dock drafts and mutates the application mirror only after controller synchronization");
+        "external taskbar reconciliation updates only Windows-owned fields and never persists unrelated Dock drafts");
 
     const std::string_view externalRefresh = Between(run,
         "settingsHostOptions.refreshExternalState = [this]()",

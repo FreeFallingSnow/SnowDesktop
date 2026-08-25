@@ -416,11 +416,15 @@ struct DockPagePresenter::Impl
     std::uint64_t generation = 0;
     std::uint64_t generalRevision = 0;
     std::uint64_t dockRevision = 0;
+    std::uint64_t systemTaskbarRevision = 0;
     bool hasSnapshot = false;
     bool updatingControls = false;
     bool synchronizingPair = false;
     bool taskbarContentThemeCustomItems = false;
     bool taskbarHookRequired = false;
+    bool taskbarAutoHideValue = false;
+    int taskbarAlignmentValue = 1;
+    int windowsSystemThemeValue = 0;
     int taskbarContentThemeValue = -1;
     int taskbarAppearanceContentThemeValue = 0;
     bool active = false;
@@ -443,6 +447,7 @@ struct DockPagePresenter::Impl
     winrt::event_token taskbarGlassToken{};
     winrt::event_token taskbarAcrylicToken{};
     winrt::event_token windowsSystemThemeToken{};
+    winrt::event_token taskbarRootLoadedToken{};
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
@@ -657,6 +662,11 @@ struct DockPagePresenter::Impl
         muxc::RadioButtons choices{};
         choices.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         choices.MaxColumns(2);
+        // Keep application-owned RadioButton instances stable. Rebuilding a
+        // string Items collection while the control is unloaded can leave
+        // RadioButtons.SelectedIndex set but no generated container checked.
+        choices.Items().Append(muxc::RadioButton{});
+        choices.Items().Append(muxc::RadioButton{});
         return choices;
     }
 
@@ -892,6 +902,11 @@ struct DockPagePresenter::Impl
 
     void HookEvents()
     {
+        taskbarRootLoadedToken = taskbarRoot.Loaded(
+            [this](const auto&, const auto&) {
+                if (!closed)
+                    RefreshTaskbarEntryState();
+            });
         dockEnabledToken = dockEnabledToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -975,6 +990,8 @@ struct DockPagePresenter::Impl
         taskbarAutoHideToken = taskbarAutoHideToggle.Toggled(
             [this](const auto&, const auto&) {
                 const bool value = taskbarAutoHideToggle.IsOn();
+                if (!updatingControls)
+                    taskbarAutoHideValue = value;
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.systemTaskbarAutoHide = value;
@@ -984,6 +1001,8 @@ struct DockPagePresenter::Impl
             [this](const auto&, const auto&) {
                 const int value = taskbarAlignmentChoices.SelectedIndex();
                 if (value < 0) return;
+                if (!updatingControls)
+                    taskbarAlignmentValue = std::clamp(value, 0, 1);
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.systemTaskbarAlignment =
@@ -996,7 +1015,10 @@ struct DockPagePresenter::Impl
                     return;
                 const int value = windowsSystemThemeChoices.SelectedIndex();
                 if (value >= 0)
+                {
+                    windowsSystemThemeValue = std::clamp(value, 0, 1);
                     (void)RequestWindowsSystemLightThemeEnabled(value == 0);
+                }
             });
         taskbarThemeToken = taskbarThemeCombo.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -1455,6 +1477,15 @@ struct DockPagePresenter::Impl
         control.acrylic.IsOn(rule.appearance.acrylicEnabled);
     }
 
+    void PatchSystemTaskbarControls(const DockSettings& settings)
+    {
+        taskbarAutoHideValue = settings.systemTaskbarAutoHide;
+        taskbarAlignmentValue = std::clamp(
+            settings.systemTaskbarAlignment, 0, 1);
+        taskbarAutoHideToggle.IsOn(taskbarAutoHideValue);
+        SelectChoice(taskbarAlignmentChoices, taskbarAlignmentValue);
+    }
+
     void PatchDock(const DockSettings& settings)
     {
         positionCombo.SelectedIndex(std::clamp(
@@ -1467,11 +1498,10 @@ struct DockPagePresenter::Impl
         showWindowsButtonToggle.IsOn(settings.showWindowsButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
-        taskbarAutoHideToggle.IsOn(settings.systemTaskbarAutoHide);
-        taskbarAlignmentChoices.SelectedIndex(std::clamp(
-            settings.systemTaskbarAlignment, 0, 1));
-        windowsSystemThemeChoices.SelectedIndex(
-            IsWindowsSystemLightThemeEnabled() ? 0 : 1);
+        PatchSystemTaskbarControls(settings);
+        windowsSystemThemeValue =
+            IsWindowsSystemLightThemeEnabled() ? 0 : 1;
+        SelectChoice(windowsSystemThemeChoices, windowsSystemThemeValue);
         const int taskbarMode = MainTaskbarThemeMode(settings);
         taskbarThemeCombo.SelectedIndex(taskbarMode);
         taskbarContentThemeValue = std::clamp(
@@ -1638,20 +1668,29 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetHelpText(taskbarRuntimeStatus, text);
     }
 
-    void RefreshTaskbarRuntimeState()
+    void RefreshTaskbarEntryState()
     {
         const bool previousUpdating = updatingControls;
         updatingControls = true;
         try
         {
-            windowsSystemThemeChoices.SelectedIndex(
-                IsWindowsSystemLightThemeEnabled() ? 0 : 1);
+            taskbarAutoHideToggle.IsOn(taskbarAutoHideValue);
+            SelectChoice(taskbarAlignmentChoices, taskbarAlignmentValue);
+            windowsSystemThemeValue =
+                IsWindowsSystemLightThemeEnabled() ? 0 : 1;
+            SelectChoice(
+                windowsSystemThemeChoices, windowsSystemThemeValue);
             RefreshTaskbarRuntimeStatus();
         }
         catch (...)
         {
         }
         updatingControls = previousUpdating;
+    }
+
+    void RefreshTaskbarRuntimeState()
+    {
+        RefreshTaskbarEntryState();
     }
 
     void SetCardText(
@@ -1734,20 +1773,39 @@ struct DockPagePresenter::Impl
         }
     }
 
+    void SelectChoice(
+        const muxc::RadioButtons& choices,
+        int selectedIndex)
+    {
+        const int selected = std::clamp(selectedIndex, 0, 1);
+        for (int index = 0; index < 2; ++index)
+        {
+            if (const auto option =
+                    choices.Items().GetAt(index).try_as<muxc::RadioButton>())
+            {
+                option.IsChecked(index == selected);
+            }
+        }
+        choices.SelectedIndex(selected);
+    }
+
     void ReplaceChoiceItems(
         const muxc::RadioButtons& choices,
         const std::initializer_list<std::pair<
-            std::string_view, std::wstring_view>>& items)
+            std::string_view, std::wstring_view>>& items,
+        int selectedIndex)
     {
-        const int selected = choices.SelectedIndex();
-        choices.Items().Clear();
+        std::uint32_t index = 0;
         for (const auto& [key, fallback] : items)
-            choices.Items().Append(winrt::box_value(L(key, fallback)));
-        if (items.size())
         {
-            choices.SelectedIndex(std::clamp(
-                selected, 0, static_cast<int>(items.size()) - 1));
+            const auto option = choices.Items().GetAt(index).as<
+                muxc::RadioButton>();
+            const std::wstring text = L(key, fallback);
+            option.Content(winrt::box_value(text));
+            muxa::AutomationProperties::SetName(option, text);
+            ++index;
         }
+        SelectChoice(choices, selectedIndex);
     }
 
     void ReplaceTaskbarThemeItems(const muxc::ComboBox& combo)
@@ -2047,15 +2105,15 @@ struct DockPagePresenter::Impl
         ReplaceChoiceItems(taskbarAlignmentChoices, {
             {"app.settings.taskbar_left", L"Left"},
             {"app.settings.taskbar_center", L"Center"},
-        });
+        }, taskbarAlignmentValue);
         windowsSystemThemeRow.SetText(
             L("app.settings.appearance", L"Appearance"), systemPanelHelp);
+        windowsSystemThemeValue =
+            IsWindowsSystemLightThemeEnabled() ? 0 : 1;
         ReplaceChoiceItems(windowsSystemThemeChoices, {
             {"app.settings.light", L"Light"},
             {"app.settings.dark", L"Dark"},
-        });
-        windowsSystemThemeChoices.SelectedIndex(
-            IsWindowsSystemLightThemeEnabled() ? 0 : 1);
+        }, windowsSystemThemeValue);
         muxa::AutomationProperties::SetName(
             windowsSystemThemeChoices, windowsSystemThemeRow.label.Text());
         restartExplorerRow.SetText(
@@ -2182,6 +2240,15 @@ struct DockPagePresenter::Impl
         {
             PatchDock(snapshot.values.dock);
             dockRevision = snapshot.domainRevisions.dock;
+            systemTaskbarRevision =
+                snapshot.domainRevisions.systemTaskbar;
+        }
+        else if (snapshot.domainRevisions.systemTaskbar !=
+            systemTaskbarRevision)
+        {
+            PatchSystemTaskbarControls(snapshot.values.dock);
+            systemTaskbarRevision =
+                snapshot.domainRevisions.systemTaskbar;
         }
         if (newGeneration)
         {
@@ -2339,6 +2406,7 @@ struct DockPagePresenter::Impl
         confirmationGate->alive.store(false, std::memory_order_release);
         try
         {
+            taskbarRoot.Loaded(taskbarRootLoadedToken);
             dockEnabledToggle.Toggled(dockEnabledToken);
             positionCombo.SelectionChanged(positionToken);
             layoutCombo.SelectionChanged(layoutToken);

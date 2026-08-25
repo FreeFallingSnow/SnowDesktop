@@ -122,9 +122,9 @@ int main(int argc, char** argv)
                 std::string_view::npos &&
             syncTaskbar.find("snapshot->dirtyDomains") !=
                 std::string_view::npos &&
-            syncTaskbar.find("SynchronizeDock(synchronized)") !=
+            syncTaskbar.find("SynchronizeSystemTaskbarState(") !=
                 std::string_view::npos,
-        "taskbar state is not mirrored while Explorer is unavailable");
+        "taskbar state is field-synchronized only while Explorer is available");
 
     const std::string_view controller = FunctionBody(dockSettings,
         "class WindowsShellSettingsController",

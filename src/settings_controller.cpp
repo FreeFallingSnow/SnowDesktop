@@ -121,6 +121,9 @@ SettingsActionResult SettingsController::Initialize()
     ++generation_;
     ++revision_;
     domainRevisions_.fill(revision_);
+    systemTaskbarRevision_ = revision_;
+    systemTaskbarAutoHideEdited_ = false;
+    systemTaskbarAlignmentEdited_ = false;
     PublishSnapshot();
     return loadResult;
 }
@@ -153,6 +156,9 @@ SettingsActionResult SettingsController::Reload(SettingsReloadPolicy policy)
     ++generation_;
     ++revision_;
     domainRevisions_.fill(revision_);
+    systemTaskbarRevision_ = revision_;
+    systemTaskbarAutoHideEdited_ = false;
+    systemTaskbarAlignmentEdited_ = false;
     PublishSnapshot();
     return loadResult;
 }
@@ -273,6 +279,12 @@ void SettingsController::UpdateDock(
 {
     if (externalReplacementPending_) return;
     NormalizeDockSettings(settings);
+    systemTaskbarAutoHideEdited_ = systemTaskbarAutoHideEdited_ ||
+        settings.systemTaskbarAutoHide !=
+            values_.dock.systemTaskbarAutoHide;
+    systemTaskbarAlignmentEdited_ = systemTaskbarAlignmentEdited_ ||
+        settings.systemTaskbarAlignment !=
+            values_.dock.systemTaskbarAlignment;
     values_.dock = std::move(settings);
     MarkChanged(SettingsDomain::Dock, mode);
 }
@@ -391,6 +403,8 @@ SettingsActionResult SettingsController::FlushPending()
             commitDomains & ~previewBlocked;
         const SettingsValues committedValues = values_;
         const auto committedDomainRevisions = domainRevisions_;
+        const std::uint64_t committedSystemTaskbarRevision =
+            systemTaskbarRevision_;
         SettingsDomain hostCompleted = hostRequested;
         if (hostRequested != SettingsDomain::None && hostActions_)
         {
@@ -428,12 +442,21 @@ SettingsActionResult SettingsController::FlushPending()
 
             SettingsActionResult saveResult =
                 SaveDomain(domain, committedValues);
-            if (saveResult.Succeeded() &&
+            const bool revisionStillCurrent =
                 domainRevisions_[DomainIndex(domain)] ==
-                    committedDomainRevisions[DomainIndex(domain)])
+                    committedDomainRevisions[DomainIndex(domain)] &&
+                (domain != SettingsDomain::Dock ||
+                    systemTaskbarRevision_ ==
+                        committedSystemTaskbarRevision);
+            if (saveResult.Succeeded() && revisionStillCurrent)
             {
                 pendingCommitDomains_ &= ~domain;
                 dirtyDomains_ &= ~domain;
+                if (domain == SettingsDomain::Dock)
+                {
+                    systemTaskbarAutoHideEdited_ = false;
+                    systemTaskbarAlignmentEdited_ = false;
+                }
             }
             stateChanged = true;
             MergeResult(result, saveResult);
@@ -507,6 +530,9 @@ void SettingsController::PrepareForExternalDataReplacement()
     ++generation_;
     ++revision_;
     domainRevisions_.fill(revision_);
+    systemTaskbarRevision_ = revision_;
+    systemTaskbarAutoHideEdited_ = false;
+    systemTaskbarAlignmentEdited_ = false;
     PublishSnapshot();
 }
 
@@ -544,6 +570,36 @@ bool SettingsController::SynchronizeDock(DockSettings settings)
         [this, settings = std::move(settings)]() mutable {
             values_.dock = std::move(settings);
         });
+}
+
+bool SettingsController::SynchronizeSystemTaskbarState(
+    bool autoHide,
+    bool alignmentCentered)
+{
+    if (externalReplacementPending_)
+        return false;
+
+    const int alignment = alignmentCentered ? 1 : 0;
+    bool changed = false;
+    if (!systemTaskbarAutoHideEdited_ &&
+        values_.dock.systemTaskbarAutoHide != autoHide)
+    {
+        values_.dock.systemTaskbarAutoHide = autoHide;
+        changed = true;
+    }
+    if (!systemTaskbarAlignmentEdited_ &&
+        values_.dock.systemTaskbarAlignment != alignment)
+    {
+        values_.dock.systemTaskbarAlignment = alignment;
+        changed = true;
+    }
+    if (!changed)
+        return true;
+
+    ++revision_;
+    systemTaskbarRevision_ = revision_;
+    PublishSnapshot();
+    return true;
 }
 
 bool SettingsController::SynchronizeNavigation(NavigationSettings settings)
@@ -604,6 +660,8 @@ void SettingsController::MarkChanged(
         pendingCommitDomains_ |= domain;
     ++revision_;
     domainRevisions_[DomainIndex(domain)] = revision_;
+    if (domain == SettingsDomain::Dock)
+        systemTaskbarRevision_ = revision_;
     PublishSnapshot();
     SchedulePendingWorkIfNeeded(previouslyPending);
 }
@@ -621,6 +679,7 @@ void SettingsController::PublishSnapshot()
         domainRevisions_[DomainIndex(SettingsDomain::Personalization)];
     snapshot->domainRevisions.dock =
         domainRevisions_[DomainIndex(SettingsDomain::Dock)];
+    snapshot->domainRevisions.systemTaskbar = systemTaskbarRevision_;
     snapshot->domainRevisions.navigation =
         domainRevisions_[DomainIndex(SettingsDomain::Navigation)];
     snapshot->domainRevisions.general =
@@ -702,6 +761,8 @@ bool SettingsController::SynchronizeDomain(
     assign();
     ++revision_;
     domainRevisions_[DomainIndex(domain)] = revision_;
+    if (domain == SettingsDomain::Dock)
+        systemTaskbarRevision_ = revision_;
     PublishSnapshot();
     return true;
 }

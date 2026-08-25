@@ -48,10 +48,14 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("snapshot.domainRevisions.dock") !=
                 std::string::npos &&
+            source.find("snapshot.domainRevisions.systemTaskbar") !=
+                std::string::npos &&
+            source.find("PatchSystemTaskbarControls(") !=
+                std::string::npos &&
             source.find("SettingsSnapshot snapshot_") == std::string::npos &&
             source.find("DockSettings settings_") == std::string::npos &&
             source.find("updatingControls") != std::string::npos,
-        "only changed General and Dock domains patch cached controls");
+        "changed General, Dock, and Windows taskbar state patch only their owned controls");
 
     for (const char* field : {
              "dockEnabled", "position", "edgeAttached",
@@ -193,6 +197,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "the presenter never overwrites requested taskbar values by rereading Windows");
     Check(header.find("void ActivateTaskbar() noexcept;") !=
                 std::string::npos &&
+            source.find("taskbarRoot.Loaded(") != std::string::npos &&
+            source.find("RefreshTaskbarEntryState();") !=
+                std::string::npos &&
             source.find("void RefreshTaskbarRuntimeState()") !=
                 std::string::npos &&
             source.find("IsWindowsSystemLightThemeEnabled() ? 0 : 1") !=
@@ -204,7 +211,29 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find(
               "impl_->RefreshTaskbarRuntimeState();") !=
                 std::string::npos,
-        "taskbar activation refreshes Windows runtime state under the programmatic-update guard");
+        "taskbar activation and first Loaded refresh restore Windows state under the programmatic-update guard");
+    const auto choiceRefreshStart = source.find("void ReplaceChoiceItems(");
+    const auto choiceRefreshEnd = source.find(
+        "void ReplaceTaskbarThemeItems", choiceRefreshStart);
+    const std::string_view choiceRefresh =
+        choiceRefreshStart != std::string::npos &&
+                choiceRefreshEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  choiceRefreshStart,
+                  choiceRefreshEnd - choiceRefreshStart)
+            : std::string_view{};
+    Check(source.find(
+              "choices.Items().Append(muxc::RadioButton{});") !=
+                std::string::npos &&
+            choiceRefresh.find("Items().Clear()") ==
+                std::string_view::npos &&
+            choiceRefresh.find("option.Content(") !=
+                std::string_view::npos &&
+            choiceRefresh.find("AutomationProperties::SetName(option") !=
+                std::string_view::npos &&
+            source.find("option.IsChecked(index == selected);") !=
+                std::string::npos,
+        "binary choices retain stable RadioButton items and explicit checked state across localization and template loading");
     Check(source.find("SystemTaskbarDynamicRule DockSettings::* member") !=
                 std::string::npos &&
             source.find("PrepareDynamicRuleTheme") != std::string::npos &&

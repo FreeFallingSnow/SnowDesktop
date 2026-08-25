@@ -347,6 +347,7 @@ void TestDomainRevisionsTrackChangedDomain()
     const SettingsDomainRevisions baseline = initialized->domainRevisions;
     Check(baseline.personalization == initialized->revision &&
             baseline.dock == initialized->revision &&
+            baseline.systemTaskbar == initialized->revision &&
             baseline.navigation == initialized->revision &&
             baseline.general == initialized->revision &&
             baseline.category == initialized->revision &&
@@ -370,6 +371,8 @@ void TestDomainRevisionsTrackChangedDomain()
             generalChanged->domainRevisions.personalization ==
                 baseline.personalization &&
             generalChanged->domainRevisions.dock == baseline.dock &&
+            generalChanged->domainRevisions.systemTaskbar ==
+                baseline.systemTaskbar &&
             generalChanged->domainRevisions.navigation ==
                 baseline.navigation &&
             generalChanged->domainRevisions.category == baseline.category &&
@@ -541,6 +544,73 @@ void TestReloadAndExternalSynchronization()
     Check(controller.SynchronizeDock(external) &&
             controller.Snapshot()->values.dock.thicknessScale == 0.65f,
         "clean domains accept application-side synchronization without writes");
+}
+
+void TestSystemTaskbarFieldSynchronization()
+{
+    auto store = std::make_shared<FakeStore>();
+    store->loaded.dock.systemTaskbarAutoHide = false;
+    store->loaded.dock.systemTaskbarAlignment = 1;
+    SettingsController controller(store);
+    (void)controller.Initialize();
+
+    DockSettings unrelatedDraft = controller.Snapshot()->values.dock;
+    unrelatedDraft.thicknessScale = 0.75f;
+    controller.UpdateDock(
+        unrelatedDraft, SettingsUpdateMode::PreviewAndCommit);
+    const auto beforeExternal = controller.Snapshot();
+    Check(controller.SynchronizeSystemTaskbarState(true, false),
+        "Windows taskbar state can be reconciled while Dock is dirty");
+    const auto reconciled = controller.Snapshot();
+    Check(reconciled->values.dock.thicknessScale == 0.75f &&
+            reconciled->values.dock.systemTaskbarAutoHide &&
+            reconciled->values.dock.systemTaskbarAlignment == 0 &&
+            HasSettingsDomain(
+                reconciled->dirtyDomains, SettingsDomain::Dock) &&
+            HasSettingsDomain(
+                reconciled->pendingPreviewDomains, SettingsDomain::Dock) &&
+            HasSettingsDomain(
+                reconciled->pendingCommitDomains, SettingsDomain::Dock),
+        "field synchronization preserves unrelated Dock values and pending work");
+    Check(reconciled->domainRevisions.dock ==
+                beforeExternal->domainRevisions.dock &&
+            reconciled->domainRevisions.systemTaskbar >
+                beforeExternal->domainRevisions.systemTaskbar,
+        "Windows taskbar reconciliation publishes only its focused revision");
+
+    Check(controller.FlushPending().Succeeded() &&
+            controller.Snapshot()->dirtyDomains == SettingsDomain::None,
+        "a successful Dock save completes the unrelated draft");
+
+    DockSettings taskbarDraft = controller.Snapshot()->values.dock;
+    taskbarDraft.systemTaskbarAlignment = 1;
+    controller.UpdateDock(taskbarDraft, SettingsUpdateMode::Commit);
+    Check(controller.SynchronizeSystemTaskbarState(false, false) &&
+            !controller.Snapshot()->values.dock.systemTaskbarAutoHide &&
+            controller.Snapshot()->values.dock.systemTaskbarAlignment == 1,
+        "an alignment edit protects only alignment while auto-hide still reconciles");
+
+    store->failingDomains = SettingsDomain::Dock;
+    Check(!controller.FlushPending().Succeeded(),
+        "the injected Dock persistence failure is observable");
+    Check(controller.SynchronizeSystemTaskbarState(true, false) &&
+            controller.Snapshot()->values.dock.systemTaskbarAlignment == 1,
+        "a failed save keeps the edited taskbar field protected");
+
+    store->failingDomains = SettingsDomain::None;
+    Check(controller.RetryPending() &&
+            controller.FlushPending().Succeeded() &&
+            controller.SynchronizeSystemTaskbarState(false, false) &&
+            controller.Snapshot()->values.dock.systemTaskbarAlignment == 0,
+        "a successful retry releases taskbar field protection");
+
+    controller.PrepareForExternalDataReplacement();
+    const auto terminal = controller.Snapshot();
+    Check(!controller.SynchronizeSystemTaskbarState(true, true) &&
+            controller.Snapshot()->revision == terminal->revision &&
+            controller.Snapshot()->values.dock.systemTaskbarAlignment ==
+                terminal->values.dock.systemTaskbarAlignment,
+        "terminal data replacement rejects taskbar reconciliation");
 }
 
 void TestLoadFailureAndOpenRetry()
@@ -856,6 +926,7 @@ int main()
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();
     TestReloadAndExternalSynchronization();
+    TestSystemTaskbarFieldSynchronization();
     TestLoadFailureAndOpenRetry();
     TestHostFailureRetryAndCloseGuard();
     TestPreviewFailureBlocksPersistence();
