@@ -55,6 +55,17 @@ void TestHostContract(const std::filesystem::path& repository)
         repository / "src/winui/SettingsShell.xaml.h");
     const std::string shell = ReadText(
         repository / "src/winui/SettingsShell.xaml.cpp");
+    const std::size_t integratedTitleBarBegin =
+        shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"");
+    const std::size_t integratedTitleBarEnd = shellMarkup.find(
+        "<NavigationView", integratedTitleBarBegin);
+    const std::string_view integratedTitleBarMarkup =
+        integratedTitleBarBegin != std::string::npos &&
+                integratedTitleBarEnd != std::string::npos
+        ? std::string_view(shellMarkup).substr(
+            integratedTitleBarBegin,
+            integratedTitleBarEnd - integratedTitleBarBegin)
+        : std::string_view{};
 
     Check(!header.empty() && !source.empty() && !runtimeHeader.empty() &&
             !runtime.empty() && !shellMarkup.empty() &&
@@ -78,7 +89,9 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("ExtendsContentIntoTitleBar(true)") !=
                 std::string::npos &&
-            source.find("muw::TitleBarHeightOption::Tall") !=
+            source.find("muw::TitleBarHeightOption::Standard") !=
+                std::string::npos &&
+            source.find("muw::TitleBarHeightOption::Tall") ==
                 std::string::npos &&
             source.find("muw::IconShowOptions::HideIconAndSystemMenu") !=
                 std::string::npos &&
@@ -100,7 +113,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
-        "AppWindow extends XAML and transparent caption-button backgrounds over one surface while Windows retains the three system buttons, Snap, and accessibility");
+        "AppWindow uses standard caption height and transparent button backgrounds over one surface while Windows retains the three system buttons, Snap, and accessibility");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
@@ -123,6 +136,19 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
         "the XAML title-bar row contains navigation, localized identity, and search with explicit caption inset and drag-region bookkeeping");
+    Check(integratedTitleBarMarkup.find("Height=\"32\"") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find("Height=\"48\"") ==
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find("Margin=\"12,2,8,2\"") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find("Margin=\"0,0,12,0\"") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find("FontSize=\"14\"") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find("FontSize=\"12\"") !=
+                std::string_view::npos,
+        "the compact title bar aligns the smaller back glyph and settings label in explicit columns at standard caption height");
     Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
                 std::string::npos &&
             source.find("constexpr int kMinimumClientHeight = 520;") !=

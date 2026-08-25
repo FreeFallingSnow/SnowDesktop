@@ -787,7 +787,7 @@ struct SettingsWindowHost::Impl
             // maximize/Snap behavior and their accessibility providers.
             appWindowTitleBar.ExtendsContentIntoTitleBar(true);
             appWindowTitleBar.PreferredHeightOption(
-                muw::TitleBarHeightOption::Tall);
+                muw::TitleBarHeightOption::Standard);
             appWindowTitleBar.IconShowOptions(
                 muw::IconShowOptions::HideIconAndSystemMenu);
             appWindowTitleBar.PreferredTheme(darkTheme

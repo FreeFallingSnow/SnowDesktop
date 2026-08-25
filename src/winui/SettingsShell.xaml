@@ -54,7 +54,7 @@
 
         <Grid x:Name="IntegratedTitleBarHost"
               Grid.Row="0"
-              Height="48"
+              Height="32"
               Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
@@ -64,29 +64,36 @@
             </Grid.ColumnDefinitions>
 
             <Grid Grid.Column="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="52" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
                 <Button x:Name="TitleBarBackButton"
-                        Width="40"
-                        Height="36"
-                        Margin="16,6,0,6"
+                        Grid.Column="0"
+                        Width="32"
+                        Height="28"
+                        Margin="12,2,8,2"
                         Padding="0"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
                         Background="Transparent"
                         BorderThickness="0"
                         UseSystemFocusVisuals="True">
-                    <FontIcon Glyph="&#xE72B;" FontSize="16" />
+                    <FontIcon Glyph="&#xE72B;" FontSize="14" />
                 </Button>
                 <TextBlock x:Name="IntegratedTitleBarText"
-                           Margin="72,0,16,0"
+                           Grid.Column="1"
+                           Margin="0,0,12,0"
+                           HorizontalAlignment="Left"
                            VerticalAlignment="Center"
-                           FontSize="14"
+                           FontSize="12"
                            TextTrimming="CharacterEllipsis" />
             </Grid>
 
             <Grid x:Name="TitleBarSearchHost"
                   Grid.Column="2"
-                  Height="36"
-                  Margin="24,6"
+                  Height="32"
+                  Margin="24,0"
                   MaxWidth="720"
                   HorizontalAlignment="Stretch"
                   VerticalAlignment="Center"
@@ -103,8 +110,10 @@
                     UpdateTextOnSelect="False" />
                 <Button x:Name="ClearSearchButton"
                         Grid.Column="1"
+                        Width="32"
+                        Height="32"
                         Visibility="Collapsed"
-                        Padding="10"
+                        Padding="0"
                         VerticalAlignment="Center">
                     <FontIcon Glyph="&#xE894;" FontSize="12" />
                 </Button>
