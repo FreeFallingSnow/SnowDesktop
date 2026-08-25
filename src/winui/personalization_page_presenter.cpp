@@ -161,8 +161,6 @@ struct PersonalizationPagePresenter::Impl
     muxc::ComboBox contextMenuCombo{nullptr};
     ContinuousControl cornerRadius;
     ContinuousControl barHeight;
-    ContinuousControl categorizedTabHeight;
-    muxc::ToggleSwitch showCategoryTabCountsToggle{nullptr};
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -172,16 +170,14 @@ struct PersonalizationPagePresenter::Impl
     SettingRow acrylicRow;
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
-    SettingRow showCategoryCountsRow;
 
-    std::array<ContinuousControl*, 7> continuousControls = {
+    std::array<ContinuousControl*, 6> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &gradientEndAlpha,
         &blurRadius,
         &cornerRadius,
         &barHeight,
-        &categorizedTabHeight,
     };
     std::array<ColorControl*, 2> colorControls = {
         &backgroundColor,
@@ -206,7 +202,6 @@ struct PersonalizationPagePresenter::Impl
     winrt::event_token acrylicToken{};
     winrt::event_token contentThemeToken{};
     winrt::event_token contextMenuToken{};
-    winrt::event_token showCountsToken{};
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
@@ -343,22 +338,10 @@ struct PersonalizationPagePresenter::Impl
         InitializeContinuousControl(barHeight,
             &PersonalizationSettings::barHeight,
             16.0, 48.0, 1.0, 1.0, 24.0);
-        InitializeContinuousControl(categorizedTabHeight,
-            &PersonalizationSettings::categorizedTabHeight,
-            24.0, 48.0, 1.0, 1.0, 34.0);
         SetUnit(cornerRadius, L"cu");
         SetUnit(barHeight, L"cu");
-        SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
-        layoutCard.content.Children().Append(categorizedTabHeight.row.root);
-        showCategoryTabCountsToggle = muxc::ToggleSwitch{};
-        showCategoryTabCountsToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
-        showCategoryCountsRow.Initialize(showCategoryTabCountsToggle);
-        showCategoryCountsRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(showCategoryCountsRow.root);
     }
 
     void InitializeColorControl(
@@ -576,15 +559,6 @@ struct PersonalizationPagePresenter::Impl
                         settings.contextMenuStyle = std::clamp(value, 0, 4);
                     });
             });
-        showCountsToken = showCategoryTabCountsToggle.Toggled(
-            [this](const auto&, const auto&) {
-                const bool value = showCategoryTabCountsToggle.IsOn();
-                Emit(SettingsUpdateMode::PreviewAndCommit,
-                    [value](PersonalizationSettings& settings) {
-                        settings.showCategoryTabCounts = value;
-                    });
-            });
-
         for (ContinuousControl* control : continuousControls)
             HookContinuousControl(*control);
     }
@@ -752,7 +726,6 @@ struct PersonalizationPagePresenter::Impl
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
             std::clamp(settings.contextMenuStyle, 0, 4));
-        showCategoryTabCountsToggle.IsOn(settings.showCategoryTabCounts);
         UpdateDependentStates();
     }
 
@@ -926,20 +899,12 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.corner_radius", L"Corner Radius");
         SetContinuousText(barHeight,
             "app.settings.bar_height", L"Bar Height");
-        SetContinuousText(categorizedTabHeight,
-            "app.settings.tab_height", L"Tab and Search Box Height");
-        showCategoryCountsRow.SetText(L("app.settings.category_show_count",
-            L"Show File Counts on Category Tabs"));
-
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
             glassToggle, glassRow.label.Text());
         muxa::AutomationProperties::SetName(
             acrylicToggle, acrylicRow.label.Text());
-        muxa::AutomationProperties::SetName(
-            showCategoryTabCountsToggle,
-            showCategoryCountsRow.label.Text());
         muxa::AutomationProperties::SetName(
             contentThemeCombo, contentThemeRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1031,11 +996,6 @@ struct PersonalizationPagePresenter::Impl
             return cornerRadius.slider;
         if (id == "personalization.barHeight")
             return barHeight.slider;
-        if (id == "personalization.tabHeight")
-            return categorizedTabHeight.slider;
-        if (id == "personalization.showCategoryTabCounts" ||
-            id == "personalization.showCounts")
-            return showCategoryTabCountsToggle;
         return nullptr;
     }
 
@@ -1109,7 +1069,6 @@ struct PersonalizationPagePresenter::Impl
             acrylicToggle.Toggled(acrylicToken);
             contentThemeCombo.SelectionChanged(contentThemeToken);
             contextMenuCombo.SelectionChanged(contextMenuToken);
-            showCategoryTabCountsToggle.Toggled(showCountsToken);
         }
         catch (...)
         {

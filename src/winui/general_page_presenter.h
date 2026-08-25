@@ -96,6 +96,9 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         Root() const noexcept;
+    /** Desktop behavior and interaction settings, rendered on Desktop. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
+        DesktopBehaviorContent() const noexcept;
     /** Legacy Dock shortcut/hotkey block, inserted after Dock enablement. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         DockShortcutContent() const noexcept;

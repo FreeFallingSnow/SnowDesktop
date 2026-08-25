@@ -33,8 +33,13 @@ void TestPresenterContract(const std::filesystem::path& root)
         root / "src/winui/desktop_page_presenter.cpp");
     const std::string controls = ReadText(
         root / "src/winui/settings_presenter_controls.h");
-    Check(!header.empty() && !source.empty() && !controls.empty(),
-        "desktop presenter and shared control sources are readable");
+    const std::string categoryHeader = ReadText(
+        root / "src/category_settings.h");
+    const std::string categorySource = ReadText(
+        root / "src/category_settings.cpp");
+    Check(!header.empty() && !source.empty() && !controls.empty() &&
+            !categoryHeader.empty() && !categorySource.empty(),
+        "desktop presenter, shared controls, and category persistence sources are readable");
 
     Check(header.find("SettingsUpdateMode mode") != std::string::npos &&
             header.find("DesktopEdit edit") != std::string::npos &&
@@ -123,7 +128,7 @@ void TestPresenterContract(const std::filesystem::path& root)
     for (const char* field : {
              "iconSpacingScale", "itemIconSizeScale", "itemFontSizeCu",
              "listItemFontSizeCu", "itemFontWeight", "shortcutArrowMode",
-             "categorizedTabHeight", "tabFontSize",
+             "categorizedTabHeight",
              "showCategoryTabCounts", "backgroundOpacity",
              "gradientEnabled", "gradientDirection", "backgroundStartR",
              "backgroundEndR", "contentScale", "textureHighlightStrength",
@@ -136,6 +141,38 @@ void TestPresenterContract(const std::filesystem::path& root)
         Check(source.find(field) != std::string::npos,
             "desktop presenter maps every persisted display field");
     }
+    Check(source.find("tabFontSize") == std::string::npos &&
+            source.find("app.settings.category_font_size") ==
+                std::string::npos &&
+            categoryHeader.find("float tabFontSize") !=
+                std::string::npos &&
+            categorySource.find(
+              "ReadDoubleField(text, \"tabFontSize\"") !=
+                std::string::npos &&
+            categorySource.find("bool SaveCategorySettings(") !=
+                std::string::npos &&
+            categorySource.find("normalized.tabFontSize") !=
+                std::string::npos,
+        "the retired category-tab font-size has no presenter UI while legacy configuration still loads and saves the field");
+    const auto displaySection = source.find(
+        "InitializeCard(displayCard, cardStyle, appearanceRoot)");
+    const auto beautifySection = source.find(
+        "InitializeCard(beautifyCard, cardStyle, appearanceRoot)");
+    const auto categoryLayoutSection = source.find(
+        "InitializeCard(categoryLayoutCard, cardStyle, categoryRoot)");
+    Check(displaySection != std::string::npos &&
+            beautifySection != std::string::npos &&
+            categoryLayoutSection != std::string::npos &&
+            source.find("hiddenCompatibilityRoot") == std::string::npos &&
+            source.find("DesktopPagePresenter::AppearanceContent()") !=
+                std::string::npos &&
+            source.find("return impl_ ? impl_->appearanceRoot : nullptr") !=
+                std::string::npos &&
+            source.find("DesktopPagePresenter::CategoryContent()") !=
+                std::string::npos &&
+            source.find("return impl_ ? impl_->categoryRoot : nullptr") !=
+                std::string::npos,
+        "Desktop owns display and icon appearance while Categories exposes its layout and classification controls on the visible category root");
     Check(source.find("CloseRuleRows") != std::string::npos &&
             source.find("SelectionChanged(shortcutArrowToken)") !=
                 std::string::npos &&

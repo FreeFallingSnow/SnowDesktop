@@ -61,12 +61,17 @@ void TestBuildManifest(const std::string& props,
                 std::string::npos,
         "MSBuild generates the deployment manifest after the application build");
     Check(props.find("$(TargetDir)Assets\\Fonts") != std::string::npos &&
+            props.find("assets\\settings\\icons\\*.svg") !=
+                std::string::npos &&
+            props.find(
+              "@(_SnowDesktopSettingsIcon-&gt;'Assets\\Settings\\Icons\\%(Filename)%(Extension)") !=
+                std::string::npos &&
             props.find("<DeploymentKind>Asset</DeploymentKind>") !=
                 std::string::npos &&
             writer.find(
                 "\"NuGet\", \"WindowsAppSDK\", \"Generated\", \"Asset\"") !=
                 std::string::npos,
-        "WinUI icon fonts are copied and listed as explicit deployment assets");
+        "WinUI icon fonts and colored settings icons are copied and listed as explicit deployment assets");
     Check(props.find("-TargetDirectory &quot;$(TargetDir).&quot;") !=
                 std::string::npos &&
             props.find("-TargetDirectory &quot;$(TargetDir)&quot;") ==

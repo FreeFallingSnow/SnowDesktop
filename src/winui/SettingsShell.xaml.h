@@ -217,6 +217,8 @@ private:
         bool forcePageCards = false,
         bool scheduleFocus = true);
     void RenderNavigationSelection();
+    void ApplyNavigationIcons();
+    void RenderPageHeaderIcon();
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void RenderConditionalPages();
@@ -305,6 +307,7 @@ private:
     winrt::event_token integratedTitleBarLoadedToken_{};
     winrt::event_token integratedTitleBarSizeChangedToken_{};
     winrt::event_token selectionChangedToken_{};
+    winrt::event_token backRequestedToken_{};
     winrt::event_token breadcrumbClickedToken_{};
     winrt::event_token searchTextChangedToken_{};
     winrt::event_token searchQuerySubmittedToken_{};

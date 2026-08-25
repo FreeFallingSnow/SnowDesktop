@@ -121,7 +121,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
 
     for (const char* route : {
              "SettingsPage::Personalization",
-             "SettingsPage::DockAndTaskbar",
+             "SettingsPage::Dock",
              "SettingsPage::Widgets",
              "SettingsPage::BackupAndData",
              "SettingsPage::About"})

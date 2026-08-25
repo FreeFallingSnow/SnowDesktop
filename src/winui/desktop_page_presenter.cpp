@@ -536,7 +536,6 @@ struct DesktopPagePresenter::Impl
     muxc::StackPanel root{nullptr};
     muxc::StackPanel appearanceRoot{nullptr};
     muxc::StackPanel categoryRoot{nullptr};
-    muxc::StackPanel hiddenCompatibilityRoot{nullptr};
 
     SettingsCard displayCard;
     SettingsCard categoryLayoutCard;
@@ -553,7 +552,6 @@ struct DesktopPagePresenter::Impl
     SettingRow shortcutArrowRow;
 
     std::unique_ptr<NumericEditor> categorizedTabHeight;
-    std::unique_ptr<NumericEditor> tabFontSize;
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
     SettingRow showCategoryTabCountsRow;
 
@@ -728,8 +726,6 @@ struct DesktopPagePresenter::Impl
         appearanceRoot.Spacing(8.0);
         categoryRoot = muxc::StackPanel{};
         categoryRoot.Spacing(8.0);
-        hiddenCompatibilityRoot = muxc::StackPanel{};
-        hiddenCompatibilityRoot.Spacing(8.0);
         root = categoryRoot;
 
         InitializeCard(displayCard, cardStyle, appearanceRoot);
@@ -770,9 +766,7 @@ struct DesktopPagePresenter::Impl
         }
         AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
 
-        // These post-migration Category layout additions remain synchronized
-        // for route compatibility, but are not part of the legacy surface.
-        InitializeCard(categoryLayoutCard, cardStyle, hiddenCompatibilityRoot);
+        InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
         categorizedTabHeight = std::make_unique<NumericEditor>(
             24.0, 48.0, 1.0, 0,
             [this](double value, SettingsUpdateMode mode) {
@@ -782,16 +776,7 @@ struct DesktopPagePresenter::Impl
                             static_cast<float>(value);
                     });
             });
-        tabFontSize = std::make_unique<NumericEditor>(
-            10.0, 22.0, 0.5, 1,
-            [this](double value, SettingsUpdateMode) {
-                UpdateCategory(SettingsUpdateMode::Draft,
-                    [value](CategorySettings& settings) {
-                        settings.tabFontSize = static_cast<float>(value);
-                    });
-            });
         categorizedTabHeight->SetUnit(L"cu");
-        tabFontSize->SetUnit(L"cu");
         showCategoryTabCounts = muxc::ToggleSwitch{};
         showCategoryTabCounts.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -800,7 +785,6 @@ struct DesktopPagePresenter::Impl
             mux::HorizontalAlignment::Right);
         categoryLayoutCard.content.Children().Append(
             categorizedTabHeight->root);
-        categoryLayoutCard.content.Children().Append(tabFontSize->root);
         categoryLayoutCard.content.Children().Append(
             showCategoryTabCountsRow.root);
 
@@ -1471,7 +1455,6 @@ struct DesktopPagePresenter::Impl
 
     void PatchCategory(const CategorySettings& settings)
     {
-        tabFontSize->SetValue(settings.tabFontSize);
         PatchRuleRows(settings);
     }
 
@@ -1509,8 +1492,6 @@ struct DesktopPagePresenter::Impl
             editor->CommitPending();
         for (ColorEditor* editor : ContinuousColors())
             editor->CommitPending();
-        // Category tabFontSize is explicitly applied with its draft.
-        tabFontSize->CancelPending();
     }
 
     void CancelContinuousEdits() noexcept
@@ -1519,7 +1500,6 @@ struct DesktopPagePresenter::Impl
             editor->CancelPending();
         for (ColorEditor* editor : ContinuousColors())
             editor->CancelPending();
-        tabFontSize->CancelPending();
     }
 
     void ApplySnapshot(const SettingsSnapshot& snapshot)
@@ -1611,12 +1591,12 @@ struct DesktopPagePresenter::Impl
 
         SetCardText(displayCard, "app.settings.desktop_icons",
             L"Desktop Icons");
-        SetCardText(categoryLayoutCard, "app.settings.category_settings",
+        SetCardText(categoryLayoutCard, "settings.desktop.categoryLayout",
             L"Category tab layout");
         SetCardText(beautifyCard, "app.settings.icon_beautify",
             L"Icon beautification");
-        SetCardText(categoryRulesCard, "app.settings.category_settings",
-            L"Category settings");
+        SetCardText(categoryRulesCard, "app.settings.category_rules",
+            L"Category rules");
 
         iconSpacing->SetLabel(L(
             "app.settings.layout_spacing", L"Icon spacing"), L(
@@ -1648,8 +1628,6 @@ struct DesktopPagePresenter::Impl
 
         categorizedTabHeight->SetLabel(
             L("app.settings.tab_height", L"Category tab height"));
-        tabFontSize->SetLabel(
-            L("app.settings.category_font_size", L"Category tab font size"));
         showCategoryTabCountsRow.SetText(L(
             "app.settings.category_show_count", L"Show item counts"));
         muxa::AutomationProperties::SetName(showCategoryTabCounts,
@@ -1793,7 +1771,6 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.categoryLayout" || id == "desktop.tabHeight")
             return categorizedTabHeight->slider;
-        if (id == "desktop.tabFontSize") return tabFontSize->number;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
@@ -1850,7 +1827,6 @@ struct DesktopPagePresenter::Impl
         listFontSize->Close();
         itemFontWeight->Close();
         categorizedTabHeight->Close();
-        tabFontSize->Close();
         backgroundStart->Close();
         backgroundOpacity->Close();
         backgroundEnd->Close();

@@ -105,9 +105,11 @@ struct GeneralPagePresenter::Impl
     GeneralPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
+    muxc::StackPanel desktopRoot{nullptr};
     muxc::StackPanel dockShortcutRoot{nullptr};
 
     SettingsCard startupCard;
+    SettingsCard desktopBehaviorCard;
     SettingsCard languageCard;
     SettingsCard quickNavigationCard;
     SettingsCard pageNavigationCard;
@@ -185,6 +187,8 @@ struct GeneralPagePresenter::Impl
     {
         root = muxc::StackPanel{};
         root.Spacing(8.0);
+        desktopRoot = muxc::StackPanel{};
+        desktopRoot.Spacing(8.0);
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
@@ -192,18 +196,8 @@ struct GeneralPagePresenter::Impl
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
-        softwareDesktopToggle = muxc::ToggleSwitch{};
-        softwareDesktopToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
-        doubleClickHideToggle = muxc::ToggleSwitch{};
-        doubleClickHideToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
         autoStartRow.Initialize(autoStartToggle);
-        softwareDesktopRow.Initialize(softwareDesktopToggle);
-        doubleClickHideRow.Initialize(doubleClickHideToggle);
         autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        softwareDesktopRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        doubleClickHideRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         startupCard.content.Children().Append(autoStartRow.root);
         portableStartupConflict = muxc::InfoBar{};
         portableStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
@@ -219,7 +213,20 @@ struct GeneralPagePresenter::Impl
         installedStartupConflict.ActionButton(openInstalledStartupSettings);
         startupCard.content.Children().Append(portableStartupConflict);
         startupCard.content.Children().Append(installedStartupConflict);
-        startupCard.content.Children().Append(softwareDesktopRow.root);
+
+        InitializeCard(desktopBehaviorCard, cardStyle, desktopRoot);
+        softwareDesktopToggle = muxc::ToggleSwitch{};
+        softwareDesktopToggle.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        doubleClickHideToggle = muxc::ToggleSwitch{};
+        doubleClickHideToggle.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        softwareDesktopRow.Initialize(softwareDesktopToggle);
+        doubleClickHideRow.Initialize(doubleClickHideToggle);
+        softwareDesktopRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        doubleClickHideRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        desktopBehaviorCard.content.Children().Append(softwareDesktopRow.root);
+        desktopBehaviorCard.content.Children().Append(doubleClickHideRow.root);
 
         InitializeCard(languageCard, cardStyle, root);
         languageCombo = muxc::ComboBox{};
@@ -260,7 +267,7 @@ struct GeneralPagePresenter::Impl
         pageNavigationCard.content.Children().Append(
             nextPageHotkeyRow.row.root);
 
-        InitializeCard(desktopPassthroughCard, cardStyle, root);
+        InitializeCard(desktopPassthroughCard, cardStyle, desktopRoot);
         desktopPassthroughToggle = muxc::ToggleSwitch{};
         desktopPassthroughToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -276,9 +283,6 @@ struct GeneralPagePresenter::Impl
         desktopPassthroughHotkeyRow.Initialize(desktopPassthroughHotkey);
         desktopPassthroughCard.content.Children().Append(
             desktopPassthroughHotkeyRow.row.root);
-        desktopPassthroughCard.content.Children().Append(
-            doubleClickHideRow.root);
-
         InitializeCard(floatingDockCard, cardStyle, dockShortcutRoot);
         floatingDockToggle = muxc::ToggleSwitch{};
         floatingDockToggle.HorizontalAlignment(
@@ -687,7 +691,8 @@ struct GeneralPagePresenter::Impl
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
-        SetCardText(startupCard, "app.settings.general_settings");
+        SetCardText(startupCard, "settings.general.startup");
+        SetCardText(desktopBehaviorCard, "settings.desktop.behavior");
         SetCardText(languageCard, "app.settings.language");
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
@@ -932,6 +937,11 @@ muxc::StackPanel GeneralPagePresenter::Root() const noexcept
     return impl_ ? impl_->root : nullptr;
 }
 
+muxc::StackPanel GeneralPagePresenter::DesktopBehaviorContent() const noexcept
+{
+    return impl_ ? impl_->desktopRoot : nullptr;
+}
+
 muxc::StackPanel GeneralPagePresenter::DockShortcutContent() const noexcept
 {
     return impl_ ? impl_->dockShortcutRoot : nullptr;
@@ -961,7 +971,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
     registerAliases(impl_->softwareDesktopToggle,
-        {"general.softwareDesktop"});
+        {"desktop.softwareDesktop", "general.softwareDesktop"});
     registerAliases(impl_->languageCombo, {"general.language"});
     registerAliases(impl_->quickNavigationToggle,
         {"general.hotkeys", "general.quickNavigation",
@@ -976,16 +986,19 @@ void GeneralPagePresenter::RegisterFocusTargets(
     registerAliases(impl_->nextPageHotkey.FocusTarget(),
         {"general.pageNavigation.next"});
     registerAliases(impl_->desktopPassthroughToggle,
-        {"general.desktopPassthrough",
+        {"desktop.passthrough", "general.desktopPassthrough",
             "general.desktopPassthrough.enabled"});
     registerAliases(impl_->desktopPassthroughHotkey.FocusTarget(),
-        {"general.desktopPassthrough.hotkey"});
+        {"desktop.passthrough.hotkey",
+            "general.desktopPassthrough.hotkey"});
     registerAliases(impl_->floatingDockToggle,
-        {"general.floatingDock", "general.floatingDock.enabled"});
+        {"dock.floatingShortcutMode", "general.floatingDock",
+            "general.floatingDock.enabled"});
     registerAliases(impl_->floatingDockHotkey.FocusTarget(),
-        {"general.floatingDock.hotkey"});
+        {"dock.floatingShortcutMode.hotkey",
+            "general.floatingDock.hotkey"});
     registerAliases(impl_->doubleClickHideToggle,
-        {"general.doubleClickHide"});
+        {"desktop.doubleClickHide", "general.doubleClickHide"});
 }
 
 void GeneralPagePresenter::Activate() noexcept

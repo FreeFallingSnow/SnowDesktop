@@ -68,10 +68,10 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Display and icon-beautification sections owned by Appearance. */
+    /** Display and icon-beautification sections owned by Desktop. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         AppearanceContent() const noexcept;
-    /** Standalone legacy Category page surface. */
+    /** Category layout and automatic-classification surface. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         CategoryContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);

@@ -163,16 +163,20 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"SettingsSearchBox\"") !=
                 std::string::npos &&
-            shellMarkup.find("IsBackButtonVisible=\"Collapsed\"") !=
+            shellMarkup.find("IsBackButtonVisible=\"Auto\"") !=
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarInsets") !=
                 std::string::npos &&
             shellHeader.find("IntegratedTitleBarDragRectangles") !=
                 std::string::npos &&
+            shellHeader.find("backRequestedToken_") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().BackRequested(") !=
+                std::string::npos &&
             shell.find("TitleBarBackButton().Click") == std::string::npos &&
             shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
-        "the XAML caption is a drag-only surface while search lives in the NavigationView pane header without duplicate back or title content");
+        "the XAML caption is drag-only while search and standard history back navigation stay inside NavigationView without duplicate title-bar controls");
     Check(integratedTitleBarMarkup.find("Height=\"32\"") !=
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("Height=\"48\"") ==
@@ -218,18 +222,27 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("constexpr int kMinimumClientHeight = 520;") !=
                 std::string::npos &&
-            shellMarkup.find("PaneDisplayMode=\"Left\"") !=
+            shellMarkup.find("PaneDisplayMode=\"Auto\"") !=
                 std::string::npos &&
-            shellMarkup.find("IsPaneOpen=\"True\"") !=
+            shellMarkup.find("CompactModeThresholdWidth=\"720\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"NarrowState\"") ==
+            shellMarkup.find("ExpandedModeThresholdWidth=\"1008\"") !=
                 std::string::npos &&
-            shellMarkup.find("AdaptiveTrigger") == std::string::npos &&
-            shellMarkup.find("CompactModeThresholdWidth") ==
+            shellMarkup.find("AdaptiveTrigger MinWindowWidth=\"0\"") !=
                 std::string::npos &&
-            shellMarkup.find("ExpandedModeThresholdWidth") ==
+            shellMarkup.find("AdaptiveTrigger MinWindowWidth=\"1008\"") !=
+                std::string::npos &&
+            shellMarkup.find(
+              "Target=\"PageSurface.Margin\" Value=\"20,12,20,32\"") !=
+                std::string::npos &&
+            shellMarkup.find(
+              "Target=\"PageSurface.Margin\" Value=\"40,16,40,48\"") !=
+                std::string::npos &&
+            shellMarkup.find("PaneDisplayMode=\"Left\"") ==
+                std::string::npos &&
+            shellMarkup.find("IsPaneOpen=\"True\"") ==
                 std::string::npos,
-        "the host enforces the supported fixed-width settings surface and expanded left navigation without a narrow adaptive state");
+        "the minimum host size is retained while NavigationView and page margins adapt between compact and wide window states");
     Check(pageScrollerMarkup.find(
               "MaxWidth=\"1200\"") !=
                 std::string_view::npos &&
@@ -325,20 +338,21 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos,
         "theme and contrast changes coordinate DWM material and the AppWindow-owned caption-button theme");
 
-    Check(source.find("\"desktop.tabFontSize\"") !=
+    Check(source.find("\"desktop.tabFontSize\"") ==
                 std::string::npos &&
             source.find("\"desktop.categoryRules\"") !=
                 std::string::npos &&
-            source.find("\"app.settings.category_font_size\"") !=
+            source.find("\"app.settings.category_font_size\"") ==
                 std::string::npos &&
             source.find("\"app.settings.category_rules\"") !=
                 std::string::npos &&
-            shell.find("\"desktop.fontWeight\", "
-                       "\"desktop.tabFontSize\"") !=
+            shell.find("\"desktop.tabFontSize\"") ==
+                std::string::npos &&
+            shell.find("\"desktop.categoryLayout\"") !=
                 std::string::npos &&
             shell.find("\"desktop.categoryRules\"") !=
                 std::string::npos,
-        "visible category font-size and rule controls are both searchable and registered as focus targets");
+        "retired category font size is absent from search and focus registration while visible category layout and rules remain addressable");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&

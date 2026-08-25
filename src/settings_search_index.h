@@ -31,6 +31,8 @@ struct StaticSettingSearchDescriptor
     std::string focusId;
     std::wstring label;
     std::wstring description;
+    /** Localized owning page or section, displayed to disambiguate hits. */
+    std::wstring context;
     std::vector<std::wstring> keywords;
     bool visible = true;
 };

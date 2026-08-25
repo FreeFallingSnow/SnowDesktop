@@ -79,7 +79,7 @@ public:
     /** Remaining non-taskbar Dock controls, owned by General. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DockContent() const noexcept;
-    /** Taskbar appearance and Windows shell controls, owned by Appearance. */
+    /** Taskbar behavior, default appearance, scenario overrides and shell UI. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         TaskbarContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);

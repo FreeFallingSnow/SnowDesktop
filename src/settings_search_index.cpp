@@ -214,8 +214,10 @@ void SettingsSearchIndex::Rebuild(
         entry.result.focusId = descriptor.focusId;
         entry.result.label = descriptor.label;
         entry.result.description = descriptor.description;
+        entry.result.context = descriptor.context;
         entry.normalizedLabel = Normalize(descriptor.label);
         entry.normalizedDescription = Normalize(descriptor.description);
+        AppendNormalized(entry.normalizedContext, descriptor.context);
         for (const auto& keyword : descriptor.keywords)
             AppendNormalized(entry.normalizedKeywords, keyword);
         entry.ordinal = ordinal++;

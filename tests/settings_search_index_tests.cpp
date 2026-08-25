@@ -34,13 +34,13 @@ void TestNavigationAndFocus()
     SettingsSearchIndexInput input;
     input.languageTag = "zh-CN";
     input.staticSettings.push_back(StaticSetting(
-        SettingsPage::DockAndTaskbar, "taskbar.theme",
+        SettingsPage::Taskbar, "taskbar.theme",
         L"任务栏主题", L"设置系统任务栏外观"));
     SettingsSearchIndex index(input);
 
     const auto results = index.Search(L"任务栏");
     Check(results.size() == 1 &&
-            results[0].route.page == SettingsPage::DockAndTaskbar &&
+            results[0].route.page == SettingsPage::Taskbar &&
             results[0].route.focusId == "taskbar.theme" &&
             results[0].focusId == "taskbar.theme" &&
             results[0].route.IsValid(),

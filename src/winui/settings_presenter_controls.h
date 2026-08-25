@@ -28,6 +28,7 @@ namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 
 inline constexpr double kSettingControlWidth = 300.0;
+inline constexpr double kSettingRowStackThreshold = 700.0;
 inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
 
 /** Remove persisted float noise before a value reaches Slider/NumberBox. */
@@ -120,9 +121,10 @@ struct CoalescedPreviewTimer
  * Programmatic equivalent of the legacy BeginSettingRow contract.
  *
  * The label/help column stays on the left and a fixed-width editor stays on
- * the right at every supported page width. Compact controls keep their
- * requested right alignment; full-width editors stretch inside the legacy
- * 300-DIP editor column.
+ * the right while enough content width is available. Below the responsive
+ * threshold the editor moves below the text so localized labels and controls
+ * do not compete for the same row. Compact controls keep their requested
+ * alignment; full-width editors stretch inside the available editor area.
  */
 struct SettingRow
 {
@@ -151,6 +153,9 @@ struct SettingRow
         muxc::RowDefinition labelRow{};
         labelRow.Height(mux::GridLengthHelper::Auto());
         root.RowDefinitions().Append(labelRow);
+        muxc::RowDefinition controlRow{};
+        controlRow.Height(mux::GridLengthHelper::Auto());
+        root.RowDefinitions().Append(controlRow);
 
         text = muxc::StackPanel{};
         text.Spacing(3.0);
@@ -175,6 +180,43 @@ struct SettingRow
         muxc::Grid::SetColumn(controlHost, 1);
         root.Children().Append(text);
         root.Children().Append(controlHost);
+
+        // SettingRow is also used as a short-lived builder in several
+        // presenters, while its XAML elements remain in the visual tree.
+        // Capture weak projected objects rather than `this` so responsive
+        // updates remain safe after the builder object goes out of scope.
+        const auto weakControlColumn = winrt::make_weak(controlColumn);
+        const auto weakText = winrt::make_weak(text);
+        const auto weakControlHost = winrt::make_weak(controlHost);
+        root.SizeChanged(
+            [weakControlColumn, weakText, weakControlHost, controlWidth](
+                const auto& sender,
+                const mux::SizeChangedEventArgs& args) {
+                const auto grid = sender.template try_as<muxc::Grid>();
+                const auto responsiveControlColumn = weakControlColumn.get();
+                const auto responsiveText = weakText.get();
+                const auto responsiveControlHost = weakControlHost.get();
+                if (!grid || !responsiveControlColumn || !responsiveText ||
+                    !responsiveControlHost)
+                {
+                    return;
+                }
+
+                const bool stacked =
+                    args.NewSize().Width < kSettingRowStackThreshold;
+                responsiveControlColumn.Width(
+                    mux::GridLengthHelper::FromValueAndType(
+                        stacked ? 0.0 : controlWidth,
+                        mux::GridUnitType::Pixel));
+                grid.ColumnSpacing(stacked ? 0.0 : 20.0);
+                grid.RowSpacing(stacked ? 10.0 : 0.0);
+                muxc::Grid::SetColumn(responsiveText, 0);
+                muxc::Grid::SetRow(responsiveText, 0);
+                muxc::Grid::SetColumn(responsiveControlHost,
+                    stacked ? 0 : 1);
+                muxc::Grid::SetRow(responsiveControlHost,
+                    stacked ? 1 : 0);
+            });
     }
 
     void SetControlAlignment(mux::HorizontalAlignment alignment)

@@ -47,6 +47,32 @@
 
     <Grid x:Name="ShellRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="CompactContent">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="PageSurface.Margin" Value="20,12,20,32" />
+                        <Setter Target="PageTitle.FontSize" Value="28" />
+                        <Setter Target="PageHeaderIconHost.Width" Value="30" />
+                        <Setter Target="PageHeaderIconHost.Height" Value="30" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="WideContent">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1008" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
+                        <Setter Target="PageTitle.FontSize" Value="32" />
+                        <Setter Target="PageHeaderIconHost.Width" Value="36" />
+                        <Setter Target="PageHeaderIconHost.Height" Value="36" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -68,11 +94,12 @@
             Grid.Row="1"
             Background="Transparent"
             IsSettingsVisible="False"
-            IsBackButtonVisible="Collapsed"
-            PaneDisplayMode="Left"
-            IsPaneOpen="True"
+            IsBackButtonVisible="Auto"
+            PaneDisplayMode="Auto"
+            CompactModeThresholdWidth="720"
+            ExpandedModeThresholdWidth="1008"
             OpenPaneLength="260"
-            IsPaneToggleButtonVisible="False">
+            IsPaneToggleButtonVisible="True">
             <NavigationView.Resources>
                 <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground"
                                  Color="Transparent" />
@@ -114,43 +141,45 @@
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="GeneralItem" Tag="general">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/general.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="PersonalizationItem" Tag="personalization">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE771;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/appearance.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItemHeader x:Name="DesktopShellHeader" />
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/desktop.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8B7;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/categories.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="DockItem" Tag="dock">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEBC8;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/dock.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/taskbar.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xECA5;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/widgets.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItemHeader x:Name="DataHeader" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE74E;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/backup.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem x:Name="AboutItem" Tag="about">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/about.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="DeveloperItem"
                                     Tag="developer-tools"
                                     Visibility="Collapsed">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEC7A;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/developer.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="DebugItem"
                                     Tag="debug"
                                     Visibility="Collapsed">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7BA;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/debug.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
@@ -179,18 +208,31 @@
                                 HorizontalAlignment="Stretch">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
-                                <StackPanel Spacing="4">
-                                    <TextBlock x:Name="PageTitle"
-                                               FontSize="32"
-                                               FontWeight="SemiBold"
-                                               TextWrapping="Wrap" />
-                                    <TextBlock x:Name="PageSubtitle"
-                                               Opacity="0.72"
-                                               FontSize="14"
-                                               TextWrapping="Wrap"
-                                               MaxWidth="780"
-                                               HorizontalAlignment="Left" />
-                                </StackPanel>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ContentControl x:Name="PageHeaderIconHost"
+                                                    Width="36"
+                                                    Height="36"
+                                                    IsTabStop="False"
+                                                    HorizontalContentAlignment="Stretch"
+                                                    VerticalContentAlignment="Stretch"
+                                                    VerticalAlignment="Top" />
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock x:Name="PageTitle"
+                                                   FontSize="32"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="PageSubtitle"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   FontSize="14"
+                                                   TextWrapping="Wrap"
+                                                   MaxWidth="780"
+                                                   HorizontalAlignment="Left" />
+                                    </StackPanel>
+                                </Grid>
                                 <StackPanel x:Name="PageCards" Spacing="8" />
                             </StackPanel>
                         </Border>
@@ -220,7 +262,7 @@
                                        TextAlignment="Center"
                                        TextWrapping="Wrap" />
                             <TextBlock x:Name="OperationProgressMessage"
-                                       Opacity="0.72"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        TextAlignment="Center"
                                        TextWrapping="Wrap" />
                             <Button x:Name="CancelOperationButton"

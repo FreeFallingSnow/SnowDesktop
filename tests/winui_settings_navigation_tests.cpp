@@ -277,14 +277,26 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find("general.autoStart") != std::string::npos,
         "General projects host-owned startup state without committing it as JSON and preserves both ownership warnings");
     Check(presenter.find(
-              "startupCard.content.Children().Append(portableStartupConflict)") <
-                presenter.find(
-              "startupCard.content.Children().Append(softwareDesktopRow.root)") &&
+              "startupCard.content.Children().Append(portableStartupConflict)") !=
+                std::string::npos &&
             presenter.find(
-              "startupCard.content.Children().Append(installedStartupConflict)") <
-                presenter.find(
-              "startupCard.content.Children().Append(softwareDesktopRow.root)"),
-        "startup ownership warnings remain immediately below Auto-start before Software Desktop");
+              "startupCard.content.Children().Append(installedStartupConflict)") !=
+                std::string::npos &&
+            presenter.find(
+              "InitializeCard(desktopBehaviorCard, cardStyle, desktopRoot)") !=
+                std::string::npos &&
+            presenter.find(
+              "desktopBehaviorCard.content.Children().Append(softwareDesktopRow.root)") !=
+                std::string::npos &&
+            presenter.find(
+              "desktopBehaviorCard.content.Children().Append(doubleClickHideRow.root)") !=
+                std::string::npos &&
+            presenter.find(
+              "InitializeCard(desktopPassthroughCard, cardStyle, desktopRoot)") !=
+                std::string::npos &&
+            presenterHeader.find("DesktopBehaviorContent()") !=
+                std::string::npos,
+        "startup ownership warnings stay with Auto-start while desktop behavior and passthrough have a dedicated Desktop surface");
 
     for (const char* target : {
              "HotkeyTarget::QuickNavigation",
@@ -357,54 +369,124 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                  std::string::npos,
         "conditional routes use their parity presenters and hidden search results are filtered at the shell boundary");
 
-    Check(shell.find("dockPage_->DockEnableContent()") !=
+    const auto renderCards = shell.find(
+        "void SettingsShell::RenderPageCards(");
+    const auto personalizationCase = shell.find(
+        "case SettingsPage::Personalization:", renderCards);
+    const auto desktopCase = shell.find(
+        "case SettingsPage::Desktop:", personalizationCase);
+    const auto categoriesCase = shell.find(
+        "case SettingsPage::DesktopCategories:", desktopCase);
+    const auto dockCase = shell.find(
+        "case SettingsPage::Dock:", categoriesCase);
+    const auto taskbarCase = shell.find(
+        "case SettingsPage::Taskbar:", dockCase);
+    const auto compatibilityCase = shell.find(
+        "case SettingsPage::DockAndTaskbar:", taskbarCase);
+    const auto section = [&](std::size_t begin, std::size_t end) {
+        return begin != std::string::npos && end != std::string::npos
+            ? std::string_view(shell).substr(begin, end - begin)
+            : std::string_view{};
+    };
+    const auto personalizationSection = section(
+        personalizationCase, desktopCase);
+    const auto desktopSection = section(desktopCase, categoriesCase);
+    const auto categoriesSection = section(categoriesCase, dockCase);
+    const auto dockSection = section(dockCase, taskbarCase);
+    const auto taskbarSection = section(taskbarCase, compatibilityCase);
+    Check(personalizationSection.find(
+              "personalizationPage_->Content()") !=
+                std::string_view::npos &&
+            personalizationSection.find("AppearanceContent()") ==
+                std::string_view::npos &&
+            desktopSection.find(
+              "generalPage_->DesktopBehaviorContent()") !=
+                std::string_view::npos &&
+            desktopSection.find("desktopPage_->AppearanceContent()") !=
+                std::string_view::npos &&
+            desktopSection.find("desktop.tabFontSize") ==
+                std::string_view::npos &&
+            categoriesSection.find("desktopPage_->CategoryContent()") !=
+                std::string_view::npos &&
+            categoriesSection.find("desktop.categoryLayout") !=
+                std::string_view::npos &&
+            categoriesSection.find("desktop.categoryRules") !=
+                std::string_view::npos &&
+            dockSection.find("dockPage_->DockEnableContent()") !=
+                std::string_view::npos &&
+            dockSection.find("generalPage_->DockShortcutContent()") !=
+                std::string_view::npos &&
+            dockSection.find("dockPage_->DockContent()") !=
+                std::string_view::npos &&
+            taskbarSection.find("dockPage_->TaskbarContent()") !=
+                std::string_view::npos &&
+            presenter.find("\"desktop.softwareDesktop\"") !=
                 std::string::npos &&
-            shell.find("generalPage_->DockShortcutContent()") !=
+            presenter.find("\"desktop.passthrough\"") !=
                 std::string::npos &&
-            shell.find("dockPage_->DockContent()") !=
+            presenter.find("\"desktop.doubleClickHide\"") !=
                 std::string::npos &&
-            shell.find("desktopPage_->AppearanceContent()") !=
-                std::string::npos &&
-            shell.find("dockPage_->TaskbarContent()") !=
-                std::string::npos &&
-            shell.find("desktopPage_->CategoryContent()") !=
-                std::string::npos &&
-            shell.find("result.route.page = result.focusId.starts_with") !=
+            shell.find("result.route.page = result.focusId.starts_with") ==
                 std::string::npos,
-        "legacy General, Appearance, and Category ownership is composed from single-parent presenter sections and search follows the moved controls");
+        "Personalization, Desktop, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
 
     const auto generalItem = shellXaml.find("x:Name=\"GeneralItem\"");
     const auto homeItem = shellXaml.find("x:Name=\"HomeItem\"");
     const auto appearanceItem = shellXaml.find(
         "x:Name=\"PersonalizationItem\"");
-    const auto categoryItem = shellXaml.find("x:Name=\"DesktopItem\"");
+    const auto desktopShellHeader = shellXaml.find(
+        "x:Name=\"DesktopShellHeader\"");
+    const auto desktopItem = shellXaml.find("x:Name=\"DesktopItem\"");
+    const auto categoriesItem = shellXaml.find(
+        "x:Name=\"CategoriesItem\"");
+    const auto dockItem = shellXaml.find("x:Name=\"DockItem\"");
+    const auto taskbarItem = shellXaml.find("x:Name=\"TaskbarItem\"");
     const auto widgetsItem = shellXaml.find("x:Name=\"WidgetsItem\"");
+    const auto dataHeader = shellXaml.find("x:Name=\"DataHeader\"");
     const auto developerItem = shellXaml.find("x:Name=\"DeveloperItem\"");
     const auto backupItem = shellXaml.find("x:Name=\"BackupItem\"");
     const auto aboutItem = shellXaml.find("x:Name=\"AboutItem\"");
     const auto debugItem = shellXaml.find("x:Name=\"DebugItem\"");
     const auto homeCollapsed = shellXaml.find(
         "Visibility=\"Collapsed\"", homeItem);
-    const auto dockItem = shellXaml.find("x:Name=\"DockItem\"");
-    const auto dockCollapsed = shellXaml.find(
-        "Visibility=\"Collapsed\"", dockItem);
-    Check(generalItem < appearanceItem && appearanceItem < categoryItem &&
-            categoryItem < widgetsItem && widgetsItem < developerItem &&
-            developerItem < backupItem && backupItem < aboutItem &&
-            aboutItem < debugItem && homeItem < homeCollapsed &&
-            homeCollapsed < generalItem && dockItem < dockCollapsed &&
-            dockCollapsed < widgetsItem &&
-            shellXaml.find("NavigationView.FooterMenuItems") ==
+    Check(homeItem != std::string::npos &&
+            homeItem < homeCollapsed && homeCollapsed < generalItem &&
+            generalItem < appearanceItem &&
+            appearanceItem < desktopShellHeader &&
+            desktopShellHeader < desktopItem &&
+            desktopItem < categoriesItem && categoriesItem < dockItem &&
+            dockItem < taskbarItem && taskbarItem < widgetsItem &&
+            widgetsItem < dataHeader && dataHeader < backupItem &&
+            backupItem < aboutItem && aboutItem < developerItem &&
+            developerItem < debugItem &&
+            shellXaml.find("NavigationView.FooterMenuItems") !=
                 std::string::npos &&
-            shellXaml.find("PaneDisplayMode=\"Left\"") !=
+            shellXaml.find("PaneDisplayMode=\"Auto\"") !=
                 std::string::npos &&
-            shellXaml.find("IsPaneOpen=\"True\"") !=
+            shellXaml.find("CompactModeThresholdWidth=\"720\"") !=
                 std::string::npos &&
-            shellXaml.find("IsPaneToggleButtonVisible=\"False\"") !=
+            shellXaml.find("ExpandedModeThresholdWidth=\"1008\"") !=
                 std::string::npos &&
-            shellXaml.find("PaneDisplayMode=\"Auto\"") ==
+            shellXaml.find("IsPaneToggleButtonVisible=\"True\"") !=
+                std::string::npos &&
+            shellXaml.find("IsBackButtonVisible=\"Auto\"") !=
+                std::string::npos &&
+            shell.find("DesktopShellHeader().Content(") !=
+                std::string::npos &&
+            shell.find("DataHeader().Content(") != std::string::npos,
+        "the adaptive NavigationView exposes Desktop and shell/data groups in task order with About and conditional tools in the footer");
+    Check(shellHeader.find("backRequestedToken_") != std::string::npos &&
+            shell.find("NavigationRoot().BackRequested(") !=
+                std::string::npos &&
+            shell.find("navigation_.PeekBack()") != std::string::npos &&
+            shell.find("routeRequested_(*route)") != std::string::npos &&
+            shell.find("navigation_.GoBack()") != std::string::npos &&
+            shell.find(
+              "NavigationRoot().IsBackEnabled(navigation_.CanGoBack())") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().BackRequested(backRequestedToken_)") !=
                 std::string::npos,
-        "the visible navigation declaration retains the legacy one-to-one ordering in a fixed expanded left pane while Home and Dock remain compatibility-only items");
+        "NavigationView back requests follow controller-owned history, update enabled state, and revoke their event token");
 
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",
@@ -426,6 +508,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     Check(sharedControls.find("struct SettingRow") != std::string::npos &&
             sharedControls.find("kSettingControlWidth = 300.0") !=
                 std::string::npos &&
+            sharedControls.find("kSettingRowStackThreshold = 700.0") !=
+                std::string::npos &&
             sharedControls.find("muxc::Grid::SetColumn(text, 0)") !=
                 std::string::npos &&
             sharedControls.find("muxc::Grid::SetColumn(controlHost, 1)") !=
@@ -433,14 +517,30 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             sharedControls.find(
                 "root.RowDefinitions().Append(labelRow)") !=
                 std::string::npos &&
+            sharedControls.find(
+                "root.RowDefinitions().Append(controlRow)") !=
+                std::string::npos &&
+            sharedControls.find("root.SizeChanged(") !=
+                std::string::npos &&
+            sharedControls.find("winrt::make_weak(controlColumn)") !=
+                std::string::npos &&
+            sharedControls.find("winrt::make_weak(text)") !=
+                std::string::npos &&
+            sharedControls.find("winrt::make_weak(controlHost)") !=
+                std::string::npos &&
+            sharedControls.find(
+              "args.NewSize().Width < kSettingRowStackThreshold") !=
+                std::string::npos &&
+            sharedControls.find("grid.ColumnSpacing(stacked") !=
+                std::string::npos &&
+            sharedControls.find("grid.RowSpacing(stacked") !=
+                std::string::npos &&
+            sharedControls.find("Grid::SetRow(responsiveControlHost") !=
+                std::string::npos &&
             sharedControls.find("void SetControlAlignment(") !=
-                std::string::npos &&
-            sharedControls.find("kSettingMinimumTextWidth") ==
-                std::string::npos &&
-            sharedControls.find("controlRow") == std::string::npos &&
-            sharedControls.find("root.SizeChanged(") == std::string::npos &&
-            sharedControls.find("Grid::SetRow(") == std::string::npos &&
-            sharedControls.find("struct ColorFlyoutEditor") !=
+                std::string::npos,
+        "SettingRow keeps the 300-DIP wide editor column and safely stacks text above controls below its narrow-width threshold");
+    Check(sharedControls.find("struct ColorFlyoutEditor") !=
                 std::string::npos &&
             sharedControls.find("SettingsUpdateMode::Preview") !=
                 std::string::npos &&
@@ -477,7 +577,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "setting rows retain fixed alignment, continuous previews are frame-coalesced, and color flyouts light-dismiss by committing while explicit Cancel rolls back");
+        "continuous previews remain frame-coalesced and color flyouts light-dismiss by committing while explicit Cancel rolls back");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");
@@ -547,9 +647,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             numericResetCommit < numericResetEnd &&
             personalization.find("1.0, 12.0") != std::string::npos &&
             personalization.find("1.0, 24.0") != std::string::npos &&
-            personalization.find("1.0, 34.0") != std::string::npos &&
             dock.find("nullptr, 100.0") != std::string::npos,
-        "legacy hotkey reset/clear paths and every numeric reset default remain available beside their editors");
+        "legacy hotkey reset/clear paths and numeric controls with inline defaults retain their reset actions");
 }
 }
 

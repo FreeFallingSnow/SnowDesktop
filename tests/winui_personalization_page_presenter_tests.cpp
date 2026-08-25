@@ -67,13 +67,23 @@ void TestPresenterContract(const std::filesystem::path& repository)
     for (const char* member : {
              "widgetAlpha", "widgetBorderAlpha", "gradientEndA",
              "glassBlurRadius", "cornerRadius", "barHeight",
-             "categorizedTabHeight", "glassEnabled", "acrylicEnabled",
-             "contentTheme", "contextMenuStyle", "showCategoryTabCounts",
+             "glassEnabled", "acrylicEnabled",
+             "contentTheme", "contextMenuStyle",
              "widgetBgR", "widgetBorderR"})
     {
         Check(source.find(member) != std::string::npos,
             "the declared personalization field has a real WinUI binding");
     }
+    Check(source.find("ContinuousControl categorizedTabHeight") ==
+                std::string::npos &&
+            source.find("showCategoryTabCountsToggle") ==
+                std::string::npos &&
+            source.find("showCategoryCountsRow") == std::string::npos &&
+            source.find("SetContinuousText(categorizedTabHeight") ==
+                std::string::npos &&
+            source.find("app.settings.category_show_count") ==
+                std::string::npos,
+        "category layout and count settings are not duplicated on the Personalization page");
     for (const char* control : {
              "muxc::Slider", "muxc::NumberBox",
              "muxc::ToggleSwitch", "muxc::ComboBox"})
@@ -122,8 +132,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("glassRow.SetControlAlignment(") !=
                 std::string::npos &&
             source.find("acrylicRow.SetControlAlignment(") !=
-                std::string::npos &&
-            source.find("showCategoryCountsRow.SetControlAlignment(") !=
                 std::string::npos &&
             source.find(
               "control.reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=

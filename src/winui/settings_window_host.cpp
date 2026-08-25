@@ -236,9 +236,6 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "desktop.categoryCounts",
         "app.settings.category_show_count",
         "settings.desktop.categoryLayout.description"},
-    {SettingsPage::Personalization, "desktop.tabFontSize",
-        "app.settings.category_font_size",
-        "settings.desktop.categoryLayout.description"},
     {SettingsPage::Desktop, "desktop.spacing", "settings.desktop.spacing",
         "settings.desktop.spacing.description"},
     {SettingsPage::Desktop, "desktop.iconSize", "settings.desktop.iconSize",
@@ -377,15 +374,15 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.blur_radius", "settings.taskbar.theme.description"},
     {SettingsPage::Taskbar, "taskbar.acrylic",
         "app.settings.acrylic_noise", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.dynamic.visibleWindow",
-        "app.settings.taskbar_dynamic_visible_window",
-        "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.dynamic.maximizedWindow",
-        "app.settings.taskbar_dynamic_maximized_window",
-        "settings.taskbar.theme.description"},
     {SettingsPage::Taskbar, "taskbar.dynamic.shellUi",
         "app.settings.taskbar_dynamic_shell_ui",
-        "settings.taskbar.theme.description"},
+        "settings.taskbar.scenarioOverrides.description"},
+    {SettingsPage::Taskbar, "taskbar.dynamic.maximizedWindow",
+        "app.settings.taskbar_dynamic_maximized_window",
+        "settings.taskbar.scenarioOverrides.description"},
+    {SettingsPage::Taskbar, "taskbar.dynamic.visibleWindow",
+        "app.settings.taskbar_dynamic_visible_window",
+        "settings.taskbar.scenarioOverrides.description"},
     {SettingsPage::Taskbar, "taskbar.systemTheme",
         "app.settings.system_panel",
         "settings.taskbar.restartExplorer.description"},
@@ -993,6 +990,36 @@ struct SettingsWindowHost::Impl
 
         if (input.staticSettings.empty())
         {
+            const auto pageContext = [this](SettingsPage page) {
+                switch (page)
+                {
+                case SettingsPage::General:
+                    return L("app.settings.general");
+                case SettingsPage::Personalization:
+                    return L("app.settings.appearance");
+                case SettingsPage::Desktop:
+                    return L("settings.nav.desktop");
+                case SettingsPage::DesktopCategories:
+                    return L("settings.nav.categories");
+                case SettingsPage::Dock:
+                case SettingsPage::DockAndTaskbar:
+                    return L("settings.nav.dock");
+                case SettingsPage::Taskbar:
+                    return L("settings.nav.taskbar");
+                case SettingsPage::Widgets:
+                    return L("app.settings.widgets");
+                case SettingsPage::BackupAndData:
+                    return L("app.settings.backup");
+                case SettingsPage::About:
+                    return L("app.settings.about");
+                case SettingsPage::DeveloperTools:
+                    return L("app.settings.widgets_developer_tools");
+                case SettingsPage::Debug:
+                    return L("app.settings.debug");
+                default:
+                    return std::wstring{};
+                }
+            };
             input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
             for (const auto& definition : kStaticSearchDefinitions)
             {
@@ -1001,6 +1028,7 @@ struct SettingsWindowHost::Impl
                 descriptor.focusId = definition.focusId;
                 descriptor.label = L(definition.labelKey);
                 descriptor.description = L(definition.descriptionKey);
+                descriptor.context = pageContext(definition.page);
                 descriptor.visible =
                     definition.page != SettingsPage::DeveloperTools &&
                         definition.page != SettingsPage::Debug

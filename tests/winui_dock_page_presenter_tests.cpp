@@ -70,7 +70,8 @@ void TestPresenterContract(const std::filesystem::path& repository)
     }
     for (const char* control : {
              "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
-             "muxc::NumberBox", "muxc::Button"})
+             "muxc::NumberBox", "muxc::Button", "muxc::Expander",
+             "muxc::InfoBar", "muxc::RadioButtons"})
     {
         Check(source.find(control) != std::string::npos,
             "the Dock page uses native WinUI controls");
@@ -121,10 +122,21 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("ExtractNumericUnit(") != std::string::npos &&
             source.find("app.settings.items_unit") != std::string::npos,
         "Dock percentages, blur pixels, and localized item-count units match the legacy surface");
-    Check(source.find(
-              "SetCardText(taskbarAppearanceCard,\n            \"app.settings.system_appearance\"") !=
+    const auto taskbarBehaviorSection = source.find(
+        "InitializeCard(taskbarCard, cardStyle, taskbarRoot)");
+    const auto taskbarAppearanceSection = source.find(
+        "InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot)");
+    const auto taskbarRulesSection = source.find(
+        "InitializeCard(taskbarRulesCard, cardStyle, taskbarRoot)");
+    const auto taskbarSystemPanelSection = source.find(
+        "InitializeCard(taskbarSystemPanelCard, cardStyle, taskbarRoot)");
+    Check(taskbarBehaviorSection != std::string::npos &&
+            taskbarBehaviorSection < taskbarAppearanceSection &&
+            taskbarAppearanceSection < taskbarRulesSection &&
+            taskbarRulesSection < taskbarSystemPanelSection &&
+            source.find("taskbarRoot.Children().RemoveAt(") ==
                 std::string::npos,
-        "System Appearance remains the legacy group title above taskbar appearance settings");
+        "Taskbar content is naturally grouped as behavior, default appearance, scenario overrides, then system panels");
     Check(source.find(
               "SetContinuousText(thicknessScale,\n            \"app.settings.dock_thickness\"") !=
                 std::string::npos &&
@@ -184,11 +196,41 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("PrepareDynamicRuleTheme") != std::string::npos &&
             source.find("contentTheme =") != std::string::npos,
         "all three dynamic rules share enabled, theme, and content-theme bindings");
-    Check(source.find("taskbarRoot.Children().RemoveAt(0)") !=
-                std::string::npos &&
-            source.find("taskbarRoot.Children().Append(taskbarCard.root)") !=
+    const auto shellUiRule = source.find(
+        "InitializeDynamicRule(shellUiRule");
+    const auto maximizedRule = source.find(
+        "InitializeDynamicRule(maximizedWindowRule");
+    const auto visibleRule = source.find(
+        "InitializeDynamicRule(visibleWindowRule");
+    Check(shellUiRule != std::string::npos &&
+            shellUiRule < maximizedRule && maximizedRule < visibleRule &&
+            source.find(
+              "&shellUiRule, &maximizedWindowRule, &visibleWindowRule") !=
                 std::string::npos,
-        "system taskbar controls follow appearance and dynamic rules as in the legacy page");
+        "scenario overrides display and iterate in shell-UI, maximized-window, visible-window priority order");
+    const auto ruleToggle = source.find(
+        "control.root.Children().Append(control.enabledRow.root)");
+    const auto ruleDisclosure = source.find(
+        "control.root.Children().Append(control.expander)");
+    Check(source.find("control.expander = muxc::Expander{}") !=
+                std::string::npos &&
+            source.find("control.expander.IsExpanded(false)") !=
+                std::string::npos &&
+            source.find("control.expander.Content(control.details)") !=
+                std::string::npos &&
+            ruleToggle != std::string::npos &&
+            ruleDisclosure != std::string::npos &&
+            ruleToggle < ruleDisclosure &&
+            source.find("control->details.Visibility(enabled") ==
+                std::string::npos &&
+            source.find("control->themeRow.SetEnabled(enabled)") !=
+                std::string::npos &&
+            source.find("SetDynamicRuleAutomation(") !=
+                std::string::npos &&
+            source.find(
+              "AutomationProperties::SetHelpText(control.expander") !=
+                std::string::npos,
+        "each scenario keeps its enable switch independent from one native Expander and applies contextual accessibility metadata");
     Check(source.find("floatingEdgeSwipeRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
             source.find("positionRow.SetEnabled(dockEnabled)") !=
@@ -213,8 +255,18 @@ void TestPresenterContract(const std::filesystem::path& repository)
     Check(source.find("taskbarHookRequired = settings.systemTaskbarBackdropEnabled") !=
                 std::string::npos &&
             source.find("if (taskbarHookRequired)") !=
+                std::string::npos &&
+            source.find("muxc::InfoBar taskbarRuntimeStatus") !=
+                std::string::npos &&
+            source.find("taskbarRuntimeStatus.IsClosable(false)") !=
+                std::string::npos &&
+            source.find("muxc::InfoBarSeverity::Warning") !=
+                std::string::npos &&
+            source.find("muxc::InfoBarSeverity::Error") !=
+                std::string::npos &&
+            source.find("taskbarRuntimeStatus.IsOpen(!text.empty())") !=
                 std::string::npos,
-        "taskbar runtime status is shown only when a visual hook is requested");
+        "taskbar hook state uses a non-closable severity-aware InfoBar only when visual integration is requested");
     Check(source.find("control.editor.Close()") !=
                 std::string::npos &&
             controls.find("picker.ColorChanged(colorToken)") !=
@@ -240,26 +292,24 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("control.acrylicRow.SetControlAlignment(") !=
                 std::string::npos &&
-            source.find("muxc::Grid systemThemeActions{};") !=
+            source.find("taskbarAlignmentChoices = NewInlineChoices()") !=
                 std::string::npos &&
-            source.find("systemThemeActions.ColumnSpacing(8.0);") !=
+            source.find("windowsSystemThemeChoices = NewInlineChoices()") !=
                 std::string::npos &&
-            source.find("themeColumn.Width(mux::GridLengthHelper::FromValueAndType(") !=
+            source.find("choices.MaxColumns(2)") !=
                 std::string::npos &&
-            source.find("1.0, mux::GridUnitType::Star") !=
+            source.find(
+              "windowsSystemThemeRow.Initialize(windowsSystemThemeChoices)") !=
                 std::string::npos &&
-            source.find("restartColumn.Width(mux::GridLengthHelper::Auto())") !=
+            source.find(
+              "restartExplorerRow.Initialize(restartExplorerButton)") !=
                 std::string::npos &&
-            source.find("muxc::Grid::SetColumn(restartExplorerButton, 1)") !=
-                std::string::npos &&
-            source.find("windowsSystemThemeRow.Initialize(systemThemeActions)") !=
-                std::string::npos &&
-            source.find("windowsSystemThemeRow.SetControlAlignment(") ==
+            source.find("restartExplorerRow.SetControlAlignment(") !=
                 std::string::npos &&
             source.find(
               "control.reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
-        "Dock toggles and compact actions align right while the theme selector stretches beside its Explorer action and every inline reset stays centered");
+        "Dock toggles and compact actions align right while binary taskbar choices use responsive RadioButtons and Explorer restart has its own row");
 }
 } // namespace
 

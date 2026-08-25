@@ -82,12 +82,18 @@
           AfterTargets="Build"
           DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
           Condition="'$(WindowsAppSDKSelfContained)' == 'true'">
-    <MakeDir Directories="$(TargetDir)Assets\Fonts" />
+    <ItemGroup>
+      <_SnowDesktopSettingsIcon Include="$(SnowDesktopSourceDirectory)\assets\settings\icons\*.svg" />
+    </ItemGroup>
+    <MakeDir Directories="$(TargetDir)Assets\Fonts;$(TargetDir)Assets\Settings\Icons" />
     <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\FluentSystemIcons-Regular.ttf"
           DestinationFiles="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf"
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\fa-solid-900.ttf"
           DestinationFiles="$(TargetDir)Assets\Fonts\fa-solid-900.ttf"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SnowDesktopSettingsIcon)"
+          DestinationFolder="$(TargetDir)Assets\Settings\Icons"
           SkipUnchangedFiles="true" />
     <ItemGroup>
       <_SnowDesktopDeploymentFile Include="@(MicrosoftWindowsAppSDKFiles)">
@@ -133,7 +139,7 @@
     </ItemGroup>
     <WriteLinesToFile
         File="$(IntDir)SnowDesktop.deployment.items"
-        Lines="@(_SnowDesktopDeploymentFile-&gt;'%(DeploymentPath)&#x9;%(SourcePackage)&#x9;%(DeploymentKind)')"
+        Lines="@(_SnowDesktopDeploymentFile-&gt;'%(DeploymentPath)&#x9;%(SourcePackage)&#x9;%(DeploymentKind)');@(_SnowDesktopSettingsIcon-&gt;'Assets\Settings\Icons\%(Filename)%(Extension)&#x9;SnowDesktop&#x9;Asset')"
         Overwrite="true"
         Encoding="UTF-8" />
     <WriteLinesToFile
