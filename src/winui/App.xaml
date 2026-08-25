@@ -36,11 +36,6 @@
                                   BorderBrush="{ThemeResource ExpanderHeaderBorderBrush}"
                                   BorderThickness="{TemplateBinding BorderThickness}"
                                   CornerRadius="{TemplateBinding CornerRadius}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-
                                 <VisualStateManager.VisualStateGroups>
                                     <VisualStateGroup x:Name="CommonStates">
                                         <VisualState x:Name="Normal" />
@@ -111,12 +106,13 @@
                                                   ContentTransitions="{TemplateBinding ContentTransitions}"
                                                   HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                                                   VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                  Foreground="{TemplateBinding Foreground}" />
+                                                  Foreground="{TemplateBinding Foreground}"
+                                                  Margin="0,0,40,0" />
                                 <Border x:Name="ExpandCollapseChevronBorder"
-                                        Grid.Column="1"
                                         Width="{ThemeResource ExpanderChevronButtonSize}"
                                         Height="{ThemeResource ExpanderChevronButtonSize}"
                                         Margin="{ThemeResource ExpanderChevronMargin}"
+                                        HorizontalAlignment="Right"
                                         Background="{ThemeResource ExpanderChevronBackground}"
                                         BorderBrush="{ThemeResource ExpanderChevronBorderBrush}"
                                         BorderThickness="{ThemeResource ExpanderChevronBorderThickness}"

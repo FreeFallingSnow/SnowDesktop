@@ -113,6 +113,10 @@ void TestHostContract(const std::filesystem::path& repository)
             appMarkup.find(
                 "<ControlTemplate TargetType=\"controls:Expander\">") !=
                 std::string::npos &&
+            appMarkup.find("<Grid.ColumnDefinitions>") ==
+                std::string::npos &&
+            appMarkup.find("HorizontalAlignment=\"Right\"") !=
+                std::string::npos &&
             appMarkup.find("<Style TargetType=\"controls:Expander\"") !=
                 std::string::npos &&
             appMarkup.find("ExpandCollapseChevronDown") !=
