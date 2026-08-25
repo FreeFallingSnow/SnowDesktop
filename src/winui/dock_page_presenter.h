@@ -86,6 +86,8 @@ public:
     void RefreshLocalizedText();
 
     void Activate() noexcept;
+    /** Activate the taskbar surface and refresh Windows-owned runtime state. */
+    void ActivateTaskbar() noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusTarget(std::string_view focusId) const noexcept;

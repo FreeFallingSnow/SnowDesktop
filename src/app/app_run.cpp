@@ -644,20 +644,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.shortcutArrowMode = shortcutArrowMode_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));
-
-        if (FindWindowW(L"Shell_TrayWnd", nullptr))
-        {
-            auto snapshot = settingsController_->Snapshot();
-            if (snapshot)
-            {
-                DockSettings dock = snapshot->values.dock;
-                dock.systemTaskbarAutoHide =
-                    IsSystemTaskbarAutoHideEnabled();
-                dock.systemTaskbarAlignment =
-                    IsSystemTaskbarAlignmentCentered() ? 1 : 0;
-                (void)settingsController_->SynchronizeDock(std::move(dock));
-            }
-        }
+        SyncSystemTaskbarSettingsFromWindows();
     };
     settingsHostOptions.developerToolsVisible = [this]() {
         if (settingsController_)

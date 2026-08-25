@@ -1638,6 +1638,22 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetHelpText(taskbarRuntimeStatus, text);
     }
 
+    void RefreshTaskbarRuntimeState()
+    {
+        const bool previousUpdating = updatingControls;
+        updatingControls = true;
+        try
+        {
+            windowsSystemThemeChoices.SelectedIndex(
+                IsWindowsSystemLightThemeEnabled() ? 0 : 1);
+            RefreshTaskbarRuntimeStatus();
+        }
+        catch (...)
+        {
+        }
+        updatingControls = previousUpdating;
+    }
+
     void SetCardText(
         SettingsCard& card,
         std::string_view key,
@@ -2418,6 +2434,14 @@ void DockPagePresenter::Activate() noexcept
 {
     if (impl_ && !impl_->closed)
         impl_->active = true;
+}
+
+void DockPagePresenter::ActivateTaskbar() noexcept
+{
+    if (!impl_ || impl_->closed)
+        return;
+    impl_->active = true;
+    impl_->RefreshTaskbarRuntimeState();
 }
 
 void DockPagePresenter::Deactivate() noexcept

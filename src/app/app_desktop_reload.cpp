@@ -487,9 +487,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (!traySettings && !immersiveColor)
             break;
 
+        if (traySettings || immersiveColor)
+            SyncSystemTaskbarSettingsFromWindows();
         if (traySettings)
         {
-            SyncSystemTaskbarSettingsFromWindows();
             ScheduleDisplayTopologyRefresh();
         }
         RefreshSystemTaskbarAppearance(false);

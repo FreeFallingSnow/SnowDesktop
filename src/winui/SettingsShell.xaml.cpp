@@ -1846,7 +1846,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "taskbar.dynamic.visibleWindow",
                 "taskbar.dynamic.maximizedWindow",
                 "taskbar.dynamic.shellUi"});
-            dockPage_->Activate();
+            dockPage_->ActivateTaskbar();
         }
         break;
     case SettingsPage::DockAndTaskbar:

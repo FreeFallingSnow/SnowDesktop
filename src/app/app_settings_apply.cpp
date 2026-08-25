@@ -935,8 +935,13 @@ public:
     }
 
     snowdesktop::SettingsActionResult OnSettingsRouteChanged(
-        const snowdesktop::SettingsRoute&) override
+        const snowdesktop::SettingsRoute& route) override
     {
+        // Windows owns these taskbar values. Reconcile them whenever the
+        // already-open settings window enters the Taskbar route; reopening the
+        // window is not the only path that can expose this page.
+        if (route.page == snowdesktop::SettingsPage::Taskbar)
+            app_.SyncSystemTaskbarSettingsFromWindows();
         return snowdesktop::SettingsActionResult::Success();
     }
 
@@ -1666,16 +1671,45 @@ void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
         return;
 
     const bool autoHide = IsSystemTaskbarAutoHideEnabled();
-    const bool centered = IsSystemTaskbarAlignmentCentered();
-    if (dockSettings_.systemTaskbarAutoHide == autoHide &&
-        dockSettings_.systemTaskbarAlignment == (centered ? 1 : 0))
-        return;
+    const int alignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
+    DockSettings synchronized = dockSettings_;
 
-    dockSettings_.systemTaskbarAutoHide = autoHide;
-    dockSettings_.systemTaskbarAlignment = centered ? 1 : 0;
-    SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
+    // A route change can race a coalesced Dock edit. Do not replace a user's
+    // draft with an external read; the next clean entry or Shell notification
+    // will reconcile it. Build from the controller snapshot so every other
+    // Dock field also keeps its authoritative value.
     if (settingsController_)
-        (void)settingsController_->SynchronizeDock(dockSettings_);
+    {
+        const auto snapshot = settingsController_->Snapshot();
+        if (snapshot)
+        {
+            if (snapshot->externalReplacementPending ||
+                snowdesktop::HasSettingsDomain(
+                    snapshot->dirtyDomains,
+                    snowdesktop::SettingsDomain::Dock))
+            {
+                return;
+            }
+            synchronized = snapshot->values.dock;
+        }
+        synchronized.systemTaskbarAutoHide = autoHide;
+        synchronized.systemTaskbarAlignment = alignment;
+        if (!settingsController_->SynchronizeDock(synchronized))
+            return;
+    }
+    else
+    {
+        synchronized.systemTaskbarAutoHide = autoHide;
+        synchronized.systemTaskbarAlignment = alignment;
+    }
+
+    const bool persistedMirrorChanged =
+        dockSettings_.systemTaskbarAutoHide != autoHide ||
+        dockSettings_.systemTaskbarAlignment != alignment;
+    dockSettings_.systemTaskbarAutoHide = autoHide;
+    dockSettings_.systemTaskbarAlignment = alignment;
+    if (persistedMirrorChanged)
+        SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);
 }
 
 void DesktopApp::LoadCategorySettingsAndApply()

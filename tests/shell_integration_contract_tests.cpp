@@ -117,7 +117,13 @@ int main(int argc, char** argv)
         "void DesktopApp::SyncSystemTaskbarSettingsFromWindows()",
         "void DesktopApp::LoadCategorySettingsAndApply()");
     Check(syncTaskbar.find("FindWindowW(L\"Shell_TrayWnd\", nullptr)") !=
-            std::string_view::npos,
+                std::string_view::npos &&
+            syncTaskbar.find("snapshot->externalReplacementPending") !=
+                std::string_view::npos &&
+            syncTaskbar.find("snapshot->dirtyDomains") !=
+                std::string_view::npos &&
+            syncTaskbar.find("SynchronizeDock(synchronized)") !=
+                std::string_view::npos,
         "taskbar state is not mirrored while Explorer is unavailable");
 
     const std::string_view controller = FunctionBody(dockSettings,
@@ -180,10 +186,12 @@ int main(int argc, char** argv)
         "LRESULT DesktopApp::HandleControlMessage(",
         "void DesktopApp::ReloadItems(");
     Check(controlHandler.find("case WM_SETTINGCHANGE:") !=
-            std::string_view::npos &&
+                std::string_view::npos &&
+            controlHandler.find("if (traySettings || immersiveColor)") !=
+                std::string_view::npos &&
             controlHandler.find("SyncSystemTaskbarSettingsFromWindows();") !=
                 std::string_view::npos,
-        "the top-level control window synchronizes external taskbar changes");
+        "the top-level control window synchronizes taskbar and system-panel theme changes");
     Check(controlHandler.find("case WM_THEMECHANGED:") !=
             std::string_view::npos &&
             controlHandler.find("RefreshSystemTaskbarAppearance(false);") !=

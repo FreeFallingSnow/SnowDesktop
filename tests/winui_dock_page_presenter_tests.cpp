@@ -191,6 +191,20 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("SyncSystemTaskbarSettingsFromWindows") ==
                 std::string::npos,
         "the presenter never overwrites requested taskbar values by rereading Windows");
+    Check(header.find("void ActivateTaskbar() noexcept;") !=
+                std::string::npos &&
+            source.find("void RefreshTaskbarRuntimeState()") !=
+                std::string::npos &&
+            source.find("IsWindowsSystemLightThemeEnabled() ? 0 : 1") !=
+                std::string::npos &&
+            source.find("updatingControls = true;") !=
+                std::string::npos &&
+            source.find("updatingControls = previousUpdating;") !=
+                std::string::npos &&
+            source.find(
+              "impl_->RefreshTaskbarRuntimeState();") !=
+                std::string::npos,
+        "taskbar activation refreshes Windows runtime state under the programmatic-update guard");
     Check(source.find("SystemTaskbarDynamicRule DockSettings::* member") !=
                 std::string::npos &&
             source.find("PrepareDynamicRuleTheme") != std::string::npos &&

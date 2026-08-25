@@ -485,7 +485,13 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string_view::npos &&
             dockSection.find("dockPage_->DockContent()") !=
                 std::string_view::npos &&
+            dockSection.find("dockPage_->Activate();") !=
+                std::string_view::npos &&
+            dockSection.find("ActivateTaskbar") ==
+                std::string_view::npos &&
             taskbarSection.find("dockPage_->TaskbarContent()") !=
+                std::string_view::npos &&
+            taskbarSection.find("dockPage_->ActivateTaskbar();") !=
                 std::string_view::npos &&
             presenter.find("\"desktop.softwareDesktop\"") !=
                 std::string::npos &&

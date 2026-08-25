@@ -153,6 +153,43 @@ int main(int argc, char** argv)
             std::string_view::npos,
         "a successful Dock commit keeps requested values instead of rereading Windows");
 
+    const std::string_view routeChanged = Between(source,
+        "snowdesktop::SettingsActionResult OnSettingsRouteChanged(",
+        "snowdesktop::SettingsActionResult Invoke(");
+    Check(routeChanged.find(
+              "route.page == snowdesktop::SettingsPage::Taskbar") !=
+                std::string_view::npos &&
+            routeChanged.find(
+              "app_.SyncSystemTaskbarSettingsFromWindows();") !=
+                std::string_view::npos &&
+            routeChanged.find("RequestSystemTaskbar") ==
+                std::string_view::npos,
+        "entering the Taskbar route reconciles Windows-owned state without issuing a write request");
+
+    const std::string_view taskbarSync = Between(source,
+        "void DesktopApp::SyncSystemTaskbarSettingsFromWindows()",
+        "void DesktopApp::LoadCategorySettingsAndApply()");
+    Check(taskbarSync.find("snapshot->externalReplacementPending") !=
+                std::string_view::npos &&
+            taskbarSync.find("snapshot->dirtyDomains") !=
+                std::string_view::npos &&
+            AppearsBefore(taskbarSync,
+                "settingsController_->SynchronizeDock(synchronized)",
+                "dockSettings_.systemTaskbarAutoHide = autoHide;") &&
+            taskbarSync.find("if (persistedMirrorChanged)\n") !=
+                std::string_view::npos,
+        "external taskbar reconciliation preserves Dock drafts and mutates the application mirror only after controller synchronization");
+
+    const std::string_view externalRefresh = Between(run,
+        "settingsHostOptions.refreshExternalState = [this]()",
+        "settingsHostOptions.developerToolsVisible = [this]()");
+    Check(externalRefresh.find(
+              "SyncSystemTaskbarSettingsFromWindows();") !=
+                std::string_view::npos &&
+            externalRefresh.find("IsSystemTaskbarAutoHideEnabled()") ==
+                std::string_view::npos,
+        "window reopen and in-window Taskbar navigation share one external-state reconciliation path");
+
     const std::string_view general = Between(commit,
         "if (HasSettingsDomain(domains, SettingsDomain::General))",
         "if (HasSettingsDomain(domains, SettingsDomain::Category))");
