@@ -69,44 +69,52 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN") !=
                 std::string::npos,
-        "the reusable Win32 top-level HWND delegates only its measured client area to DesktopWindowXamlSource");
+        "the reusable Win32 top-level HWND delegates its full measured client area, including the integrated title-bar row, to DesktopWindowXamlSource");
     Check(source.find("WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN") !=
                 std::string::npos &&
-            header.find("native non-client title bar") !=
+            header.find("AppWindowTitleBar extends XAML into the caption") !=
                 std::string::npos &&
-            source.find("Microsoft.UI.Windowing") == std::string::npos &&
-            source.find("AppWindow") == std::string::npos &&
-            source.find("AppWindowTitleBar") == std::string::npos &&
-            source.find("ExtendsContentIntoTitleBar") ==
+            source.find("muw::AppWindow::GetFromWindowId") !=
+                std::string::npos &&
+            source.find("ExtendsContentIntoTitleBar(true)") !=
+                std::string::npos &&
+            source.find("muw::TitleBarHeightOption::Tall") !=
+                std::string::npos &&
+            source.find("muw::IconShowOptions::HideIconAndSystemMenu") !=
+                std::string::npos &&
+            source.find("SetDragRectangles(rectangles)") !=
                 std::string::npos &&
             source.find("WM_NCHITTEST") == std::string::npos &&
             source.find("WM_NCCALCSIZE") == std::string::npos &&
-            source.find("SetTitleBar(") == std::string::npos &&
-            runtime.find("SetTitleBar(") == std::string::npos &&
             shellMarkup.find("x:Name=\"MinimizeButton\"") ==
                 std::string::npos &&
             shellMarkup.find("x:Name=\"MaximizeButton\"") ==
                 std::string::npos &&
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
-        "WS_OVERLAPPEDWINDOW leaves the native caption, three system buttons, Snap, and accessibility entirely owned by Windows");
-    Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") ==
+        "AppWindow extends XAML into the caption while Windows retains the three system buttons, Snap, and accessibility");
+    Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") ==
+            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
                 std::string::npos &&
-            shellMarkup.find("TitleBarLeftInsetColumn") ==
+            shellMarkup.find("TitleBarLeftInsetColumn") !=
                 std::string::npos &&
-            shellMarkup.find("TitleBarRightInsetColumn") ==
+            shellMarkup.find("TitleBarRightInsetColumn") !=
                 std::string::npos &&
-            shellMarkup.find("IsTitleBarAutoPaddingEnabled") ==
+            shellMarkup.find("x:Name=\"TitleBarSearchHost\"") !=
                 std::string::npos &&
-            shellHeader.find("SetIntegratedTitleBar") ==
+            shellMarkup.find("x:Name=\"SettingsSearchBox\"") !=
                 std::string::npos &&
-            shell.find("SetIntegratedTitleBar") == std::string::npos &&
-            shell.find("UpdateIntegratedTitleBar") == std::string::npos &&
-            shell.find("NavigationRoot().PaneTitle(shellTitle)") !=
+            shellMarkup.find("IsBackButtonVisible=\"Collapsed\"") !=
+                std::string::npos &&
+            shellHeader.find("SetIntegratedTitleBarInsets") !=
+                std::string::npos &&
+            shellHeader.find("IntegratedTitleBarDragRectangles") !=
+                std::string::npos &&
+            shell.find("TitleBarBackButton().Click") != std::string::npos &&
+            shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
-        "the Island starts below the native caption and contains no integrated XAML title-bar row or inset bookkeeping");
+        "the XAML title-bar row contains navigation, localized identity, and search with explicit caption inset and drag-region bookkeeping");
     Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
                 std::string::npos &&
             source.find("constexpr int kMinimumClientHeight = 520;") !=
@@ -159,8 +167,9 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarWindowActive") ==
                 std::string::npos &&
-            shell.find("IntegratedTitleBarText") == std::string::npos,
-        "caption activation visuals remain native instead of being mirrored into XAML");
+            shell.find("IntegratedTitleBarText().Text(shellTitle)") !=
+                std::string::npos,
+        "Windows owns caption activation visuals while XAML provides only the localized title content");
     Check(source.find("ApplySettingsWindowChrome(window, darkTheme)") !=
                 std::string::npos &&
             source.find("DWMWA_USE_IMMERSIVE_DARK_MODE") !=
@@ -177,9 +186,13 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("DWMWA_COLOR_DEFAULT") != std::string::npos &&
             source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
-            source.find("AppWindow") == std::string::npos &&
-            source.find("TitleBarTheme") == std::string::npos,
-        "theme and contrast changes coordinate native DWM caption material while Windows retains title-bar layout and ownership");
+            source.find("appWindowTitleBar.PreferredTheme") !=
+                std::string::npos &&
+            source.find("muw::TitleBarTheme::Dark") !=
+                std::string::npos &&
+            source.find("muw::TitleBarTheme::Light") !=
+                std::string::npos,
+        "theme and contrast changes coordinate DWM material and the AppWindow-owned caption-button theme");
 
     Check(source.find("\"desktop.tabFontSize\"") !=
                 std::string::npos &&
@@ -384,7 +397,7 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("DWMSBT_NONE") != std::string::npos &&
             source.find("DwmExtendFrameIntoClientArea") ==
                 std::string::npos,
-        "Detach clears the Island material while the untouched native frame uses the matching DWM system backdrop with a contrast fallback");
+        "Detach clears the Island material while the integrated top-level frame uses the matching DWM system backdrop with a contrast fallback");
     const std::size_t shutdownBegin = source.find(
         "void SettingsWindowHost::Shutdown() noexcept");
     const std::size_t openBegin = source.find(
@@ -394,9 +407,12 @@ void TestHostContract(const std::filesystem::path& repository)
         ? std::string_view(source).substr(
             shutdownBegin, openBegin - shutdownBegin)
         : std::string_view{};
-    Check(shutdownFunction.find("ResetIntegratedTitleBar()") ==
+    Check(shutdownFunction.find("ResetIntegratedTitleBar()") !=
                 std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") !=
+                std::string_view::npos &&
+            shutdownFunction.find(
+                "SetIntegratedTitleBarLayoutChangedCallback({})") !=
                 std::string_view::npos &&
             shutdownFunction.find("callbacks->alive.store(false)") !=
                 std::string_view::npos &&
@@ -408,11 +424,16 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") <
                 shutdownFunction.find("callbacks->alive.store(false)") &&
+            shutdownFunction.find(
+                "SetIntegratedTitleBarLayoutChangedCallback({})") <
+                shutdownFunction.find("callbacks->alive.store(false)") &&
             shutdownFunction.find("shell->Close()") <
                 shutdownFunction.find("runtime.Detach()") &&
             shutdownFunction.find("runtime.Detach()") <
+                shutdownFunction.find("ResetIntegratedTitleBar()") &&
+            shutdownFunction.find("ResetIntegratedTitleBar()") <
                 shutdownFunction.find("DestroyWindow("),
-        "the Shell callbacks close before the XAML Island and native overlapped HWND are destroyed, with no AppWindow title-bar state to unwind");
+        "the Shell callbacks close before the Island detaches and AppWindow title-bar state resets ahead of HWND destruction");
     Check(source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
             source.find("SupportsMicaBackdrop()") != std::string::npos &&

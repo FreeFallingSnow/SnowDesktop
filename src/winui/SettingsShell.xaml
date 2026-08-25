@@ -47,11 +47,75 @@
 
     <Grid x:Name="ShellRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="IntegratedTitleBarHost"
+              Grid.Row="0"
+              Height="48"
+              Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="1">
+                <Button x:Name="TitleBarBackButton"
+                        Width="40"
+                        Height="36"
+                        Margin="16,6,0,6"
+                        Padding="0"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        UseSystemFocusVisuals="True">
+                    <FontIcon Glyph="&#xE72B;" FontSize="16" />
+                </Button>
+                <TextBlock x:Name="IntegratedTitleBarText"
+                           Margin="72,0,16,0"
+                           VerticalAlignment="Center"
+                           FontSize="14"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
+
+            <Grid x:Name="TitleBarSearchHost"
+                  Grid.Column="2"
+                  Height="36"
+                  Margin="24,6"
+                  MaxWidth="720"
+                  HorizontalAlignment="Stretch"
+                  VerticalAlignment="Center"
+                  ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <AutoSuggestBox
+                    x:Name="SettingsSearchBox"
+                    Grid.Column="0"
+                    HorizontalAlignment="Stretch"
+                    QueryIcon="Find"
+                    UpdateTextOnSelect="False" />
+                <Button x:Name="ClearSearchButton"
+                        Grid.Column="1"
+                        Visibility="Collapsed"
+                        Padding="10"
+                        VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE894;" FontSize="12" />
+                </Button>
+            </Grid>
+        </Grid>
+
         <NavigationView
             x:Name="NavigationRoot"
+            Grid.Row="1"
             IsSettingsVisible="False"
-            IsBackButtonVisible="Visible"
-            IsBackEnabled="False"
+            IsBackButtonVisible="Collapsed"
             PaneDisplayMode="Left"
             IsPaneOpen="True"
             OpenPaneLength="260"
@@ -100,41 +164,16 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Grid x:Name="HeaderHost"
-                      Grid.Row="0"
-                      Padding="24,14,24,8"
-                      ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <AutoSuggestBox
-                        x:Name="SettingsSearchBox"
-                        Grid.Column="0"
-                        MaxWidth="680"
-                        HorizontalAlignment="Stretch"
-                        QueryIcon="Find"
-                        UpdateTextOnSelect="False" />
-                    <Button x:Name="ClearSearchButton"
-                            Grid.Column="1"
-                            Visibility="Collapsed"
-                            Padding="10"
-                            VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE894;" FontSize="12" />
-                    </Button>
-                </Grid>
-
                 <InfoBar x:Name="StatusInfoBar"
-                         Grid.Row="1"
-                         Margin="24,0,24,8"
+                         Grid.Row="0"
+                         Margin="24,8,24,8"
                          IsOpen="False"
                          IsClosable="True" />
 
-                <Grid Grid.Row="2">
+                <Grid Grid.Row="1">
                     <ScrollViewer x:Name="PageScrollViewer"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">

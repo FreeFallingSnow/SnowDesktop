@@ -67,9 +67,9 @@ struct SettingsWindowHostOptions
 
 /**
  * Owns the Win32 top-level settings HWND and its full-client WinUI 3 Island.
- * WS_OVERLAPPEDWINDOW deliberately retains the native non-client title bar,
- * system caption buttons, Snap, and accessibility. The XAML Island is limited
- * to the HWND client area on every supported Windows version.
+ * AppWindowTitleBar extends XAML into the caption so the Shell can host its
+ * navigation and search there, while Windows continues to own the caption
+ * buttons, maximize/Snap behavior and their accessibility providers.
  *
  * The host does not own SettingsController or WidgetSettingsService. All
  * methods are STA-thread affine except callbacks that only enqueue immutable

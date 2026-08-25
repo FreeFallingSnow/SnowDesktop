@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <utility>
 
 namespace winrt::SnowDesktop::implementation
@@ -16,6 +17,8 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace wfc = winrt::Windows::Foundation::Collections;
+namespace wf = winrt::Windows::Foundation;
+namespace wg = winrt::Windows::Graphics;
 
 namespace
 {
@@ -38,6 +41,7 @@ struct LocalizedFallback
 
 constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.shell.title", L"Settings"},
+    LocalizedFallback{"settings.nav.back", L"Back"},
     LocalizedFallback{"settings.search.placeholder", L"Find a setting"},
     LocalizedFallback{"settings.search.clear", L"Clear search"},
     LocalizedFallback{"settings.progress.cancel", L"Cancel"},
@@ -306,6 +310,7 @@ void SettingsShell::Close() noexcept
     searchRequested_ = {};
     cancelOperation_ = {};
     actualThemeChanged_ = {};
+    integratedTitleBarLayoutChanged_ = {};
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -333,7 +338,7 @@ void SettingsShell::RefreshLocalizedText()
         return;
 
     const std::wstring shellTitle = Localize("settings.shell.title");
-    NavigationRoot().PaneTitle(shellTitle);
+    IntegratedTitleBarText().Text(shellTitle);
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     PersonalizationItem().Content(
@@ -353,6 +358,11 @@ void SettingsShell::RefreshLocalizedText()
 
     muxa::AutomationProperties::SetName(
         NavigationRoot(), Localize("settings.shell.title"));
+    muxa::AutomationProperties::SetName(
+        TitleBarBackButton(), Localize("settings.nav.back"));
+    muxc::ToolTipService::SetToolTip(
+        TitleBarBackButton(),
+        winrt::box_value(Localize("settings.nav.back")));
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
     muxa::AutomationProperties::SetName(
@@ -442,6 +452,113 @@ void SettingsShell::SetActualThemeChangedCallback(
     NotifyActualThemeChanged();
 }
 
+void SettingsShell::SetIntegratedTitleBarInsets(
+    double leftInset, double rightInset)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    leftInset = std::max(0.0, leftInset);
+    rightInset = std::max(0.0, rightInset);
+    TitleBarLeftInsetColumn().Width(
+        mux::GridLength{leftInset, mux::GridUnitType::Pixel});
+    TitleBarRightInsetColumn().Width(
+        mux::GridLength{rightInset, mux::GridUnitType::Pixel});
+}
+
+std::vector<wg::RectInt32>
+SettingsShell::IntegratedTitleBarDragRectangles()
+{
+    std::vector<wg::RectInt32> rectangles;
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return rectangles;
+
+    try
+    {
+        const mux::FrameworkElement host = IntegratedTitleBarHost();
+        const mux::XamlRoot xamlRoot = host.XamlRoot();
+        if (!xamlRoot || host.ActualWidth() <= 0.0 ||
+            host.ActualHeight() <= 0.0)
+        {
+            return rectangles;
+        }
+
+        const double scale = xamlRoot.RasterizationScale();
+        if (scale <= 0.0)
+            return rectangles;
+
+        struct Interval
+        {
+            double left = 0.0;
+            double right = 0.0;
+        };
+        std::array<Interval, 2> interactive{};
+        const auto boundsInHost = [&host](
+                                      const mux::FrameworkElement& element) {
+            return element.TransformToVisual(host).TransformBounds(
+                wf::Rect{0.0f, 0.0f,
+                    static_cast<float>(element.ActualWidth()),
+                    static_cast<float>(element.ActualHeight())});
+        };
+        const wf::Rect backBounds = boundsInHost(TitleBarBackButton());
+        const wf::Rect searchBounds = boundsInHost(TitleBarSearchHost());
+        interactive[0] = {backBounds.X,
+            backBounds.X + backBounds.Width};
+        interactive[1] = {searchBounds.X,
+            searchBounds.X + searchBounds.Width};
+        std::sort(interactive.begin(), interactive.end(),
+            [](const Interval& left, const Interval& right) {
+                return left.left < right.left;
+            });
+
+        const double titleLeft =
+            TitleBarLeftInsetColumn().ActualWidth();
+        const double titleRight = std::max(titleLeft,
+            host.ActualWidth() -
+                TitleBarRightInsetColumn().ActualWidth());
+        const int pixelHeight = std::max(1,
+            static_cast<int>(std::floor(host.ActualHeight() * scale)));
+        const auto appendSegment = [&](double left, double right) {
+            left = std::clamp(left, titleLeft, titleRight);
+            right = std::clamp(right, titleLeft, titleRight);
+            const int pixelLeft = static_cast<int>(std::ceil(left * scale));
+            const int pixelRight = static_cast<int>(std::floor(right * scale));
+            if (pixelRight > pixelLeft)
+            {
+                rectangles.push_back(
+                    wg::RectInt32{pixelLeft, 0,
+                        pixelRight - pixelLeft, pixelHeight});
+            }
+        };
+
+        double cursor = titleLeft;
+        for (const Interval& interval : interactive)
+        {
+            const double intervalLeft =
+                std::clamp(interval.left, titleLeft, titleRight);
+            const double intervalRight =
+                std::clamp(interval.right, titleLeft, titleRight);
+            appendSegment(cursor, intervalLeft);
+            cursor = std::max(cursor, intervalRight);
+        }
+        appendSegment(cursor, titleRight);
+    }
+    catch (...)
+    {
+        rectangles.clear();
+    }
+    return rectangles;
+}
+
+void SettingsShell::SetIntegratedTitleBarLayoutChangedCallback(
+    IntegratedTitleBarLayoutChangedCallback callback)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+    integratedTitleBarLayoutChanged_ = std::move(callback);
+    NotifyIntegratedTitleBarLayoutChanged();
+}
+
 void SettingsShell::NotifyActualThemeChanged() noexcept
 {
     if (closed_ || ownerThreadId_ != GetCurrentThreadId())
@@ -459,6 +576,22 @@ void SettingsShell::NotifyActualThemeChanged() noexcept
     {
         // Theme notification is presentation-only and must not unwind through
         // the XAML event dispatcher or window initialization.
+    }
+}
+
+void SettingsShell::NotifyIntegratedTitleBarLayoutChanged() noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
+        !integratedTitleBarLayoutChanged_)
+    {
+        return;
+    }
+    try
+    {
+        integratedTitleBarLayoutChanged_();
+    }
+    catch (...)
+    {
     }
 }
 
@@ -1071,6 +1204,24 @@ void SettingsShell::HookEvents()
                 NotifyActualThemeChanged();
         });
 
+    integratedTitleBarLoadedToken_ = IntegratedTitleBarHost().Loaded(
+        [this](const winrt::Windows::Foundation::IInspectable&,
+               const mux::RoutedEventArgs&) {
+            NotifyIntegratedTitleBarLayoutChanged();
+        });
+    integratedTitleBarSizeChangedToken_ =
+        IntegratedTitleBarHost().SizeChanged(
+            [this](const winrt::Windows::Foundation::IInspectable&,
+                   const mux::SizeChangedEventArgs&) {
+                NotifyIntegratedTitleBarLayoutChanged();
+            });
+    titleBarBackToken_ = TitleBarBackButton().Click(
+        [this](const winrt::Windows::Foundation::IInspectable&,
+               const mux::RoutedEventArgs&) {
+            if (const auto route = navigation_.PeekBack())
+                RequestRoute(*route);
+        });
+
     selectionChangedToken_ = NavigationRoot().SelectionChanged(
         [this](const muxc::NavigationView&,
                const muxc::NavigationViewSelectionChangedEventArgs& args) {
@@ -1093,13 +1244,6 @@ void SettingsShell::HookEvents()
                     return;
                 }
             }
-        });
-
-    backRequestedToken_ = NavigationRoot().BackRequested(
-        [this](const muxc::NavigationView&,
-               const muxc::NavigationViewBackRequestedEventArgs&) {
-            if (const auto route = navigation_.PeekBack())
-                RequestRoute(*route);
         });
 
     breadcrumbClickedToken_ = PageBreadcrumb().ItemClicked(
@@ -1168,10 +1312,17 @@ void SettingsShell::UnhookEvents() noexcept
     {
         if (actualThemeChangedToken_.value)
             ShellRoot().ActualThemeChanged(actualThemeChangedToken_);
+        if (integratedTitleBarLoadedToken_.value)
+            IntegratedTitleBarHost().Loaded(integratedTitleBarLoadedToken_);
+        if (integratedTitleBarSizeChangedToken_.value)
+        {
+            IntegratedTitleBarHost().SizeChanged(
+                integratedTitleBarSizeChangedToken_);
+        }
+        if (titleBarBackToken_.value)
+            TitleBarBackButton().Click(titleBarBackToken_);
         if (selectionChangedToken_.value)
             NavigationRoot().SelectionChanged(selectionChangedToken_);
-        if (backRequestedToken_.value)
-            NavigationRoot().BackRequested(backRequestedToken_);
         if (breadcrumbClickedToken_.value)
             PageBreadcrumb().ItemClicked(breadcrumbClickedToken_);
         if (searchTextChangedToken_.value)
@@ -1189,8 +1340,10 @@ void SettingsShell::UnhookEvents() noexcept
     {
     }
     actualThemeChangedToken_ = {};
+    integratedTitleBarLoadedToken_ = {};
+    integratedTitleBarSizeChangedToken_ = {};
+    titleBarBackToken_ = {};
     selectionChangedToken_ = {};
-    backRequestedToken_ = {};
     breadcrumbClickedToken_ = {};
     searchTextChangedToken_ = {};
     searchQuerySubmittedToken_ = {};
@@ -1217,7 +1370,7 @@ void SettingsShell::RenderRoute(
     PageSubtitle().Text(PageDescriptionText(route.page));
     muxa::AutomationProperties::SetName(PageTitle(), title);
     RenderPageCards(forcePageCards);
-    NavigationRoot().IsBackEnabled(navigation_.CanGoBack());
+    TitleBarBackButton().IsEnabled(navigation_.CanGoBack());
     if (scheduleFocus)
         ScheduleFocus();
 }
