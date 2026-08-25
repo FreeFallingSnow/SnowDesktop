@@ -578,14 +578,17 @@ void TestHostContract(const std::filesystem::path& repository)
               developerToggleEnd - developerToggleStart)
         : std::string{};
     const auto appliedCheck = developerToggle.find("if (applied)");
+    const auto refreshPresenter = developerToggle.find(
+        "state->owner->widgetsPageBackend->Refresh()", appliedCheck);
     const auto refreshVisibility = developerToggle.find(
-        "state->owner->RebuildSearchIndex()", appliedCheck);
+        "state->owner->RebuildSearchIndex()", refreshPresenter);
     const auto returnApplied = developerToggle.find(
         "return applied", refreshVisibility);
     Check(appliedCheck != std::string::npos &&
+            refreshPresenter != std::string::npos &&
             refreshVisibility != std::string::npos &&
             returnApplied != std::string::npos,
-        "enabling Developer Tools refreshes conditional navigation and search before the presenter navigates");
+        "Developer Tools toggles refresh the cached presenter and conditional navigation before navigation or another click");
 }
 } // namespace
 

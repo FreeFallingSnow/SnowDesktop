@@ -1125,6 +1125,12 @@ struct SettingsWindowHost::Impl
                     enabled;
             if (applied)
             {
+                // Publish the new toggle state back to the cached Widgets
+                // presenter before another click can derive its next value.
+                // Without this refresh, disabling and then re-enabling from
+                // the same page keeps using the stale pre-click snapshot.
+                if (state->owner->widgetsPageBackend)
+                    (void)state->owner->widgetsPageBackend->Refresh();
                 // Keep the conditional NavigationView item and its search
                 // entries in sync before the presenter optionally navigates
                 // to Developer Tools on this same click.
