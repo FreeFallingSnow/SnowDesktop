@@ -385,8 +385,7 @@ struct NumericEditor
     void SetResetText(std::wstring text)
     {
         if (!reset) return;
-        reset.Content(winrt::box_value(text));
-        muxa::AutomationProperties::SetName(reset, text);
+        presenter_controls::ConfigureRestoreDefaultButton(reset, text);
     }
 
     void SetUnit(std::wstring text)

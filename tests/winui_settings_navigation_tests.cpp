@@ -333,8 +333,16 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             recorderHeader.find("FocusTarget() const noexcept") !=
                 std::string::npos &&
             recorder.find("return state_ ? state_->button : nullptr;") !=
+                std::string::npos &&
+            recorder.find("CreateChordVisual(") != std::string::npos &&
+            recorder.find("CreateKeycap(") != std::string::npos &&
+            recorder.find("depth.Padding({0.0, 0.0, 0.0, 2.0})") !=
+                std::string::npos &&
+            recorder.find("SetItemStatus(") != std::string::npos &&
+            recorder.find("ActualThemeChanged(") != std::string::npos &&
+            recorder.find("IsHighContrastEnabled()") !=
                 std::string::npos,
-        "hotkeys use the dedicated recorder button and expose its focus target");
+        "hotkeys use a dedicated recorder button with layered keycaps, theme and High Contrast updates, accessible chord status, and a stable focus target");
     Check(recorderHeader.find(
               "SetValidationContext(bool enabled, bool localDesktopHotkey)") !=
                 std::string::npos &&
@@ -697,6 +705,19 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find("actions.Children().Append(reset)") !=
                 std::string::npos &&
             presenter.find(
+              "presenter_controls::ConfigureRestoreDefaultButton(") !=
+                std::string::npos &&
+            sharedControls.find(
+              "inline void ConfigureRestoreDefaultButton(") !=
+                std::string::npos &&
+            sharedControls.find("button.Content(icon)") !=
+                std::string::npos &&
+            sharedControls.find("ToolTipService::SetToolTip(") !=
+                std::string::npos &&
+            sharedControls.find(
+              "AutomationProperties::SetHelpText(button, accessibleText)") !=
+                std::string::npos &&
+            presenter.find(
               "reset.VerticalAlignment(mux::VerticalAlignment::Top)") !=
                 std::string::npos &&
             sharedControls.find(
@@ -741,7 +762,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             personalization.find("1.0, 12.0") != std::string::npos &&
             personalization.find("1.0, 24.0") != std::string::npos &&
             dock.find("nullptr, 100.0") != std::string::npos,
-        "legacy hotkey reset/clear paths and numeric controls with inline defaults retain their reset actions");
+        "hotkey and numeric defaults retain their reset actions while low-risk restore buttons use compact accessible icon treatment");
 }
 }
 

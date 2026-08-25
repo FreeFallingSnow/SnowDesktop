@@ -31,6 +31,35 @@ inline constexpr double kSettingControlWidth = 300.0;
 inline constexpr double kSettingRowStackThreshold = 700.0;
 inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
 
+/**
+ * Applies the compact Fluent treatment used by low-risk restore-default
+ * actions. The visible affordance is intentionally icon-only, while the
+ * localized action remains available to tooltips and accessibility clients.
+ * Destructive or broad reset actions must keep their explicit text labels.
+ */
+inline void ConfigureRestoreDefaultButton(
+    const muxc::Button& button,
+    const std::wstring& accessibleText)
+{
+    if (!button)
+        return;
+    muxc::FontIcon icon{};
+    icon.Glyph(L"\xE777");
+    icon.FontSize(15.0);
+    button.Content(icon);
+    button.Width(32.0);
+    button.Height(32.0);
+    button.MinWidth(32.0);
+    button.MinHeight(32.0);
+    button.Padding({0.0, 0.0, 0.0, 0.0});
+    button.VerticalContentAlignment(mux::VerticalAlignment::Center);
+    button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+    muxc::ToolTipService::SetToolTip(
+        button, winrt::box_value(accessibleText));
+    muxa::AutomationProperties::SetName(button, accessibleText);
+    muxa::AutomationProperties::SetHelpText(button, accessibleText);
+}
+
 /** Remove persisted float noise before a value reaches Slider/NumberBox. */
 inline double QuantizeNumericValue(
     double value,

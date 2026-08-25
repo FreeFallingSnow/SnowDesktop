@@ -209,7 +209,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos,
         "scenario overrides display and iterate in shell-UI, maximized-window, visible-window priority order");
     const auto ruleToggle = source.find(
-        "control.root.Children().Append(control.enabledRow.root)");
+        "control.details.Children().Append(control.enabledRow.root)");
+    const auto ruleAppearance = source.find(
+        "control.details.Children().Append(control.appearanceDetails)");
     const auto ruleDisclosure = source.find(
         "control.root.Children().Append(control.expander)");
     Check(source.find("control.expander = muxc::Expander{}") !=
@@ -219,18 +221,36 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("control.expander.Content(control.details)") !=
                 std::string::npos &&
             ruleToggle != std::string::npos &&
+            ruleAppearance != std::string::npos &&
             ruleDisclosure != std::string::npos &&
-            ruleToggle < ruleDisclosure &&
-            source.find("control->details.Visibility(enabled") ==
+            ruleToggle < ruleAppearance &&
+            ruleAppearance < ruleDisclosure &&
+            source.find("control.detailTitle.Text(context)") !=
+                std::string::npos &&
+            source.find(
+              "control.enabledRow.SetText(\n            L(\"app.settings.widgets_enabled\", L\"Enabled\"))") !=
+                std::string::npos &&
+            source.find("control->appearanceDetails.Visibility(enabled") !=
+                std::string::npos &&
+            source.find("? mux::Visibility::Visible") !=
+                std::string::npos &&
+            source.find(": mux::Visibility::Collapsed)") !=
                 std::string::npos &&
             source.find("control->themeRow.SetEnabled(enabled)") !=
                 std::string::npos &&
+            source.find("return visibleWindowRule.expander") !=
+                std::string::npos &&
+            source.find("return maximizedWindowRule.expander") !=
+                std::string::npos &&
+            source.find("return shellUiRule.expander") !=
+                std::string::npos &&
+            source.find("Children().Clear()") == std::string::npos &&
             source.find("SetDynamicRuleAutomation(") !=
                 std::string::npos &&
             source.find(
               "AutomationProperties::SetHelpText(control.expander") !=
                 std::string::npos,
-        "each scenario keeps its enable switch independent from one native Expander and applies contextual accessibility metadata");
+        "each condition is a named, collapsed disclosure whose nested enable switch gates its appearance children without rebuilding the page, and routed keyboard focus lands on the visible header");
     Check(source.find("floatingEdgeSwipeRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
             source.find("positionRow.SetEnabled(dockEnabled)") !=

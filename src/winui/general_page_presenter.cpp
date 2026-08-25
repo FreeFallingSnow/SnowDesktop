@@ -732,8 +732,8 @@ struct GeneralPagePresenter::Impl
             L("app.settings.hotkey"),
             L("app.settings.hotkey_capture_help"));
 
-        const auto restoreDefault = winrt::box_value(
-            L("app.settings.restore_default"));
+        const std::wstring restoreDefault =
+            L("app.settings.restore_default");
         for (const auto& button : {
                  quickNavigationHotkeyRow.reset,
                  previousPageHotkeyRow.reset,
@@ -741,9 +741,8 @@ struct GeneralPagePresenter::Impl
                  desktopPassthroughHotkeyRow.reset,
                  floatingDockHotkeyRow.reset})
         {
-            button.Content(restoreDefault);
-            muxa::AutomationProperties::SetName(
-                button, L("app.settings.restore_default"));
+            presenter_controls::ConfigureRestoreDefaultButton(
+                button, restoreDefault);
         }
 
         quickNavigationHotkey.SetText(HotkeyText(

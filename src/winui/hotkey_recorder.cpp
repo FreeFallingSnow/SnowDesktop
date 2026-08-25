@@ -3,10 +3,12 @@
 #include "hotkey_recorder.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
+#include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.System.h>
 
 #include <array>
 #include <utility>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -14,6 +16,7 @@ namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
+namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace mud = winrt::Microsoft::UI::Dispatching;
 
 namespace
@@ -73,27 +76,172 @@ std::wstring VirtualKeyName(std::uint32_t virtualKey)
     return fallback;
 }
 
+std::vector<std::wstring> ChordParts(
+    HotkeyChord chord,
+    const HotkeyRecorderText& text)
+{
+    if (chord.Empty()) return {};
+    std::vector<std::wstring> parts;
+    if ((chord.modifiers & HotkeyRecorderRules::ModifierControl) != 0)
+        parts.push_back(text.control);
+    if ((chord.modifiers & HotkeyRecorderRules::ModifierAlt) != 0)
+        parts.push_back(text.alt);
+    if ((chord.modifiers & HotkeyRecorderRules::ModifierShift) != 0)
+        parts.push_back(text.shift);
+    if ((chord.modifiers & HotkeyRecorderRules::ModifierWindows) != 0)
+        parts.push_back(text.windows);
+    parts.push_back(VirtualKeyName(chord.virtualKey));
+    return parts;
+}
+
 std::wstring FormatChord(
     HotkeyChord chord,
     const HotkeyRecorderText& text)
 {
-    if (chord.Empty()) return text.none;
+    const auto parts = ChordParts(chord, text);
+    if (parts.empty()) return text.none;
     std::wstring result;
-    const auto append = [&result](const wchar_t* part) {
+    for (const auto& part : parts)
+    {
         if (!result.empty()) result += L" + ";
         result += part;
-    };
-    if ((chord.modifiers & HotkeyRecorderRules::ModifierControl) != 0)
-        append(text.control.c_str());
-    if ((chord.modifiers & HotkeyRecorderRules::ModifierAlt) != 0)
-        append(text.alt.c_str());
-    if ((chord.modifiers & HotkeyRecorderRules::ModifierShift) != 0)
-        append(text.shift.c_str());
-    if ((chord.modifiers & HotkeyRecorderRules::ModifierWindows) != 0)
-        append(text.windows.c_str());
-    const std::wstring key = VirtualKeyName(chord.virtualKey);
-    append(key.c_str());
+    }
     return result;
+}
+
+[[nodiscard]] bool IsHighContrastEnabled() noexcept
+{
+    HIGHCONTRASTW state{};
+    state.cbSize = sizeof(state);
+    return SystemParametersInfoW(
+               SPI_GETHIGHCONTRAST, sizeof(state), &state, 0) != FALSE &&
+        (state.dwFlags & HCF_HIGHCONTRASTON) != 0;
+}
+
+[[nodiscard]] muxm::SolidColorBrush MakeBrush(
+    std::uint8_t red,
+    std::uint8_t green,
+    std::uint8_t blue)
+{
+    return muxm::SolidColorBrush(
+        winrt::Windows::UI::Color{0xFF, red, green, blue});
+}
+
+[[nodiscard]] muxm::SolidColorBrush MakeSystemBrush(int colorIndex)
+{
+    const COLORREF color = GetSysColor(colorIndex);
+    return MakeBrush(
+        static_cast<std::uint8_t>(GetRValue(color)),
+        static_cast<std::uint8_t>(GetGValue(color)),
+        static_cast<std::uint8_t>(GetBValue(color)));
+}
+
+struct KeycapPalette
+{
+    muxm::Brush surface{nullptr};
+    muxm::Brush depth{nullptr};
+    muxm::Brush stroke{nullptr};
+    muxm::Brush foreground{nullptr};
+};
+
+[[nodiscard]] KeycapPalette ResolveKeycapPalette(
+    const muxc::UserControl& root,
+    bool capturing)
+{
+    if (IsHighContrastEnabled())
+    {
+        return {
+            MakeSystemBrush(COLOR_BTNFACE),
+            MakeSystemBrush(COLOR_BTNSHADOW),
+            MakeSystemBrush(capturing ? COLOR_HIGHLIGHT : COLOR_BTNTEXT),
+            MakeSystemBrush(COLOR_BTNTEXT),
+        };
+    }
+
+    const bool dark = root && root.ActualTheme() == mux::ElementTheme::Dark;
+    if (dark)
+    {
+        return {
+            MakeBrush(0x3B, 0x3B, 0x3B),
+            MakeBrush(0x18, 0x18, 0x18),
+            capturing ? MakeBrush(0x60, 0xCD, 0xFF)
+                      : MakeBrush(0x70, 0x70, 0x70),
+            MakeBrush(0xFF, 0xFF, 0xFF),
+        };
+    }
+    return {
+        MakeBrush(0xFC, 0xFC, 0xFC),
+        MakeBrush(0x9A, 0x9A, 0x9A),
+        capturing ? MakeBrush(0x00, 0x67, 0xC0)
+                  : MakeBrush(0xBC, 0xBC, 0xBC),
+        MakeBrush(0x1A, 0x1A, 0x1A),
+    };
+}
+
+[[nodiscard]] mux::UIElement CreateKeycap(
+    const std::wstring& label,
+    const KeycapPalette& palette)
+{
+    muxc::TextBlock text{};
+    text.Text(label);
+    text.FontSize(12.0);
+    text.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    text.Foreground(palette.foreground);
+    text.TextAlignment(mux::TextAlignment::Center);
+    text.VerticalAlignment(mux::VerticalAlignment::Center);
+
+    muxc::Border surface{};
+    surface.MinWidth(30.0);
+    surface.MinHeight(26.0);
+    surface.Padding({8.0, 3.0, 8.0, 3.0});
+    surface.Background(palette.surface);
+    surface.BorderBrush(palette.stroke);
+    surface.BorderThickness({1.0, 1.0, 1.0, 1.0});
+    surface.CornerRadius({4.0, 4.0, 4.0, 4.0});
+    surface.Child(text);
+
+    muxc::Border depth{};
+    depth.Background(palette.depth);
+    depth.Padding({0.0, 0.0, 0.0, 2.0});
+    depth.CornerRadius({5.0, 5.0, 5.0, 5.0});
+    depth.Child(surface);
+    return depth;
+}
+
+[[nodiscard]] mux::UIElement CreateChordVisual(
+    HotkeyChord chord,
+    const HotkeyRecorderText& text,
+    const muxc::UserControl& root,
+    bool capturing)
+{
+    const auto parts = ChordParts(chord, text);
+    if (parts.empty())
+    {
+        muxc::TextBlock empty{};
+        empty.Text(text.none);
+        empty.Opacity(0.72);
+        empty.VerticalAlignment(mux::VerticalAlignment::Center);
+        return empty;
+    }
+
+    const KeycapPalette palette = ResolveKeycapPalette(root, capturing);
+    muxc::StackPanel panel{};
+    panel.Orientation(muxc::Orientation::Horizontal);
+    panel.Spacing(6.0);
+    panel.VerticalAlignment(mux::VerticalAlignment::Center);
+    for (std::size_t index = 0; index < parts.size(); ++index)
+    {
+        if (index != 0)
+        {
+            muxc::TextBlock plus{};
+            plus.Text(L"+");
+            plus.Opacity(0.68);
+            plus.VerticalAlignment(mux::VerticalAlignment::Center);
+            panel.Children().Append(plus);
+        }
+        panel.Children().Append(CreateKeycap(parts[index], palette));
+    }
+    return panel;
 }
 } // namespace
 
@@ -122,6 +270,7 @@ struct HotkeyRecorderState
     winrt::event_token keyDownToken{};
     winrt::event_token keyUpToken{};
     winrt::event_token lostFocusToken{};
+    winrt::event_token themeChangedToken{};
 };
 
 namespace
@@ -138,8 +287,8 @@ void UpdateVisuals(const std::shared_ptr<HotkeyRecorderState>& state)
 {
     const HotkeyChord displayed = state->rules.Active()
         ? state->rules.Candidate() : state->rules.Committed();
-    state->button.Content(winrt::box_value(
-        FormatChord(displayed, state->text)));
+    state->button.Content(CreateChordVisual(
+        displayed, state->text, state->root, state->rules.Active()));
 
     std::wstring statusText;
     if (state->rules.Active())
@@ -213,6 +362,8 @@ void UpdateVisuals(const std::shared_ptr<HotkeyRecorderState>& state)
         state->button, state->text.automationName);
     muxa::AutomationProperties::SetHelpText(
         state->button, statusText);
+    muxa::AutomationProperties::SetItemStatus(
+        state->button, FormatChord(displayed, state->text));
     muxa::AutomationProperties::SetName(
         state->status, statusText);
     muxa::AutomationProperties::SetLiveSetting(
@@ -366,6 +517,8 @@ HotkeyRecorder::HotkeyRecorder()
     state_->button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
     state_->button.HorizontalContentAlignment(
         mux::HorizontalAlignment::Left);
+    state_->button.MinHeight(44.0);
+    state_->button.Padding({10.0, 7.0, 10.0, 7.0});
     state_->button.IsTabStop(true);
     state_->button.UseSystemFocusVisuals(true);
     state_->status.TextWrapping(mux::TextWrapping::Wrap);
@@ -375,6 +528,12 @@ HotkeyRecorder::HotkeyRecorder()
     state_->root.Content(state_->panel);
 
     const std::weak_ptr<HotkeyRecorderState> weak = state_;
+    state_->themeChangedToken = state_->root.ActualThemeChanged(
+        [weak](const auto&, const auto&) {
+            const auto state = weak.lock();
+            if (state && state->alive)
+                UpdateVisuals(state);
+        });
     state_->clickToken = state_->button.Click(
         [weak](const auto&, const auto&) {
             const auto state = weak.lock();
@@ -529,6 +688,7 @@ void HotkeyRecorder::Close() noexcept
         state_->button.KeyDown(state_->keyDownToken);
         state_->button.KeyUp(state_->keyUpToken);
         state_->button.LostFocus(state_->lostFocusToken);
+        state_->root.ActualThemeChanged(state_->themeChangedToken);
         state_->availabilityProbe = {};
         state_->committed = {};
         state_->cancelled = {};

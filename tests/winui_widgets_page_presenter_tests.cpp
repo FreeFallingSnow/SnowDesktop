@@ -256,6 +256,47 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos,
         "package and nested Expander content stretches across each card while natural-width actions align at the right edge");
 
+    const std::string packageRowRegion = sourceRegion(
+        "void AddPackageRow(", "void RequestUninstall(");
+    const std::string installedPatchRegion = sourceRegion(
+        "[[nodiscard]] bool TryPatchInstalledRows(",
+        "void RenderInstalledRows()");
+    const std::string installedRenderRegion = sourceRegion(
+        "void RenderInstalledRows()", "void AddCatalogResult(");
+    Check(packageRowRegion.find("packageExpansionState.find(") !=
+                std::string::npos &&
+            packageRowRegion.find("row.IsExpanded(savedExpansion") !=
+                std::string::npos &&
+            packageRowRegion.find("row.IsExpanded(true)") ==
+                std::string::npos &&
+            developmentOverrideRegion.find("row.IsExpanded(false)") !=
+                std::string::npos,
+        "component package Expanders start collapsed and restore only expansion explicitly retained for the Presenter lifetime");
+    Check(source.find("struct PackageRowBinding") != std::string::npos &&
+            source.find("CapturePackageExpansionState();") !=
+                std::string::npos &&
+            installedRenderRegion.find("CapturePackageExpansionState();") <
+                installedRenderRegion.find(
+                    "installedRows.Children().Clear();") &&
+            packageRowRegion.find("FindPackage(packageId)") !=
+                std::string::npos,
+        "package rows retain expansion and state-changing actions resolve the current snapshot instead of capturing stale enabled values");
+    Check(installedPatchRegion.find("PatchPackageRowState(") !=
+                std::string::npos &&
+            installedPatchRegion.find("changedRows.push_back(index)") !=
+                std::string::npos &&
+            installedPatchRegion.find(
+                "for (const std::size_t index : changedRows)") !=
+                std::string::npos &&
+            installedPatchRegion.find("Children().Clear()") ==
+                std::string::npos &&
+            installedPatchRegion.find("previousIds != currentIds") !=
+                std::string::npos &&
+            installedPatchRegion.find(
+                "HasOnlyInlinePackageStateChanges") !=
+                std::string::npos,
+        "enabled, active and add-to-desktop state echoes patch existing package controls while structural package changes fall back to reconciliation");
+
     const std::string sourceGroupRegion = sourceRegion(
         "void AddSourceGroup(", "void RenderSourceRows()");
     Check(stretchesAfterContent(sourceGroupRegion,
@@ -377,6 +418,12 @@ void TestWidgetsPagePresenterContract(
             applyRegion.find("if (sourcePresentationChanged)") !=
                 std::string::npos,
         "snapshot updates rebuild only presentation regions whose data changed");
+    Check(applyRegion.find("TryPatchInstalledRows(previousPackages") !=
+                std::string::npos &&
+            applyRegion.find("if (!patched)") != std::string::npos &&
+            applyRegion.find("RenderInstalledRows();",
+                applyRegion.find("if (!patched)")) != std::string::npos,
+        "package state snapshots use an in-place row patch before the structural rebuild fallback");
 
     Check(source.find("actions.confirm(requestGeneration") !=
                 std::string::npos &&

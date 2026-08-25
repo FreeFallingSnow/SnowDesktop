@@ -126,7 +126,8 @@ void TestPresenterContract(const std::filesystem::path& repository)
 
     for (const char* control : {
              "muxc::TextBox", "muxc::ListView", "muxc::Button",
-             "muxc::InfoBar", "muxc::ProgressRing"})
+             "muxc::InfoBar", "muxc::ProgressRing",
+             "muxc::CommandBar", "muxc::AppBarButton"})
     {
         Check(source.find(control) != std::string::npos,
             "backup/data page uses real native WinUI controls");
@@ -158,11 +159,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("controls::SettingRow migrationActionRow") !=
                 std::string::npos &&
-            source.find("row.settingRow.Initialize(buttons)") !=
+            source.find("row.settingRow.Initialize(row.commandBar)") !=
                 std::string::npos &&
             source.find("migrationActionRow.SetControlAlignment(") !=
-                std::string::npos &&
-            source.find("row.settingRow.SetControlAlignment(") !=
                 std::string::npos &&
             source.find(
               "button.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
@@ -170,35 +169,41 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find(
               "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
-        "backup rows remain single-line description/control layouts with compact actions right-aligned and vertically centered");
+        "backup rows keep responsive description/control layouts and native focus visuals");
     Check(source.find("app.settings.save_current_layout") !=
                 std::string::npos &&
             source.find("layoutActions.Children().Append(layoutName)") !=
                 std::string::npos &&
-            source.find("layoutActions.Children().Append(createLayoutButton)") !=
+            source.find("layoutActions.Children().Append(layoutActionBar)") !=
                 std::string::npos &&
-            source.find("layoutActions.Children().Append(openDataDirectoryButton)") !=
+            source.find(
+              "layoutActionBar.PrimaryCommands().Append(createLayoutButton)") !=
+                std::string::npos &&
+            source.find(
+              "layoutActionBar.SecondaryCommands().Append(") !=
+                std::string::npos &&
+            source.find("openDataDirectoryButton);") !=
                 std::string::npos &&
             source.find("layoutList.MaxHeight(132.0)") !=
                 std::string::npos &&
             source.find("layoutBackupSaveRunning") != std::string::npos &&
             source.find("layoutName.Text(L\"\")") != std::string::npos,
-        "layout backup section reproduces the legacy label, input/save/open row, compact list and successful-name reset");
-    Check(source.find("muxc::Grid fullActions") !=
+        "layout backup keeps the name field and primary save action while moving folder access to overflow");
+    Check(source.find("fullBackupActionBar = NewCommandBar()") !=
                 std::string::npos &&
             source.find(
-              "fullActions.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
+              "fullBackupActionBar.PrimaryCommands().Append(") !=
                 std::string::npos &&
-            source.find("column.Width(mux::GridLengthHelper::Auto())") !=
+            source.find("muxc::Grid fullActions") ==
                 std::string::npos &&
-            source.find("fullActions.ColumnDefinitions().Append(column)") !=
+            source.find(
+              "createFullBackupButton);") != std::string::npos &&
+            source.find(
+              "importFullBackupButton);") != std::string::npos &&
+            source.find(
+              "fullBackupActionBar.SecondaryCommands().Append(") !=
                 std::string::npos &&
-            source.find("fullActions.Children().Append("
-                        "createFullBackupButton)") != std::string::npos &&
-            source.find("fullActions.Children().Append("
-                        "importFullBackupButton)") != std::string::npos &&
-            source.find("fullActions.Children().Append("
-                        "openFullBackupDirectoryButton)") !=
+            source.find("openFullBackupDirectoryButton);") !=
                 std::string::npos &&
             source.find("fullBackupList.MaxHeight(172.0)") !=
                 std::string::npos &&
@@ -209,19 +214,39 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.full_backup_item") !=
                 std::string::npos &&
             source.find("FormatBackupSize") != std::string::npos,
-        "complete-backup description, horizontal toolbar, compact list and legacy item labels retain their original order and information");
-    Check(source.find("buttons.Orientation("
-                      "muxc::Orientation::Vertical)") ==
+        "complete-backup keeps create/restore primary and folder access in overflow without losing list metadata");
+    Check(source.find("commandBar.DefaultLabelPosition(") !=
+                std::string::npos &&
+            source.find(
+              "muxc::CommandBarDefaultLabelPosition::Right") !=
+                std::string::npos &&
+            source.find("commandBar.IsDynamicOverflowEnabled(true)") !=
+                std::string::npos &&
+            source.find(
+              "row.commandBar.PrimaryCommands().Append(row.restore)") !=
+                std::string::npos &&
+            source.find(
+              "row.commandBar.SecondaryCommands().Append(row.exportArchive)") !=
+                std::string::npos &&
+            source.find(
+              "row.commandBar.SecondaryCommands().Append(row.open)") !=
+                std::string::npos &&
+            source.find(
+              "row.commandBar.SecondaryCommands().Append(row.remove)") !=
+                std::string::npos &&
+            source.find("muxc::AppBarSeparator{}") !=
                 std::string::npos &&
             source.find("row.metadata") == std::string::npos &&
             source.find("dataDirectoryPath") == std::string::npos &&
             source.find("fullBackupDirectoryPath") == std::string::npos,
-        "backup parity does not introduce path fields or vertically reorder legacy action buttons");
+        "native dynamic overflow keeps one row-level restore action visible and groups infrequent or destructive actions in a separated menu");
     Check(source.find("AutomationProperties::SetName") !=
                 std::string::npos &&
             source.find("AutomationProperties::SetHelpText") !=
                 std::string::npos &&
             source.find("UseSystemFocusVisuals(true)") !=
+                std::string::npos &&
+            source.find("ToolTipService::SetToolTip") !=
                 std::string::npos &&
             source.find("backup.layout") != std::string::npos &&
             source.find("backup.full") != std::string::npos &&

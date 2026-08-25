@@ -802,9 +802,8 @@ struct PersonalizationPagePresenter::Impl
             control.number, control.row.label.Text());
         if (control.reset)
         {
-            control.reset.Content(winrt::box_value(
-                L("app.settings.restore_default", L"Restore Default")));
-            muxa::AutomationProperties::SetName(control.reset,
+            presenter_controls::ConfigureRestoreDefaultButton(
+                control.reset,
                 L("app.settings.restore_default", L"Restore Default"));
         }
     }

@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cwchar>
 #include <cwctype>
+#include <unordered_map>
 #include <utility>
 
 namespace snowdesktop::winui
@@ -173,6 +174,18 @@ struct CallbackGenerationGate
 
 struct WidgetsPagePresenter::Impl
 {
+    struct PackageRowBinding
+    {
+        std::wstring packageId;
+        muxc::Expander expander{nullptr};
+        muxc::TextBlock metadata{nullptr};
+        muxc::Button enabledAction{nullptr};
+        muxc::Button addAction{nullptr};
+        muxc::TextBlock stateHelp{nullptr};
+        muxc::ContentControl stateControlHost{nullptr};
+        muxc::Button developmentAction{nullptr};
+    };
+
     explicit Impl(LocalizeCallback callback, const mux::Style& style,
         const mux::DataTemplate& fluentTemplate,
         const mux::DataTemplate& fontAwesomeTemplate)
@@ -272,6 +285,8 @@ struct WidgetsPagePresenter::Impl
     mux::FrameworkElement firstDebugDiagnosticTarget{nullptr};
 
     std::vector<InstalledWidgetPackageSnapshot> packages;
+    std::vector<PackageRowBinding> packageRowBindings;
+    std::unordered_map<std::wstring, bool> packageExpansionState;
     std::vector<WidgetAgentSkillTargetSnapshot> agentSkills;
     std::vector<WidgetRuntimeErrorSnapshot> errors;
     std::vector<WidgetRuntimeDiagnosticSnapshot> diagnostics;
@@ -1528,7 +1543,7 @@ struct WidgetsPagePresenter::Impl
         muxc::Expander row;
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        row.IsExpanded(true);
+        row.IsExpanded(false);
         muxc::StackPanel header;
         header.Spacing(3.0);
         muxc::TextBlock name;
@@ -2310,7 +2325,10 @@ struct WidgetsPagePresenter::Impl
         muxc::Expander row;
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        row.IsExpanded(true);
+        const auto savedExpansion =
+            packageExpansionState.find(package.packageId);
+        row.IsExpanded(savedExpansion != packageExpansionState.end() &&
+            savedExpansion->second);
 
         muxc::StackPanel header;
         header.Spacing(3.0);
@@ -2430,6 +2448,10 @@ struct WidgetsPagePresenter::Impl
             body.Children().Append(failureActions);
         }
 
+        muxc::Button enabledAction{nullptr};
+        muxc::Button addAction{nullptr};
+        muxc::TextBlock stateHelp{nullptr};
+        muxc::ContentControl stateControlHost{nullptr};
         if (package.canEnable || package.showAddToDesktop)
         {
             muxc::StackPanel primaryActions;
@@ -2439,23 +2461,25 @@ struct WidgetsPagePresenter::Impl
             primaryActions.Spacing(8.0);
             if (package.canEnable)
             {
-                muxc::Button enabledAction = MakeActionButton(L(
+                enabledAction = MakeActionButton(L(
                     package.enabled
                         ? "app.settings.widgets_disable"
                         : "app.settings.widgets_enable",
                     package.enabled ? L"Disable" : L"Enable"));
                 HookClick(enabledAction,
-                    [this, packageId = package.packageId,
-                        enable = !package.enabled](
+                    [this, packageId = package.packageId](
                         const winrt::Windows::Foundation::IInspectable&,
                         const mux::RoutedEventArgs&) {
                         if (updatingControls || closed || !active)
+                            return;
+                        const auto* current = FindPackage(packageId);
+                        if (!current || !current->canEnable)
                             return;
                         WidgetsPageRequest request;
                         request.command =
                             WidgetsPageCommand::SetPackageEnabled;
                         request.packageId = packageId;
-                        request.enabled = enable;
+                        request.enabled = !current->enabled;
                         Emit(std::move(request));
                     },
                     installedRevokers);
@@ -2463,11 +2487,11 @@ struct WidgetsPagePresenter::Impl
             }
             if (package.showAddToDesktop)
             {
-                muxc::Button add = MakeActionButton(
+                addAction = MakeActionButton(
                     L("app.widget_preview.add_to_desktop",
                         L"Add to Desktop"));
-                add.IsEnabled(package.canAddToDesktop);
-                HookClick(add,
+                addAction.IsEnabled(package.canAddToDesktop);
+                HookClick(addAction,
                     [this, packageId = package.packageId](
                         const winrt::Windows::Foundation::IInspectable&,
                         const mux::RoutedEventArgs&) {
@@ -2478,7 +2502,7 @@ struct WidgetsPagePresenter::Impl
                         Emit(std::move(request));
                     },
                     installedRevokers);
-                primaryActions.Children().Append(add);
+                primaryActions.Children().Append(addAction);
             }
             presenter_controls::SettingRow primaryActionsRow;
             primaryActionsRow.Initialize(primaryActions);
@@ -2487,13 +2511,16 @@ struct WidgetsPagePresenter::Impl
             primaryActionsRow.SetText(
                 L("app.settings.widgets_enabled", L"Enabled"),
                 PackageStateText(package));
+            stateHelp = primaryActionsRow.help;
+            stateControlHost = primaryActionsRow.controlHost;
             body.Children().Append(primaryActionsRow.root);
         }
 
+        muxc::Button developmentAction{nullptr};
         if (developerOverridesVisible &&
             package.canUseDevelopmentOverride)
         {
-            muxc::Button developmentAction = MakeActionButton(L(
+            developmentAction = MakeActionButton(L(
                 package.developmentOverrideActive
                     ? "app.settings.widgets_development_deactivate"
                     : "app.settings.widgets_development_activate",
@@ -2501,17 +2528,20 @@ struct WidgetsPagePresenter::Impl
                     ? L"Deactivate Development Version"
                     : L"Activate Development Version"));
             HookClick(developmentAction,
-                [this, packageId = package.packageId,
-                    enable = !package.developmentOverrideActive](
+                [this, packageId = package.packageId](
                     const winrt::Windows::Foundation::IInspectable&,
                     const mux::RoutedEventArgs&) {
                     if (updatingControls || closed || !active)
+                        return;
+                    const auto* current = FindPackage(packageId);
+                    if (!current || !current->canUseDevelopmentOverride)
                         return;
                     WidgetsPageRequest request;
                     request.command =
                         WidgetsPageCommand::SetDevelopmentOverride;
                     request.packageId = packageId;
-                    request.enabled = enable;
+                    request.enabled =
+                        !current->developmentOverrideActive;
                     Emit(std::move(request));
                 },
                 installedRevokers);
@@ -2559,6 +2589,9 @@ struct WidgetsPagePresenter::Impl
         if (!firstPackageTarget)
             firstPackageTarget = row;
         targetRows.Children().Append(row);
+        packageRowBindings.push_back(PackageRowBinding{
+            package.packageId, row, metadata, enabledAction, addAction,
+            stateHelp, stateControlHost, developmentAction});
     }
 
     void RequestUninstall(
@@ -2609,11 +2642,156 @@ struct WidgetsPagePresenter::Impl
             });
     }
 
+    void CapturePackageExpansionState() noexcept
+    {
+        for (const PackageRowBinding& binding : packageRowBindings)
+        {
+            if (binding.expander)
+            {
+                packageExpansionState[binding.packageId] =
+                    binding.expander.IsExpanded();
+            }
+        }
+    }
+
+    [[nodiscard]] static bool HasOnlyInlinePackageStateChanges(
+        const InstalledWidgetPackageSnapshot& previous,
+        const InstalledWidgetPackageSnapshot& current)
+    {
+        InstalledWidgetPackageSnapshot previousStructure = previous;
+        InstalledWidgetPackageSnapshot currentStructure = current;
+        previousStructure.enabled = currentStructure.enabled = false;
+        previousStructure.active = currentStructure.active = false;
+        previousStructure.canAddToDesktop =
+            currentStructure.canAddToDesktop = false;
+        previousStructure.developmentOverrideActive =
+            currentStructure.developmentOverrideActive = false;
+        return previousStructure == currentStructure;
+    }
+
+    [[nodiscard]] std::vector<std::wstring> VisiblePackageIds(
+        const std::vector<InstalledWidgetPackageSnapshot>& values) const
+    {
+        std::vector<std::wstring> result;
+        result.reserve(values.size());
+        for (const auto& package : values)
+        {
+            if (!IsIncludedOnlyPackage(package) && MatchesFilter(package))
+                result.push_back(package.packageId);
+        }
+        for (const auto& package : values)
+        {
+            if (IsIncludedOnlyPackage(package) && MatchesQuery(package))
+                result.push_back(package.packageId);
+        }
+        return result;
+    }
+
+    void PatchPackageRowState(
+        const PackageRowBinding& binding,
+        const InstalledWidgetPackageSnapshot& package)
+    {
+        const std::wstring packageState = PackageStateText(package);
+        binding.metadata.Text(JoinMetadata(
+            {package.sourceName, packageState}));
+
+        if (binding.enabledAction)
+        {
+            const std::wstring label = L(package.enabled
+                    ? "app.settings.widgets_disable"
+                    : "app.settings.widgets_enable",
+                package.enabled ? L"Disable" : L"Enable");
+            binding.enabledAction.Content(winrt::box_value(label));
+            SetAutomation(binding.enabledAction, label);
+        }
+        if (binding.addAction)
+            binding.addAction.IsEnabled(package.canAddToDesktop);
+        if (binding.stateHelp)
+        {
+            binding.stateHelp.Text(packageState);
+            binding.stateHelp.Visibility(packageState.empty()
+                    ? mux::Visibility::Collapsed
+                    : mux::Visibility::Visible);
+        }
+        if (binding.stateControlHost)
+        {
+            SetAutomation(binding.stateControlHost,
+                L("app.settings.widgets_enabled", L"Enabled"),
+                packageState);
+        }
+        if (binding.developmentAction)
+        {
+            const std::wstring label = L(
+                package.developmentOverrideActive
+                    ? "app.settings.widgets_development_deactivate"
+                    : "app.settings.widgets_development_activate",
+                package.developmentOverrideActive
+                    ? L"Deactivate Development Version"
+                    : L"Activate Development Version");
+            binding.developmentAction.Content(winrt::box_value(label));
+            SetAutomation(binding.developmentAction, label);
+        }
+    }
+
+    [[nodiscard]] bool TryPatchInstalledRows(
+        const std::vector<InstalledWidgetPackageSnapshot>& previousPackages,
+        bool developerVisibilityChanged)
+    {
+        if (developerVisibilityChanged)
+            return false;
+
+        const std::vector<std::wstring> previousIds =
+            VisiblePackageIds(previousPackages);
+        const std::vector<std::wstring> currentIds =
+            VisiblePackageIds(packages);
+        if (previousIds != currentIds ||
+            currentIds.size() != packageRowBindings.size())
+        {
+            return false;
+        }
+        std::vector<std::size_t> changedRows;
+        for (std::size_t index = 0; index < currentIds.size(); ++index)
+        {
+            if (packageRowBindings[index].packageId != currentIds[index])
+                return false;
+            const auto previous = std::find_if(previousPackages.begin(),
+                previousPackages.end(), [&](const auto& package) {
+                    return package.packageId == currentIds[index];
+                });
+            const auto current = std::find_if(packages.begin(), packages.end(),
+                [&](const auto& package) {
+                    return package.packageId == currentIds[index];
+                });
+            if (previous == previousPackages.end() ||
+                current == packages.end() ||
+                (*previous != *current &&
+                    !HasOnlyInlinePackageStateChanges(*previous, *current)))
+            {
+                return false;
+            }
+            if (*previous != *current)
+                changedRows.push_back(index);
+        }
+
+        for (const std::size_t index : changedRows)
+        {
+            const auto current = std::find_if(packages.begin(), packages.end(),
+                [&](const auto& package) {
+                    return package.packageId == currentIds[index];
+                });
+            if (current != packages.end())
+                PatchPackageRowState(packageRowBindings[index], *current);
+        }
+        return true;
+    }
+
     void RenderInstalledRows()
     {
+        CapturePackageExpansionState();
         Revoke(installedRevokers);
         installedRows.Children().Clear();
         includedRows.Children().Clear();
+        packageRowBindings.clear();
         firstPackageTarget = nullptr;
         firstPermissionTarget = nullptr;
 
@@ -2895,6 +3073,12 @@ struct WidgetsPagePresenter::Impl
         if (hasRevision && snapshot.revision <= revision)
             return false;
 
+        const std::vector<InstalledWidgetPackageSnapshot> previousPackages =
+            packages;
+        const bool previousDeveloperOverridesVisible =
+            developerOverridesVisible;
+        const std::wstring previousQuery = query;
+        const PackageFilter previousFilter = filter;
         const bool firstPublication = !hasRevision;
         const bool installedPresentationChanged = firstPublication ||
             packages != snapshot.installed || developerOverridesVisible !=
@@ -2944,10 +3128,18 @@ struct WidgetsPagePresenter::Impl
             query = snapshot.searchQuery;
             searchBox.Text(query);
         }
-        if (installedPresentationChanged)
+        const bool installedQueryChanged = previousQuery != query;
+        if (installedPresentationChanged || installedQueryChanged)
         {
-            RefreshFilterItems();
-            RenderInstalledRows();
+            if (installedPresentationChanged)
+                RefreshFilterItems();
+            const bool patched = !firstPublication &&
+                !installedQueryChanged && previousFilter == filter &&
+                TryPatchInstalledRows(previousPackages,
+                    previousDeveloperOverridesVisible !=
+                        developerOverridesVisible);
+            if (!patched)
+                RenderInstalledRows();
         }
         if (developerPresentationChanged)
             RenderDeveloperRows();

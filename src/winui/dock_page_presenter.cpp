@@ -116,6 +116,7 @@ struct DynamicRuleControl
     muxc::ComboBox theme{nullptr};
     muxc::ComboBox contentTheme{nullptr};
     muxc::StackPanel details{nullptr};
+    muxc::StackPanel appearanceDetails{nullptr};
     muxc::StackPanel customAppearance{nullptr};
     SettingRow enabledRow;
     SettingRow themeRow;
@@ -814,8 +815,16 @@ struct DockPagePresenter::Impl
             mux::HorizontalAlignment::Stretch);
         control.themeRow.Initialize(control.theme);
         control.contentThemeRow.Initialize(control.contentTheme);
-        control.details.Children().Append(control.themeRow.root);
-        control.details.Children().Append(control.contentThemeRow.root);
+        // Keep the rule switch inside its named scenario.  The scenario is the
+        // parent disclosure and all appearance editors are dependent children.
+        control.details.Children().Append(control.enabledRow.root);
+        control.appearanceDetails = muxc::StackPanel{};
+        control.appearanceDetails.Spacing(12.0);
+        control.appearanceDetails.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        control.appearanceDetails.Children().Append(control.themeRow.root);
+        control.appearanceDetails.Children().Append(
+            control.contentThemeRow.root);
 
         control.customAppearance = muxc::StackPanel{};
         control.customAppearance.Spacing(12.0);
@@ -848,10 +857,10 @@ struct DockPagePresenter::Impl
         control.customAppearance.Children().Append(control.glassRow.root);
         control.customAppearance.Children().Append(control.blurRadius.root);
         control.customAppearance.Children().Append(control.acrylicRow.root);
-        control.details.Children().Append(control.customAppearance);
+        control.appearanceDetails.Children().Append(control.customAppearance);
+        control.details.Children().Append(control.appearanceDetails);
         control.expander.Content(control.details);
         StretchExpanderBody(control.expander, control.details);
-        control.root.Children().Append(control.enabledRow.root);
         control.root.Children().Append(control.expander);
         taskbarRulesCard.content.Children().Append(control.root);
     }
@@ -1557,6 +1566,10 @@ struct DockPagePresenter::Impl
                 static_cast<int>(SystemTaskbarThemeMode::Native);
             const bool custom = control->theme.SelectedIndex() ==
                 static_cast<int>(SystemTaskbarThemeMode::Custom);
+            control->appearanceDetails.Visibility(enabled
+                    ? mux::Visibility::Visible
+                    : mux::Visibility::Collapsed);
+            control->appearanceDetails.IsHitTestVisible(enabled);
             control->contentThemeRow.root.Visibility(!native
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
@@ -1652,8 +1665,8 @@ struct DockPagePresenter::Impl
         {
             const std::wstring text = L(
                 "app.settings.restore_default", L"Restore Default");
-            control.reset.Content(winrt::box_value(text));
-            muxa::AutomationProperties::SetName(control.reset, text);
+            presenter_controls::ConfigureRestoreDefaultButton(
+                control.reset, text);
         }
         muxa::AutomationProperties::SetName(control.number,
             control.label.Text());
@@ -1790,11 +1803,10 @@ struct DockPagePresenter::Impl
             : L("app.settings.hotkey_status_disabled", L"Disabled");
         control.summary.Text(summary);
 
-        const winrt::hstring contextText = control.enabledRow.label.Text();
+        const winrt::hstring contextText = control.detailTitle.Text();
         const std::wstring context{
             contextText.c_str(), contextText.size()};
-        muxa::AutomationProperties::SetName(control.expander,
-            ContextualText(context, control.detailTitle.Text()));
+        muxa::AutomationProperties::SetName(control.expander, context);
         muxa::AutomationProperties::SetHelpText(control.expander,
             ContextualText(context, summary));
     }
@@ -1812,8 +1824,9 @@ struct DockPagePresenter::Impl
             muxa::AutomationProperties::SetHelpText(element, help);
         };
 
-        muxa::AutomationProperties::SetName(
-            control.enabled, std::wstring(context));
+        muxa::AutomationProperties::SetName(control.enabled,
+            ContextualText(context,
+                L("app.settings.widgets_enabled", L"Enabled")));
         muxa::AutomationProperties::SetHelpText(control.enabled, help);
         set(control.theme, control.themeRow.label.Text());
         set(control.contentTheme, control.contentThemeRow.label.Text());
@@ -1844,6 +1857,12 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             control.root, std::wstring(context));
         muxa::AutomationProperties::SetHelpText(control.root, help);
+        muxa::AutomationProperties::SetName(control.appearanceDetails,
+            ContextualText(context,
+                L("app.settings.taskbar_dynamic_theme",
+                    L"Appearance when active")));
+        muxa::AutomationProperties::SetHelpText(
+            control.appearanceDetails, help);
         RefreshDynamicRuleSummary(control);
     }
 
@@ -2085,9 +2104,9 @@ struct DockPagePresenter::Impl
         std::wstring_view fallback)
     {
         const std::wstring context = L(titleKey, fallback);
-        control.enabledRow.SetText(context);
-        control.detailTitle.Text(L(
-            "app.settings.taskbar_dynamic_theme", L"Appearance when active"));
+        control.detailTitle.Text(context);
+        control.enabledRow.SetText(
+            L("app.settings.widgets_enabled", L"Enabled"));
         control.themeRow.SetText(L(
             "app.settings.taskbar_dynamic_theme", L"Appearance when active"));
         ReplaceTaskbarThemeItems(control.theme);
@@ -2196,13 +2215,13 @@ struct DockPagePresenter::Impl
         if (id == "taskbar.restartExplorer") return restartExplorerButton;
         if (id == "taskbar.dynamic.visibleWindow" ||
             id == "taskbar.visibleWindow")
-            return visibleWindowRule.enabled;
+            return visibleWindowRule.expander;
         if (id == "taskbar.dynamic.maximizedWindow" ||
             id == "taskbar.maximizedWindow")
-            return maximizedWindowRule.enabled;
+            return maximizedWindowRule.expander;
         if (id == "taskbar.dynamic.shellUi" ||
             id == "taskbar.shellUi")
-            return shellUiRule.enabled;
+            return shellUiRule.expander;
         return nullptr;
     }
 
