@@ -96,6 +96,18 @@ struct SettingRow
         // meet the right edge shared by full-width editors.
         controlHost.HorizontalAlignment(alignment);
         controlHost.HorizontalContentAlignment(alignment);
+        if (alignment == mux::HorizontalAlignment::Right)
+        {
+            // WinUI reserves 154 DIPs for ToggleSwitch by default while its
+            // visible track/content remain left-aligned inside that width.
+            // Remove only that reserved minimum so the intrinsic switch
+            // group, including localized On/Off content, reaches the edge.
+            if (const auto toggle =
+                    controlHost.Content().try_as<muxc::ToggleSwitch>())
+            {
+                toggle.MinWidth(0.0);
+            }
+        }
     }
 
     void SetText(std::wstring labelText, std::wstring helpText = {})

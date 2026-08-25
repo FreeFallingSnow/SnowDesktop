@@ -495,6 +495,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             sharedControls.find(
               "controlHost.HorizontalAlignment(alignment)") !=
                 std::string::npos &&
+            sharedControls.find("toggle.MinWidth(0.0)") !=
+                std::string::npos &&
             presenter.find(
               "autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&
