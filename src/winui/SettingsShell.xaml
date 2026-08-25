@@ -66,12 +66,19 @@
         <NavigationView
             x:Name="NavigationRoot"
             Grid.Row="1"
+            Background="Transparent"
             IsSettingsVisible="False"
             IsBackButtonVisible="Collapsed"
             PaneDisplayMode="Left"
             IsPaneOpen="True"
             OpenPaneLength="260"
             IsPaneToggleButtonVisible="False">
+            <NavigationView.Resources>
+                <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground"
+                                 Color="Transparent" />
+                <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground"
+                                 Color="Transparent" />
+            </NavigationView.Resources>
             <NavigationView.PaneHeader>
                 <Grid x:Name="SidebarSearchHost"
                       Width="228"

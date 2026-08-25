@@ -76,6 +76,17 @@ void TestHostContract(const std::filesystem::path& repository)
         ? std::string_view(shellMarkup).substr(
             paneHeaderBegin, paneHeaderEnd - paneHeaderBegin)
         : std::string_view{};
+    const std::size_t navigationRootBegin =
+        shellMarkup.find("x:Name=\"NavigationRoot\"");
+    const std::size_t navigationRootEnd = shellMarkup.find(
+        "<NavigationView.PaneHeader>", navigationRootBegin);
+    const std::string_view navigationRootMarkup =
+        navigationRootBegin != std::string::npos &&
+                navigationRootEnd != std::string::npos
+        ? std::string_view(shellMarkup).substr(
+            navigationRootBegin,
+            navigationRootEnd - navigationRootBegin)
+        : std::string_view{};
     const std::size_t pageScrollerBegin =
         shellMarkup.find("x:Name=\"PageScrollViewer\"");
     const std::size_t pageScrollerEnd = shellMarkup.find(
@@ -183,6 +194,23 @@ void TestHostContract(const std::filesystem::path& repository)
             paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") !=
                 std::string_view::npos,
         "the standard-height caption has no interactive content and the complete search surface is the first element in the fixed left pane");
+    Check(shellMarkup.find(
+              "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
+                std::string::npos &&
+            integratedTitleBarMarkup.find(
+              "Background=\"Transparent\"") !=
+                std::string_view::npos &&
+            navigationRootMarkup.find(
+              "Background=\"Transparent\"") !=
+                std::string_view::npos &&
+            navigationRootMarkup.find(
+              "x:Key=\"NavigationViewDefaultPaneBackground\"") !=
+                std::string_view::npos &&
+            navigationRootMarkup.find(
+              "x:Key=\"NavigationViewExpandedPaneBackground\"") !=
+                std::string_view::npos &&
+            Count(navigationRootMarkup, "Color=\"Transparent\"") == 2,
+        "the caption, navigation pane, and page content expose one shared shell background without region-specific fills");
     Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
                 std::string::npos &&
             source.find("constexpr int kMinimumClientHeight = 520;") !=
