@@ -224,6 +224,23 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("++impl_->viewEpoch;") != std::string::npos,
         "controller pending work survives a visible-window Open that advances only the rendered-view epoch");
 
+    const std::size_t flushNowBegin = source.find(
+        "void FlushPendingNow()", pendingFlushEnd);
+    const std::size_t flushNowEnd = source.find(
+        "std::wstring BackupConfirmationMessage", flushNowBegin);
+    const std::string_view flushNowFunction =
+        flushNowBegin != std::string::npos && flushNowEnd != std::string::npos
+        ? std::string_view(source).substr(
+            flushNowBegin, flushNowEnd - flushNowBegin)
+        : std::string_view{};
+    Check(flushNowFunction.find("controller->FlushPending()") !=
+                std::string_view::npos &&
+            flushNowFunction.find("ShowActionError(result)") !=
+                std::string_view::npos &&
+            flushNowFunction.find("RefreshLocalizedPresentation()") ==
+                std::string_view::npos,
+        "coalesced preview and commit work does not rewrite localized XAML while a continuous control owns pointer or flyout interaction");
+
     const std::size_t snapshotQueueBegin = source.find(
         "void QueueSnapshot(SettingsController::SnapshotPtr snapshot)");
     const std::size_t snapshotQueueEnd = source.find(

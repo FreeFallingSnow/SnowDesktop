@@ -953,8 +953,12 @@ struct SettingsWindowHost::Impl
         const SettingsActionResult result = controller->FlushPending();
         if (!result.Succeeded())
             ShowActionError(result);
-        else
-            RefreshLocalizedPresentation();
+        // A successful preview/commit already publishes revisioned snapshots
+        // for the affected presenters. Refreshing every localized label here
+        // rewrites the active XAML tree on the DispatcherQueue turn following
+        // Slider.ValueChanged/ColorChanged, which releases pointer capture and
+        // dismisses flyouts after their first value. Localization refreshes are
+        // reserved for initialization, reopen, and ApplyLanguageChange.
     }
 
     std::wstring BackupConfirmationMessage(
