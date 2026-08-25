@@ -3,12 +3,150 @@
     x:Class="SnowDesktop.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
     xmlns:local="using:SnowDesktop">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!--
+                Keep Expander's native interaction and automation behavior, but
+                avoid the animated chevron source used by the Windows App SDK
+                template. On affected systems that source can fail activation
+                while the template is first applied and terminate the process.
+            -->
+            <Style x:Key="ExpanderHeaderDownStyle" TargetType="ToggleButton">
+                <Setter Property="Padding" Value="{StaticResource ExpanderHeaderPadding}" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Grid x:Name="ToggleButtonGrid"
+                                  MinHeight="{TemplateBinding MinHeight}"
+                                  MinWidth="{TemplateBinding MinWidth}"
+                                  MaxWidth="{TemplateBinding MaxWidth}"
+                                  Width="{TemplateBinding Width}"
+                                  Padding="{TemplateBinding Padding}"
+                                  HorizontalAlignment="{TemplateBinding HorizontalAlignment}"
+                                  Background="{TemplateBinding Background}"
+                                  BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                                  BorderBrush="{ThemeResource ExpanderHeaderBorderBrush}"
+                                  BorderThickness="{TemplateBinding BorderThickness}"
+                                  CornerRadius="{TemplateBinding CornerRadius}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpandCollapseChevronBorder.Background"
+                                                        Value="{ThemeResource ExpanderChevronPointerOverBackground}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpandCollapseChevronBorder.Background"
+                                                        Value="{ThemeResource ExpanderChevronPressedBackground}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="HeaderPresenter.Foreground"
+                                                        Value="{ThemeResource ExpanderHeaderDisabledForeground}" />
+                                                <Setter Target="ExpandCollapseChevronDown.Foreground"
+                                                        Value="{ThemeResource ExpanderHeaderDisabledForeground}" />
+                                                <Setter Target="ExpandCollapseChevronUp.Foreground"
+                                                        Value="{ThemeResource ExpanderHeaderDisabledForeground}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Checked">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpandCollapseChevronDown.Visibility" Value="Collapsed" />
+                                                <Setter Target="ExpandCollapseChevronUp.Visibility" Value="Visible" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="CheckedPointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpandCollapseChevronDown.Visibility" Value="Collapsed" />
+                                                <Setter Target="ExpandCollapseChevronUp.Visibility" Value="Visible" />
+                                                <Setter Target="ExpandCollapseChevronBorder.Background"
+                                                        Value="{ThemeResource ExpanderChevronPointerOverBackground}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="CheckedPressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpandCollapseChevronDown.Visibility" Value="Collapsed" />
+                                                <Setter Target="ExpandCollapseChevronUp.Visibility" Value="Visible" />
+                                                <Setter Target="ExpandCollapseChevronBorder.Background"
+                                                        Value="{ThemeResource ExpanderChevronPressedBackground}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="CheckedDisabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="HeaderPresenter.Foreground"
+                                                        Value="{ThemeResource ExpanderHeaderDisabledForeground}" />
+                                                <Setter Target="ExpandCollapseChevronDown.Visibility" Value="Collapsed" />
+                                                <Setter Target="ExpandCollapseChevronUp.Visibility" Value="Visible" />
+                                                <Setter Target="ExpandCollapseChevronUp.Foreground"
+                                                        Value="{ThemeResource ExpanderHeaderDisabledForeground}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Indeterminate" />
+                                        <VisualState x:Name="IndeterminatePointerOver" />
+                                        <VisualState x:Name="IndeterminatePressed" />
+                                        <VisualState x:Name="IndeterminateDisabled" />
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+
+                                <ContentPresenter x:Name="HeaderPresenter"
+                                                  Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  ContentTransitions="{TemplateBinding ContentTransitions}"
+                                                  HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  Foreground="{TemplateBinding Foreground}" />
+                                <Border x:Name="ExpandCollapseChevronBorder"
+                                        Grid.Column="1"
+                                        Width="{ThemeResource ExpanderChevronButtonSize}"
+                                        Height="{ThemeResource ExpanderChevronButtonSize}"
+                                        Margin="{ThemeResource ExpanderChevronMargin}"
+                                        Background="{ThemeResource ExpanderChevronBackground}"
+                                        BorderBrush="{ThemeResource ExpanderChevronBorderBrush}"
+                                        BorderThickness="{ThemeResource ExpanderChevronBorderThickness}"
+                                        CornerRadius="{ThemeResource ControlCornerRadius}">
+                                    <Grid>
+                                        <FontIcon x:Name="ExpandCollapseChevronDown"
+                                                  Glyph="{StaticResource ExpanderChevronDownGlyph}"
+                                                  FontFamily="{StaticResource SymbolThemeFontFamily}"
+                                                  FontSize="12"
+                                                  IsTextScaleFactorEnabled="False"
+                                                  Foreground="{ThemeResource ExpanderChevronForeground}"
+                                                  AutomationProperties.AccessibilityView="Raw" />
+                                        <FontIcon x:Name="ExpandCollapseChevronUp"
+                                                  Glyph="{StaticResource ExpanderChevronUpGlyph}"
+                                                  FontFamily="{StaticResource SymbolThemeFontFamily}"
+                                                  FontSize="12"
+                                                  IsTextScaleFactorEnabled="False"
+                                                  Foreground="{ThemeResource ExpanderChevronForeground}"
+                                                  Visibility="Collapsed"
+                                                  AutomationProperties.AccessibilityView="Raw" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="ExpanderHeaderUpStyle"
+                   TargetType="ToggleButton"
+                   BasedOn="{StaticResource ExpanderHeaderDownStyle}" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

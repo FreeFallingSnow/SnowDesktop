@@ -49,6 +49,8 @@ void TestHostContract(const std::filesystem::path& repository)
         repository / "src/winui/winui_runtime.h");
     const std::string runtime = ReadText(
         repository / "src/winui/winui_runtime.cpp");
+    const std::string appMarkup = ReadText(
+        repository / "src/winui/App.xaml");
     const std::string shellMarkup = ReadText(
         repository / "src/winui/SettingsShell.xaml");
     const std::string shellHeader = ReadText(
@@ -99,9 +101,20 @@ void TestHostContract(const std::filesystem::path& repository)
         : std::string_view{};
 
     Check(!header.empty() && !source.empty() && !runtimeHeader.empty() &&
-            !runtime.empty() && !shellMarkup.empty() &&
+            !runtime.empty() && !appMarkup.empty() && !shellMarkup.empty() &&
             !shellHeader.empty() && !shell.empty(),
         "WinUI settings host contract sources are readable");
+    Check(appMarkup.find("x:Key=\"ExpanderHeaderDownStyle\"") !=
+                std::string::npos &&
+            appMarkup.find("x:Key=\"ExpanderHeaderUpStyle\"") !=
+                std::string::npos &&
+            appMarkup.find("ExpandCollapseChevronDown") !=
+                std::string::npos &&
+            appMarkup.find("ExpandCollapseChevronUp") !=
+                std::string::npos &&
+            appMarkup.find("AnimatedChevronUpDownSmallVisualSource") ==
+                std::string::npos,
+        "Expander headers retain static accessible chevrons without the crash-prone animated visual source");
     Check(source.find("DesktopWindowXamlSource") == std::string::npos &&
             source.find("runtime.Attach(impl_->window") !=
                 std::string::npos &&
