@@ -22,8 +22,6 @@ local settings = {
         { key = "fontSize",
             label = l10n.tr("lua_widget.rss_reader.article_font_size"),
             type = "int", default = 15, min = 10, max = 24 },
-        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"),
-            type = "color", default = 0xFFFFFF },
     },
 }
 

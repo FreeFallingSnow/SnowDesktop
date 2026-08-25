@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "RSS Reader",
   "nameKey": "lua_widget.rss_reader.name",
-  "version": "3.0.5",
+  "version": "3.0.6",
   "description": "Subscribes to RSS and Atom feeds, lists headlines and dates, and opens articles on double-click.",
   "descriptionKey": "lua_widget.rss_reader.description",
   "locales": {
@@ -38,8 +38,7 @@
       "lua_widget.rss_reader.preview_article_3": "公路旅行循环播放的歌单",
       "lua_widget.rss_reader.preview_date_1": "2026年8月2日",
       "lua_widget.rss_reader.preview_date_2": "2026年8月1日",
-      "lua_widget.rss_reader.preview_date_3": "2026年7月31日",
-      "lua_widget.common.text_color": "文字颜色"
+      "lua_widget.rss_reader.preview_date_3": "2026年7月31日"
     },
     "en-US": {
       "lua_widget.rss_reader.name": "RSS Reader",
@@ -65,8 +64,7 @@
       "lua_widget.rss_reader.preview_article_3": "The Road-Trip Playlist on Repeat",
       "lua_widget.rss_reader.preview_date_1": "Aug 2, 2026",
       "lua_widget.rss_reader.preview_date_2": "Aug 1, 2026",
-      "lua_widget.rss_reader.preview_date_3": "Jul 31, 2026",
-      "lua_widget.common.text_color": "Text Color"
+      "lua_widget.rss_reader.preview_date_3": "Jul 31, 2026"
     },
     "zh-TW": {
       "lua_widget.rss_reader.name": "RSS 閱讀器",
@@ -92,8 +90,7 @@
       "lua_widget.rss_reader.preview_article_3": "公路旅行循環播放的歌單",
       "lua_widget.rss_reader.preview_date_1": "2026年8月2日",
       "lua_widget.rss_reader.preview_date_2": "2026年8月1日",
-      "lua_widget.rss_reader.preview_date_3": "2026年7月31日",
-      "lua_widget.common.text_color": "文字顏色"
+      "lua_widget.rss_reader.preview_date_3": "2026年7月31日"
     },
     "ja-JP": {
       "lua_widget.rss_reader.name": "RSS リーダー",
@@ -119,8 +116,7 @@
       "lua_widget.rss_reader.preview_article_3": "リピートのロードトリップ プレイリスト",
       "lua_widget.rss_reader.preview_date_1": "2026年8月2日",
       "lua_widget.rss_reader.preview_date_2": "2026年8月1日",
-      "lua_widget.rss_reader.preview_date_3": "2026年7月31日",
-      "lua_widget.common.text_color": "文字色"
+      "lua_widget.rss_reader.preview_date_3": "2026年7月31日"
     },
     "ko-KR": {
       "lua_widget.rss_reader.name": "RSS 리더",
@@ -146,8 +142,7 @@
       "lua_widget.rss_reader.preview_article_3": "반복되는 도로 여행 재생 목록",
       "lua_widget.rss_reader.preview_date_1": "2026년 8월 2일",
       "lua_widget.rss_reader.preview_date_2": "2026년 8월 1일",
-      "lua_widget.rss_reader.preview_date_3": "2026년 7월 31일",
-      "lua_widget.common.text_color": "텍스트 색상"
+      "lua_widget.rss_reader.preview_date_3": "2026년 7월 31일"
     },
     "de-DE": {
       "lua_widget.rss_reader.name": "RSS-Reader",
@@ -173,8 +168,7 @@
       "lua_widget.rss_reader.preview_article_3": "Die Road-Trip-Playlist in Wiederholung",
       "lua_widget.rss_reader.preview_date_1": "2. Aug. 2026",
       "lua_widget.rss_reader.preview_date_2": "1. Aug. 2026",
-      "lua_widget.rss_reader.preview_date_3": "31. Juli 2026",
-      "lua_widget.common.text_color": "Textfarbe"
+      "lua_widget.rss_reader.preview_date_3": "31. Juli 2026"
     },
     "fr-FR": {
       "lua_widget.rss_reader.name": "Lecteur RSS",
@@ -200,8 +194,7 @@
       "lua_widget.rss_reader.preview_article_3": "La playlist Road-Trip en répétition",
       "lua_widget.rss_reader.preview_date_1": "2 août 2026",
       "lua_widget.rss_reader.preview_date_2": "1 août 2026",
-      "lua_widget.rss_reader.preview_date_3": "31 juillet 2026",
-      "lua_widget.common.text_color": "Couleur du texte"
+      "lua_widget.rss_reader.preview_date_3": "31 juillet 2026"
     },
     "es-ES": {
       "lua_widget.rss_reader.name": "Lector RSS",
@@ -227,8 +220,7 @@
       "lua_widget.rss_reader.preview_article_3": "La lista de reproducción del viaje por carretera en repetición",
       "lua_widget.rss_reader.preview_date_1": "2 ago 2026",
       "lua_widget.rss_reader.preview_date_2": "1 ago 2026",
-      "lua_widget.rss_reader.preview_date_3": "31 jul 2026",
-      "lua_widget.common.text_color": "Color del texto"
+      "lua_widget.rss_reader.preview_date_3": "31 jul 2026"
     },
     "es-419": {
       "lua_widget.rss_reader.name": "Lector RSS",
@@ -254,8 +246,7 @@
       "lua_widget.rss_reader.preview_article_3": "La lista de reproducción del viaje por carretera en repetición",
       "lua_widget.rss_reader.preview_date_1": "2 ago 2026",
       "lua_widget.rss_reader.preview_date_2": "1 ago 2026",
-      "lua_widget.rss_reader.preview_date_3": "31 jul 2026",
-      "lua_widget.common.text_color": "Color del texto"
+      "lua_widget.rss_reader.preview_date_3": "31 jul 2026"
     },
     "pt-BR": {
       "lua_widget.rss_reader.name": "Leitor RSS",
@@ -281,8 +272,7 @@
       "lua_widget.rss_reader.preview_article_3": "A lista de reprodução da viagem em repetição",
       "lua_widget.rss_reader.preview_date_1": "2 de ago. de 2026",
       "lua_widget.rss_reader.preview_date_2": "1 de ago. de 2026",
-      "lua_widget.rss_reader.preview_date_3": "31 de jul. de 2026",
-      "lua_widget.common.text_color": "Cor do texto"
+      "lua_widget.rss_reader.preview_date_3": "31 de jul. de 2026"
     }
   },
   "defaultSize": {
