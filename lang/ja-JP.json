@@ -1134,7 +1134,7 @@
   "settings.general.doubleClickHide.description": "デスクトップの空白部分をダブルクリックして内容を表示または非表示にします。",
   "settings.general.quickNavigation": "クイックナビゲーション",
   "settings.general.quickNavigation.description": "クイックナビゲーションを有効にしてグローバルホットキーを設定します。",
-  "settings.general.pageNavigation": "設定ページのナビゲーション",
+  "settings.general.pageNavigation": "デスクトップページの切り替え",
   "settings.general.pageNavigation.description": "キーボードとショートカットでデスクトップページを切り替えます。",
   "settings.general.desktopPassthrough": "デスクトップのクリック透過",
   "settings.general.desktopPassthrough.description": "ポインター入力を一時的にデスクトップ内容の背後へ通します。",

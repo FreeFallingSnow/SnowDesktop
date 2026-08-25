@@ -226,7 +226,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         "pageNavigationToggleRow.SetText(", desktopInteractionTitle);
     Check(desktopInteractionCard != std::string::npos &&
             desktopInteractionTitle < pageNavigationRow,
-        "Settings page navigation has a task-specific group title before its controls");
+        "Desktop page navigation has a task-specific group title before its controls");
     Check(presenter.find(
               "SetCardText(desktopPassthroughCard,\n            \"settings.desktop.passthrough\"") !=
                 std::string::npos &&

@@ -1134,7 +1134,7 @@
     "settings.general.doubleClickHide.description": "Double-click an empty desktop area to hide or show desktop content.",
     "settings.general.quickNavigation": "Quick navigation",
     "settings.general.quickNavigation.description": "Enable quick navigation and set its global shortcut.",
-    "settings.general.pageNavigation": "Settings page navigation",
+    "settings.general.pageNavigation": "Desktop page navigation",
     "settings.general.pageNavigation.description": "Use the keyboard and shortcuts to move between desktop pages.",
     "settings.general.desktopPassthrough": "Desktop click-through",
     "settings.general.desktopPassthrough.description": "Temporarily pass pointer input through desktop content.",

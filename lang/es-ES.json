@@ -1134,7 +1134,7 @@
   "settings.general.doubleClickHide.description": "Haz doble clic en una zona vacía del escritorio para ocultar o mostrar su contenido.",
   "settings.general.quickNavigation": "Navegación rápida",
   "settings.general.quickNavigation.description": "Activa la navegación rápida y define su método abreviado global.",
-  "settings.general.pageNavigation": "Navegación por las páginas de configuración",
+  "settings.general.pageNavigation": "Navegación entre páginas del escritorio",
   "settings.general.pageNavigation.description": "Usa el teclado y métodos abreviados para cambiar de página del escritorio.",
   "settings.general.desktopPassthrough": "Traspaso de clics del escritorio",
   "settings.general.desktopPassthrough.description": "Permite temporalmente que la entrada del puntero atraviese el contenido del escritorio.",

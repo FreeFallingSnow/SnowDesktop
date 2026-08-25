@@ -1134,7 +1134,7 @@
   "settings.general.doubleClickHide.description": "Durch Doppelklick auf eine freie Desktopfläche Desktopinhalte aus- oder einblenden.",
   "settings.general.quickNavigation": "Schnellnavigation",
   "settings.general.quickNavigation.description": "Schnellnavigation aktivieren und ihr globales Tastenkürzel festlegen.",
-  "settings.general.pageNavigation": "Navigation in den Einstellungen",
+  "settings.general.pageNavigation": "Navigation zwischen Desktopseiten",
   "settings.general.pageNavigation.description": "Mit Tastatur und Tastenkürzeln zwischen Desktopseiten wechseln.",
   "settings.general.desktopPassthrough": "Klicks durch den Desktop leiten",
   "settings.general.desktopPassthrough.description": "Zeigereingaben vorübergehend durch Desktopinhalte hindurchleiten.",

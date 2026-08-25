@@ -1134,7 +1134,7 @@
   "settings.general.doubleClickHide.description": "Double-cliquez sur une zone vide du bureau pour masquer ou afficher son contenu.",
   "settings.general.quickNavigation": "Navigation rapide",
   "settings.general.quickNavigation.description": "Activez la navigation rapide et définissez son raccourci global.",
-  "settings.general.pageNavigation": "Navigation dans les paramètres",
+  "settings.general.pageNavigation": "Navigation entre les pages du bureau",
   "settings.general.pageNavigation.description": "Utilisez le clavier et des raccourcis pour passer d'une page du bureau à l'autre.",
   "settings.general.desktopPassthrough": "Clic traversant le bureau",
   "settings.general.desktopPassthrough.description": "Faites temporairement traverser le contenu du bureau aux entrées du pointeur.",

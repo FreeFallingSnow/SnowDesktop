@@ -1134,7 +1134,7 @@
     "settings.general.doubleClickHide.description": "双击桌面空白区域以隐藏或显示桌面内容。",
     "settings.general.quickNavigation": "快速导航",
     "settings.general.quickNavigation.description": "启用快速导航并设置全局热键。",
-    "settings.general.pageNavigation": "设置页导航",
+    "settings.general.pageNavigation": "桌面翻页",
     "settings.general.pageNavigation.description": "使用键盘和快捷键切换桌面页面。",
     "settings.general.desktopPassthrough": "桌面点击穿透",
     "settings.general.desktopPassthrough.description": "临时将指针输入穿透桌面内容。",

@@ -1134,7 +1134,7 @@
   "settings.general.doubleClickHide.description": "바탕 화면의 빈 영역을 두 번 클릭하여 내용을 숨기거나 표시합니다.",
   "settings.general.quickNavigation": "빠른 탐색",
   "settings.general.quickNavigation.description": "빠른 탐색을 켜고 전역 바로 가기 키를 설정합니다.",
-  "settings.general.pageNavigation": "설정 페이지 탐색",
+  "settings.general.pageNavigation": "바탕 화면 페이지 전환",
   "settings.general.pageNavigation.description": "키보드와 바로 가기 키로 바탕 화면 페이지를 이동합니다.",
   "settings.general.desktopPassthrough": "바탕 화면 클릭 통과",
   "settings.general.desktopPassthrough.description": "포인터 입력이 일시적으로 바탕 화면 콘텐츠를 통과하도록 합니다.",

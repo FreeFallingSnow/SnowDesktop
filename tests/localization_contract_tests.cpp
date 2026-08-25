@@ -347,6 +347,20 @@ void TestCatalogMatrix(
         "en-US must exist as the runtime fallback catalog");
     if (english == catalogs.end()) return;
 
+    const auto desktopPageNavigationTitle =
+        english->second.find("settings.general.pageNavigation");
+    Check(desktopPageNavigationTitle != english->second.end() &&
+            desktopPageNavigationTitle->second ==
+                "Desktop page navigation",
+        "desktop page-navigation settings must not be labeled as settings-page navigation");
+    const auto simplifiedChinese = catalogs.find("zh-CN");
+    Check(simplifiedChinese != catalogs.end() &&
+            simplifiedChinese->second.contains(
+                "settings.general.pageNavigation") &&
+            simplifiedChinese->second.at(
+                "settings.general.pageNavigation") == "桌面翻页",
+        "the simplified-Chinese title must identify desktop page switching");
+
     for (const auto& [language, catalog] : catalogs)
     {
         Check(catalog.size() ==

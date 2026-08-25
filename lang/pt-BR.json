@@ -1134,7 +1134,7 @@
   "settings.general.doubleClickHide.description": "Clique duas vezes em uma área vazia da área de trabalho para ocultar ou mostrar seu conteúdo.",
   "settings.general.quickNavigation": "Navegação rápida",
   "settings.general.quickNavigation.description": "Ative a navegação rápida e defina seu atalho global.",
-  "settings.general.pageNavigation": "Navegação pelas páginas de configurações",
+  "settings.general.pageNavigation": "Navegação entre páginas da área de trabalho",
   "settings.general.pageNavigation.description": "Use o teclado e atalhos para alternar entre as páginas da área de trabalho.",
   "settings.general.desktopPassthrough": "Passagem de cliques na área de trabalho",
   "settings.general.desktopPassthrough.description": "Permita temporariamente que a entrada do ponteiro atravesse o conteúdo da área de trabalho.",
