@@ -1079,6 +1079,8 @@
   "app.settings.beautify_enabled": "아이콘 꾸미기 사용",
   "app.settings.desktop_display": "바탕 화면 아이콘 표시",
   "settings.shell.title": "설정",
+  "settings.shell.back": "뒤로",
+  "settings.shell.toggleNavigation": "탐색 창 전환",
   "settings.search.placeholder": "설정 찾기",
   "settings.search.clear": "검색 지우기",
   "settings.progress.cancel": "취소",

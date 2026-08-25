@@ -279,6 +279,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             presenter.find("installedStartupConflict") !=
                 std::string::npos &&
+            presenter.find(
+              "portableStartupConflict.Visibility(showPortableConflict") !=
+                std::string::npos &&
+            presenter.find(
+              "installedStartupConflict.Visibility(showInstalledConflict") !=
+                std::string::npos &&
             presenterHeader.find("openStartupAppsSettings") !=
                 std::string::npos &&
             presenter.find("general.autoStart") != std::string::npos,
@@ -474,26 +480,46 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shellXaml.find("ExpandedModeThresholdWidth=\"1008\"") !=
                 std::string::npos &&
-            shellXaml.find("IsPaneToggleButtonVisible=\"True\"") !=
+            shellXaml.find("IsPaneToggleButtonVisible=\"False\"") !=
                 std::string::npos &&
-            shellXaml.find("IsBackButtonVisible=\"Auto\"") !=
+            shellXaml.find("IsBackButtonVisible=\"Collapsed\"") !=
+                std::string::npos &&
+            shellXaml.find("x:Name=\"TitleBarBackButton\"") !=
+                std::string::npos &&
+            shellXaml.find("x:Name=\"TitleBarPaneToggleButton\"") !=
+                std::string::npos &&
+            shellXaml.find("<NavigationView.AutoSuggestBox>") !=
                 std::string::npos &&
             shell.find("DesktopShellHeader().Content(") !=
                 std::string::npos &&
             shell.find("DataHeader().Content(") != std::string::npos,
         "the adaptive NavigationView exposes Desktop and shell/data groups in task order with About and conditional tools in the footer");
-    Check(shellHeader.find("backRequestedToken_") != std::string::npos &&
-            shell.find("NavigationRoot().BackRequested(") !=
+    Check(shellHeader.find("titleBarBackToken_") != std::string::npos &&
+            shellHeader.find("titleBarPaneToggleToken_") !=
+                std::string::npos &&
+            shell.find("TitleBarBackButton().Click") != std::string::npos &&
+            shell.find("TitleBarPaneToggleButton().Click") !=
+                std::string::npos &&
+            shellXaml.find("x:Name=\"BackKeyboardAccelerator\"") !=
+                std::string::npos &&
+            shellXaml.find("x:Name=\"SearchKeyboardAccelerator\"") !=
+                std::string::npos &&
+            shell.find("BackKeyboardAccelerator().Invoked") !=
+                std::string::npos &&
+            shell.find("SearchKeyboardAccelerator().Invoked") !=
                 std::string::npos &&
             shell.find("navigation_.PeekBack()") != std::string::npos &&
             shell.find("routeRequested_(*route)") != std::string::npos &&
             shell.find("navigation_.GoBack()") != std::string::npos &&
-            shell.find(
-              "NavigationRoot().IsBackEnabled(navigation_.CanGoBack())") !=
+            shell.find("const bool canGoBack = navigation_.CanGoBack()") !=
                 std::string::npos &&
-            shell.find("NavigationRoot().BackRequested(backRequestedToken_)") !=
+            shell.find("TitleBarBackButton().IsEnabled(canGoBack)") !=
+                std::string::npos &&
+            shell.find("BackKeyboardAccelerator().IsEnabled(canGoBack)") !=
+                std::string::npos &&
+            shell.find("TitleBarBackButton().Click(titleBarBackToken_)") !=
                 std::string::npos,
-        "NavigationView back requests follow controller-owned history, update enabled state, and revoke their event token");
+        "title-bar navigation follows controller-owned history, updates enabled state, toggles the NavigationView pane, supports Alt+Left and Ctrl+F, and revokes its event tokens");
 
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",

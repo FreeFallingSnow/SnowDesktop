@@ -15,6 +15,7 @@ namespace winrt::SnowDesktop::implementation
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace muxmi = winrt::Microsoft::UI::Xaml::Media::Imaging;
 namespace wfc = winrt::Windows::Foundation::Collections;
@@ -72,6 +73,8 @@ struct LocalizedFallback
 
 constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.shell.title", L"Settings"},
+    LocalizedFallback{"settings.shell.back", L"Back"},
+    LocalizedFallback{"settings.shell.toggleNavigation", L"Toggle navigation pane"},
     LocalizedFallback{"settings.search.placeholder", L"Find a setting"},
     LocalizedFallback{"settings.search.clear", L"Clear search"},
     LocalizedFallback{"settings.progress.cancel", L"Cancel"},
@@ -402,10 +405,15 @@ void SettingsShell::RefreshLocalizedText()
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
     muxa::AutomationProperties::SetName(
-        ClearSearchButton(), Localize("settings.search.clear"));
+        TitleBarBackButton(), Localize("settings.shell.back"));
+    muxa::AutomationProperties::SetName(
+        TitleBarPaneToggleButton(), Localize("settings.shell.toggleNavigation"));
     muxc::ToolTipService::SetToolTip(
-        ClearSearchButton(),
-        winrt::box_value(Localize("settings.search.clear")));
+        TitleBarBackButton(),
+        winrt::box_value(Localize("settings.shell.back")));
+    muxc::ToolTipService::SetToolTip(
+        TitleBarPaneToggleButton(),
+        winrt::box_value(Localize("settings.shell.toggleNavigation")));
 
     ApplyNavigationIcons();
 
@@ -525,11 +533,19 @@ SettingsShell::IntegratedTitleBarDragRectangles()
         if (scale <= 0.0)
             return rectangles;
 
-        const double titleLeft =
-            TitleBarLeftInsetColumn().ActualWidth();
-        const double titleRight = std::max(titleLeft,
-            host.ActualWidth() -
-                TitleBarRightInsetColumn().ActualWidth());
+        const mux::FrameworkElement dragRegion = TitleBarDragRegion();
+        if (dragRegion.ActualWidth() <= 0.0 ||
+            dragRegion.ActualHeight() <= 0.0)
+        {
+            return rectangles;
+        }
+        const auto transform = dragRegion.TransformToVisual(host);
+        const auto origin = transform.TransformPoint(
+            winrt::Windows::Foundation::Point{0.0f, 0.0f});
+        const double titleLeft = std::max(0.0,
+            static_cast<double>(origin.X));
+        const double titleRight = std::min(host.ActualWidth(),
+            titleLeft + dragRegion.ActualWidth());
         const int pixelHeight = std::max(1,
             static_cast<int>(std::floor(host.ActualHeight() * scale)));
         const int pixelLeft =
@@ -1032,7 +1048,6 @@ void SettingsShell::ClearSearch()
         searchItems_.Clear();
     SettingsSearchBox().Text(L"");
     SettingsSearchBox().IsSuggestionListOpen(false);
-    ClearSearchButton().Visibility(mux::Visibility::Collapsed);
     updatingSearch_ = false;
 }
 
@@ -1203,6 +1218,33 @@ void SettingsShell::HookEvents()
                    const mux::SizeChangedEventArgs&) {
                 NotifyIntegratedTitleBarLayoutChanged();
             });
+    titleBarBackToken_ = TitleBarBackButton().Click(
+        [this](const winrt::Windows::Foundation::IInspectable&,
+               const mux::RoutedEventArgs&) {
+            NavigateBack();
+        });
+    titleBarPaneToggleToken_ = TitleBarPaneToggleButton().Click(
+        [this](const winrt::Windows::Foundation::IInspectable&,
+               const mux::RoutedEventArgs&) {
+            if (!closed_)
+                NavigationRoot().IsPaneOpen(!NavigationRoot().IsPaneOpen());
+        });
+    backKeyboardAcceleratorToken_ = BackKeyboardAccelerator().Invoked(
+        [this](const muxi::KeyboardAccelerator&,
+               const muxi::KeyboardAcceleratorInvokedEventArgs& args) {
+            NavigateBack();
+            args.Handled(true);
+        });
+    searchKeyboardAcceleratorToken_ = SearchKeyboardAccelerator().Invoked(
+        [this](const muxi::KeyboardAccelerator&,
+               const muxi::KeyboardAcceleratorInvokedEventArgs& args) {
+            if (!closed_)
+            {
+                NavigationRoot().IsPaneOpen(true);
+                SettingsSearchBox().Focus(mux::FocusState::Keyboard);
+            }
+            args.Handled(true);
+        });
     selectionChangedToken_ = NavigationRoot().SelectionChanged(
         [this](const muxc::NavigationView&,
                const muxc::NavigationViewSelectionChangedEventArgs& args) {
@@ -1227,19 +1269,6 @@ void SettingsShell::HookEvents()
                 }
             }
         });
-    backRequestedToken_ = NavigationRoot().BackRequested(
-        [this](const auto&, const auto&) {
-            if (closed_)
-                return;
-            const auto route = navigation_.PeekBack();
-            if (!route)
-                return;
-            if (routeRequested_)
-                routeRequested_(*route);
-            else if (navigation_.GoBack())
-                RenderRoute();
-        });
-
     breadcrumbClickedToken_ = PageBreadcrumb().ItemClicked(
         [this](const muxc::BreadcrumbBar&,
                const muxc::BreadcrumbBarItemClickedEventArgs& args) {
@@ -1263,9 +1292,6 @@ void SettingsShell::HookEvents()
             searchResults_.clear();
             searchItems_.Clear();
             const std::wstring query = sender.Text().c_str();
-            ClearSearchButton().Visibility(
-                query.empty() ? mux::Visibility::Collapsed
-                              : mux::Visibility::Visible);
             if (searchRequested_)
             {
                 searchRequested_(
@@ -1288,9 +1314,6 @@ void SettingsShell::HookEvents()
             (void)TrySelectSearchResult(args.SelectedItem());
         });
 
-    clearSearchToken_ = ClearSearchButton().Click(
-        [this](const winrt::Windows::Foundation::IInspectable&,
-               const mux::RoutedEventArgs&) { ClearSearch(); });
     cancelOperationToken_ = CancelOperationButton().Click(
         [this](const winrt::Windows::Foundation::IInspectable&,
                const mux::RoutedEventArgs&) {
@@ -1313,10 +1336,16 @@ void SettingsShell::UnhookEvents() noexcept
             IntegratedTitleBarHost().SizeChanged(
                 integratedTitleBarSizeChangedToken_);
         }
+        if (titleBarBackToken_.value)
+            TitleBarBackButton().Click(titleBarBackToken_);
+        if (titleBarPaneToggleToken_.value)
+            TitleBarPaneToggleButton().Click(titleBarPaneToggleToken_);
+        if (backKeyboardAcceleratorToken_.value)
+            BackKeyboardAccelerator().Invoked(backKeyboardAcceleratorToken_);
+        if (searchKeyboardAcceleratorToken_.value)
+            SearchKeyboardAccelerator().Invoked(searchKeyboardAcceleratorToken_);
         if (selectionChangedToken_.value)
             NavigationRoot().SelectionChanged(selectionChangedToken_);
-        if (backRequestedToken_.value)
-            NavigationRoot().BackRequested(backRequestedToken_);
         if (breadcrumbClickedToken_.value)
             PageBreadcrumb().ItemClicked(breadcrumbClickedToken_);
         if (searchTextChangedToken_.value)
@@ -1325,8 +1354,6 @@ void SettingsShell::UnhookEvents() noexcept
             SettingsSearchBox().QuerySubmitted(searchQuerySubmittedToken_);
         if (searchSuggestionChosenToken_.value)
             SettingsSearchBox().SuggestionChosen(searchSuggestionChosenToken_);
-        if (clearSearchToken_.value)
-            ClearSearchButton().Click(clearSearchToken_);
         if (cancelOperationToken_.value)
             CancelOperationButton().Click(cancelOperationToken_);
     }
@@ -1336,13 +1363,15 @@ void SettingsShell::UnhookEvents() noexcept
     actualThemeChangedToken_ = {};
     integratedTitleBarLoadedToken_ = {};
     integratedTitleBarSizeChangedToken_ = {};
+    titleBarBackToken_ = {};
+    titleBarPaneToggleToken_ = {};
+    backKeyboardAcceleratorToken_ = {};
+    searchKeyboardAcceleratorToken_ = {};
     selectionChangedToken_ = {};
-    backRequestedToken_ = {};
     breadcrumbClickedToken_ = {};
     searchTextChangedToken_ = {};
     searchQuerySubmittedToken_ = {};
     searchSuggestionChosenToken_ = {};
-    clearSearchToken_ = {};
     cancelOperationToken_ = {};
 }
 
@@ -1376,8 +1405,23 @@ void SettingsShell::RenderNavigationSelection()
     if (selectedPage == SettingsPage::WidgetSettings)
         selectedPage = SettingsPage::Widgets;
     NavigationRoot().SelectedItem(NavigationItemForPage(selectedPage));
-    NavigationRoot().IsBackEnabled(navigation_.CanGoBack());
+    const bool canGoBack = navigation_.CanGoBack();
+    TitleBarBackButton().IsEnabled(canGoBack);
+    BackKeyboardAccelerator().IsEnabled(canGoBack);
     updatingNavigation_ = false;
+}
+
+void SettingsShell::NavigateBack()
+{
+    if (closed_)
+        return;
+    const auto route = navigation_.PeekBack();
+    if (!route)
+        return;
+    if (routeRequested_)
+        routeRequested_(*route);
+    else if (navigation_.GoBack())
+        RenderRoute();
 }
 
 void SettingsShell::ApplyNavigationIcons()
@@ -1452,7 +1496,7 @@ void SettingsShell::RenderPageHeaderIcon()
     {
         muxc::FontIcon headerIcon{};
         headerIcon.Glyph(sourceIcon.Glyph());
-        headerIcon.FontSize(28.0);
+        headerIcon.FontSize(34.0);
         PageHeaderIconHost().Content(headerIcon);
         PageHeaderIconHost().Visibility(mux::Visibility::Visible);
     }

@@ -1079,6 +1079,8 @@
     "app.settings.beautify_enabled": "Enable icon beautification",
     "app.settings.desktop_display": "Desktop icon display",
     "settings.shell.title": "Settings",
+    "settings.shell.back": "Back",
+    "settings.shell.toggleNavigation": "Toggle navigation pane",
     "settings.search.placeholder": "Find a setting",
     "settings.search.clear": "Clear search",
     "settings.progress.cancel": "Cancel",

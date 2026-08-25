@@ -67,9 +67,9 @@ void TestHostContract(const std::filesystem::path& repository)
             integratedTitleBarEnd - integratedTitleBarBegin)
         : std::string_view{};
     const std::size_t paneHeaderBegin =
-        shellMarkup.find("<NavigationView.PaneHeader>");
+        shellMarkup.find("<NavigationView.AutoSuggestBox>");
     const std::size_t paneHeaderEnd = shellMarkup.find(
-        "</NavigationView.PaneHeader>", paneHeaderBegin);
+        "</NavigationView.AutoSuggestBox>", paneHeaderBegin);
     const std::string_view paneHeaderMarkup =
         paneHeaderBegin != std::string::npos &&
                 paneHeaderEnd != std::string::npos
@@ -79,7 +79,7 @@ void TestHostContract(const std::filesystem::path& repository)
     const std::size_t navigationRootBegin =
         shellMarkup.find("x:Name=\"NavigationRoot\"");
     const std::size_t navigationRootEnd = shellMarkup.find(
-        "<NavigationView.PaneHeader>", navigationRootBegin);
+        "<NavigationView.AutoSuggestBox>", navigationRootBegin);
     const std::string_view navigationRootMarkup =
         navigationRootBegin != std::string::npos &&
                 navigationRootEnd != std::string::npos
@@ -149,58 +149,57 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") ==
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarBackButton\"") ==
+            shellMarkup.find("x:Name=\"TitleBarBackButton\"") !=
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"TitleBarPaneToggleButton\"") !=
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"TitleBarDragRegion\"") !=
                 std::string::npos &&
             shellMarkup.find("TitleBarLeftInsetColumn") !=
                 std::string::npos &&
             shellMarkup.find("TitleBarRightInsetColumn") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarSearchHost\"") ==
-                std::string::npos &&
-            shellMarkup.find("x:Name=\"SidebarSearchHost\"") !=
-                std::string::npos &&
-            shellMarkup.find("<NavigationView.PaneHeader>") !=
+            shellMarkup.find("<NavigationView.AutoSuggestBox>") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"SettingsSearchBox\"") !=
                 std::string::npos &&
-            shellMarkup.find("IsBackButtonVisible=\"Auto\"") !=
+            shellMarkup.find("IsBackButtonVisible=\"Collapsed\"") !=
+                std::string::npos &&
+            shellMarkup.find("IsPaneToggleButtonVisible=\"False\"") !=
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarInsets") !=
                 std::string::npos &&
             shellHeader.find("IntegratedTitleBarDragRectangles") !=
                 std::string::npos &&
-            shellHeader.find("backRequestedToken_") !=
+            shellHeader.find("titleBarBackToken_") !=
                 std::string::npos &&
-            shell.find("NavigationRoot().BackRequested(") !=
+            shellHeader.find("titleBarPaneToggleToken_") !=
                 std::string::npos &&
-            shell.find("TitleBarBackButton().Click") == std::string::npos &&
+            shell.find("TitleBarBackButton().Click") != std::string::npos &&
+            shell.find("TitleBarPaneToggleButton().Click") !=
+                std::string::npos &&
             shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
-        "the XAML caption is drag-only while search and standard history back navigation stay inside NavigationView without duplicate title-bar controls");
+        "the standard XAML caption owns back and pane navigation while NavigationView supplies its native search placement without duplicate controls");
     Check(integratedTitleBarMarkup.find("Height=\"32\"") !=
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("Height=\"48\"") ==
                 std::string_view::npos &&
-            integratedTitleBarMarkup.find("<Button") ==
-                std::string_view::npos &&
+            Count(integratedTitleBarMarkup, "<Button x:Name=") == 2 &&
             integratedTitleBarMarkup.find("<TextBlock") ==
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("<AutoSuggestBox") ==
                 std::string_view::npos &&
-            paneHeaderMarkup.find("x:Name=\"SidebarSearchHost\"") !=
-                std::string_view::npos &&
-            paneHeaderMarkup.find("Width=\"228\"") ==
+            integratedTitleBarMarkup.find("x:Name=\"TitleBarDragRegion\"") !=
                 std::string_view::npos &&
             paneHeaderMarkup.find(
               "HorizontalAlignment=\"Stretch\"") !=
                 std::string_view::npos &&
-            paneHeaderMarkup.find("Margin=\"16,8,16,12\"") !=
-                std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"SettingsSearchBox\"") !=
                 std::string_view::npos &&
-            paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") !=
+            paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") ==
                 std::string_view::npos,
-        "the standard-height caption has no interactive content and the complete search surface stretches inside the fixed left pane");
+        "the standard-height caption keeps only navigation controls and a dedicated drag region while NavigationView owns the stretch search surface and built-in clear affordance");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&
@@ -211,13 +210,12 @@ void TestHostContract(const std::filesystem::path& repository)
               "Background=\"Transparent\"") !=
                 std::string_view::npos &&
             navigationRootMarkup.find(
-              "x:Key=\"NavigationViewDefaultPaneBackground\"") !=
+              "x:Key=\"NavigationViewDefaultPaneBackground\"") ==
                 std::string_view::npos &&
             navigationRootMarkup.find(
-              "x:Key=\"NavigationViewExpandedPaneBackground\"") !=
-                std::string_view::npos &&
-            Count(navigationRootMarkup, "Color=\"Transparent\"") == 2,
-        "the caption, navigation pane, and page content expose one shared shell background without region-specific fills");
+              "x:Key=\"NavigationViewExpandedPaneBackground\"") ==
+                std::string_view::npos,
+        "the shared shell remains backdrop-aware while NavigationView retains its theme-provided opaque overlay pane fills");
     Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
                 std::string::npos &&
             source.find("constexpr int kMinimumClientHeight = 520;") !=

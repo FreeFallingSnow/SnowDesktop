@@ -1079,6 +1079,8 @@
     "app.settings.beautify_enabled": "启用图标美化",
     "app.settings.desktop_display": "桌面图标显示",
     "settings.shell.title": "设置",
+    "settings.shell.back": "返回",
+    "settings.shell.toggleNavigation": "展开或收起导航窗格",
     "settings.search.placeholder": "查找设置",
     "settings.search.clear": "清除搜索",
     "settings.progress.cancel": "取消",

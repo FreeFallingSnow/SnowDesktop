@@ -797,12 +797,18 @@ struct GeneralPagePresenter::Impl
         if (actions.queryStartupConflict)
             conflict = actions.queryStartupConflict();
 
-        portableStartupConflict.IsOpen(
-            conflict.kind ==
-                GeneralStartupConflictKind::PortableVersionOwnsStartup);
-        installedStartupConflict.IsOpen(
-            conflict.kind ==
-                GeneralStartupConflictKind::InstalledVersionOwnsStartup);
+        const bool showPortableConflict = conflict.kind ==
+            GeneralStartupConflictKind::PortableVersionOwnsStartup;
+        const bool showInstalledConflict = conflict.kind ==
+            GeneralStartupConflictKind::InstalledVersionOwnsStartup;
+        portableStartupConflict.Visibility(showPortableConflict
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+        installedStartupConflict.Visibility(showInstalledConflict
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+        portableStartupConflict.IsOpen(showPortableConflict);
+        installedStartupConflict.IsOpen(showInstalledConflict);
 
         std::wstring portableMessage =
             L("app.settings.auto_start_other_version");

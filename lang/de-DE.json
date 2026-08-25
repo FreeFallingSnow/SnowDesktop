@@ -1079,6 +1079,8 @@
   "app.settings.beautify_enabled": "Symbolverschönerung aktivieren",
   "app.settings.desktop_display": "Anzeige der Desktopsymbole",
   "settings.shell.title": "Einstellungen",
+  "settings.shell.back": "Zurück",
+  "settings.shell.toggleNavigation": "Navigationsbereich ein- oder ausblenden",
   "settings.search.placeholder": "Einstellung suchen",
   "settings.search.clear": "Suche löschen",
   "settings.progress.cancel": "Abbrechen",

@@ -1079,6 +1079,8 @@
   "app.settings.beautify_enabled": "アイコン美化を有効にする",
   "app.settings.desktop_display": "デスクトップアイコンの表示",
   "settings.shell.title": "設定",
+  "settings.shell.back": "戻る",
+  "settings.shell.toggleNavigation": "ナビゲーション ウィンドウを切り替える",
   "settings.search.placeholder": "設定を検索",
   "settings.search.clear": "検索をクリア",
   "settings.progress.cancel": "キャンセル",

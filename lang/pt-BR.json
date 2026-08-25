@@ -1079,6 +1079,8 @@
   "app.settings.beautify_enabled": "Ativar embelezamento de ícones",
   "app.settings.desktop_display": "Exibição dos ícones da área de trabalho",
   "settings.shell.title": "Configurações",
+  "settings.shell.back": "Voltar",
+  "settings.shell.toggleNavigation": "Alternar painel de navegação",
   "settings.search.placeholder": "Localizar uma configuração",
   "settings.search.clear": "Limpar pesquisa",
   "settings.progress.cancel": "Cancelar",

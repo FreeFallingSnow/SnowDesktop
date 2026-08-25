@@ -25,6 +25,15 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="8" />
         </Style>
+        <Style x:Key="SettingsShellTitleBarButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+        </Style>
         <DataTemplate x:Key="SettingsShellFluentGlyphTemplate">
             <Border Width="38" Height="38">
                 <TextBlock Text="{Binding}"
@@ -56,8 +65,8 @@
                     <VisualState.Setters>
                         <Setter Target="PageSurface.Margin" Value="20,12,20,32" />
                         <Setter Target="PageTitle.FontSize" Value="28" />
-                        <Setter Target="PageHeaderIconHost.Width" Value="30" />
-                        <Setter Target="PageHeaderIconHost.Height" Value="30" />
+                        <Setter Target="PageHeaderIconHost.Width" Value="40" />
+                        <Setter Target="PageHeaderIconHost.Height" Value="40" />
                     </VisualState.Setters>
                 </VisualState>
                 <VisualState x:Name="WideContent">
@@ -67,8 +76,8 @@
                     <VisualState.Setters>
                         <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
                         <Setter Target="PageTitle.FontSize" Value="32" />
-                        <Setter Target="PageHeaderIconHost.Width" Value="36" />
-                        <Setter Target="PageHeaderIconHost.Height" Value="36" />
+                        <Setter Target="PageHeaderIconHost.Width" Value="44" />
+                        <Setter Target="PageHeaderIconHost.Height" Value="44" />
                     </VisualState.Setters>
                 </VisualState>
             </VisualStateGroup>
@@ -84,9 +93,29 @@
               Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
             </Grid.ColumnDefinitions>
+            <Button x:Name="TitleBarBackButton"
+                    Grid.Column="1"
+                    Style="{StaticResource SettingsShellTitleBarButtonStyle}">
+                <Button.KeyboardAccelerators>
+                    <KeyboardAccelerator x:Name="BackKeyboardAccelerator"
+                                         Key="Left"
+                                         Modifiers="Menu" />
+                </Button.KeyboardAccelerators>
+                <FontIcon Glyph="&#xE72B;" FontSize="12" />
+            </Button>
+            <Button x:Name="TitleBarPaneToggleButton"
+                    Grid.Column="2"
+                    Style="{StaticResource SettingsShellTitleBarButtonStyle}">
+                <FontIcon Glyph="&#xE700;" FontSize="14" />
+            </Button>
+            <Border x:Name="TitleBarDragRegion"
+                    Grid.Column="3"
+                    Background="Transparent" />
         </Grid>
 
         <NavigationView
@@ -94,46 +123,24 @@
             Grid.Row="1"
             Background="Transparent"
             IsSettingsVisible="False"
-            IsBackButtonVisible="Auto"
+            IsBackButtonVisible="Collapsed"
             PaneDisplayMode="Auto"
             CompactModeThresholdWidth="720"
             ExpandedModeThresholdWidth="1008"
             OpenPaneLength="260"
-            IsPaneToggleButtonVisible="True">
-            <NavigationView.Resources>
-                <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground"
-                                 Color="Transparent" />
-                <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground"
-                                 Color="Transparent" />
-            </NavigationView.Resources>
-            <NavigationView.PaneHeader>
-                <Grid x:Name="SidebarSearchHost"
-                      Height="32"
-                      Margin="16,8,16,12"
-                      HorizontalAlignment="Stretch"
-                      VerticalAlignment="Center"
-                      ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <AutoSuggestBox
-                        x:Name="SettingsSearchBox"
-                        Grid.Column="0"
-                        HorizontalAlignment="Stretch"
-                        QueryIcon="Find"
-                        UpdateTextOnSelect="False" />
-                    <Button x:Name="ClearSearchButton"
-                            Grid.Column="1"
-                            Width="32"
-                            Height="32"
-                            Visibility="Collapsed"
-                            Padding="0"
-                            VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE894;" FontSize="12" />
-                    </Button>
-                </Grid>
-            </NavigationView.PaneHeader>
+            IsPaneToggleButtonVisible="False">
+            <NavigationView.AutoSuggestBox>
+                <AutoSuggestBox x:Name="SettingsSearchBox"
+                                HorizontalAlignment="Stretch"
+                                QueryIcon="Find"
+                                UpdateTextOnSelect="False">
+                    <AutoSuggestBox.KeyboardAccelerators>
+                        <KeyboardAccelerator x:Name="SearchKeyboardAccelerator"
+                                             Key="F"
+                                             Modifiers="Control" />
+                    </AutoSuggestBox.KeyboardAccelerators>
+                </AutoSuggestBox>
+            </NavigationView.AutoSuggestBox>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="HomeItem"
                                     Tag="home"
@@ -208,7 +215,7 @@
                                 HorizontalAlignment="Stretch">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
-                                <Grid ColumnSpacing="12">
+                                <Grid MinHeight="52" ColumnSpacing="16">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
@@ -219,8 +226,10 @@
                                                     IsTabStop="False"
                                                     HorizontalContentAlignment="Stretch"
                                                     VerticalContentAlignment="Stretch"
-                                                    VerticalAlignment="Top" />
-                                    <StackPanel Grid.Column="1" Spacing="4">
+                                                    VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1"
+                                                Spacing="4"
+                                                VerticalAlignment="Center">
                                         <TextBlock x:Name="PageTitle"
                                                    FontSize="32"
                                                    FontWeight="SemiBold"

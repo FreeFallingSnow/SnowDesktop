@@ -211,6 +211,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 private:
     void HookEvents();
     void UnhookEvents() noexcept;
+    void NavigateBack();
     void NotifyActualThemeChanged() noexcept;
     void NotifyIntegratedTitleBarLayoutChanged() noexcept;
     void RenderRoute(
@@ -306,13 +307,15 @@ private:
     winrt::event_token actualThemeChangedToken_{};
     winrt::event_token integratedTitleBarLoadedToken_{};
     winrt::event_token integratedTitleBarSizeChangedToken_{};
+    winrt::event_token titleBarBackToken_{};
+    winrt::event_token titleBarPaneToggleToken_{};
+    winrt::event_token backKeyboardAcceleratorToken_{};
+    winrt::event_token searchKeyboardAcceleratorToken_{};
     winrt::event_token selectionChangedToken_{};
-    winrt::event_token backRequestedToken_{};
     winrt::event_token breadcrumbClickedToken_{};
     winrt::event_token searchTextChangedToken_{};
     winrt::event_token searchQuerySubmittedToken_{};
     winrt::event_token searchSuggestionChosenToken_{};
-    winrt::event_token clearSearchToken_{};
     winrt::event_token cancelOperationToken_{};
 };
 
