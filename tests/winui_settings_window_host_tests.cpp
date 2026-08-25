@@ -84,6 +84,14 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("SetDragRectangles(rectangles)") !=
                 std::string::npos &&
+            source.find("ButtonBackgroundColor(transparent)") !=
+                std::string::npos &&
+            source.find("ButtonInactiveBackgroundColor(transparent)") !=
+                std::string::npos &&
+            source.find("ButtonHoverBackgroundColor(hover)") !=
+                std::string::npos &&
+            source.find("ButtonPressedBackgroundColor(pressed)") !=
+                std::string::npos &&
             source.find("WM_NCHITTEST") == std::string::npos &&
             source.find("WM_NCCALCSIZE") == std::string::npos &&
             shellMarkup.find("x:Name=\"MinimizeButton\"") ==
@@ -92,7 +100,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
-        "AppWindow extends XAML into the caption while Windows retains the three system buttons, Snap, and accessibility");
+        "AppWindow extends XAML and transparent caption-button backgrounds over one surface while Windows retains the three system buttons, Snap, and accessibility");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=

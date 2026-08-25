@@ -12,6 +12,8 @@
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Windowing.h>
 #include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.h>
 
 #include <algorithm>
 #include <atomic>
@@ -28,6 +30,8 @@ namespace snowdesktop::winui
 namespace mud = winrt::Microsoft::UI::Dispatching;
 namespace muw = winrt::Microsoft::UI::Windowing;
 namespace mux = winrt::Microsoft::UI::Xaml;
+namespace wf = winrt::Windows::Foundation;
+namespace wui = winrt::Windows::UI;
 namespace shell_impl = winrt::SnowDesktop::implementation;
 
 namespace
@@ -54,6 +58,16 @@ bool QueryHighContrastEnabled(bool& enabled) noexcept
     }
     enabled = (state.dwFlags & HCF_HIGHCONTRASTON) != 0;
     return true;
+}
+
+wf::IReference<wui::Color> BoxTitleBarColor(
+    std::uint8_t alpha,
+    std::uint8_t red,
+    std::uint8_t green,
+    std::uint8_t blue)
+{
+    return winrt::box_value(wui::Color{alpha, red, green, blue})
+        .as<wf::IReference<wui::Color>>();
 }
 
 DWORD WindowsBuildNumber() noexcept
@@ -702,6 +716,47 @@ struct SettingsWindowHost::Impl
         shell->SetSystemBackdropActive(active);
     }
 
+    void ApplyIntegratedTitleBarButtonColors() noexcept
+    {
+        if (!appWindowTitleBar)
+            return;
+
+        try
+        {
+            bool highContrast = false;
+            if (!QueryHighContrastEnabled(highContrast) || highContrast)
+            {
+                const wf::IReference<wui::Color> systemDefault{nullptr};
+                appWindowTitleBar.ButtonBackgroundColor(systemDefault);
+                appWindowTitleBar.ButtonInactiveBackgroundColor(
+                    systemDefault);
+                appWindowTitleBar.ButtonHoverBackgroundColor(systemDefault);
+                appWindowTitleBar.ButtonPressedBackgroundColor(systemDefault);
+                return;
+            }
+
+            // With content extended into the caption, transparent resting
+            // backgrounds let the same XAML/Mica surface continue underneath
+            // all three Windows-owned caption buttons. Theme-aware overlays
+            // preserve pointer feedback without reintroducing a solid strip.
+            const auto transparent = BoxTitleBarColor(0, 0, 0, 0);
+            const auto hover = darkTheme
+                ? BoxTitleBarColor(24, 255, 255, 255)
+                : BoxTitleBarColor(15, 0, 0, 0);
+            const auto pressed = darkTheme
+                ? BoxTitleBarColor(15, 255, 255, 255)
+                : BoxTitleBarColor(25, 0, 0, 0);
+            appWindowTitleBar.ButtonBackgroundColor(transparent);
+            appWindowTitleBar.ButtonInactiveBackgroundColor(transparent);
+            appWindowTitleBar.ButtonHoverBackgroundColor(hover);
+            appWindowTitleBar.ButtonPressedBackgroundColor(pressed);
+        }
+        catch (...)
+        {
+            // Keep Windows defaults if color customization is unavailable.
+        }
+    }
+
     [[nodiscard]] bool ConfigureIntegratedTitleBar()
     {
         if (!window || !IsWindow(window) ||
@@ -738,6 +793,7 @@ struct SettingsWindowHost::Impl
             appWindowTitleBar.PreferredTheme(darkTheme
                     ? muw::TitleBarTheme::Dark
                     : muw::TitleBarTheme::Light);
+            ApplyIntegratedTitleBarButtonColors();
             return true;
         }
         catch (const winrt::hresult_error& error)
@@ -830,6 +886,7 @@ struct SettingsWindowHost::Impl
                 appWindowTitleBar.PreferredTheme(darkTheme
                         ? muw::TitleBarTheme::Dark
                         : muw::TitleBarTheme::Light);
+                ApplyIntegratedTitleBarButtonColors();
             }
             catch (...)
             {
@@ -2389,6 +2446,7 @@ struct SettingsWindowHost::Impl
         case WM_SYSCOLORCHANGE:
         case WM_DWMCOLORIZATIONCOLORCHANGED:
             ApplySettingsWindowChrome(hwnd, self->darkTheme);
+            self->ApplyIntegratedTitleBarButtonColors();
             self->QueueSystemBackdropUpdate();
             self->QueueIntegratedTitleBarUpdate();
             break;
