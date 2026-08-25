@@ -108,13 +108,20 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             appMarkup.find("x:Key=\"ExpanderHeaderUpStyle\"") !=
                 std::string::npos &&
+            appMarkup.find("x:Key=\"SnowDesktopSafeExpanderStyle\"") !=
+                std::string::npos &&
+            appMarkup.find(
+                "<ControlTemplate TargetType=\"controls:Expander\">") !=
+                std::string::npos &&
+            appMarkup.find("<Style TargetType=\"controls:Expander\"") !=
+                std::string::npos &&
             appMarkup.find("ExpandCollapseChevronDown") !=
                 std::string::npos &&
             appMarkup.find("ExpandCollapseChevronUp") !=
                 std::string::npos &&
             appMarkup.find("AnimatedChevronUpDownSmallVisualSource") ==
                 std::string::npos,
-        "Expander headers retain static accessible chevrons without the crash-prone animated visual source");
+        "the app applies a complete static-chevron Expander template without the crash-prone animated visual source");
     Check(source.find("DesktopWindowXamlSource") == std::string::npos &&
             source.find("runtime.Attach(impl_->window") !=
                 std::string::npos &&

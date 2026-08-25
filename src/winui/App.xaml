@@ -147,6 +147,109 @@
             <Style x:Key="ExpanderHeaderUpStyle"
                    TargetType="ToggleButton"
                    BasedOn="{StaticResource ExpanderHeaderDownStyle}" />
+
+            <Style x:Key="SnowDesktopSafeExpanderStyle"
+                   TargetType="controls:Expander"
+                   BasedOn="{StaticResource DefaultExpanderStyle}">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="controls:Expander">
+                            <Grid MinWidth="{TemplateBinding MinWidth}"
+                                  MaxWidth="{TemplateBinding MaxWidth}">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="ExpandStates">
+                                        <VisualState x:Name="ExpandUp">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpanderContent.Visibility" Value="Visible" />
+                                                <Setter Target="ExpanderHeader.CornerRadius"
+                                                        Value="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource BottomCornerRadiusFilterConverter}}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="CollapseDown">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpanderContent.Visibility" Value="Collapsed" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="ExpandDown">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpanderContent.Visibility" Value="Visible" />
+                                                <Setter Target="ExpanderHeader.CornerRadius"
+                                                        Value="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource TopCornerRadiusFilterConverter}}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="CollapseUp">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpanderContent.Visibility" Value="Collapsed" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                    <VisualStateGroup x:Name="ExpandDirectionStates">
+                                        <VisualState x:Name="Down" />
+                                        <VisualState x:Name="Up">
+                                            <VisualState.Setters>
+                                                <Setter Target="ExpanderHeader.Style"
+                                                        Value="{StaticResource ExpanderHeaderUpStyle}" />
+                                                <Setter Target="ExpanderContent.BorderThickness"
+                                                        Value="{StaticResource ExpanderContentUpBorderThickness}" />
+                                                <Setter Target="ExpanderContent.CornerRadius"
+                                                        Value="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource TopCornerRadiusFilterConverter}}" />
+                                                <Setter Target="ExpanderHeader.(Grid.Row)" Value="1" />
+                                                <Setter Target="ExpanderContentClip.(Grid.Row)" Value="0" />
+                                                <Setter Target="Row0.Height" Value="*" />
+                                                <Setter Target="Row1.Height" Value="Auto" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+
+                                <Grid.RowDefinitions>
+                                    <RowDefinition x:Name="Row0" Height="Auto" />
+                                    <RowDefinition x:Name="Row1" Height="*" />
+                                </Grid.RowDefinitions>
+                                <ToggleButton x:Name="ExpanderHeader"
+                                              AutomationProperties.AutomationId="ExpanderToggleButton"
+                                              Background="{ThemeResource ExpanderHeaderBackground}"
+                                              BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                                              BorderBrush="{ThemeResource ExpanderHeaderBorderBrush}"
+                                              BorderThickness="{ThemeResource ExpanderHeaderBorderThickness}"
+                                              MinHeight="{TemplateBinding MinHeight}"
+                                              CornerRadius="{TemplateBinding CornerRadius}"
+                                              IsEnabled="{TemplateBinding IsEnabled}"
+                                              Padding="{StaticResource ExpanderHeaderPadding}"
+                                              Style="{StaticResource ExpanderHeaderDownStyle}"
+                                              HorizontalAlignment="Stretch"
+                                              HorizontalContentAlignment="{StaticResource ExpanderHeaderHorizontalContentAlignment}"
+                                              VerticalContentAlignment="{StaticResource ExpanderHeaderVerticalContentAlignment}"
+                                              Content="{TemplateBinding Header}"
+                                              ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding HeaderTemplateSelector}"
+                                              IsChecked="{Binding Path=IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" />
+                                <Border x:Name="ExpanderContentClip" Grid.Row="1">
+                                    <Border x:Name="ExpanderContent"
+                                            Visibility="Collapsed"
+                                            Background="{TemplateBinding Background}"
+                                            BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                                            CornerRadius="{Binding CornerRadius, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource BottomCornerRadiusFilterConverter}}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{StaticResource ExpanderContentDownBorderThickness}"
+                                            MinHeight="{TemplateBinding MinHeight}"
+                                            HorizontalAlignment="Stretch"
+                                            VerticalAlignment="Stretch"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter Content="{TemplateBinding Content}"
+                                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                          ContentTemplateSelector="{TemplateBinding ContentTemplateSelector}"
+                                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                                    </Border>
+                                </Border>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style TargetType="controls:Expander"
+                   BasedOn="{StaticResource SnowDesktopSafeExpanderStyle}" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
