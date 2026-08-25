@@ -25,6 +25,24 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="8" />
         </Style>
+        <DataTemplate x:Key="SettingsShellFluentGlyphTemplate">
+            <Border Width="38" Height="38">
+                <TextBlock Text="{Binding}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="18"
+                           FontFamily="ms-appx:///Assets/Fonts/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular" />
+            </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="SettingsShellFontAwesomeGlyphTemplate">
+            <Border Width="38" Height="38">
+                <TextBlock Text="{Binding}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="18"
+                           FontFamily="ms-appx:///Assets/Fonts/fa-solid-900.ttf#Font Awesome 6 Free" />
+            </Border>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Grid x:Name="ShellRoot"

@@ -21,7 +21,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.classic,
             },
         },
         {
@@ -33,7 +32,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.white,
             },
         },
         {
@@ -45,7 +43,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.pink,
             },
         },
         {
@@ -57,7 +54,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.blue,
             },
         },
         {
@@ -69,7 +65,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.green,
             },
         },
         {
@@ -81,7 +76,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.purple,
             },
         },
         {
@@ -93,7 +87,6 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.95,
                 gradientEndA = 0.0,
-                textColor = presetTextColors.dark,
             },
         },
     },
@@ -147,7 +140,6 @@ local function resetDefaults()
     storage.set("alpha", "1")
     storage.set("borderAlpha", "0.85")
     storage.set("gradientEndA", "0")
-    storage.set("textColor", tostring(presetTextColors.classic))
     storage.set("fontSize", "15")
     storage.set("followPersonalization", "1")
     storage.set("__preset", "classic")

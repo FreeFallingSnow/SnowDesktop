@@ -227,8 +227,9 @@ void TestStickyNotePresetTextColors(const fs::path& repository)
     Check(colors.find("dark = 0xFFFFFF") != std::string_view::npos,
         "the dark sticky-note preset must use white text");
     Check(CountOccurrences(source,
-            "textColor = presetTextColors.") == 7,
-        "every sticky-note preset must persist its assigned text color");
+            "textColor = presetTextColors.") == 0 &&
+            source.find("storage.set(\"textColor\"") == std::string::npos,
+        "sticky-note presets must not publish an undeclared legacy setting");
 
     Check(source.find(
             "local noteTheme = module.require(\"modules/theme.lua\")") !=

@@ -34,8 +34,10 @@ void TestWidgetsPagePresenterContract(
         repository / "src/winui/widgets_page_presenter.h");
     const std::string source = ReadText(
         repository / "src/winui/widgets_page_presenter.cpp");
+    const std::string shellXaml = ReadText(
+        repository / "src/winui/SettingsShell.xaml");
 
-    Check(!header.empty() && !source.empty(),
+    Check(!header.empty() && !source.empty() && !shellXaml.empty(),
         "Widgets presenter sources are readable");
 
     Check(header.find("struct WidgetsPageSnapshot") != std::string::npos &&
@@ -163,9 +165,16 @@ void TestWidgetsPagePresenterContract(
 
     const std::string diagnosticRegion = sourceRegion(
         "void AddDiagnosticRow(", "void RenderDeveloperRows()");
-    Check(stretchesAfterContent(diagnosticRegion,
-            "row.Content(body)", "StretchExpanderBody(row, body)"),
-        "diagnostic Expander content is stretched after attachment");
+    Check(diagnosticRegion.find("muxcp::ToggleButton disclosure") !=
+                std::string::npos &&
+            diagnosticRegion.find(
+                "body.Visibility(mux::Visibility::Collapsed)") !=
+                std::string::npos &&
+            diagnosticRegion.find("HookClick(disclosure") !=
+                std::string::npos &&
+            diagnosticRegion.find("muxc::Expander row") ==
+                std::string::npos,
+        "diagnostic disclosure avoids the crashing nested Expander path");
 
     const std::string permissionRegion = sourceRegion(
         "void AddPermissionControls(", "void AddInstanceControls(");
@@ -338,6 +347,36 @@ void TestWidgetsPagePresenterContract(
             source.find("developerDiagnosticActionsRow") !=
                 std::string::npos,
         "Developer Tools retains Agent Skill, authoring, icon, error-log and diagnostics parity");
+
+    Check(source.find("XamlReader::Load") == std::string::npos &&
+            source.find("grid.ItemTemplate(itemTemplate)") !=
+                std::string::npos &&
+            shellXaml.find("SettingsShellFluentGlyphTemplate") !=
+                std::string::npos &&
+            shellXaml.find("SettingsShellFontAwesomeGlyphTemplate") !=
+                std::string::npos &&
+            shellXaml.find(
+                "ms-appx:///Assets/Fonts/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular") !=
+                std::string::npos &&
+            shellXaml.find(
+                "ms-appx:///Assets/Fonts/fa-solid-900.ttf#Font Awesome 6 Free") !=
+                std::string::npos,
+        "icon references use compiled XAML templates and deployed font resources");
+
+    const std::string applyRegion = sourceRegion(
+        "bool ApplySnapshot(const WidgetsPageSnapshot& snapshot)",
+        "void RefreshLocalizedText()");
+    Check(applyRegion.find("installedPresentationChanged") !=
+                std::string::npos &&
+            applyRegion.find("if (installedPresentationChanged)") !=
+                std::string::npos &&
+            applyRegion.find("if (developerPresentationChanged)") !=
+                std::string::npos &&
+            applyRegion.find("if (debugPresentationChanged)") !=
+                std::string::npos &&
+            applyRegion.find("if (sourcePresentationChanged)") !=
+                std::string::npos,
+        "snapshot updates rebuild only presentation regions whose data changed");
 
     Check(source.find("actions.confirm(requestGeneration") !=
                 std::string::npos &&

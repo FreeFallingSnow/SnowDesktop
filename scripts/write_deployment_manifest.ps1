@@ -66,7 +66,7 @@ foreach ($line in @(Get-Content -LiteralPath $FileList -Encoding UTF8)) {
               $package.StartsWith("Microsoft.UI", [System.StringComparison]::OrdinalIgnoreCase))) {
         continue
     }
-    if ($kind -notin @("NuGet", "WindowsAppSDK", "Generated")) {
+    if ($kind -notin @("NuGet", "WindowsAppSDK", "Generated", "Asset")) {
         throw "Unknown deployment item kind '$kind'."
     }
     $source = Join-Path $TargetDirectory $relative.Replace("/", "\")

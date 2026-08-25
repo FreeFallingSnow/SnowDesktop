@@ -82,6 +82,13 @@
           AfterTargets="Build"
           DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
           Condition="'$(WindowsAppSDKSelfContained)' == 'true'">
+    <MakeDir Directories="$(TargetDir)Assets\Fonts" />
+    <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\FluentSystemIcons-Regular.ttf"
+          DestinationFiles="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\fa-solid-900.ttf"
+          DestinationFiles="$(TargetDir)Assets\Fonts\fa-solid-900.ttf"
+          SkipUnchangedFiles="true" />
     <ItemGroup>
       <_SnowDesktopDeploymentFile Include="@(MicrosoftWindowsAppSDKFiles)">
         <DeploymentPath>%(RecursiveDir)%(Filename)%(Extension)</DeploymentPath>
@@ -112,6 +119,16 @@
         <DeploymentPath>SnowDesktop.winmd</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf">
+        <DeploymentPath>Assets\Fonts\FluentSystemIcons-Regular.ttf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Asset</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\fa-solid-900.ttf">
+        <DeploymentPath>Assets\Fonts\fa-solid-900.ttf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Asset</DeploymentKind>
       </_SnowDesktopDeploymentFile>
     </ItemGroup>
     <WriteLinesToFile

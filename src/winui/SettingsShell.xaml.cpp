@@ -218,7 +218,13 @@ SettingsShell::SettingsShell()
             [this](std::string_view key) { return Localize(key); },
             Resources().Lookup(
                 winrt::box_value(L"SettingsShellCardStyle"))
-                .as<mux::Style>());
+                .as<mux::Style>(),
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellFluentGlyphTemplate"))
+                .as<mux::DataTemplate>(),
+            Resources().Lookup(
+                winrt::box_value(L"SettingsShellFontAwesomeGlyphTemplate"))
+                .as<mux::DataTemplate>());
     backupDataPage_ =
         std::make_unique<snowdesktop::winui::BackupDataPagePresenter>(
             [this](std::string_view key) { return Localize(key); },

@@ -50,7 +50,8 @@ void TestBuildManifest(const std::string& props,
              "@(MicrosoftWindowsAppSDKFilesRes)",
              "@(MicrosoftWindowsAppSDKAppxFragmentFiles)",
              "App.xbf", "SettingsShell.xbf", "SnowDesktop.pri",
-             "SnowDesktop.winmd"})
+             "SnowDesktop.winmd", "FluentSystemIcons-Regular.ttf",
+             "fa-solid-900.ttf"})
     {
         Check(props.find(item) != std::string::npos,
             "MSBuild deployment target captures every required item class");
@@ -59,6 +60,13 @@ void TestBuildManifest(const std::string& props,
             props.find("write_deployment_manifest.ps1") !=
                 std::string::npos,
         "MSBuild generates the deployment manifest after the application build");
+    Check(props.find("$(TargetDir)Assets\\Fonts") != std::string::npos &&
+            props.find("<DeploymentKind>Asset</DeploymentKind>") !=
+                std::string::npos &&
+            writer.find(
+                "\"NuGet\", \"WindowsAppSDK\", \"Generated\", \"Asset\"") !=
+                std::string::npos,
+        "WinUI icon fonts are copied and listed as explicit deployment assets");
     Check(props.find("-TargetDirectory &quot;$(TargetDir).&quot;") !=
                 std::string::npos &&
             props.find("-TargetDirectory &quot;$(TargetDir)&quot;") ==

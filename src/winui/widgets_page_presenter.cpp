@@ -173,8 +173,12 @@ struct CallbackGenerationGate
 
 struct WidgetsPagePresenter::Impl
 {
-    explicit Impl(LocalizeCallback callback, const mux::Style& style)
+    explicit Impl(LocalizeCallback callback, const mux::Style& style,
+        const mux::DataTemplate& fluentTemplate,
+        const mux::DataTemplate& fontAwesomeTemplate)
         : localize(std::move(callback)), cardStyle(style),
+          fluentGlyphTemplate(fluentTemplate),
+          fontAwesomeGlyphTemplate(fontAwesomeTemplate),
           callbackGate(std::make_shared<CallbackGenerationGate>())
     {
         BuildControls();
@@ -187,6 +191,8 @@ struct WidgetsPagePresenter::Impl
     LocalizeCallback localize;
     WidgetsPageActions actions;
     mux::Style cardStyle{nullptr};
+    mux::DataTemplate fluentGlyphTemplate{nullptr};
+    mux::DataTemplate fontAwesomeGlyphTemplate{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::InfoBar feedbackBar{nullptr};
     muxc::StackPanel developerRoot{nullptr};
@@ -254,7 +260,6 @@ struct WidgetsPagePresenter::Impl
     presenter_controls::SettingRow developerDiagnosticActionsRow;
     muxc::Button copyDiagnosticsButton{nullptr};
     muxc::Button developerRefreshButton{nullptr};
-    muxc::ScrollViewer developerDiagnosticScroller{nullptr};
     muxc::StackPanel developerDiagnosticRows{nullptr};
     muxc::Button debugRefreshButton{nullptr};
     muxc::StackPanel debugDiagnosticRows{nullptr};
@@ -531,15 +536,6 @@ struct WidgetsPagePresenter::Impl
         return values;
     }
 
-    mux::DataTemplate GlyphTemplate(std::wstring_view family) const
-    {
-        const std::wstring markup =
-            LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Border Width="38" Height="38"><TextBlock Text="{Binding}" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" FontFamily=")" +
-            std::wstring(family) + LR"(" /></Border></DataTemplate>)";
-        return winrt::Microsoft::UI::Xaml::Markup::XamlReader::Load(
-            winrt::hstring(markup)).as<mux::DataTemplate>();
-    }
-
     void InitializeIconReference(
         muxc::Expander& expander,
         muxc::TextBlock& count,
@@ -548,7 +544,7 @@ struct WidgetsPagePresenter::Impl
         std::wstring_view titleFallback,
         std::string_view hintKey,
         std::wstring_view hintFallback,
-        std::wstring_view family,
+        const mux::DataTemplate& itemTemplate,
         const winrt::Windows::Foundation::Collections::
             IObservableVector<winrt::Windows::Foundation::IInspectable>&
                 items)
@@ -578,13 +574,7 @@ struct WidgetsPagePresenter::Impl
         grid.SelectionMode(muxc::ListViewSelectionMode::None);
         grid.IsItemClickEnabled(true);
         grid.ItemsSource(items);
-        try
-        {
-            grid.ItemTemplate(GlyphTemplate(family));
-        }
-        catch (...)
-        {
-        }
+        grid.ItemTemplate(itemTemplate);
         body.Children().Append(grid);
         expander.Content(body);
         StretchExpanderBody(expander, body);
@@ -794,7 +784,7 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fluent_icon_hint",
             L"Click an icon to copy it. Set iconFont = \"fluent\" on the "
                 L"Lua menu item that uses it.",
-            L"FluentSystemIcons-Regular", FluentGlyphItems());
+            fluentGlyphTemplate, FluentGlyphItems());
         developerReferenceCard.content.Children().Append(
             fluentIconsExpander);
         InitializeIconReference(fontAwesomeIconsExpander,
@@ -803,7 +793,7 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fa_icon_hint",
             L"Click an icon to copy its character, then paste it into a Lua "
                 L"menu item's icon field.",
-            L"Font Awesome 6 Free Solid", FontAwesomeGlyphItems());
+            fontAwesomeGlyphTemplate, FontAwesomeGlyphItems());
         developerReferenceCard.content.Children().Append(
             fontAwesomeIconsExpander);
 
@@ -856,15 +846,8 @@ struct WidgetsPagePresenter::Impl
         developerDiagnosticRows.Spacing(8.0);
         developerDiagnosticRows.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        developerDiagnosticScroller = muxc::ScrollViewer{};
-        developerDiagnosticScroller.MaxHeight(180.0);
-        developerDiagnosticScroller.HorizontalScrollBarVisibility(
-            muxc::ScrollBarVisibility::Auto);
-        developerDiagnosticScroller.VerticalScrollBarVisibility(
-            muxc::ScrollBarVisibility::Auto);
-        developerDiagnosticScroller.Content(developerDiagnosticRows);
         developerToolsCard.content.Children().Append(
-            developerDiagnosticScroller);
+            developerDiagnosticRows);
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
@@ -1632,9 +1615,24 @@ struct WidgetsPagePresenter::Impl
         std::vector<std::function<void()>>& revokers,
         mux::FrameworkElement& firstTarget)
     {
-        muxc::Expander row;
+        muxc::StackPanel row;
+        row.Spacing(6.0);
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        muxcp::ToggleButton disclosure;
+        disclosure.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        disclosure.HorizontalContentAlignment(
+            mux::HorizontalAlignment::Stretch);
+        disclosure.UseSystemFocusVisuals(true);
+        disclosure.IsChecked(false);
+        muxc::Grid headerGrid;
+        headerGrid.ColumnSpacing(12.0);
+        muxc::ColumnDefinition headerColumn;
+        headerColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        headerGrid.ColumnDefinitions().Append(headerColumn);
+        muxc::ColumnDefinition chevronColumn;
+        chevronColumn.Width(mux::GridLengthHelper::Auto());
+        headerGrid.ColumnDefinitions().Append(chevronColumn);
         muxc::StackPanel header;
         header.Spacing(3.0);
         muxc::TextBlock name;
@@ -1647,11 +1645,20 @@ struct WidgetsPagePresenter::Impl
         header.Children().Append(name);
         header.Children().Append(MakeSecondaryText(JoinMetadata(
             {diagnostic.instanceId, diagnostic.packageId})));
-        row.Header(header);
+        headerGrid.Children().Append(header);
+        muxc::TextBlock chevron;
+        chevron.Text(L"⌄");
+        chevron.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(chevron, 1);
+        headerGrid.Children().Append(chevron);
+        disclosure.Content(headerGrid);
+        row.Children().Append(disclosure);
 
         muxc::StackPanel body;
         body.Spacing(7.0);
+        body.Margin(mux::ThicknessHelper::FromLengths(12.0, 2.0, 12.0, 8.0));
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        body.Visibility(mux::Visibility::Collapsed);
         const std::wstring validity = L(diagnostic.valid
                 ? "app.settings.valid" : "app.settings.invalid",
             diagnostic.valid ? L"Valid" : L"Invalid");
@@ -1725,15 +1732,28 @@ struct WidgetsPagePresenter::Impl
                 },
                 revokers);
             body.Children().Append(reload);
-            if (!firstTarget)
-                firstTarget = reload;
         }
 
-        row.Content(body);
-        StretchExpanderBody(row, body);
-        SetAutomation(row, name.Text(), diagnostic.lastError);
+        row.Children().Append(body);
+        const auto weakBody = winrt::make_weak(body);
+        const auto weakChevron = winrt::make_weak(chevron);
+        HookClick(disclosure,
+            [disclosure, weakBody, weakChevron](const auto&, const auto&) {
+                const auto checked = disclosure.IsChecked();
+                const bool expanded = checked && checked.Value();
+                if (const auto currentBody = weakBody.get())
+                {
+                    currentBody.Visibility(expanded
+                            ? mux::Visibility::Visible
+                            : mux::Visibility::Collapsed);
+                }
+                if (const auto currentChevron = weakChevron.get())
+                    currentChevron.Text(expanded ? L"⌃" : L"⌄");
+            },
+            revokers);
+        SetAutomation(disclosure, name.Text(), diagnostic.lastError);
         if (!firstTarget)
-            firstTarget = row;
+            firstTarget = disclosure;
         rows.Children().Append(row);
     }
 
@@ -2875,6 +2895,23 @@ struct WidgetsPagePresenter::Impl
         if (hasRevision && snapshot.revision <= revision)
             return false;
 
+        const bool firstPublication = !hasRevision;
+        const bool installedPresentationChanged = firstPublication ||
+            packages != snapshot.installed || developerOverridesVisible !=
+                snapshot.developerOverridesVisible;
+        const bool developerPresentationChanged =
+            installedPresentationChanged ||
+            agentSkills != snapshot.agentSkills ||
+            agentSkillTargetMask != snapshot.agentSkillTargetMask ||
+            agentSkillStatusError != snapshot.agentSkillStatusError ||
+            developerActionStatus != snapshot.developerActionStatus ||
+            developmentWorkspace != snapshot.developmentWorkspace ||
+            componentCliPath != snapshot.componentCliPath ||
+            developerPublisherAvailable !=
+                snapshot.developerPublisherAvailable ||
+            errors != snapshot.errors || diagnostics != snapshot.diagnostics;
+        const bool debugPresentationChanged =
+            firstPublication || diagnostics != snapshot.diagnostics;
         updatingControls = true;
         revision = snapshot.revision;
         hasRevision = true;
@@ -2895,6 +2932,9 @@ struct WidgetsPagePresenter::Impl
         const bool acceptSearch =
             snapshot.searchRevision >= searchRevision &&
             snapshot.searchRevision >= requestedSearchRevision;
+        const bool sourcePresentationChanged = acceptSearch &&
+            (firstPublication || sources != snapshot.sources ||
+                query != snapshot.searchQuery);
         if (acceptSearch)
         {
             searchRevision = snapshot.searchRevision;
@@ -2904,13 +2944,19 @@ struct WidgetsPagePresenter::Impl
             query = snapshot.searchQuery;
             searchBox.Text(query);
         }
-        RefreshFilterItems();
-        RenderInstalledRows();
-        RenderDeveloperRows();
-        RenderDebugRows();
-        if (acceptSearch)
+        if (installedPresentationChanged)
+        {
+            RefreshFilterItems();
+            RenderInstalledRows();
+        }
+        if (developerPresentationChanged)
+            RenderDeveloperRows();
+        if (debugPresentationChanged)
+            RenderDebugRows();
+        if (sourcePresentationChanged)
             RenderSourceRows();
-        RenderManagementControls();
+        if (installedPresentationChanged || sourcePresentationChanged)
+            RenderManagementControls();
         RenderTask();
         RenderFeedback();
         updatingControls = false;
@@ -3285,8 +3331,11 @@ struct WidgetsPagePresenter::Impl
 
 WidgetsPagePresenter::WidgetsPagePresenter(
     LocalizeCallback localize,
-    const mux::Style& cardStyle)
-    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+    const mux::Style& cardStyle,
+    const mux::DataTemplate& fluentGlyphTemplate,
+    const mux::DataTemplate& fontAwesomeGlyphTemplate)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle,
+          fluentGlyphTemplate, fontAwesomeGlyphTemplate))
 {
 }
 

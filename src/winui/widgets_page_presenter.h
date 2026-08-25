@@ -59,12 +59,17 @@ struct WidgetPermissionSnapshot
     bool required = false;
     bool requiresConsent = false;
     bool granted = false;
+
+    bool operator==(const WidgetPermissionSnapshot&) const = default;
 };
 
 struct WidgetPackageValidationIssueSnapshot
 {
     std::wstring code;
     std::wstring message;
+
+    bool operator==(const WidgetPackageValidationIssueSnapshot&) const =
+        default;
 };
 
 /** One invalid source/version retained by the package manager. */
@@ -78,6 +83,9 @@ struct InvalidWidgetPackageSourceSnapshot
     bool development = false;
     bool selected = false;
     std::vector<WidgetPackageValidationIssueSnapshot> issues;
+
+    bool operator==(const InvalidWidgetPackageSourceSnapshot&) const =
+        default;
 };
 
 /** One cached Steam subscription which failed package installation. */
@@ -87,6 +95,9 @@ struct WidgetWorkshopInstallFailureSnapshot
     std::wstring externalItemId;
     std::wstring version;
     std::wstring error;
+
+    bool operator==(const WidgetWorkshopInstallFailureSnapshot&) const =
+        default;
 };
 
 enum class WidgetInstallConfirmationReasonKind : std::uint8_t
@@ -126,24 +137,32 @@ struct WidgetInstanceSnapshot
     std::wstring instanceId;
     std::wstring displayName;
     bool settingsAvailable = false;
+
+    bool operator==(const WidgetInstanceSnapshot&) const = default;
 };
 
 /** One managed package version kept by the package manager for rollback. */
 struct WidgetRestorableVersionSnapshot
 {
     std::wstring version;
+
+    bool operator==(const WidgetRestorableVersionSnapshot&) const = default;
 };
 
 struct WidgetRuntimeLogSnapshot
 {
     std::wstring level;
     std::wstring message;
+
+    bool operator==(const WidgetRuntimeLogSnapshot&) const = default;
 };
 
 struct WidgetRuntimeErrorSnapshot
 {
     std::wstring key;
     std::wstring message;
+
+    bool operator==(const WidgetRuntimeErrorSnapshot&) const = default;
 };
 
 struct WidgetRuntimeViewNodeSnapshot
@@ -157,6 +176,8 @@ struct WidgetRuntimeViewNodeSnapshot
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
+
+    bool operator==(const WidgetRuntimeViewNodeSnapshot&) const = default;
 };
 
 /** Runtime-only diagnostics exposed exclusively by gated native pages. */
@@ -180,6 +201,8 @@ struct WidgetRuntimeDiagnosticSnapshot
     std::wstring auxiliarySurface;
     std::vector<WidgetRuntimeViewNodeSnapshot> desktopViewNodes;
     std::vector<WidgetRuntimeViewNodeSnapshot> auxiliaryViewNodes;
+
+    bool operator==(const WidgetRuntimeDiagnosticSnapshot&) const = default;
 };
 
 enum class WidgetAgentSkillInstallState : std::uint8_t
@@ -209,6 +232,8 @@ struct WidgetAgentSkillTargetSnapshot
         WidgetAgentSkillInstallState::Unavailable;
     bool selected = false;
     bool installed = false;
+
+    bool operator==(const WidgetAgentSkillTargetSnapshot&) const = default;
 };
 
 /** One installed package, including its active source and desktop instances. */
@@ -252,6 +277,8 @@ struct InstalledWidgetPackageSnapshot
     std::vector<WidgetWorkshopInstallFailureSnapshot>
         workshopInstallFailures;
     std::vector<WidgetInstanceSnapshot> instances;
+
+    bool operator==(const InstalledWidgetPackageSnapshot&) const = default;
 };
 
 enum class WidgetPermissionEditorAction : std::uint8_t
@@ -298,6 +325,8 @@ struct WidgetCatalogItemSnapshot
     bool installed = false;
     bool updateAvailable = false;
     bool installAllowed = true;
+
+    bool operator==(const WidgetCatalogItemSnapshot&) const = default;
 };
 
 struct WidgetSourceGroupSnapshot
@@ -313,6 +342,8 @@ struct WidgetSourceGroupSnapshot
     bool supportsInstall = false;
     bool workshop = false;
     std::vector<WidgetCatalogItemSnapshot> results;
+
+    bool operator==(const WidgetSourceGroupSnapshot&) const = default;
 };
 
 enum class WidgetsPageTaskKind : std::uint8_t
@@ -492,7 +523,10 @@ public:
 
     WidgetsPagePresenter(
         LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        const winrt::Microsoft::UI::Xaml::DataTemplate& fluentGlyphTemplate,
+        const winrt::Microsoft::UI::Xaml::DataTemplate&
+            fontAwesomeGlyphTemplate);
     ~WidgetsPagePresenter();
 
     WidgetsPagePresenter(const WidgetsPagePresenter&) = delete;
