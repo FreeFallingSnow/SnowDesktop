@@ -26,6 +26,9 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::WidgetSettings:
     case SettingsPage::BackupAndData:
     case SettingsPage::About:
+    case SettingsPage::Dock:
+    case SettingsPage::Taskbar:
+    case SettingsPage::DesktopCategories:
         return true;
     default:
         return false;
@@ -78,7 +81,8 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
     std::uint64_t revision,
     std::uint64_t generation)
 {
-    if (!IsRouteAvailable(route))
+    const SettingsRoute canonicalRoute = CanonicalizeSettingsRoute(route);
+    if (!IsRouteAvailable(canonicalRoute))
         return false;
 
     if (hasControllerUpdate_)
@@ -98,18 +102,19 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
 
     if (newGeneration)
     {
-        history_.assign(1, route);
+        history_.assign(1, canonicalRoute);
         historyIndex_ = 0;
     }
-    else if (Route() != route)
+    else if (Route() != canonicalRoute)
     {
-        if (historyIndex_ > 0 && history_[historyIndex_ - 1] == route)
+        if (historyIndex_ > 0 &&
+            history_[historyIndex_ - 1] == canonicalRoute)
             --historyIndex_;
         else if (historyIndex_ + 1 < history_.size() &&
-            history_[historyIndex_ + 1] == route)
+            history_[historyIndex_ + 1] == canonicalRoute)
             ++historyIndex_;
         else
-            Push(route);
+            Push(canonicalRoute);
     }
     return true;
 }
@@ -123,9 +128,10 @@ std::optional<SettingsRoute> SettingsShellNavigationState::PeekBack() const
 
 bool SettingsShellNavigationState::Navigate(const SettingsRoute& route)
 {
-    if (!IsRouteAvailable(route) || Route() == route)
+    const SettingsRoute canonicalRoute = CanonicalizeSettingsRoute(route);
+    if (!IsRouteAvailable(canonicalRoute) || Route() == canonicalRoute)
         return false;
-    Push(route);
+    Push(canonicalRoute);
     return true;
 }
 

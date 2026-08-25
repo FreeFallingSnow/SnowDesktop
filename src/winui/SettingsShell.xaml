@@ -122,31 +122,37 @@
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="DockItem"
-                                    Tag="dock-and-taskbar"
-                                    Visibility="Collapsed">
+                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8B7;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="DockItem" Tag="dock">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xEBC8;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xECA5;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE74E;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="AboutItem" Tag="about">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="DeveloperItem"
                                     Tag="developer-tools"
                                     Visibility="Collapsed">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xEC7A;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE74E;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="AboutItem" Tag="about">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
                 <NavigationViewItem x:Name="DebugItem"
                                     Tag="debug"
-                    Visibility="Collapsed">
+                                    Visibility="Collapsed">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7BA;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-            </NavigationView.MenuItems>
+            </NavigationView.FooterMenuItems>
 
             <Grid>
                 <Grid.RowDefinitions>

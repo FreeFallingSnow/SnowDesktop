@@ -26,6 +26,76 @@ SettingsRoute SettingsRoute::ForWidget(
     return route;
 }
 
+SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
+{
+    if (route.page == SettingsPage::General)
+    {
+        if (route.focusId == "general.softwareDesktop")
+        {
+            route.page = SettingsPage::Desktop;
+            route.focusId = "desktop.softwareDesktop";
+        }
+        else if (route.focusId == "general.doubleClickHide")
+        {
+            route.page = SettingsPage::Desktop;
+            route.focusId = "desktop.doubleClickHide";
+        }
+        else if (route.focusId == "general.desktopPassthrough" ||
+            route.focusId == "general.desktopPassthrough.enabled")
+        {
+            route.page = SettingsPage::Desktop;
+            route.focusId = "desktop.passthrough";
+        }
+        else if (route.focusId == "general.desktopPassthrough.hotkey")
+        {
+            route.page = SettingsPage::Desktop;
+            route.focusId = "desktop.passthrough.hotkey";
+        }
+        else if (route.focusId == "general.floatingDock" ||
+            route.focusId == "general.floatingDock.enabled")
+        {
+            route.page = SettingsPage::Dock;
+            route.focusId = "dock.floatingShortcutMode";
+        }
+        else if (route.focusId == "general.floatingDock.hotkey")
+        {
+            route.page = SettingsPage::Dock;
+            route.focusId = "dock.floatingShortcutMode.hotkey";
+        }
+    }
+    else if (route.page == SettingsPage::Personalization)
+    {
+        if (route.focusId == "personalization.tabHeight")
+        {
+            route.page = SettingsPage::DesktopCategories;
+            route.focusId = "desktop.categoryLayout";
+        }
+        else if (route.focusId ==
+            "personalization.showCategoryTabCounts" ||
+            route.focusId == "personalization.showCounts")
+        {
+            route.page = SettingsPage::DesktopCategories;
+            route.focusId = "desktop.categoryCounts";
+        }
+    }
+    else if (route.page == SettingsPage::DockAndTaskbar)
+    {
+        route.page = route.focusId.starts_with("taskbar.")
+            ? SettingsPage::Taskbar
+            : SettingsPage::Dock;
+    }
+    else if (route.page == SettingsPage::Desktop &&
+        (route.focusId == "desktop.categories" ||
+         route.focusId == "desktop.categoryRules" ||
+         route.focusId == "desktop.category.add" ||
+         route.focusId == "desktop.categoryLayout" ||
+         route.focusId == "desktop.categoryCounts"))
+    {
+        route.page = SettingsPage::DesktopCategories;
+    }
+    return route;
+}
+
 bool SettingsRoute::IsValid() const noexcept
 {
     switch (page)
@@ -41,6 +111,9 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::About:
     case SettingsPage::DeveloperTools:
     case SettingsPage::Debug:
+    case SettingsPage::Dock:
+    case SettingsPage::Taskbar:
+    case SettingsPage::DesktopCategories:
         break;
     default:
         return false;
@@ -66,6 +139,9 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::About: return "about";
     case SettingsPage::DeveloperTools: return "developer-tools";
     case SettingsPage::Debug: return "debug";
+    case SettingsPage::Dock: return "dock";
+    case SettingsPage::Taskbar: return "taskbar";
+    case SettingsPage::DesktopCategories: return "desktop-categories";
     }
     return "home";
 }

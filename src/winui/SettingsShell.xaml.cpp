@@ -21,6 +21,7 @@ namespace wg = winrt::Windows::Graphics;
 
 namespace
 {
+using snowdesktop::CanonicalizeSettingsRoute;
 using snowdesktop::SettingsPage;
 using snowdesktop::SettingsRoute;
 using snowdesktop::SettingsSearchEntryKind;
@@ -339,8 +340,11 @@ void SettingsShell::RefreshLocalizedText()
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     PersonalizationItem().Content(
         winrt::box_value(Localize("app.settings.appearance")));
-    DesktopItem().Content(winrt::box_value(Localize("app.settings.category")));
-    DockItem().Content(winrt::box_value(Localize("settings.nav.dock")));
+    DesktopItem().Content(winrt::box_value(Localize("settings.nav.desktop")));
+    CategoriesItem().Content(
+        winrt::box_value(Localize("settings.desktop.categories")));
+    DockItem().Content(winrt::box_value(Localize("settings.dock.dock")));
+    TaskbarItem().Content(winrt::box_value(Localize("settings.dock.taskbar")));
     WidgetsItem().Content(winrt::box_value(Localize("app.settings.widgets")));
     BackupItem().Content(winrt::box_value(Localize("app.settings.backup")));
     AboutItem().Content(winrt::box_value(Localize("app.settings.about")));
@@ -871,24 +875,26 @@ bool SettingsShell::Navigate(
         return false;
     try
     {
+        const SettingsRoute canonicalRoute =
+            CanonicalizeSettingsRoute(route);
         if (notifyHost && routeRequested_)
         {
             // The host synchronously validates and commits the route before
             // the shell renders it. This is essential for component routes:
             // their instance and declarative settings snapshot must exist
             // before the presenter becomes active.
-            routeRequested_(route);
-            if (navigation_.Route() == route)
+            routeRequested_(canonicalRoute);
+            if (navigation_.Route() == canonicalRoute)
                 return true;
             RenderRoute();
             return false;
         }
 
-        const bool changed = navigation_.Navigate(route);
+        const bool changed = navigation_.Navigate(canonicalRoute);
         if (changed)
             RenderRoute();
-        else if (navigation_.IsRouteAvailable(route) &&
-                 navigation_.Route() == route)
+        else if (navigation_.IsRouteAvailable(canonicalRoute) &&
+                 navigation_.Route() == canonicalRoute)
             ScheduleFocus();
         else
             return false;
@@ -952,24 +958,6 @@ bool SettingsShell::SetSearchResults(
     try
     {
         updatingSearch_ = true;
-        for (auto& result : results)
-        {
-            if (result.kind != SettingsSearchEntryKind::StaticSetting)
-                continue;
-            if (result.route.page == SettingsPage::DockAndTaskbar)
-            {
-                result.route.page = result.focusId.starts_with("taskbar.")
-                    ? SettingsPage::Personalization
-                    : SettingsPage::General;
-            }
-            else if (result.route.page == SettingsPage::Desktop &&
-                     result.focusId != "desktop.categories" &&
-                     result.focusId != "desktop.categoryRules" &&
-                     result.focusId != "desktop.category.add")
-            {
-                result.route.page = SettingsPage::Personalization;
-            }
-        }
         std::erase_if(results, [this](const auto& result) {
             return !navigation_.IsRouteAvailable(result.route);
         });
@@ -1179,7 +1167,8 @@ void SettingsShell::HookEvents()
             for (const SettingsPage page : {
                      SettingsPage::Home, SettingsPage::General,
                      SettingsPage::Personalization, SettingsPage::Desktop,
-                     SettingsPage::DockAndTaskbar, SettingsPage::Widgets,
+                     SettingsPage::DesktopCategories, SettingsPage::Dock,
+                     SettingsPage::Taskbar, SettingsPage::Widgets,
                      SettingsPage::BackupAndData, SettingsPage::About,
                      SettingsPage::DeveloperTools, SettingsPage::Debug})
             {
@@ -1363,19 +1352,19 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
 
     const auto usesGeneralPresenter = [](SettingsPage page) {
         return page == SettingsPage::General ||
-            page == SettingsPage::DockAndTaskbar;
+            page == SettingsPage::Dock;
     };
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
-            page == SettingsPage::Desktop;
+            page == SettingsPage::Desktop ||
+            page == SettingsPage::DesktopCategories;
     };
     const auto usesDockPresenter = [](SettingsPage page) {
-        return page == SettingsPage::General ||
-            page == SettingsPage::Personalization ||
-            page == SettingsPage::DockAndTaskbar;
+        return page == SettingsPage::Dock ||
+            page == SettingsPage::Taskbar;
     };
     const bool leavingGeneral = renderedPageRoute_ &&
         usesGeneralPresenter(renderedPageRoute_->page) &&
@@ -1470,34 +1459,23 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::General:
-        if (generalPage_ && dockPage_)
+        if (generalPage_)
         {
             PageCards().Children().Append(generalPage_->Root());
-            PageCards().Children().Append(dockPage_->DockEnableContent());
-            PageCards().Children().Append(
-                generalPage_->DockShortcutContent());
-            PageCards().Children().Append(dockPage_->DockContent());
             generalPage_->RegisterFocusTargets(
                 [this](std::string focusId,
                        const mux::FrameworkElement& element) {
                     RegisterFocusTarget(std::move(focusId), element);
                 });
-            registerDockFocus({
-                "dock.enable", "dock.position", "dock.layout",
-                "dock.monitor", "dock.thickness",
-                "dock.floatingEdgeSwipe", "dock.showWindowsButton",
-                "dock.showFrequentItems", "dock.frequentItemCount"});
             generalPage_->Activate();
-            dockPage_->Activate();
         }
         break;
     case SettingsPage::Personalization:
-        if (personalizationPage_ && desktopPage_ && dockPage_)
+        if (personalizationPage_ && desktopPage_)
         {
             PageCards().Children().Append(personalizationPage_->Content());
             PageCards().Children().Append(
                 desktopPage_->AppearanceContent());
-            PageCards().Children().Append(dockPage_->TaskbarContent());
             for (const std::string_view focusId : {
                      "personalization.theme",
                      "personalization.globalTheme",
@@ -1515,9 +1493,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                      "personalization.contentTheme",
                      "personalization.contextMenu",
                      "personalization.cornerRadius",
-                     "personalization.barHeight",
-                     "personalization.tabHeight",
-                     "personalization.showCategoryTabCounts"})
+                     "personalization.barHeight"})
             {
                 RegisterFocusTarget(
                     std::string(focusId),
@@ -1550,30 +1526,21 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "desktop.iconBeautify.outlineWidth",
                 "desktop.iconBeautify.outlineOpacity",
                 "desktop.iconBeautify.outlineColor"});
-            RegisterFocusTarget("desktop.categoryLayout",
-                personalizationPage_->FocusTarget(
-                    "personalization.tabHeight"));
-            registerDockFocus({
-                "taskbar.autoHide", "taskbar.alignment",
-                "taskbar.systemTheme", "taskbar.theme",
-                "taskbar.contentTheme", "taskbar.backgroundColor",
-                "taskbar.borderColor", "taskbar.backgroundOpacity",
-                "taskbar.borderOpacity", "taskbar.glass",
-                "taskbar.blurRadius", "taskbar.acrylic",
-                "taskbar.restartExplorer",
-                "taskbar.dynamic.visibleWindow",
-                "taskbar.dynamic.maximizedWindow",
-                "taskbar.dynamic.shellUi"});
             personalizationPage_->Activate();
             desktopPage_->Activate();
-            dockPage_->Activate();
         }
         break;
     case SettingsPage::Desktop:
         if (desktopPage_)
+            desktopPage_->Activate();
+        break;
+    case SettingsPage::DesktopCategories:
+        if (desktopPage_)
         {
             PageCards().Children().Append(desktopPage_->CategoryContent());
             for (const std::string_view focusId : {
+                      "desktop.categoryLayout",
+                      "desktop.categoryCounts",
                       "desktop.categories",
                       "desktop.categoryRules",
                       "desktop.category.add"})
@@ -1585,54 +1552,48 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             desktopPage_->Activate();
         }
         break;
-    case SettingsPage::DockAndTaskbar:
+    case SettingsPage::Dock:
         if (dockPage_ && generalPage_)
         {
             PageCards().Children().Append(dockPage_->DockEnableContent());
             PageCards().Children().Append(
                 generalPage_->DockShortcutContent());
             PageCards().Children().Append(dockPage_->DockContent());
-            PageCards().Children().Append(dockPage_->TaskbarContent());
             generalPage_->RegisterFocusTargets(
                 [this](std::string focusId,
                        const mux::FrameworkElement& element) {
                     RegisterFocusTarget(std::move(focusId), element);
                 });
-            for (const std::string_view focusId : {
-                     "dock.enable",
-                     "dock.position",
-                     "dock.layout",
-                     "dock.monitor",
-                     "dock.thickness",
-                     "dock.floatingShortcutMode",
-                     "dock.floatingEdgeSwipe",
-                     "dock.showWindowsButton",
-                     "dock.showFrequentItems",
-                     "dock.frequentItemCount",
-                     "dock.keepWhenDesktopHidden",
-                     "taskbar.autoHide",
-                     "taskbar.alignment",
-                     "taskbar.theme",
-                     "taskbar.contentTheme",
-                     "taskbar.backgroundColor",
-                     "taskbar.borderColor",
-                     "taskbar.backgroundOpacity",
-                     "taskbar.borderOpacity",
-                     "taskbar.glass",
-                     "taskbar.blurRadius",
-                     "taskbar.acrylic",
-                     "taskbar.restartExplorer",
-                      "taskbar.dynamic.visibleWindow",
-                      "taskbar.dynamic.maximizedWindow",
-                      "taskbar.dynamic.shellUi"})
-            {
-                RegisterFocusTarget(
-                    std::string(focusId),
-                    dockPage_->FocusTarget(focusId));
-            }
+            registerDockFocus({
+                "dock.enable", "dock.position", "dock.layout",
+                "dock.monitor", "dock.thickness",
+                "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
+                "dock.showWindowsButton", "dock.showFrequentItems",
+                "dock.frequentItemCount", "dock.keepWhenDesktopHidden"});
             generalPage_->Activate();
             dockPage_->Activate();
         }
+        break;
+    case SettingsPage::Taskbar:
+        if (dockPage_)
+        {
+            PageCards().Children().Append(dockPage_->TaskbarContent());
+            registerDockFocus({
+                "taskbar.autoHide", "taskbar.alignment",
+                "taskbar.systemTheme", "taskbar.theme",
+                "taskbar.contentTheme", "taskbar.backgroundColor",
+                "taskbar.borderColor", "taskbar.backgroundOpacity",
+                "taskbar.borderOpacity", "taskbar.glass",
+                "taskbar.blurRadius", "taskbar.acrylic",
+                "taskbar.restartExplorer",
+                "taskbar.dynamic.visibleWindow",
+                "taskbar.dynamic.maximizedWindow",
+                "taskbar.dynamic.shellUi"});
+            dockPage_->Activate();
+        }
+        break;
+    case SettingsPage::DockAndTaskbar:
+        // Compatibility routes are canonicalized before they enter history.
         break;
     case SettingsPage::Widgets:
         if (widgetsPage_)
@@ -1841,8 +1802,13 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::General: return Localize("app.settings.general");
     case SettingsPage::Personalization:
         return Localize("app.settings.appearance");
-    case SettingsPage::Desktop: return Localize("app.settings.category");
-    case SettingsPage::DockAndTaskbar: return Localize("settings.nav.dock");
+    case SettingsPage::Desktop: return Localize("settings.nav.desktop");
+    case SettingsPage::DesktopCategories:
+        return Localize("settings.desktop.categories");
+    case SettingsPage::Dock: return Localize("settings.dock.dock");
+    case SettingsPage::Taskbar: return Localize("settings.dock.taskbar");
+    case SettingsPage::DockAndTaskbar:
+        return Localize("settings.dock.dock");
     case SettingsPage::Widgets: return Localize("app.settings.widgets");
     case SettingsPage::WidgetSettings: return Localize("app.settings.widgets");
     case SettingsPage::BackupAndData: return Localize("app.settings.backup");
@@ -1865,8 +1831,13 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
         return Localize("settings.page.personalization.description");
     case SettingsPage::Desktop:
         return Localize("settings.page.desktop.description");
+    case SettingsPage::DesktopCategories:
+        return Localize("settings.desktop.categories.description");
+    case SettingsPage::Dock:
     case SettingsPage::DockAndTaskbar:
-        return Localize("settings.page.dock.description");
+        return Localize("settings.dock.dock.description");
+    case SettingsPage::Taskbar:
+        return Localize("settings.dock.taskbar.description");
     case SettingsPage::Widgets:
         return Localize("settings.page.widgets.description");
     case SettingsPage::WidgetSettings:
@@ -1892,7 +1863,10 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::General: return GeneralItem();
     case SettingsPage::Personalization: return PersonalizationItem();
     case SettingsPage::Desktop: return DesktopItem();
+    case SettingsPage::DesktopCategories: return CategoriesItem();
+    case SettingsPage::Dock:
     case SettingsPage::DockAndTaskbar: return DockItem();
+    case SettingsPage::Taskbar: return TaskbarItem();
     case SettingsPage::Widgets:
     case SettingsPage::WidgetSettings: return WidgetsItem();
     case SettingsPage::BackupAndData: return BackupItem();

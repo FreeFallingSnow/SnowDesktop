@@ -332,7 +332,7 @@ struct HomeAboutPagePresenter::Impl
         InitializeHomeCard(themeCard, navigationCardStyle, homeRoot,
             SettingsRoute::ForPage(SettingsPage::Personalization));
         InitializeHomeCard(dockCard, navigationCardStyle, homeRoot,
-            SettingsRoute::ForPage(SettingsPage::DockAndTaskbar));
+            SettingsRoute::ForPage(SettingsPage::Dock));
         InitializeHomeCard(widgetCard, navigationCardStyle, homeRoot,
             SettingsRoute::ForPage(SettingsPage::Widgets));
         InitializeHomeCard(updateCard, navigationCardStyle, homeRoot,

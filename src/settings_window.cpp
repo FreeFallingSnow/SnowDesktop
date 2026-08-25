@@ -96,17 +96,11 @@ void SettingsWindow::Shutdown() noexcept
 
 bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 {
-    snowdesktop::SettingsRoute canonical = route;
+    snowdesktop::SettingsRoute canonical =
+        snowdesktop::CanonicalizeSettingsRoute(route);
     if (canonical.page == snowdesktop::SettingsPage::Home)
     {
         canonical.page = snowdesktop::SettingsPage::General;
-    }
-    else if (canonical.page ==
-        snowdesktop::SettingsPage::DockAndTaskbar)
-    {
-        canonical.page = canonical.focusId.starts_with("taskbar.")
-            ? snowdesktop::SettingsPage::Personalization
-            : snowdesktop::SettingsPage::General;
     }
     return impl_->EnsureInitialized() && impl_->host->Open(canonical);
 }
@@ -120,7 +114,7 @@ bool SettingsWindow::Show()
 bool SettingsWindow::ShowDockSettings()
 {
     return Open(snowdesktop::SettingsRoute::ForPage(
-        snowdesktop::SettingsPage::General, "dock.enable"));
+        snowdesktop::SettingsPage::Dock, "dock.enable"));
 }
 
 bool SettingsWindow::ShowAppearanceSettings()

@@ -14,6 +14,7 @@ enum class SettingsPage : std::uint8_t
     General,
     Personalization,
     Desktop,
+    // Retained as a compatibility input. New routes use Dock or Taskbar.
     DockAndTaskbar,
     Widgets,
     WidgetSettings,
@@ -21,6 +22,10 @@ enum class SettingsPage : std::uint8_t
     About,
     DeveloperTools,
     Debug,
+    // Appended to preserve the numeric values of existing destinations.
+    Dock,
+    Taskbar,
+    DesktopCategories,
 };
 
 /**
@@ -49,6 +54,9 @@ struct SettingsRoute
         const SettingsRoute&,
         const SettingsRoute&) = default;
 };
+
+/** Converts legacy compatibility destinations to their canonical pages. */
+[[nodiscard]] SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route);
 
 /** Stable, non-localized key suitable for diagnostics and navigation state. */
 [[nodiscard]] std::string_view SettingsPageKey(SettingsPage page) noexcept;
