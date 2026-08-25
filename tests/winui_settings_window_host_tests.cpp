@@ -185,7 +185,10 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"SidebarSearchHost\"") !=
                 std::string_view::npos &&
-            paneHeaderMarkup.find("Width=\"228\"") !=
+            paneHeaderMarkup.find("Width=\"228\"") ==
+                std::string_view::npos &&
+            paneHeaderMarkup.find(
+              "HorizontalAlignment=\"Stretch\"") !=
                 std::string_view::npos &&
             paneHeaderMarkup.find("Margin=\"16,8,16,12\"") !=
                 std::string_view::npos &&
@@ -193,7 +196,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") !=
                 std::string_view::npos,
-        "the standard-height caption has no interactive content and the complete search surface is the first element in the fixed left pane");
+        "the standard-height caption has no interactive content and the complete search surface stretches inside the fixed left pane");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&
@@ -234,6 +237,9 @@ void TestHostContract(const std::filesystem::path& repository)
               "HorizontalAlignment=\"Stretch\"") !=
                 std::string_view::npos &&
             pageScrollerMarkup.find(
+              "HorizontalContentAlignment=\"Stretch\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
               "HorizontalScrollBarVisibility=\"Disabled\"") !=
                 std::string_view::npos &&
             pageScrollerMarkup.find(
@@ -249,7 +255,7 @@ void TestHostContract(const std::filesystem::path& repository)
               "HorizontalScrollMode=\"Disabled\"") ==
                 std::string_view::npos &&
             pageScrollerMarkup.find(
-              "MaxWidth=\"1120\"") ==
+              "MaxWidth=\"1120\"") !=
                 std::string_view::npos &&
             pageScrollerMarkup.find(
               "HorizontalAlignment=\"Center\"") ==
@@ -257,14 +263,6 @@ void TestHostContract(const std::filesystem::path& repository)
             pageScrollerMarkup.find("<Grid>") ==
                 std::string_view::npos,
         "the viewport owns the centered width cap while dynamic page content remains stretched and free of desired-width feedback");
-    Check(paneHeaderMarkup.find("x:Name=\"SidebarSearchHost\"") !=
-                std::string_view::npos &&
-            paneHeaderMarkup.find("Width=\"228\"") ==
-                std::string_view::npos &&
-            paneHeaderMarkup.find(
-              "HorizontalAlignment=\"Stretch\"") !=
-                std::string_view::npos,
-        "the pane header stretches inside the NavigationView instead of competing with its one-pixel separator at fractional DPI scales");
     Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
             source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
                 std::string::npos &&

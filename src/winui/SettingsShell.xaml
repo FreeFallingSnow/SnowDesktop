@@ -164,9 +164,11 @@
                     <ScrollViewer x:Name="PageScrollViewer"
                                   MaxWidth="1200"
                                   HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
                         <Border x:Name="PageSurface"
+                                MaxWidth="1120"
                                 Margin="40,16,40,48"
                                 HorizontalAlignment="Stretch">
                             <StackPanel Spacing="16">
