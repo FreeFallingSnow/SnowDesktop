@@ -34,7 +34,7 @@ void DesktopApp::GetNavHotEdgeRects(
     const GridPage* targetPage = GetPageNavigationGridPage();
     if (!targetPage) return;
     snowdesktop::page_navigation_rules::BuildHotEdgeRects(
-        targetPage->workArea, targetPage->dpiX,
+        targetPage->bounds, targetPage->dpiX,
         outPrev, outNext);
 }
 

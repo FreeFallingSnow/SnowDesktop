@@ -154,7 +154,7 @@ int main(int argc, char** argv)
                 nextEdge.right == 1100 &&
                 pageNavigation::HotEdgeWidth(96) == 8 &&
                 pageNavigation::HotEdgeWidth(144) == 12,
-            "page navigation hot edges must span the work area and scale from eight DIPs");
+            "page navigation hot edges must span the supplied monitor bounds and scale from eight DIPs");
 
         Check(pageNavigation::HitTestPointerTarget(
                 { 105, 100 },
@@ -4865,6 +4865,26 @@ int main(int argc, char** argv)
         const std::size_t drawPageHotEdges =
             navigationRenderSource.find(
                 "void DesktopApp::DrawPageNavHotEdgeHint(");
+        const std::size_t getPageHotEdges =
+            navigationRenderSource.find(
+                "void DesktopApp::GetNavHotEdgeRects(");
+        const std::size_t getPageHotEdgesEnd =
+            navigationRenderSource.find(
+                "RECT DesktopApp::GetPageNavHotEdgeHintBounds(",
+                getPageHotEdges);
+        const std::string getPageHotEdgesSource =
+            getPageHotEdges != std::string::npos &&
+                    getPageHotEdgesEnd != std::string::npos
+                ? navigationRenderSource.substr(
+                    getPageHotEdges,
+                    getPageHotEdgesEnd - getPageHotEdges)
+                : std::string{};
+        Check(!getPageHotEdgesSource.empty() &&
+                getPageHotEdgesSource.find(
+                    "targetPage->bounds") != std::string::npos &&
+                getPageHotEdgesSource.find(
+                    "targetPage->workArea") == std::string::npos,
+            "page navigation hot edges must extend through the Dock to the full monitor bounds");
         const std::size_t resolveDragRails =
             navigationRenderSource.find(
                 "ResolveHotEdgeRailVisibility(",

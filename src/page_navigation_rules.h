@@ -65,31 +65,31 @@ inline int HotEdgeWidth(UINT dpi) noexcept
 }
 
 inline void BuildHotEdgeRects(
-    const RECT& workArea,
+    const RECT& monitorBounds,
     UINT dpi,
     RECT& previous,
     RECT& next) noexcept
 {
     previous = {};
     next = {};
-    if (workArea.right <= workArea.left ||
-        workArea.bottom <= workArea.top)
+    if (monitorBounds.right <= monitorBounds.left ||
+        monitorBounds.bottom <= monitorBounds.top)
         return;
 
     const LONG width = std::min<LONG>(
         HotEdgeWidth(dpi),
-        workArea.right - workArea.left);
+        monitorBounds.right - monitorBounds.left);
     previous = {
-        workArea.left,
-        workArea.top,
-        workArea.left + width,
-        workArea.bottom,
+        monitorBounds.left,
+        monitorBounds.top,
+        monitorBounds.left + width,
+        monitorBounds.bottom,
     };
     next = {
-        workArea.right - width,
-        workArea.top,
-        workArea.right,
-        workArea.bottom,
+        monitorBounds.right - width,
+        monitorBounds.top,
+        monitorBounds.right,
+        monitorBounds.bottom,
     };
 }
 
