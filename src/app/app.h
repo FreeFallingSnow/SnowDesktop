@@ -66,6 +66,7 @@
 #include "../widget_preview_scene.h"
 #include "../shell_file_operation_worker.h"
 #include "everything_search.h"
+#include "quick_navigation_search_async.h"
 #include "data_paths.h"
 #include "utils.h"
 #include "widget_engine.h"
@@ -1374,6 +1375,11 @@ private:
     void ClearQuickNavigationSearchCompositionText();
     void RefreshQuickNavigationEverythingResults();
     void ClearQuickNavigationEverythingResults();
+    void StartQueuedQuickNavigationEverythingSearch();
+    void OnQuickNavigationEverythingSearchCompleted(
+        WPARAM cookie);
+    void ApplyQuickNavigationEverythingSearchResult(
+        snowdesktop::QuickNavigationEverythingSearchResult result);
     int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
     const QuickNavigationAppEntry* FindQuickNavigationEverythingAppEntry() const;
     std::wstring GetQuickNavigationEverythingNoticeText() const;
@@ -2805,7 +2811,6 @@ private:
         const QuickNavigationEntry& entry) const;
     bool CommitLuaLogicalSlotPickerCandidate(
         snowdesktop::widget_runtime::LogicalSlotItem candidate);
-    std::vector<EverythingSearchResult> SearchEverythingCached(const std::wstring& query, DWORD maxResults) const;
     /** @brief 通过 Lua 脚本提交路径打开请求。 @param path 要打开的路径 @return 请求是否已接受 */
     bool LuaOpenPath(const std::wstring& path);
     /** @brief 通过 Lua 脚本在资源管理器中显示指定路径。 @param path 路径 @return 操作是否成功 */
@@ -3727,6 +3732,9 @@ private:
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
     DWORD quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
     bool quickNavigationEverythingHasMore_ = false;
+    bool quickNavigationEverythingSearchPending_ = false;
+    std::uint64_t quickNavigationEverythingSearchGeneration_ = 0;
+    std::wstring quickNavigationEverythingResultsQuery_;
     std::vector<size_t> quickNavigationAppResultIndices_;
     std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
     bool quickNavigationAppsIndexed_ = false;
@@ -3758,12 +3766,9 @@ private:
         quickNavigationPointerTarget_{};
     HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
     std::unordered_map<std::wstring, int> quickNavigationEverythingIconCache_;
-    mutable EverythingSearchClient everythingSearch_;
-    mutable std::wstring everythingSearchCacheQuery_;
-    mutable DWORD everythingSearchCacheMaxResults_ = 0;
-    mutable DWORD everythingSearchCacheTick_ = 0;
-    mutable std::vector<EverythingSearchResult> everythingSearchCacheResults_;
-    mutable bool everythingSearchAvailable_ = true;
+    snowdesktop::QuickNavigationEverythingSearchAsync
+        quickNavigationEverythingSearch_;
+    bool everythingSearchAvailable_ = true;
 
     int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
     void BeginQuickNavigationDesktopItemRename(size_t itemIndex);

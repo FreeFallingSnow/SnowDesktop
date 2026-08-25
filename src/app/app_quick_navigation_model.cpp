@@ -6,55 +6,6 @@
 
 // Quick-navigation search caches, app indexing and content-model construction.
 
-std::vector<EverythingSearchResult> DesktopApp::SearchEverythingCached(
-    const std::wstring& query, DWORD maxResults) const
-{
-    if (query.empty() || maxResults == 0)
-        return {};
-
-    const DWORD now = GetTickCount();
-    const bool cacheFresh = everythingSearchCacheQuery_ == query &&
-        everythingSearchCacheMaxResults_ >= maxResults &&
-        now - everythingSearchCacheTick_ < 2000;
-    if (cacheFresh)
-    {
-        const size_t count = std::min<size_t>(everythingSearchCacheResults_.size(), maxResults);
-        std::vector<EverythingSearchResult> cached;
-        cached.reserve(count);
-        for (size_t i = 0; i < count; ++i)
-            cached.push_back(everythingSearchCacheResults_[i]);
-        return cached;
-    }
-
-    everythingSearchCacheQuery_ = query;
-    everythingSearchCacheMaxResults_ = maxResults;
-    everythingSearchCacheTick_ = now;
-    everythingSearchCacheResults_ = everythingSearch_.Search(query, maxResults);
-    everythingSearchAvailable_ = (everythingSearch_.LastError() != 2); // 2 = EVERYTHING_ERROR_IPC, Everything not running
-    const std::wstring normalizedQuery = ToUpperInvariant(query);
-    std::stable_sort(everythingSearchCacheResults_.begin(), everythingSearchCacheResults_.end(),
-        [&](const EverythingSearchResult& a, const EverythingSearchResult& b) {
-            const std::wstring aName = a.name.empty() ? FileNameFromPath(a.path) : a.name;
-            const std::wstring bName = b.name.empty() ? FileNameFromPath(b.path) : b.name;
-            const int aRank = NameSearchMatchRank(aName, normalizedQuery);
-            const int bRank = NameSearchMatchRank(bName, normalizedQuery);
-            if (aRank != bRank)
-                return aRank < bRank;
-
-            const std::wstring aNameKey = ToUpperInvariant(aName);
-            const std::wstring bNameKey = ToUpperInvariant(bName);
-            if (aNameKey != bNameKey)
-                return aNameKey < bNameKey;
-
-            const int timeCmp = CompareFileTime(&a.dateModified, &b.dateModified);
-            if (timeCmp != 0)
-                return timeCmp > 0;
-
-            return ToUpperInvariant(a.path) < ToUpperInvariant(b.path);
-        });
-    return everythingSearchCacheResults_;
-}
-
 std::vector<DesktopApp::QuickNavigationAppEntry>
 DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd,
     HIMAGELIST& systemImageListSmall, int iconSourceSize)

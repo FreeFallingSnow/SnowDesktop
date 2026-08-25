@@ -322,10 +322,20 @@ void DesktopApp::RefreshQuickNavigationSearchText()
 
 void DesktopApp::ClearQuickNavigationEverythingResults()
 {
+    ++quickNavigationEverythingSearchGeneration_;
+    if (quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_))
+    {
+        KillTimer(
+            quickNavigationHwnd_,
+            kQuickNavigationEverythingSearchTimerId);
+    }
     quickNavigationAppResultIndices_.clear();
     quickNavigationAppsExpanded_ = false;
     quickNavigationEverythingResults_.clear();
     quickNavigationEverythingHasMore_ = false;
+    quickNavigationEverythingSearchPending_ = false;
+    quickNavigationEverythingResultsQuery_.clear();
     quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
 }
 
@@ -397,35 +407,139 @@ int DesktopApp::GetQuickNavigationEverythingIconIndex(
 
 void DesktopApp::RefreshQuickNavigationEverythingResults()
 {
-    const bool preserveLoadedOrder =
-        quickNavigationEverythingResultLimit_ > kQuickNavigationEverythingResultBatchSize &&
-        !quickNavigationEverythingResults_.empty();
-    std::vector<QuickNavigationEverythingEntry> previousResults;
-    if (preserveLoadedOrder)
-        previousResults = quickNavigationEverythingResults_;
-
     quickNavigationAppResultIndices_.clear();
     quickNavigationAppsExpanded_ = false;
-    quickNavigationEverythingResults_.clear();
-    quickNavigationEverythingHasMore_ = false;
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
     if (query.empty())
+    {
+        ClearQuickNavigationEverythingResults();
         return;
+    }
 
     RefreshQuickNavigationAppResults();
 
     if (IsLuaLogicalSlotPickerOpen() &&
         !LuaLogicalSlotPickerAccepts("filesystem.reference"))
+    {
+        ++quickNavigationEverythingSearchGeneration_;
+        quickNavigationEverythingResults_.clear();
+        quickNavigationEverythingHasMore_ = false;
+        quickNavigationEverythingSearchPending_ = false;
+        quickNavigationEverythingResultsQuery_.clear();
         return;
+    }
 
     const DWORD requestLimit = std::max<DWORD>(
         quickNavigationEverythingResultLimit_,
         kQuickNavigationEverythingResultBatchSize);
     quickNavigationEverythingResultLimit_ = requestLimit;
-    std::vector<EverythingSearchResult> searchResults =
-        SearchEverythingCached(query, requestLimit);
+    const bool preserveLoadedOrder =
+        query == quickNavigationEverythingResultsQuery_ &&
+        requestLimit > kQuickNavigationEverythingResultBatchSize &&
+        !quickNavigationEverythingResults_.empty();
+    if (!preserveLoadedOrder)
+        quickNavigationEverythingResults_.clear();
+    quickNavigationEverythingHasMore_ = false;
+    quickNavigationEverythingSearchPending_ = true;
+    everythingSearchAvailable_ = true;
+    quickNavigationEverythingResultsQuery_ = query;
+    ++quickNavigationEverythingSearchGeneration_;
+
+    if (quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_) &&
+        SetTimer(
+            quickNavigationHwnd_,
+            kQuickNavigationEverythingSearchTimerId,
+            kQuickNavigationEverythingSearchDebounceMs,
+            nullptr))
+    {
+        return;
+    }
+    StartQueuedQuickNavigationEverythingSearch();
+}
+
+void DesktopApp::StartQueuedQuickNavigationEverythingSearch()
+{
+    if (quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_))
+    {
+        KillTimer(
+            quickNavigationHwnd_,
+            kQuickNavigationEverythingSearchTimerId);
+    }
+
+    const std::wstring query =
+        GetQuickNavigationEffectiveSearchText();
+    if (!quickNavigationOpen_ || query.empty() ||
+        !quickNavigationEverythingSearchPending_)
+    {
+        return;
+    }
+
+    snowdesktop::QuickNavigationEverythingSearchRequest
+        request;
+    request.generation =
+        quickNavigationEverythingSearchGeneration_;
+    request.query = query;
+    request.maxResults =
+        quickNavigationEverythingResultLimit_;
+    if (!quickNavigationEverythingSearch_.Submit(
+            hwnd_,
+            kQuickNavigationEverythingSearchMessage,
+            std::move(request)))
+    {
+        quickNavigationEverythingSearchPending_ = false;
+        everythingSearchAvailable_ = false;
+        InvalidateQuickNavigationWindow();
+    }
+}
+
+void DesktopApp::OnQuickNavigationEverythingSearchCompleted(
+    WPARAM cookie)
+{
+    if (cookie !=
+        quickNavigationEverythingSearch_.MessageCookie())
+    {
+        return;
+    }
+
+    auto result =
+        quickNavigationEverythingSearch_.TakeCompleted();
+    if (!result || !quickNavigationOpen_ ||
+        result->generation !=
+            quickNavigationEverythingSearchGeneration_ ||
+        result->query !=
+            GetQuickNavigationEffectiveSearchText())
+    {
+        return;
+    }
+
+    ApplyQuickNavigationEverythingSearchResult(
+        std::move(*result));
+}
+
+void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
+    snowdesktop::QuickNavigationEverythingSearchResult result)
+{
+    const bool preserveLoadedOrder =
+        result.query ==
+            quickNavigationEverythingResultsQuery_ &&
+        result.maxResults >
+            kQuickNavigationEverythingResultBatchSize &&
+        !quickNavigationEverythingResults_.empty();
+    std::vector<QuickNavigationEverythingEntry>
+        previousResults;
+    if (preserveLoadedOrder)
+        previousResults = quickNavigationEverythingResults_;
+
+    quickNavigationEverythingResults_.clear();
+    quickNavigationEverythingSearchPending_ = false;
+    quickNavigationEverythingResultsQuery_ = result.query;
+    everythingSearchAvailable_ = result.error != 2;
     quickNavigationEverythingHasMore_ =
-        searchResults.size() >= static_cast<size_t>(requestLimit);
+        everythingSearchAvailable_ &&
+        result.results.size() >=
+            static_cast<size_t>(result.maxResults);
 
     std::unordered_set<std::wstring> seenPaths;
     auto appendResult = [&](const EverythingSearchResult& result) {
@@ -459,12 +573,14 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
     if (preserveLoadedOrder)
     {
         std::unordered_map<std::wstring, size_t> resultIndicesByPath;
-        resultIndicesByPath.reserve(searchResults.size());
-        for (size_t i = 0; i < searchResults.size(); ++i)
+        resultIndicesByPath.reserve(result.results.size());
+        for (size_t i = 0; i < result.results.size(); ++i)
         {
-            if (searchResults[i].path.empty())
+            if (result.results[i].path.empty())
                 continue;
-            resultIndicesByPath.emplace(ToUpperInvariant(searchResults[i].path), i);
+            resultIndicesByPath.emplace(
+                ToUpperInvariant(result.results[i].path),
+                i);
         }
 
         for (const auto& previous : previousResults)
@@ -472,12 +588,19 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
             auto found = resultIndicesByPath.find(ToUpperInvariant(previous.path));
             if (found == resultIndicesByPath.end())
                 continue;
-            appendResult(searchResults[found->second]);
+            appendResult(result.results[found->second]);
         }
     }
 
-    for (const auto& result : searchResults)
-        appendResult(result);
+    for (const auto& entry : result.results)
+        appendResult(entry);
+
+    quickNavigationScrollOffset_ = std::clamp(
+        quickNavigationScrollOffset_, 0,
+        GetQuickNavigationMaxScrollOffset(
+            quickNavigationRect_));
+    ResetQuickNavigationKeyboardTarget();
+    InvalidateQuickNavigationWindow();
 }
 
 /**

@@ -228,6 +228,7 @@ constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
+constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 
@@ -289,6 +290,8 @@ constexpr UINT kOleDragUiPumpIntervalMs = USER_TIMER_MINIMUM;
 constexpr UINT_PTR kSettingsWindowRetryTimerId = 22;
 constexpr UINT kSettingsWindowRetryIntervalMs = 250;
 constexpr unsigned kSettingsWindowMaximumAutomaticRetries = 3;
+constexpr UINT_PTR kQuickNavigationEverythingSearchTimerId = 23;
+constexpr UINT kQuickNavigationEverythingSearchDebounceMs = 120;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

@@ -36,6 +36,7 @@ DesktopApp::~DesktopApp()
     UnregisterFloatingDockHotkey();
     DestroyDragPreviewWindow();
     DestroyFloatingDockWindow();
+    quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();
@@ -893,6 +894,7 @@ void DesktopApp::RequestExit()
     exitRequested_ = true;
     shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
+    quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();

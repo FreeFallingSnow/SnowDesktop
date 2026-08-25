@@ -1045,6 +1045,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kQuickNavigationAppsIndexedMessage:
         OnQuickNavigationAppsIndexed(wp, lp);
         return 0;
+    case kQuickNavigationEverythingSearchMessage:
+        OnQuickNavigationEverythingSearchCompleted(wp);
+        return 0;
     case kCommitRenameMessage:
         renameCommitPending_ = false;
         CommitRename(wp != 0);

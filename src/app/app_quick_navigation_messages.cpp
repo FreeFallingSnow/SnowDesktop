@@ -101,6 +101,14 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         return 0;
     case WM_ERASEBKGND:
         return 1;
+    case WM_TIMER:
+        if (wp ==
+            kQuickNavigationEverythingSearchTimerId)
+        {
+            StartQueuedQuickNavigationEverythingSearch();
+            return 0;
+        }
+        break;
     case WM_CTLCOLOREDIT:
         if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_)
         {

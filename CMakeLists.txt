@@ -307,6 +307,8 @@ set(SNOWDESKTOP_SOURCES
     src/modern_menu.cpp
     src/search_match.cpp
     src/everything_search.cpp
+    src/quick_navigation_everything_search.cpp
+    src/quick_navigation_search_async.cpp
     src/lua_runtime.cpp
     src/widget_api_registry.cpp
     src/widget_package_image_cache.cpp
@@ -1646,6 +1648,17 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopPinyinData
         LABELS rules navigation)
+
+    snowdesktop_add_test(
+        SnowDesktopQuickNavigationSearchAsyncTests
+        quick_navigation_search_async
+        SOURCES
+            tests/quick_navigation_search_async_tests.cpp
+            src/quick_navigation_search_async.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES
+            user32
+        LABELS rules navigation integration)
 
     snowdesktop_add_test(
         SnowDesktopShortcutApplicationRulesTests
