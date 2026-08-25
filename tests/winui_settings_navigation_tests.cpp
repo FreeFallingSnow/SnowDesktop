@@ -214,12 +214,19 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto desktopInteractionCard = presenter.find(
         "SetCardText(pageNavigationCard");
     const auto desktopInteractionTitle = presenter.find(
-        "\"app.settings.desktop_interact\"", desktopInteractionCard);
+        "\"settings.general.pageNavigation\"", desktopInteractionCard);
     const auto pageNavigationRow = presenter.find(
         "pageNavigationToggleRow.SetText(", desktopInteractionTitle);
     Check(desktopInteractionCard != std::string::npos &&
             desktopInteractionTitle < pageNavigationRow,
-        "Desktop Interaction remains the legacy group title before the page-navigation setting");
+        "Settings page navigation has a task-specific group title before its controls");
+    Check(presenter.find(
+              "SetCardText(desktopPassthroughCard,\n            \"settings.desktop.passthrough\"") !=
+                std::string::npos &&
+            presenter.find(
+              "SetCardText(floatingDockCard,\n            \"settings.dock.floatingShortcut\"") !=
+                std::string::npos,
+        "Desktop passthrough and the floating Dock shortcut avoid repeating their first setting as the card title");
 
     const auto conditionalHintsStart = presenter.find(
         "void UpdateConditionalHintVisibility()");

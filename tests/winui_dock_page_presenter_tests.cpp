@@ -252,6 +252,16 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("ReplaceMainContentThemeItems") !=
                 std::string::npos,
         "Dock descendants leave pointer and keyboard input when disabled while the independent taskbar controls retain legacy semantics");
+    Check(source.find(
+              "\"settings.dock.edgeSwipe\", L\"Floating Dock edge gesture\"") !=
+                std::string::npos &&
+            source.find(
+              "\"settings.dock.layoutAndPosition\", L\"Position and layout\"") !=
+                std::string::npos &&
+            source.find(
+              "\"settings.dock.itemsAndBehavior\", L\"Items and behavior\"") !=
+                std::string::npos,
+        "Dock cards use task-level group names instead of repeating the first row label");
     Check(source.find("taskbarHookRequired = settings.systemTaskbarBackdropEnabled") !=
                 std::string::npos &&
             source.find("if (taskbarHookRequired)") !=

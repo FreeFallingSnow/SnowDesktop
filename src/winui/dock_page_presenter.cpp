@@ -1895,11 +1895,11 @@ struct DockPagePresenter::Impl
         SetCardText(enableCard,
             "app.settings.dock_bar", L"Dock and Taskbar");
         SetCardText(edgeSwipeCard,
-            "app.dock.floating_edge_swipe", L"Floating Dock Edge Swipe");
+            "settings.dock.edgeSwipe", L"Floating Dock edge gesture");
         SetCardText(layoutCard,
-            "app.dock.layout", L"Dock Layout");
+            "settings.dock.layoutAndPosition", L"Position and layout");
         SetCardText(behaviorCard,
-            "app.dock.detailed", L"Dock Behavior");
+            "settings.dock.itemsAndBehavior", L"Items and behavior");
         SetCardText(taskbarCard,
             "settings.taskbar.behavior", L"Behavior");
         SetCardText(taskbarAppearanceCard,

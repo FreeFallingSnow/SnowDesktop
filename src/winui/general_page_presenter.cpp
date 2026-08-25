@@ -696,11 +696,11 @@ struct GeneralPagePresenter::Impl
         SetCardText(languageCard, "app.settings.language");
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
-            "app.settings.desktop_interact");
+            "settings.general.pageNavigation");
         SetCardText(desktopPassthroughCard,
-            "app.settings.desktop_passthrough_hotkey");
+            "settings.desktop.passthrough");
         SetCardText(floatingDockCard,
-            "app.dock.floating_shortcut_mode");
+            "settings.dock.floatingShortcut");
 
         autoStartRow.SetText(L("app.settings.auto_start"));
         softwareDesktopRow.SetText(L("app.settings.software_desktop"));
