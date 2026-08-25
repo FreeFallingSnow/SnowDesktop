@@ -11,6 +11,7 @@
 #include <winrt/Windows.UI.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <string>
@@ -27,6 +28,7 @@ namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 
 inline constexpr double kSettingControlWidth = 300.0;
+inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
 
 /** Remove persisted float noise before a value reaches Slider/NumberBox. */
 inline double QuantizeNumericValue(
@@ -41,6 +43,78 @@ inline double QuantizeNumericValue(
     const double ticks = std::round((value - minimum) / step);
     return std::clamp(minimum + ticks * step, minimum, maximum);
 }
+
+/**
+ * Keeps the native control responsive while limiting expensive host previews
+ * to the last value observed in a display-sized interval.
+ */
+template <typename Value>
+struct CoalescedPreviewTimer
+{
+    using PublishCallback = std::function<void(const Value&)>;
+
+    mux::DispatcherTimer timer{nullptr};
+    PublishCallback publish;
+    Value latest{};
+    bool pending = false;
+    bool closed = false;
+    winrt::event_token tickToken{};
+
+    void Initialize(PublishCallback callback)
+    {
+        publish = std::move(callback);
+        timer = mux::DispatcherTimer{};
+        timer.Interval(kContinuousPreviewInterval);
+        tickToken = timer.Tick([this](const auto&, const auto&) {
+            timer.Stop();
+            Flush();
+        });
+    }
+
+    void Queue(const Value& value)
+    {
+        if (closed) return;
+        latest = value;
+        pending = true;
+        if (!timer.IsEnabled())
+            timer.Start();
+    }
+
+    void Flush()
+    {
+        if (closed || !pending) return;
+        pending = false;
+        if (publish)
+            publish(latest);
+    }
+
+    void Cancel() noexcept
+    {
+        pending = false;
+        try
+        {
+            if (timer) timer.Stop();
+        }
+        catch (...)
+        {
+        }
+    }
+
+    void Close() noexcept
+    {
+        if (closed) return;
+        Cancel();
+        closed = true;
+        try
+        {
+            if (timer) timer.Tick(tickToken);
+        }
+        catch (...)
+        {
+        }
+        publish = {};
+    }
+};
 
 /**
  * Programmatic equivalent of the legacy BeginSettingRow contract.
@@ -168,13 +242,13 @@ struct ColorFlyoutEditor
     muxc::Border swatch{nullptr};
     muxc::Flyout flyout{nullptr};
     muxc::ColorPicker picker{nullptr};
-    muxc::Button apply{nullptr};
     muxc::Button cancel{nullptr};
+    CoalescedPreviewTimer<winrt::Windows::UI::Color> preview;
     ChangedCallback changed;
     winrt::Windows::UI::Color original{};
     bool updating = false;
     bool open = false;
-    bool accepted = false;
+    bool canceled = false;
     bool rollbackApplied = false;
     bool closed = false;
     EditState editState = EditState::Inactive;
@@ -185,7 +259,6 @@ struct ColorFlyoutEditor
     winrt::event_token pointerReleasedToken{};
     winrt::event_token lostFocusToken{};
     winrt::event_token keyDownToken{};
-    winrt::event_token applyToken{};
     winrt::event_token cancelToken{};
 
     void Initialize(ChangedCallback callback)
@@ -209,13 +282,11 @@ struct ColorFlyoutEditor
         picker.IsAlphaTextInputVisible(false);
         picker.IsMoreButtonVisible(false);
 
-        apply = muxc::Button{};
         cancel = muxc::Button{};
         muxc::StackPanel actions{};
         actions.Orientation(muxc::Orientation::Horizontal);
         actions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         actions.Spacing(8.0);
-        actions.Children().Append(apply);
         actions.Children().Append(cancel);
 
         muxc::StackPanel panel{};
@@ -228,11 +299,16 @@ struct ColorFlyoutEditor
         row.Initialize(button);
         row.SetControlAlignment(mux::HorizontalAlignment::Right);
 
+        preview.Initialize([this](const auto& color) {
+            if (changed)
+                changed(color, SettingsUpdateMode::Preview);
+        });
+
         openingToken = flyout.Opening([this](const auto&, const auto&) {
             if (closed) return;
             original = picker.Color();
             open = true;
-            accepted = false;
+            canceled = false;
             rollbackApplied = false;
             // The opening value is already authoritative. A later change
             // becomes PendingPreview until one of the continuous-control
@@ -243,8 +319,7 @@ struct ColorFlyoutEditor
             if (closed || updating || !open) return;
             UpdateSwatch();
             editState = EditState::PendingPreview;
-            if (changed)
-                changed(picker.Color(), SettingsUpdateMode::Preview);
+            preview.Queue(picker.Color());
         });
         pointerReleasedToken = picker.PointerReleased(
             [this](const auto&, const auto&) { Commit(); });
@@ -255,25 +330,18 @@ struct ColorFlyoutEditor
                 if (args.Key() == winrt::Windows::System::VirtualKey::Enter)
                     Commit();
             });
-        applyToken = apply.Click([this](const auto&, const auto&) {
-            if (closed || !open) return;
-            Commit();
-            accepted = true;
-            flyout.Hide();
-        });
         cancelToken = cancel.Click([this](const auto&, const auto&) {
             if (closed || !open) return;
+            canceled = true;
             Rollback();
             flyout.Hide();
         });
         closedToken = flyout.Closed([this](const auto&, const auto&) {
             if (closed) return;
-            // Light-dismiss has the same transactional meaning as Cancel:
-            // only Apply accepts the edit session. Pointer/focus boundaries
-            // may have persisted an intermediate value, so restore and commit
-            // the opening color before deactivating the editor.
-            if (!accepted)
-                Rollback();
+            // Light-dismiss accepts the latest visible color. Cancel is the
+            // only explicit rollback path.
+            if (!canceled)
+                Commit();
             open = false;
             editState = EditState::Inactive;
         });
@@ -283,11 +351,9 @@ struct ColorFlyoutEditor
     void SetText(
         std::wstring labelText,
         std::wstring helpText,
-        std::wstring applyText,
         std::wstring cancelText)
     {
         row.SetText(std::move(labelText), std::move(helpText));
-        apply.Content(winrt::box_value(std::move(applyText)));
         cancel.Content(winrt::box_value(std::move(cancelText)));
         muxa::AutomationProperties::SetName(button, row.label.Text());
         muxa::AutomationProperties::SetHelpText(button, row.help.Text());
@@ -330,6 +396,7 @@ struct ColorFlyoutEditor
     {
         if (closed || !open || editState != EditState::PendingPreview)
             return;
+        preview.Cancel();
         if (changed)
             changed(picker.Color(), SettingsUpdateMode::PreviewAndCommit);
         editState = EditState::Committed;
@@ -339,6 +406,7 @@ struct ColorFlyoutEditor
     {
         if (closed || !open || rollbackApplied)
             return;
+        preview.Cancel();
         rollbackApplied = true;
         const bool previous = updating;
         updating = true;
@@ -361,19 +429,18 @@ struct ColorFlyoutEditor
         if (!open || !flyout) return;
         try
         {
-            // Flyout::Hide completes asynchronously. Restore while the owning
-            // presenter is still active so navigation/window teardown cannot
-            // strand an unconfirmed preview after guarded mutations stop.
-            if (!accepted)
-                Rollback();
+            // Flyout::Hide completes asynchronously. Commit while the owning
+            // presenter and its generation guard are still authoritative.
+            if (!canceled)
+                Commit();
             flyout.Hide();
         }
         catch (...)
         {
             try
             {
-                if (!accepted)
-                    Rollback();
+                if (!canceled)
+                    Commit();
             }
             catch (...)
             {
@@ -388,8 +455,8 @@ struct ColorFlyoutEditor
         if (closed) return;
         try
         {
-            if (open && !accepted)
-                Rollback();
+            if (open && !canceled)
+                Commit();
         }
         catch (...)
         {
@@ -397,6 +464,7 @@ struct ColorFlyoutEditor
         open = false;
         editState = EditState::Inactive;
         closed = true;
+        preview.Close();
         try
         {
             flyout.Opening(openingToken);
@@ -405,7 +473,6 @@ struct ColorFlyoutEditor
             picker.PointerReleased(pointerReleasedToken);
             picker.LostFocus(lostFocusToken);
             picker.KeyDown(keyDownToken);
-            apply.Click(applyToken);
             cancel.Click(cancelToken);
         }
         catch (...)

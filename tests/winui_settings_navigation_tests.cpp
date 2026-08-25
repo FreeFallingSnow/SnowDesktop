@@ -409,7 +409,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",
         dismissStart);
-    const auto dismissRollback = sharedControls.find("Rollback();",
+    const auto dismissCommit = sharedControls.find("Commit();",
         dismissStart);
     const auto dismissHide = sharedControls.find("flyout.Hide();",
         dismissStart);
@@ -419,6 +419,10 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         "closedToken = flyout.Closed", cancelStart);
     const auto cancelRollback = sharedControls.find("Rollback();", cancelStart);
     const auto cancelHide = sharedControls.find("flyout.Hide();", cancelStart);
+    const auto closedStart = sharedControls.find(
+        "closedToken = flyout.Closed", cancelStart);
+    const auto closedEnd = sharedControls.find("UpdateSwatch();", closedStart);
+    const auto closedCommit = sharedControls.find("Commit();", closedStart);
     Check(sharedControls.find("struct SettingRow") != std::string::npos &&
             sharedControls.find("kSettingControlWidth = 300.0") !=
                 std::string::npos &&
@@ -442,11 +446,21 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             sharedControls.find("SettingsUpdateMode::PreviewAndCommit") !=
                 std::string::npos &&
+            sharedControls.find("CoalescedPreviewTimer") !=
+                std::string::npos &&
+            sharedControls.find("kContinuousPreviewInterval{33}") !=
+                std::string::npos &&
             sharedControls.find("Rollback()") != std::string::npos &&
             dismissStart != std::string::npos &&
-            dismissRollback < dismissHide && dismissHide < dismissEnd &&
+            dismissCommit < dismissHide && dismissHide < dismissEnd &&
             cancelStart != std::string::npos &&
             cancelRollback < cancelHide && cancelHide < cancelEnd &&
+            closedStart != std::string::npos &&
+            closedCommit < closedEnd &&
+            sharedControls.find("applyToken = apply.Click") ==
+                std::string::npos &&
+            sharedControls.find("actions.Children().Append(apply)") ==
+                std::string::npos &&
             personalization.find("mux::DispatcherTimer") !=
                 std::string::npos &&
             personalization.find("std::chrono::milliseconds(650)") !=
@@ -463,7 +477,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             dock.find("taskbarBackgroundColor.editor.button") !=
                 std::string::npos,
-        "setting rows keep text in the left column and the legacy-width editor in the right column without a SizeChanged stacking path, while color swatches transactionally restore unconfirmed sessions");
+        "setting rows retain fixed alignment, continuous previews are frame-coalesced, and color flyouts light-dismiss by committing while explicit Cancel rolls back");
 
     const auto firstFontReset = desktop.find("}, 16.0);");
     const auto numericResetPublish = desktop.find("changed(defaultValue,");

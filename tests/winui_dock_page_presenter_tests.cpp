@@ -78,9 +78,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
     Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
             controls.find("muxc::ColorPicker picker") != std::string::npos,
         "Dock colors use the shared native WinUI ColorPicker flyout");
-    Check(source.find("void RollbackOpenColorEditors() noexcept") !=
+    Check(source.find("void CommitOpenColorEditors() noexcept") !=
                 std::string::npos &&
-            source.find("impl_->RollbackOpenColorEditors();") !=
+            source.find("impl_->CommitOpenColorEditors();") !=
                 std::string::npos &&
             controls.find("pointerReleasedToken = picker.PointerReleased") !=
                 std::string::npos &&
@@ -89,8 +89,14 @@ void TestPresenterContract(const std::filesystem::path& repository)
             controls.find("keyDownToken = picker.KeyDown") !=
                 std::string::npos &&
             controls.find("changed(original, SettingsUpdateMode::PreviewAndCommit)") !=
+                std::string::npos &&
+            source.find("control.preview.Queue(value)") !=
+                std::string::npos &&
+            controls.find("kContinuousPreviewInterval{33}") !=
+                std::string::npos &&
+            controls.find("applyToken = apply.Click") ==
                 std::string::npos,
-        "Dock colors commit interaction boundaries and restore unconfirmed sessions on Cancel or page teardown");
+        "Dock previews are frame-coalesced and colors commit on light-dismiss or page teardown while explicit Cancel rolls back");
     Check(source.find("SettingsUpdateMode::Preview,") !=
                 std::string::npos &&
             source.find("SettingsUpdateMode::PreviewAndCommit,") !=

@@ -2562,10 +2562,7 @@ struct WidgetSettingsPresenter::Impl
             muxa::AutomationProperties::SetName(field.number, name);
         if (field.colorEditor)
         {
-            const auto applyText = L("app.settings.apply", L"Apply");
             const auto cancelText = L("app.settings.cancel", L"Cancel");
-            field.colorEditor->apply.Content(
-                winrt::box_value(applyText));
             field.colorEditor->cancel.Content(
                 winrt::box_value(cancelText));
             muxa::AutomationProperties::SetName(
@@ -2573,8 +2570,6 @@ struct WidgetSettingsPresenter::Impl
             muxa::AutomationProperties::SetHelpText(
                 field.colorEditor->button,
                 ToText(field.schema.description));
-            muxa::AutomationProperties::SetName(
-                field.colorEditor->apply, applyText);
             muxa::AutomationProperties::SetName(
                 field.colorEditor->cancel, cancelText);
         }
@@ -2598,16 +2593,15 @@ struct WidgetSettingsPresenter::Impl
             L("engine.editor.follow_global", L"Follow global settings"));
         appearanceThemeRow.SetText(
             L("app.settings.theme", L"Theme"));
-        const auto applyText = L("app.settings.apply", L"Apply");
         const auto cancelText = L("app.settings.cancel", L"Cancel");
         backgroundColorEditor->SetText(
             L("app.settings.bg_color", L"Background color"), {},
-            applyText, cancelText);
+            cancelText);
         backgroundOpacity.row.SetText(
             L("app.settings.bg_opacity", L"Background opacity"));
         borderColorEditor->SetText(
             L("app.settings.border_color", L"Border color"), {},
-            applyText, cancelText);
+            cancelText);
         borderOpacity.row.SetText(
             L("app.settings.border_opacity", L"Border opacity"));
         gradientEndOpacity.row.SetText(L(
@@ -2761,16 +2755,16 @@ struct WidgetSettingsPresenter::Impl
         }
     }
 
-    void RollbackOpenColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         try
         {
-            const auto rollbackAppearance = [](auto& editor) {
+            const auto commitAppearance = [](auto& editor) {
                 if (editor && editor->open)
                     editor->Dismiss();
             };
-            rollbackAppearance(backgroundColorEditor);
-            rollbackAppearance(borderColorEditor);
+            commitAppearance(backgroundColorEditor);
+            commitAppearance(borderColorEditor);
             for (auto& field : fields)
             {
                 if (field->colorEditor && field->colorEditor->open)
@@ -2789,8 +2783,8 @@ struct WidgetSettingsPresenter::Impl
             try
             {
                 // Rebuild teardown must not mutate a possibly newer service
-                // generation. Deactivate/Close explicitly roll back while
-                // the old identity and guard are still authoritative.
+                // generation. Deactivate/Close explicitly commit while the
+                // old identity and guard are still authoritative.
                 field.colorEditor->changed = {};
                 field.colorEditor->Dismiss();
                 field.colorEditor->Close();
@@ -2900,7 +2894,7 @@ struct WidgetSettingsPresenter::Impl
         if (closed) return;
         try
         {
-            RollbackOpenColorEditors();
+            CommitOpenColorEditors();
             (void)FlushPendingEdits();
             CancelSearches();
         }
@@ -3061,7 +3055,7 @@ void WidgetSettingsPresenter::Deactivate() noexcept
     if (!impl_ || impl_->closed) return;
     try
     {
-        impl_->RollbackOpenColorEditors();
+        impl_->CommitOpenColorEditors();
         const auto result = impl_->FlushPendingEdits();
         if (!result.Succeeded())
             return;

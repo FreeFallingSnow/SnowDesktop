@@ -26,6 +26,7 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
+using presenter_controls::CoalescedPreviewTimer;
 using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
@@ -76,6 +77,7 @@ struct ContinuousControl
     SystemTaskbarDynamicRule DockSettings::* ruleMember = nullptr;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     bool dirty = false;
+    CoalescedPreviewTimer<double> preview;
     mux::DispatcherTimer idleCommitTimer{nullptr};
 
     winrt::event_token sliderChanged{};
@@ -1006,6 +1008,9 @@ struct DockPagePresenter::Impl
                 control.idleCommitTimer.Stop();
                 Commit(control);
             });
+        control.preview.Initialize([this, &control](const double& value) {
+            PublishPreview(control, value);
+        });
         control.sliderChanged = control.slider.ValueChanged(
             [this, &control](const auto&, const auto&) {
                 if (updatingControls || synchronizingPair || closed)
@@ -1052,6 +1057,7 @@ struct DockPagePresenter::Impl
                 [this, &control](const auto&, const auto&) {
                     if (!std::isfinite(control.defaultValue)) return;
                     control.idleCommitTimer.Stop();
+                    control.preview.Cancel();
                     control.dirty = false;
                     const auto field = control.field;
                     const auto member = control.ruleMember;
@@ -1232,6 +1238,13 @@ struct DockPagePresenter::Impl
         control.dirty = true;
         control.idleCommitTimer.Stop();
         control.idleCommitTimer.Start();
+        control.preview.Queue(value);
+    }
+
+    void PublishPreview(ContinuousControl& control, double value)
+    {
+        if (!control.dirty || !CanEmitDock())
+            return;
         const ContinuousField field = control.field;
         const auto member = control.ruleMember;
         EmitDock(SettingsUpdateMode::Preview,
@@ -1244,6 +1257,7 @@ struct DockPagePresenter::Impl
     {
         if (control.idleCommitTimer)
             control.idleCommitTimer.Stop();
+        control.preview.Cancel();
         if (!control.dirty || !CanEmitDock())
             return;
         control.dirty = false;
@@ -1572,7 +1586,6 @@ struct DockPagePresenter::Impl
     {
         control.editor.SetText(
             L(key, fallback), {},
-            L("app.settings.apply", L"Apply"),
             L("app.settings.cancel", L"Cancel"));
     }
 
@@ -1974,7 +1987,7 @@ struct DockPagePresenter::Impl
         }
     }
 
-    void RollbackOpenColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         for (ColorControl* control : colorControls)
             control->editor.Dismiss();
@@ -1994,6 +2007,7 @@ struct DockPagePresenter::Impl
                 control.idleCommitTimer.Stop();
                 control.idleCommitTimer.Tick(control.idleCommitToken);
             }
+            control.preview.Close();
             control.slider.ValueChanged(control.sliderChanged);
             control.number.ValueChanged(control.numberChanged);
             control.slider.PointerReleased(control.sliderReleased);
@@ -2034,7 +2048,7 @@ struct DockPagePresenter::Impl
     {
         if (closed)
             return;
-        RollbackOpenColorEditors();
+        CommitOpenColorEditors();
         CommitContinuousEdits();
         active = false;
         closed = true;
@@ -2142,7 +2156,7 @@ void DockPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed)
         return;
-    impl_->RollbackOpenColorEditors();
+    impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
 }

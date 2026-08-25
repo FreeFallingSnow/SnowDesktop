@@ -25,6 +25,7 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
+using presenter_controls::CoalescedPreviewTimer;
 using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
@@ -157,6 +158,7 @@ struct NumericEditor
     muxc::NumberBox number{nullptr};
     muxc::TextBlock unit{nullptr};
     muxc::Button reset{nullptr};
+    CoalescedPreviewTimer<double> preview;
     ChangedCallback changed;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     double step = 1.0;
@@ -260,6 +262,10 @@ struct NumericEditor
                 idleCommitTimer.Stop();
                 CommitPending();
             });
+        preview.Initialize([this](const double& value) {
+            if (changed)
+                changed(value, SettingsUpdateMode::Preview);
+        });
 
         sliderValueToken = slider.ValueChanged(
             [this](const auto&, const auto&) {
@@ -302,6 +308,7 @@ struct NumericEditor
         {
             resetToken = reset.Click([this](const auto&, const auto&) {
                 idleCommitTimer.Stop();
+                preview.Cancel();
                 pendingCommit = false;
                 if (changed)
                     changed(defaultValue,
@@ -316,8 +323,7 @@ struct NumericEditor
         pendingCommit = true;
         idleCommitTimer.Stop();
         idleCommitTimer.Start();
-        if (changed)
-            changed(value, SettingsUpdateMode::Preview);
+        preview.Queue(value);
     }
 
     void CommitPending()
@@ -325,6 +331,7 @@ struct NumericEditor
         if (idleCommitTimer)
             idleCommitTimer.Stop();
         if (!pendingCommit || closed) return;
+        preview.Cancel();
         pendingCommit = false;
         if (changed)
             changed(Normalize(slider.Value()),
@@ -335,6 +342,7 @@ struct NumericEditor
     {
         if (idleCommitTimer)
             idleCommitTimer.Stop();
+        preview.Cancel();
         pendingCommit = false;
         interactionActive = false;
     }
@@ -402,6 +410,7 @@ struct NumericEditor
         {
             idleCommitTimer.Stop();
             idleCommitTimer.Tick(idleCommitToken);
+            preview.Close();
             slider.ValueChanged(sliderValueToken);
             number.ValueChanged(numberValueToken);
             slider.PointerReleased(sliderPointerToken);
@@ -455,11 +464,10 @@ struct ColorEditor
 
     void SetLabel(
         std::wstring text,
-        std::wstring applyText,
         std::wstring cancelText)
     {
-        editor.SetText(std::move(text), {},
-            std::move(applyText), std::move(cancelText));
+        editor.SetText(
+            std::move(text), {}, std::move(cancelText));
     }
 
     void SetEnabled(bool enabled)
@@ -1666,7 +1674,6 @@ struct DesktopPagePresenter::Impl
         }, std::max(0, beautifyMode.SelectedIndex()));
         backgroundStart->SetLabel(
             L("app.settings.default_bg", L"Background color"),
-            L("app.settings.apply", L"Apply"),
             L("app.settings.cancel", L"Cancel"));
         backgroundOpacity->SetLabel(
             L("app.settings.bg_opacity_val", L"Background opacity"));
@@ -1676,7 +1683,6 @@ struct DesktopPagePresenter::Impl
             gradientEnabledRow.label.Text());
         backgroundEnd->SetLabel(L(
             "app.settings.gradient_end_color", L"Gradient end color"),
-            L("app.settings.apply", L"Apply"),
             L("app.settings.cancel", L"Cancel"));
         gradientDirectionRow.SetText(
             L("app.settings.beautify_gradient_dir", L"Gradient direction"));
@@ -1721,7 +1727,6 @@ struct DesktopPagePresenter::Impl
             filterEnabledRow.label.Text());
         filterTint->SetLabel(L(
             "app.settings.beautify_filter_color", L"Filter color"),
-            L("app.settings.apply", L"Apply"),
             L("app.settings.cancel", L"Cancel"));
         filterStrength->SetLabel(L(
             "app.settings.beautify_filter_strength", L"Filter strength"));
@@ -1737,7 +1742,6 @@ struct DesktopPagePresenter::Impl
             "app.settings.beautify_outline_opacity", L"Outline opacity"));
         outlineColor->SetLabel(L(
             "app.settings.beautify_outline_color", L"Outline color"),
-            L("app.settings.apply", L"Apply"),
             L("app.settings.cancel", L"Cancel"));
 
         categoryHint.Text(L("app.settings.category_hint",
@@ -1864,7 +1868,7 @@ struct DesktopPagePresenter::Impl
         outlineColor->Close();
     }
 
-    void RollbackOpenColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         backgroundStart->Dismiss();
         backgroundEnd->Dismiss();
@@ -1875,7 +1879,7 @@ struct DesktopPagePresenter::Impl
     void Close() noexcept
     {
         if (closed) return;
-        RollbackOpenColorEditors();
+        CommitOpenColorEditors();
         if (active)
             CommitContinuousEdits();
         active = false;
@@ -1970,7 +1974,7 @@ void DesktopPagePresenter::Activate() noexcept
 void DesktopPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed || !impl_->active) return;
-    impl_->RollbackOpenColorEditors();
+    impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
 }

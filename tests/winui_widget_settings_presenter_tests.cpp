@@ -144,18 +144,18 @@ void TestPopupColorEditing(
               "SettingsUpdateMode mode",
               "service.SetOrdinary(guard, key,",
               "wr::MakeWidgetSettingInteger(value)",
-              "RollbackOpenColorEditors()",
+              "CommitOpenColorEditors()",
               "field->colorEditor->Dismiss()",
               "field.colorEditor->Close()",
               "if (field.colorEditor) return field.colorEditor->button",
               "backgroundColorEditor",
               "borderColorEditor",
               "RunAppearancePatch",
-              "rollbackAppearance(backgroundColorEditor)",
-              "rollbackAppearance(borderColorEditor)",
+              "commitAppearance(backgroundColorEditor)",
+              "commitAppearance(borderColorEditor)",
               "QueueTransientOrdinary(field.schema.key,",
               "CommitTransientOwner(field.schema.key)"}),
-        "field and host appearance colors preserve guarded coalesced preview and roll back unconfirmed edits before teardown");
+        "field and host appearance colors preserve guarded coalesced preview and commit the visible value before teardown");
     Check(ContainsAll(sharedControls, {
               "muxc::Flyout",
               "button.Flyout(flyout)",
@@ -169,14 +169,16 @@ void TestPopupColorEditing(
               "keyDownToken = picker.KeyDown",
               "VirtualKey::Enter",
               "closedToken = flyout.Closed",
-              "changed(picker.Color(), SettingsUpdateMode::Preview)",
+              "preview.Queue(picker.Color())",
+              "changed(color, SettingsUpdateMode::Preview)",
               "changed(picker.Color(), SettingsUpdateMode::PreviewAndCommit)",
               "changed(original, SettingsUpdateMode::PreviewAndCommit)",
               "picker.PointerReleased(pointerReleasedToken)",
               "picker.LostFocus(lostFocusToken)",
               "picker.KeyDown(keyDownToken)",
-              "swatch.Background"}),
-        "the shared swatch previews continuously, commits every interaction boundary, and unloads every handler");
+              "swatch.Background",
+              "kContinuousPreviewInterval{33}"}),
+        "the shared swatch coalesces live previews, commits interaction boundaries, and unloads every handler");
 
     const auto cancelStart = sharedControls.find(
         "cancelToken = cancel.Click");
@@ -186,40 +188,37 @@ void TestPopupColorEditing(
         "Rollback();", cancelStart);
     const auto cancelHide = sharedControls.find(
         "flyout.Hide();", cancelStart);
-    const auto applyStart = sharedControls.find("applyToken = apply.Click");
-    const auto applyEnd = sharedControls.find(
-        "cancelToken = cancel.Click", applyStart);
-    const auto applyCommit = sharedControls.find("Commit();", applyStart);
-    const auto applyHide = sharedControls.find("flyout.Hide();", applyStart);
     const auto lightDismissStart = sharedControls.find(
         "closedToken = flyout.Closed");
     const auto lightDismissEnd = sharedControls.find(
         "UpdateSwatch();", lightDismissStart);
-    const auto lightDismissRollback = sharedControls.find(
-        "Rollback();", lightDismissStart);
+    const auto lightDismissCommit = sharedControls.find(
+        "Commit();", lightDismissStart);
     const auto lightDismissDeactivate = sharedControls.find(
         "open = false;", lightDismissStart);
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find(
         "void Close() noexcept", dismissStart);
-    const auto dismissRollback = sharedControls.find("Rollback();", dismissStart);
+    const auto dismissCommit = sharedControls.find("Commit();", dismissStart);
     const auto dismissHide = sharedControls.find("flyout.Hide();", dismissStart);
     const auto closeStart = dismissEnd;
-    const auto closeRollback = sharedControls.find("Rollback();", closeStart);
+    const auto closeCommit = sharedControls.find("Commit();", closeStart);
     const auto closeDisable = sharedControls.find("closed = true;", closeStart);
     Check(cancelStart != std::string::npos &&
             cancelEnd != std::string::npos &&
             cancelRollback < cancelHide && cancelHide < cancelEnd &&
-            applyStart != std::string::npos &&
-            applyCommit < applyHide && applyHide < applyEnd &&
+            sharedControls.find("applyToken = apply.Click") ==
+                std::string::npos &&
+            sharedControls.find("actions.Children().Append(apply)") ==
+                std::string::npos &&
             lightDismissStart != std::string::npos &&
-            lightDismissRollback < lightDismissDeactivate &&
+            lightDismissCommit < lightDismissDeactivate &&
             lightDismissDeactivate < lightDismissEnd &&
             dismissStart != std::string::npos &&
-            dismissRollback < dismissHide && dismissHide < dismissEnd &&
+            dismissCommit < dismissHide && dismissHide < dismissEnd &&
             closeStart != std::string::npos &&
-            closeRollback < closeDisable,
-        "Cancel, light-dismiss, navigation, and close restore the opening color before teardown");
+            closeCommit < closeDisable,
+        "explicit Cancel restores the opening color, while light-dismiss, navigation, and close commit the visible color without an Apply button");
     const auto rollbackStart = sharedControls.find("void Rollback()");
     const auto rollbackEnd = sharedControls.find(
         "void UpdateSwatch()", rollbackStart);
@@ -237,8 +236,8 @@ void TestPopupColorEditing(
             rollbackBody.find("EditState::PendingPreview") ==
                 std::string_view::npos,
         "Cancel formally commits the opening color even after an intermediate interaction commit");
-    Check(source.find("RollbackOpenColorEditors") != std::string::npos,
-        "widget teardown rolls back any color session that was not accepted with Apply");
+    Check(source.find("CommitOpenColorEditors") != std::string::npos,
+        "widget teardown commits any visible color session before flushing transient edits");
 }
 
 void TestOpaqueChannels(const std::string& source)

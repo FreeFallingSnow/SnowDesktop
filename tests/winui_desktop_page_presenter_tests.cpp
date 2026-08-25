@@ -58,9 +58,12 @@ void TestPresenterContract(const std::filesystem::path& root)
             source.find("VirtualKey::Enter") != std::string::npos &&
             source.find("LostFocus") != std::string::npos &&
             source.find("mux::DispatcherTimer") != std::string::npos &&
+            source.find("preview.Queue(value)") != std::string::npos &&
+            controls.find("kContinuousPreviewInterval{33}") !=
+                std::string::npos &&
             source.find("std::chrono::milliseconds(650)") !=
                 std::string::npos,
-        "continuous controls preview and commit on release, focus, Enter, or keyboard idle");
+        "continuous controls coalesce host previews while committing the final value on release, focus, Enter, or keyboard idle");
     Check(source.find("bool interactionActive = false") !=
                 std::string::npos &&
             source.find("interactionActive = true") !=
@@ -79,9 +82,9 @@ void TestPresenterContract(const std::filesystem::path& root)
             controls.find("std::round((value - minimum) / step)") !=
                 std::string::npos,
         "desktop numeric snapshots and edits are quantized to the declared control step");
-    Check(source.find("void RollbackOpenColorEditors() noexcept") !=
+    Check(source.find("void CommitOpenColorEditors() noexcept") !=
                 std::string::npos &&
-            source.find("impl_->RollbackOpenColorEditors();") !=
+            source.find("impl_->CommitOpenColorEditors();") !=
                 std::string::npos &&
             controls.find("pointerReleasedToken = picker.PointerReleased") !=
                 std::string::npos &&
@@ -90,8 +93,12 @@ void TestPresenterContract(const std::filesystem::path& root)
             controls.find("keyDownToken = picker.KeyDown") !=
                 std::string::npos &&
             controls.find("changed(original, SettingsUpdateMode::PreviewAndCommit)") !=
+                std::string::npos &&
+            controls.find("if (!canceled)") !=
+                std::string::npos &&
+            controls.find("applyToken = apply.Click") ==
                 std::string::npos,
-        "desktop colors preview live, commit interaction boundaries, and restore unconfirmed sessions on Cancel or page close");
+        "desktop colors coalesce live previews, commit on light-dismiss or page close, and roll back only through explicit Cancel");
     Check(source.find("iconSpacing->SetUnit(L\"%\")") !=
                 std::string::npos &&
             source.find("itemFontSize->SetUnit(L\"cu\")") !=

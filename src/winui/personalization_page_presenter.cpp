@@ -22,6 +22,7 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
+using presenter_controls::CoalescedPreviewTimer;
 using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
@@ -57,6 +58,7 @@ struct ContinuousControl
     double scale = 1.0;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     bool dirty = false;
+    CoalescedPreviewTimer<double> preview;
     mux::DispatcherTimer idleCommitTimer{nullptr};
 
     winrt::event_token sliderChanged{};
@@ -596,6 +598,9 @@ struct PersonalizationPagePresenter::Impl
                 control.idleCommitTimer.Stop();
                 Commit(control);
             });
+        control.preview.Initialize([this, &control](const double& value) {
+            PublishPreview(control, value);
+        });
         control.sliderChanged = control.slider.ValueChanged(
             [this, &control](const auto&, const auto&) {
                 if (updatingControls || synchronizingPair || closed)
@@ -652,6 +657,7 @@ struct PersonalizationPagePresenter::Impl
                 [this, &control](const auto&, const auto&) {
                     if (!std::isfinite(control.defaultValue)) return;
                     control.idleCommitTimer.Stop();
+                    control.preview.Cancel();
                     control.dirty = false;
                     const auto member = control.member;
                     const float value = static_cast<float>(
@@ -671,6 +677,13 @@ struct PersonalizationPagePresenter::Impl
         control.dirty = true;
         control.idleCommitTimer.Stop();
         control.idleCommitTimer.Start();
+        control.preview.Queue(uiValue);
+    }
+
+    void PublishPreview(ContinuousControl& control, double uiValue)
+    {
+        if (!control.dirty || !CanEmit())
+            return;
         const auto member = control.member;
         const float value = static_cast<float>(uiValue * control.scale);
         Emit(SettingsUpdateMode::Preview,
@@ -683,6 +696,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (control.idleCommitTimer)
             control.idleCommitTimer.Stop();
+        control.preview.Cancel();
         if (!control.dirty || !CanEmit())
             return;
         control.dirty = false;
@@ -806,7 +820,6 @@ struct PersonalizationPagePresenter::Impl
     {
         control.editor.SetText(
             L(key, fallback), {},
-            L("app.settings.apply", L"Apply"),
             L("app.settings.cancel", L"Cancel"));
     }
 
@@ -1035,6 +1048,7 @@ struct PersonalizationPagePresenter::Impl
                 control.idleCommitTimer.Stop();
                 control.idleCommitTimer.Tick(control.idleCommitToken);
             }
+            control.preview.Close();
             control.slider.ValueChanged(control.sliderChanged);
             control.number.ValueChanged(control.numberChanged);
             control.slider.PointerReleased(control.sliderReleased);
@@ -1056,7 +1070,7 @@ struct PersonalizationPagePresenter::Impl
         control.editor.Close();
     }
 
-    void RollbackOpenColorEditors() noexcept
+    void CommitOpenColorEditors() noexcept
     {
         for (ColorControl* control : colorControls)
             control->editor.Dismiss();
@@ -1078,7 +1092,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
-        RollbackOpenColorEditors();
+        CommitOpenColorEditors();
         if (active)
             CommitContinuousEdits();
         active = false;
@@ -1155,7 +1169,7 @@ void PersonalizationPagePresenter::Activate() noexcept
 void PersonalizationPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed) return;
-    impl_->RollbackOpenColorEditors();
+    impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
 }
