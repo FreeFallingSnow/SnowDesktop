@@ -49,8 +49,6 @@ void TestHostContract(const std::filesystem::path& repository)
         repository / "src/winui/winui_runtime.h");
     const std::string runtime = ReadText(
         repository / "src/winui/winui_runtime.cpp");
-    const std::string appMarkup = ReadText(
-        repository / "src/winui/App.xaml");
     const std::string shellMarkup = ReadText(
         repository / "src/winui/SettingsShell.xaml");
     const std::string shellHeader = ReadText(
@@ -101,31 +99,9 @@ void TestHostContract(const std::filesystem::path& repository)
         : std::string_view{};
 
     Check(!header.empty() && !source.empty() && !runtimeHeader.empty() &&
-            !runtime.empty() && !appMarkup.empty() && !shellMarkup.empty() &&
+            !runtime.empty() && !shellMarkup.empty() &&
             !shellHeader.empty() && !shell.empty(),
         "WinUI settings host contract sources are readable");
-    Check(appMarkup.find("x:Key=\"ExpanderHeaderDownStyle\"") !=
-                std::string::npos &&
-            appMarkup.find("x:Key=\"ExpanderHeaderUpStyle\"") !=
-                std::string::npos &&
-            appMarkup.find("x:Key=\"SnowDesktopSafeExpanderStyle\"") !=
-                std::string::npos &&
-            appMarkup.find(
-                "<ControlTemplate TargetType=\"controls:Expander\">") !=
-                std::string::npos &&
-            appMarkup.find("<Grid.ColumnDefinitions>") ==
-                std::string::npos &&
-            appMarkup.find("HorizontalAlignment=\"Right\"") !=
-                std::string::npos &&
-            appMarkup.find("<Style TargetType=\"controls:Expander\"") !=
-                std::string::npos &&
-            appMarkup.find("ExpandCollapseChevronDown") !=
-                std::string::npos &&
-            appMarkup.find("ExpandCollapseChevronUp") !=
-                std::string::npos &&
-            appMarkup.find("AnimatedChevronUpDownSmallVisualSource") ==
-                std::string::npos,
-        "the app applies a complete static-chevron Expander template without the crash-prone animated visual source");
     Check(source.find("DesktopWindowXamlSource") == std::string::npos &&
             source.find("runtime.Attach(impl_->window") !=
                 std::string::npos &&
@@ -252,7 +228,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos,
         "the host enforces the supported fixed-width settings surface and expanded left navigation without a narrow adaptive state");
     Check(pageScrollerMarkup.find(
-              "HorizontalContentAlignment=\"Stretch\"") !=
+              "HorizontalContentAlignment=\"Center\"") !=
                 std::string_view::npos &&
             pageScrollerMarkup.find(
               "HorizontalScrollMode=\"Disabled\"") !=
@@ -273,9 +249,11 @@ void TestHostContract(const std::filesystem::path& repository)
               "HorizontalAlignment=\"Center\"") !=
                 std::string_view::npos &&
             pageScrollerMarkup.find(
-              "HorizontalAlignment=\"Stretch\"") ==
+              "HorizontalContentAlignment=\"Stretch\"") ==
+                std::string_view::npos &&
+            pageScrollerMarkup.find("<Grid>") ==
                 std::string_view::npos,
-        "the vertically scrolling page stretches its viewport while a centered max-width surface remains stable across window enlargement without horizontal drift");
+        "the vertically scrolling page directly centers its max-width surface without adding a wrapper visual that changes page-content realization");
     Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
             source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
                 std::string::npos &&

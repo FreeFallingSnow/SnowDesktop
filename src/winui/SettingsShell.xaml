@@ -163,33 +163,31 @@
 
                 <Grid Grid.Row="1">
                     <ScrollViewer x:Name="PageScrollViewer"
-                                  HorizontalContentAlignment="Stretch"
+                                  HorizontalContentAlignment="Center"
                                   HorizontalScrollMode="Disabled"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
-                        <Grid>
-                            <Border x:Name="PageSurface"
-                                    MaxWidth="1120"
-                                    Margin="40,16,40,48"
-                                    HorizontalAlignment="Center">
-                                <StackPanel Spacing="16">
-                                    <BreadcrumbBar x:Name="PageBreadcrumb" />
-                                    <StackPanel Spacing="4">
-                                        <TextBlock x:Name="PageTitle"
-                                                   FontSize="32"
-                                                   FontWeight="SemiBold"
-                                                   TextWrapping="Wrap" />
-                                        <TextBlock x:Name="PageSubtitle"
-                                                   Opacity="0.72"
-                                                   FontSize="14"
-                                                   TextWrapping="Wrap"
-                                                   MaxWidth="780"
-                                                   HorizontalAlignment="Left" />
-                                    </StackPanel>
-                                    <StackPanel x:Name="PageCards" Spacing="8" />
+                        <Border x:Name="PageSurface"
+                                MaxWidth="1120"
+                                Margin="40,16,40,48"
+                                HorizontalAlignment="Center">
+                            <StackPanel Spacing="16">
+                                <BreadcrumbBar x:Name="PageBreadcrumb" />
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="PageTitle"
+                                               FontSize="32"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock x:Name="PageSubtitle"
+                                               Opacity="0.72"
+                                               FontSize="14"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="780"
+                                               HorizontalAlignment="Left" />
                                 </StackPanel>
-                            </Border>
-                        </Grid>
+                                <StackPanel x:Name="PageCards" Spacing="8" />
+                            </StackPanel>
+                        </Border>
                     </ScrollViewer>
 
                     <Border x:Name="ProgressHost"
