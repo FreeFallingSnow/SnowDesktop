@@ -61,6 +61,14 @@ void TestPresenterContract(const std::filesystem::path& root)
             source.find("std::chrono::milliseconds(650)") !=
                 std::string::npos,
         "continuous controls preview and commit on release, focus, Enter, or keyboard idle");
+    Check(source.find("bool interactionActive = false") !=
+                std::string::npos &&
+            source.find("interactionActive = true") !=
+                std::string::npos &&
+            source.find("if (interactionActive) return;") !=
+                std::string::npos &&
+            controls.find("if (open) return;") != std::string::npos,
+        "live desktop slider and color edits ignore their own snapshot echo while interaction remains active");
     Check(source.find("void RollbackOpenColorEditors() noexcept") !=
                 std::string::npos &&
             source.find("impl_->RollbackOpenColorEditors();") !=

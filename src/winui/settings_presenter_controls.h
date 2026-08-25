@@ -281,6 +281,11 @@ struct ColorFlyoutEditor
     void SetColor(const winrt::Windows::UI::Color& color)
     {
         if (closed) return;
+        // ColorChanged previews are echoed through the controller snapshot.
+        // Do not write that echo into the live ColorPicker: assigning Color
+        // while its flyout owns focus causes WinUI to light-dismiss the flyout
+        // and ends the drag after the first channel change.
+        if (open) return;
         const bool previous = updating;
         updating = true;
         picker.Color(color);

@@ -160,6 +160,7 @@ struct NumericEditor
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     bool updating = false;
     bool pendingCommit = false;
+    bool interactionActive = false;
     bool closed = false;
     mux::DispatcherTimer idleCommitTimer{nullptr};
 
@@ -280,6 +281,7 @@ struct NumericEditor
         };
         const auto lostFocus = [this](const auto&, const auto&) {
             CommitPending();
+            interactionActive = false;
         };
         const auto keyDown = [this](const auto&, const muxi::KeyRoutedEventArgs& args) {
             if (args.Key() == winrt::Windows::System::VirtualKey::Enter)
@@ -305,6 +307,7 @@ struct NumericEditor
 
     void PublishPreview(double value)
     {
+        interactionActive = true;
         pendingCommit = true;
         idleCommitTimer.Stop();
         idleCommitTimer.Start();
@@ -327,11 +330,18 @@ struct NumericEditor
         if (idleCommitTimer)
             idleCommitTimer.Stop();
         pendingCommit = false;
+        interactionActive = false;
     }
 
     void SetValue(double value)
     {
         if (closed) return;
+        // A controller preview publishes an immutable snapshot back to this
+        // presenter on the next DispatcherQueue turn. Reassigning Slider.Value
+        // during the interaction makes WinUI release the thumb's pointer
+        // capture after its first movement. The editor already owns the newest
+        // local value, so leave it untouched until focus exits the edit.
+        if (interactionActive) return;
         value = std::clamp(value, slider.Minimum(), slider.Maximum());
         const bool wasUpdating = updating;
         updating = true;
