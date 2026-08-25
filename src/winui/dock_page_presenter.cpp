@@ -422,6 +422,7 @@ struct DockPagePresenter::Impl
     bool synchronizingPair = false;
     bool taskbarContentThemeCustomItems = false;
     bool taskbarHookRequired = false;
+    bool taskbarInputReady = false;
     bool taskbarAutoHideValue = false;
     int taskbarAlignmentValue = 1;
     int windowsSystemThemeValue = 0;
@@ -904,8 +905,10 @@ struct DockPagePresenter::Impl
     {
         taskbarRootLoadedToken = taskbarRoot.Loaded(
             [this](const auto&, const auto&) {
-                if (!closed)
-                    RefreshTaskbarEntryState();
+                if (closed)
+                    return;
+                RefreshTaskbarEntryState();
+                taskbarInputReady = true;
             });
         dockEnabledToken = dockEnabledToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -989,6 +992,8 @@ struct DockPagePresenter::Impl
             });
         taskbarAutoHideToken = taskbarAutoHideToggle.Toggled(
             [this](const auto&, const auto&) {
+                if (!taskbarInputReady)
+                    return;
                 const bool value = taskbarAutoHideToggle.IsOn();
                 if (!updatingControls)
                     taskbarAutoHideValue = value;
@@ -999,6 +1004,8 @@ struct DockPagePresenter::Impl
             });
         taskbarAlignmentToken = taskbarAlignmentChoices.SelectionChanged(
             [this](const auto&, const auto&) {
+                if (!taskbarInputReady)
+                    return;
                 const int value = taskbarAlignmentChoices.SelectedIndex();
                 if (value < 0) return;
                 if (!updatingControls)
@@ -1011,7 +1018,8 @@ struct DockPagePresenter::Impl
             });
         windowsSystemThemeToken = windowsSystemThemeChoices.SelectionChanged(
             [this](const auto&, const auto&) {
-                if (closed || updatingControls || !active || !hasSnapshot)
+                if (!taskbarInputReady || closed || updatingControls ||
+                    !active || !hasSnapshot)
                     return;
                 const int value = windowsSystemThemeChoices.SelectedIndex();
                 if (value >= 0)
@@ -2508,6 +2516,7 @@ void DockPagePresenter::ActivateTaskbar() noexcept
 {
     if (!impl_ || impl_->closed)
         return;
+    impl_->taskbarInputReady = false;
     impl_->active = true;
     impl_->RefreshTaskbarRuntimeState();
 }
@@ -2518,6 +2527,7 @@ void DockPagePresenter::Deactivate() noexcept
         return;
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
+    impl_->taskbarInputReady = false;
     impl_->active = false;
 }
 

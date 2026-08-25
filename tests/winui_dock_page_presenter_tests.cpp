@@ -208,10 +208,18 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("updatingControls = previousUpdating;") !=
                 std::string::npos &&
+            source.find("bool taskbarInputReady = false;") !=
+                std::string::npos &&
+            source.find("taskbarInputReady = true;") !=
+                std::string::npos &&
+            source.find("impl_->taskbarInputReady = false;") !=
+                std::string::npos &&
+            source.find("if (!taskbarInputReady)") !=
+                std::string::npos &&
             source.find(
               "impl_->RefreshTaskbarRuntimeState();") !=
                 std::string::npos,
-        "taskbar activation and first Loaded refresh restore Windows state under the programmatic-update guard");
+        "taskbar activation and Loaded refresh restore Windows state before initialization events can be treated as input");
     const auto choiceRefreshStart = source.find("void ReplaceChoiceItems(");
     const auto choiceRefreshEnd = source.find(
         "void ReplaceTaskbarThemeItems", choiceRefreshStart);
