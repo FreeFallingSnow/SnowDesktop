@@ -66,6 +66,16 @@ void TestHostContract(const std::filesystem::path& repository)
             integratedTitleBarBegin,
             integratedTitleBarEnd - integratedTitleBarBegin)
         : std::string_view{};
+    const std::size_t paneHeaderBegin =
+        shellMarkup.find("<NavigationView.PaneHeader>");
+    const std::size_t paneHeaderEnd = shellMarkup.find(
+        "</NavigationView.PaneHeader>", paneHeaderBegin);
+    const std::string_view paneHeaderMarkup =
+        paneHeaderBegin != std::string::npos &&
+                paneHeaderEnd != std::string::npos
+        ? std::string_view(shellMarkup).substr(
+            paneHeaderBegin, paneHeaderEnd - paneHeaderBegin)
+        : std::string_view{};
 
     Check(!header.empty() && !source.empty() && !runtimeHeader.empty() &&
             !runtime.empty() && !shellMarkup.empty() &&
@@ -116,13 +126,19 @@ void TestHostContract(const std::filesystem::path& repository)
         "AppWindow uses standard caption height and transparent button backgrounds over one surface while Windows retains the three system buttons, Snap, and accessibility");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
+            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") ==
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"TitleBarBackButton\"") ==
                 std::string::npos &&
             shellMarkup.find("TitleBarLeftInsetColumn") !=
                 std::string::npos &&
             shellMarkup.find("TitleBarRightInsetColumn") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarSearchHost\"") !=
+            shellMarkup.find("x:Name=\"TitleBarSearchHost\"") ==
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"SidebarSearchHost\"") !=
+                std::string::npos &&
+            shellMarkup.find("<NavigationView.PaneHeader>") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"SettingsSearchBox\"") !=
                 std::string::npos &&
@@ -132,23 +148,31 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellHeader.find("IntegratedTitleBarDragRectangles") !=
                 std::string::npos &&
-            shell.find("TitleBarBackButton().Click") != std::string::npos &&
+            shell.find("TitleBarBackButton().Click") == std::string::npos &&
             shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
-        "the XAML title-bar row contains navigation, localized identity, and search with explicit caption inset and drag-region bookkeeping");
+        "the XAML caption is a drag-only surface while search lives in the NavigationView pane header without duplicate back or title content");
     Check(integratedTitleBarMarkup.find("Height=\"32\"") !=
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("Height=\"48\"") ==
                 std::string_view::npos &&
-            integratedTitleBarMarkup.find("Margin=\"12,2,8,2\"") !=
+            integratedTitleBarMarkup.find("<Button") ==
                 std::string_view::npos &&
-            integratedTitleBarMarkup.find("Margin=\"0,0,12,0\"") !=
+            integratedTitleBarMarkup.find("<TextBlock") ==
                 std::string_view::npos &&
-            integratedTitleBarMarkup.find("FontSize=\"14\"") !=
+            integratedTitleBarMarkup.find("<AutoSuggestBox") ==
                 std::string_view::npos &&
-            integratedTitleBarMarkup.find("FontSize=\"12\"") !=
+            paneHeaderMarkup.find("x:Name=\"SidebarSearchHost\"") !=
+                std::string_view::npos &&
+            paneHeaderMarkup.find("Width=\"228\"") !=
+                std::string_view::npos &&
+            paneHeaderMarkup.find("Margin=\"16,8,16,12\"") !=
+                std::string_view::npos &&
+            paneHeaderMarkup.find("x:Name=\"SettingsSearchBox\"") !=
+                std::string_view::npos &&
+            paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") !=
                 std::string_view::npos,
-        "the compact title bar aligns the smaller back glyph and settings label in explicit columns at standard caption height");
+        "the standard-height caption has no interactive content and the complete search surface is the first element in the fixed left pane");
     Check(source.find("constexpr int kMinimumClientWidth = 840;") !=
                 std::string::npos &&
             source.find("constexpr int kMinimumClientHeight = 520;") !=
@@ -201,9 +225,8 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarWindowActive") ==
                 std::string::npos &&
-            shell.find("IntegratedTitleBarText().Text(shellTitle)") !=
-                std::string::npos,
-        "Windows owns caption activation visuals while XAML provides only the localized title content");
+            shell.find("IntegratedTitleBarText") == std::string::npos,
+        "Windows owns caption activation visuals and the drag-only XAML caption contains no duplicate app identity");
     Check(source.find("ApplySettingsWindowChrome(window, darkTheme)") !=
                 std::string::npos &&
             source.find("DWMWA_USE_IMMERSIVE_DARK_MODE") !=

@@ -17,7 +17,6 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace wfc = winrt::Windows::Foundation::Collections;
-namespace wf = winrt::Windows::Foundation;
 namespace wg = winrt::Windows::Graphics;
 
 namespace
@@ -41,7 +40,6 @@ struct LocalizedFallback
 
 constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.shell.title", L"Settings"},
-    LocalizedFallback{"settings.nav.back", L"Back"},
     LocalizedFallback{"settings.search.placeholder", L"Find a setting"},
     LocalizedFallback{"settings.search.clear", L"Clear search"},
     LocalizedFallback{"settings.progress.cancel", L"Cancel"},
@@ -337,8 +335,6 @@ void SettingsShell::RefreshLocalizedText()
     if (closed_)
         return;
 
-    const std::wstring shellTitle = Localize("settings.shell.title");
-    IntegratedTitleBarText().Text(shellTitle);
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     PersonalizationItem().Content(
@@ -358,11 +354,6 @@ void SettingsShell::RefreshLocalizedText()
 
     muxa::AutomationProperties::SetName(
         NavigationRoot(), Localize("settings.shell.title"));
-    muxa::AutomationProperties::SetName(
-        TitleBarBackButton(), Localize("settings.nav.back"));
-    muxc::ToolTipService::SetToolTip(
-        TitleBarBackButton(),
-        winrt::box_value(Localize("settings.nav.back")));
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
     muxa::AutomationProperties::SetName(
@@ -487,30 +478,6 @@ SettingsShell::IntegratedTitleBarDragRectangles()
         if (scale <= 0.0)
             return rectangles;
 
-        struct Interval
-        {
-            double left = 0.0;
-            double right = 0.0;
-        };
-        std::array<Interval, 2> interactive{};
-        const auto boundsInHost = [&host](
-                                      const mux::FrameworkElement& element) {
-            return element.TransformToVisual(host).TransformBounds(
-                wf::Rect{0.0f, 0.0f,
-                    static_cast<float>(element.ActualWidth()),
-                    static_cast<float>(element.ActualHeight())});
-        };
-        const wf::Rect backBounds = boundsInHost(TitleBarBackButton());
-        const wf::Rect searchBounds = boundsInHost(TitleBarSearchHost());
-        interactive[0] = {backBounds.X,
-            backBounds.X + backBounds.Width};
-        interactive[1] = {searchBounds.X,
-            searchBounds.X + searchBounds.Width};
-        std::sort(interactive.begin(), interactive.end(),
-            [](const Interval& left, const Interval& right) {
-                return left.left < right.left;
-            });
-
         const double titleLeft =
             TitleBarLeftInsetColumn().ActualWidth();
         const double titleRight = std::max(titleLeft,
@@ -518,30 +485,15 @@ SettingsShell::IntegratedTitleBarDragRectangles()
                 TitleBarRightInsetColumn().ActualWidth());
         const int pixelHeight = std::max(1,
             static_cast<int>(std::floor(host.ActualHeight() * scale)));
-        const auto appendSegment = [&](double left, double right) {
-            left = std::clamp(left, titleLeft, titleRight);
-            right = std::clamp(right, titleLeft, titleRight);
-            const int pixelLeft = static_cast<int>(std::ceil(left * scale));
-            const int pixelRight = static_cast<int>(std::floor(right * scale));
-            if (pixelRight > pixelLeft)
-            {
-                rectangles.push_back(
-                    wg::RectInt32{pixelLeft, 0,
-                        pixelRight - pixelLeft, pixelHeight});
-            }
-        };
-
-        double cursor = titleLeft;
-        for (const Interval& interval : interactive)
+        const int pixelLeft =
+            static_cast<int>(std::ceil(titleLeft * scale));
+        const int pixelRight =
+            static_cast<int>(std::floor(titleRight * scale));
+        if (pixelRight > pixelLeft)
         {
-            const double intervalLeft =
-                std::clamp(interval.left, titleLeft, titleRight);
-            const double intervalRight =
-                std::clamp(interval.right, titleLeft, titleRight);
-            appendSegment(cursor, intervalLeft);
-            cursor = std::max(cursor, intervalRight);
+            rectangles.push_back(wg::RectInt32{pixelLeft, 0,
+                pixelRight - pixelLeft, pixelHeight});
         }
-        appendSegment(cursor, titleRight);
     }
     catch (...)
     {
@@ -1215,13 +1167,6 @@ void SettingsShell::HookEvents()
                    const mux::SizeChangedEventArgs&) {
                 NotifyIntegratedTitleBarLayoutChanged();
             });
-    titleBarBackToken_ = TitleBarBackButton().Click(
-        [this](const winrt::Windows::Foundation::IInspectable&,
-               const mux::RoutedEventArgs&) {
-            if (const auto route = navigation_.PeekBack())
-                RequestRoute(*route);
-        });
-
     selectionChangedToken_ = NavigationRoot().SelectionChanged(
         [this](const muxc::NavigationView&,
                const muxc::NavigationViewSelectionChangedEventArgs& args) {
@@ -1319,8 +1264,6 @@ void SettingsShell::UnhookEvents() noexcept
             IntegratedTitleBarHost().SizeChanged(
                 integratedTitleBarSizeChangedToken_);
         }
-        if (titleBarBackToken_.value)
-            TitleBarBackButton().Click(titleBarBackToken_);
         if (selectionChangedToken_.value)
             NavigationRoot().SelectionChanged(selectionChangedToken_);
         if (breadcrumbClickedToken_.value)
@@ -1342,7 +1285,6 @@ void SettingsShell::UnhookEvents() noexcept
     actualThemeChangedToken_ = {};
     integratedTitleBarLoadedToken_ = {};
     integratedTitleBarSizeChangedToken_ = {};
-    titleBarBackToken_ = {};
     selectionChangedToken_ = {};
     breadcrumbClickedToken_ = {};
     searchTextChangedToken_ = {};
@@ -1370,7 +1312,6 @@ void SettingsShell::RenderRoute(
     PageSubtitle().Text(PageDescriptionText(route.page));
     muxa::AutomationProperties::SetName(PageTitle(), title);
     RenderPageCards(forcePageCards);
-    TitleBarBackButton().IsEnabled(navigation_.CanGoBack());
     if (scheduleFocus)
         ScheduleFocus();
 }

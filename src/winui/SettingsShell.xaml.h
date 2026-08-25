@@ -304,7 +304,6 @@ private:
     winrt::event_token actualThemeChangedToken_{};
     winrt::event_token integratedTitleBarLoadedToken_{};
     winrt::event_token integratedTitleBarSizeChangedToken_{};
-    winrt::event_token titleBarBackToken_{};
     winrt::event_token selectionChangedToken_{};
     winrt::event_token breadcrumbClickedToken_{};
     winrt::event_token searchTextChangedToken_{};
