@@ -116,14 +116,20 @@ int main(int argc, char** argv)
                 header.find("NeedsRender()") == std::string::npos,
             "the settings facade owns no ImGui, D3D, swap chain, or frame renderer");
         Check(source.find("SettingsWindow::Open(") != std::string::npos &&
+                source.find("CanonicalizeSettingsRoute(route)") !=
+                    std::string::npos &&
                 source.find("SettingsPage::Home") != std::string::npos &&
-                source.find("SettingsPage::DockAndTaskbar") !=
+                source.find("SettingsPage::General") !=
+                    std::string::npos &&
+                source.find("SettingsPage::Dock, \"dock.enable\"") !=
+                    std::string::npos &&
+                source.find("SettingsPage::DockAndTaskbar") ==
                     std::string::npos &&
                 source.find("SettingsPage::Personalization") !=
                     std::string::npos &&
                 source.find("SettingsRoute::ForWidget(widgetId)") !=
                     std::string::npos,
-            "all compatibility entry points resolve to typed settings routes");
+            "compatibility entry points canonicalize legacy routes and use current typed destinations");
         Check(source.find("bool EnsureInitialized()") !=
                     std::string::npos &&
                 source.find("auto candidate =") != std::string::npos &&

@@ -97,7 +97,7 @@ void TestNativeControlMapping(
     }
 }
 
-void TestSingleLineFieldRows(
+void TestResponsiveFieldRows(
     const std::string& source,
     const std::string& sharedControls)
 {
@@ -120,19 +120,52 @@ void TestSingleLineFieldRows(
         "widget fields keep full-width editors and validation while compact controls and reset actions align right and group expanders stretch");
     Check(ContainsAll(sharedControls, {
               "kSettingControlWidth = 300.0",
+              "controlWidth, mux::GridUnitType::Pixel",
               "muxc::Grid::SetColumn(text, 0)",
               "muxc::Grid::SetColumn(controlHost, 1)",
+              "controlHost.HorizontalContentAlignment(",
+              "mux::HorizontalAlignment::Stretch);",
               "void SetControlAlignment(",
               "controlHost.HorizontalAlignment(alignment)",
               "controlHost.HorizontalContentAlignment(alignment)",
               "controlHost.Content().try_as<muxc::ToggleSwitch>()",
-              "toggle.MinWidth(0.0)"}) &&
-            sharedControls.find("kSettingMinimumTextWidth") ==
-                std::string::npos &&
-            sharedControls.find("controlRow") == std::string::npos &&
-            sharedControls.find("root.SizeChanged(") == std::string::npos &&
-            sharedControls.find("Grid::SetRow(") == std::string::npos,
-        "shared setting rows retain fixed left-text and legacy-width right-editor columns without a SizeChanged stacking path");
+              "toggle.MinWidth(0.0)"}),
+        "shared setting rows retain a 300-DIP editor column at regular widths and preserve compact-control alignment");
+    Check(ContainsAll(sharedControls, {
+              "kSettingRowStackThreshold = 700.0",
+              "muxc::RowDefinition controlRow",
+              "root.RowDefinitions().Append(controlRow)",
+              "root.SizeChanged(",
+              "args.NewSize().Width < kSettingRowStackThreshold",
+              "grid.ColumnSpacing(stacked ? 0.0 : 20.0)",
+              "grid.RowSpacing(stacked ? 10.0 : 0.0)",
+              "muxc::Grid::SetColumn(responsiveControlHost,",
+              "stacked ? 0 : 1",
+              "muxc::Grid::SetRow(responsiveControlHost,",
+              "stacked ? 1 : 0"}),
+        "shared setting rows move the existing editor host below its label at narrow widths instead of compressing both columns");
+    Check(ContainsAll(sharedControls, {
+              "winrt::make_weak(controlColumn)",
+              "winrt::make_weak(text)",
+              "winrt::make_weak(controlHost)",
+              "[weakControlColumn, weakText, weakControlHost, controlWidth]",
+              "weakControlColumn.get()",
+              "weakText.get()",
+              "weakControlHost.get()"}),
+        "responsive row callbacks do not retain or dereference short-lived SettingRow builders");
+    Check(ContainsAll(sharedControls, {
+              "AutomationProperties::SetName(controlHost, label.Text())",
+              "AutomationProperties::SetHelpText(controlHost, help.Text())",
+              "controlHost.IsEnabled(enabled)"}) &&
+            ContainsAll(source, {
+              "mux::FrameworkElement FocusTarget(",
+              "if (field.text) return field.text",
+              "if (field.password) return field.password",
+              "if (field.toggle) return field.toggle",
+              "if (field.slider) return field.slider",
+              "if (field.colorEditor) return field.colorEditor->button",
+              "return field.root;"}),
+        "responsive widget rows keep editor automation context, disabled-state semantics, and concrete keyboard focus targets");
 }
 
 void TestPopupColorEditing(
@@ -462,7 +495,7 @@ int main(int argc, char** argv)
         "widget settings presenter sources are readable");
     TestPublicContract(header);
     TestNativeControlMapping(source, sharedControls);
-    TestSingleLineFieldRows(source, sharedControls);
+    TestResponsiveFieldRows(source, sharedControls);
     TestPopupColorEditing(source, sharedControls);
     TestOpaqueChannels(source);
     TestSnapshotAndAsyncSafety(source);
