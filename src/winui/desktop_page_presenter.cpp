@@ -534,7 +534,8 @@ struct DesktopPagePresenter::Impl
     DesktopPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
-    muxc::StackPanel appearanceRoot{nullptr};
+    muxc::StackPanel desktopIconsRoot{nullptr};
+    muxc::StackPanel iconBeautificationRoot{nullptr};
     muxc::StackPanel categoryRoot{nullptr};
 
     SettingsCard displayCard;
@@ -551,7 +552,6 @@ struct DesktopPagePresenter::Impl
     muxc::ComboBox shortcutArrow{nullptr};
     SettingRow shortcutArrowRow;
 
-    std::unique_ptr<NumericEditor> categorizedTabHeight;
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
     SettingRow showCategoryTabCountsRow;
 
@@ -722,13 +722,15 @@ struct DesktopPagePresenter::Impl
 
     void BuildControls()
     {
-        appearanceRoot = muxc::StackPanel{};
-        appearanceRoot.Spacing(8.0);
+        desktopIconsRoot = muxc::StackPanel{};
+        desktopIconsRoot.Spacing(8.0);
+        iconBeautificationRoot = muxc::StackPanel{};
+        iconBeautificationRoot.Spacing(8.0);
         categoryRoot = muxc::StackPanel{};
         categoryRoot.Spacing(8.0);
         root = categoryRoot;
 
-        InitializeCard(displayCard, cardStyle, appearanceRoot);
+        InitializeCard(displayCard, cardStyle, desktopIconsRoot);
         iconSpacing = MakeDesktopNumber(50.0, 200.0, 1.0, 0,
             [](DesktopDisplaySettings& settings, double value) {
                 settings.iconSpacingScale =
@@ -767,16 +769,6 @@ struct DesktopPagePresenter::Impl
         AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
 
         InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
-        categorizedTabHeight = std::make_unique<NumericEditor>(
-            24.0, 48.0, 1.0, 0,
-            [this](double value, SettingsUpdateMode mode) {
-                UpdatePersonalization(mode,
-                    [value](PersonalizationSettings& settings) {
-                        settings.categorizedTabHeight =
-                            static_cast<float>(value);
-                    });
-            });
-        categorizedTabHeight->SetUnit(L"cu");
         showCategoryTabCounts = muxc::ToggleSwitch{};
         showCategoryTabCounts.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -784,11 +776,10 @@ struct DesktopPagePresenter::Impl
         showCategoryTabCountsRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         categoryLayoutCard.content.Children().Append(
-            categorizedTabHeight->root);
-        categoryLayoutCard.content.Children().Append(
             showCategoryTabCountsRow.root);
 
-        InitializeCard(beautifyCard, cardStyle, appearanceRoot);
+        InitializeCard(
+            beautifyCard, cardStyle, iconBeautificationRoot);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         beautifyAdvanced = muxc::StackPanel{};
         beautifyAdvanced.Spacing(12.0);
@@ -1460,7 +1451,6 @@ struct DesktopPagePresenter::Impl
 
     void PatchPersonalization(const PersonalizationSettings& settings)
     {
-        categorizedTabHeight->SetValue(settings.categorizedTabHeight);
         showCategoryTabCounts.IsOn(settings.showCategoryTabCounts);
     }
 
@@ -1469,7 +1459,6 @@ struct DesktopPagePresenter::Impl
         return {
             iconSpacing.get(), iconSize.get(), itemFontSize.get(),
             listFontSize.get(), itemFontWeight.get(),
-            categorizedTabHeight.get(),
             backgroundOpacity.get(), contentScale.get(),
             highlightStrength.get(), highlightSize.get(),
             highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(),
@@ -1626,8 +1615,6 @@ struct DesktopPagePresenter::Impl
             L("app.settings.arrow_show_all", L"Show all"),
         }, std::max(0, shortcutArrow.SelectedIndex()));
 
-        categorizedTabHeight->SetLabel(
-            L("app.settings.tab_height", L"Category tab height"));
         showCategoryTabCountsRow.SetText(L(
             "app.settings.category_show_count", L"Show item counts"));
         muxa::AutomationProperties::SetName(showCategoryTabCounts,
@@ -1769,8 +1756,6 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.listFontSize") return listFontSize->number;
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
-        if (id == "desktop.categoryLayout" || id == "desktop.tabHeight")
-            return categorizedTabHeight->slider;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
@@ -1826,7 +1811,6 @@ struct DesktopPagePresenter::Impl
         itemFontSize->Close();
         listFontSize->Close();
         itemFontWeight->Close();
-        categorizedTabHeight->Close();
         backgroundStart->Close();
         backgroundOpacity->Close();
         backgroundEnd->Close();
@@ -1914,9 +1898,15 @@ mux::FrameworkElement DesktopPagePresenter::Content() const noexcept
 }
 
 mux::FrameworkElement
-DesktopPagePresenter::AppearanceContent() const noexcept
+DesktopPagePresenter::DesktopIconsContent() const noexcept
 {
-    return impl_ ? impl_->appearanceRoot : nullptr;
+    return impl_ ? impl_->desktopIconsRoot : nullptr;
+}
+
+mux::FrameworkElement
+DesktopPagePresenter::IconBeautificationContent() const noexcept
+{
+    return impl_ ? impl_->iconBeautificationRoot : nullptr;
 }
 
 mux::FrameworkElement

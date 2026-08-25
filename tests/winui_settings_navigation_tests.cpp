@@ -54,6 +54,12 @@ void TestHistoryAndFocusRoutes()
     Check(state.Navigate(SettingsRoute::ForPage(SettingsPage::Desktop)) &&
             !state.CanGoForward(),
         "a new branch discards forward history");
+    Check(state.Navigate(SettingsRoute::ForPage(
+              SettingsPage::AppearanceWidgets,
+              "personalization.cornerRadius")) &&
+            state.Route().page == SettingsPage::AppearanceWidgets &&
+            state.Route().focusId == "personalization.cornerRadius",
+        "Appearance leaves are available as first-class navigation targets");
 }
 
 void TestConditionalPages()
@@ -88,12 +94,13 @@ void TestControllerGenerationGate()
     SettingsShellNavigationState state;
     Check(state.ApplyControllerUpdate(
               SettingsRoute::ForPage(SettingsPage::Personalization), 10, 3) &&
-            state.Revision() == 10 && state.Generation() == 3,
-        "first controller publication initializes revision and generation");
+            state.Revision() == 10 && state.Generation() == 3 &&
+            state.Route().page == SettingsPage::AppearanceTheme,
+        "first controller publication canonicalizes compatibility input and initializes revision and generation");
 
     Check(!state.ApplyControllerUpdate(
               SettingsRoute::ForPage(SettingsPage::Desktop), 11, 2) &&
-            state.Route().page == SettingsPage::Personalization,
+            state.Route().page == SettingsPage::AppearanceTheme,
         "an older generation cannot replace the visible route");
     Check(!state.ApplyControllerUpdate(
               SettingsRoute::ForPage(SettingsPage::Desktop), 9, 3) &&
@@ -385,11 +392,18 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto renderCards = shell.find(
         "void SettingsShell::RenderPageCards(");
     const auto personalizationCase = shell.find(
-        "case SettingsPage::Personalization:", renderCards);
+        "case SettingsPage::AppearanceTheme:", renderCards);
+    const auto widgetAppearanceCase = shell.find(
+        "case SettingsPage::AppearanceWidgets:", personalizationCase);
     const auto desktopCase = shell.find(
-        "case SettingsPage::Desktop:", personalizationCase);
+        "case SettingsPage::Desktop:", widgetAppearanceCase);
+    const auto desktopIconsCase = shell.find(
+        "case SettingsPage::AppearanceDesktopIcons:", desktopCase);
+    const auto beautificationCase = shell.find(
+        "case SettingsPage::AppearanceIconBeautification:",
+        desktopIconsCase);
     const auto categoriesCase = shell.find(
-        "case SettingsPage::DesktopCategories:", desktopCase);
+        "case SettingsPage::DesktopCategories:", beautificationCase);
     const auto dockCase = shell.find(
         "case SettingsPage::Dock:", categoriesCase);
     const auto taskbarCase = shell.find(
@@ -402,26 +416,49 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             : std::string_view{};
     };
     const auto personalizationSection = section(
-        personalizationCase, desktopCase);
-    const auto desktopSection = section(desktopCase, categoriesCase);
+        personalizationCase, widgetAppearanceCase);
+    const auto widgetAppearanceSection = section(
+        widgetAppearanceCase, desktopCase);
+    const auto desktopSection = section(desktopCase, desktopIconsCase);
+    const auto desktopIconsSection = section(
+        desktopIconsCase, beautificationCase);
+    const auto beautificationSection = section(
+        beautificationCase, categoriesCase);
     const auto categoriesSection = section(categoriesCase, dockCase);
     const auto dockSection = section(dockCase, taskbarCase);
     const auto taskbarSection = section(taskbarCase, compatibilityCase);
     Check(personalizationSection.find(
-              "personalizationPage_->Content()") !=
+              "personalizationPage_->ThemeContent()") !=
                 std::string_view::npos &&
-            personalizationSection.find("AppearanceContent()") ==
+            personalizationSection.find("WidgetAppearanceContent()") ==
+                std::string_view::npos &&
+            widgetAppearanceSection.find(
+              "personalizationPage_->WidgetAppearanceContent()") !=
+                std::string_view::npos &&
+            widgetAppearanceSection.find("desktop.categoryLayout") !=
                 std::string_view::npos &&
             desktopSection.find(
               "generalPage_->DesktopBehaviorContent()") !=
                 std::string_view::npos &&
-            desktopSection.find("desktopPage_->AppearanceContent()") !=
+            desktopSection.find("DesktopIconsContent()") ==
+                std::string_view::npos &&
+            desktopIconsSection.find(
+              "desktopPage_->DesktopIconsContent()") !=
+                std::string_view::npos &&
+            desktopIconsSection.find("desktop.iconSize") !=
+                std::string_view::npos &&
+            beautificationSection.find(
+              "desktopPage_->IconBeautificationContent()") !=
+                std::string_view::npos &&
+            beautificationSection.find("desktop.iconBeautify.outline") !=
                 std::string_view::npos &&
             desktopSection.find("desktop.tabFontSize") ==
                 std::string_view::npos &&
             categoriesSection.find("desktopPage_->CategoryContent()") !=
                 std::string_view::npos &&
-            categoriesSection.find("desktop.categoryLayout") !=
+            categoriesSection.find("desktop.categoryLayout") ==
+                std::string_view::npos &&
+            categoriesSection.find("desktop.categoryCounts") !=
                 std::string_view::npos &&
             categoriesSection.find("desktop.categoryRules") !=
                 std::string_view::npos &&
@@ -441,12 +478,20 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shell.find("result.route.page = result.focusId.starts_with") ==
                 std::string::npos,
-        "Personalization, Desktop, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
+        "Appearance leaves, Desktop, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
 
     const auto generalItem = shellXaml.find("x:Name=\"GeneralItem\"");
     const auto homeItem = shellXaml.find("x:Name=\"HomeItem\"");
     const auto appearanceItem = shellXaml.find(
         "x:Name=\"PersonalizationItem\"");
+    const auto appearanceThemeItem = shellXaml.find(
+        "x:Name=\"AppearanceThemeItem\"");
+    const auto appearanceWidgetsItem = shellXaml.find(
+        "x:Name=\"AppearanceWidgetsItem\"");
+    const auto appearanceDesktopIconsItem = shellXaml.find(
+        "x:Name=\"AppearanceDesktopIconsItem\"");
+    const auto appearanceIconBeautificationItem = shellXaml.find(
+        "x:Name=\"AppearanceIconBeautificationItem\"");
     const auto desktopShellHeader = shellXaml.find(
         "x:Name=\"DesktopShellHeader\"");
     const auto desktopItem = shellXaml.find("x:Name=\"DesktopItem\"");
@@ -465,7 +510,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     Check(homeItem != std::string::npos &&
             homeItem < homeCollapsed && homeCollapsed < generalItem &&
             generalItem < appearanceItem &&
-            appearanceItem < desktopShellHeader &&
+            appearanceItem < appearanceThemeItem &&
+            appearanceThemeItem < appearanceWidgetsItem &&
+            appearanceWidgetsItem < appearanceDesktopIconsItem &&
+            appearanceDesktopIconsItem <
+                appearanceIconBeautificationItem &&
+            appearanceIconBeautificationItem < desktopShellHeader &&
             desktopShellHeader < desktopItem &&
             desktopItem < categoriesItem && categoriesItem < dockItem &&
             dockItem < taskbarItem && taskbarItem < widgetsItem &&
@@ -490,10 +540,20 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shellXaml.find("<NavigationView.AutoSuggestBox>") !=
                 std::string::npos &&
+            shellXaml.find("SelectsOnInvoked=\"False\"",
+              appearanceItem) < appearanceThemeItem &&
+            shell.find("AppearanceThemeItem().Content(") !=
+                std::string::npos &&
+            shell.find("appearance-theme.svg") != std::string::npos &&
+            shell.find("appearance-widgets.svg") != std::string::npos &&
+            shell.find("appearance-desktop-icons.svg") !=
+                std::string::npos &&
+            shell.find("appearance-icon-beautification.svg") !=
+                std::string::npos &&
             shell.find("DesktopShellHeader().Content(") !=
                 std::string::npos &&
             shell.find("DataHeader().Content(") != std::string::npos,
-        "the adaptive NavigationView exposes Desktop and shell/data groups in task order with About and conditional tools in the footer");
+        "the adaptive NavigationView exposes a shallow Appearance tree plus Desktop and shell/data groups in task order with About and conditional tools in the footer");
     Check(shellHeader.find("titleBarBackToken_") != std::string::npos &&
             shellHeader.find("titleBarPaneToggleToken_") !=
                 std::string::npos &&

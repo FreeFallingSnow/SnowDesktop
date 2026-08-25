@@ -4,6 +4,39 @@
 
 namespace snowdesktop
 {
+namespace
+{
+
+bool IsWidgetAppearanceFocus(std::string_view focusId) noexcept
+{
+    return focusId == "personalization.backgroundColor" ||
+        focusId == "personalization.borderColor" ||
+        focusId == "personalization.widgetAlpha" ||
+        focusId == "personalization.backgroundOpacity" ||
+        focusId == "personalization.borderAlpha" ||
+        focusId == "personalization.borderOpacity" ||
+        focusId == "personalization.enableGradient" ||
+        focusId == "personalization.gradientEndAlpha" ||
+        focusId == "personalization.glass" ||
+        focusId == "personalization.acrylic" ||
+        focusId == "personalization.blurRadius" ||
+        focusId == "personalization.contentTheme" ||
+        focusId == "personalization.cornerRadius" ||
+        focusId == "personalization.barHeight";
+}
+
+bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
+{
+    return focusId == "desktop.spacing" ||
+        focusId == "desktop.iconSpacing" ||
+        focusId == "desktop.iconSize" ||
+        focusId == "desktop.itemFontSize" ||
+        focusId == "desktop.listFontSize" ||
+        focusId == "desktop.fontWeight" ||
+        focusId == "desktop.shortcutArrow";
+}
+
+} // namespace
 
 SettingsRoute SettingsRoute::ForPage(
     SettingsPage page,
@@ -65,9 +98,11 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
     }
     else if (route.page == SettingsPage::Personalization)
     {
-        if (route.focusId == "personalization.tabHeight")
+        if (route.focusId == "personalization.tabHeight" ||
+            route.focusId == "desktop.categoryLayout" ||
+            route.focusId == "desktop.tabHeight")
         {
-            route.page = SettingsPage::DesktopCategories;
+            route.page = SettingsPage::AppearanceWidgets;
             route.focusId = "desktop.categoryLayout";
         }
         else if (route.focusId ==
@@ -77,6 +112,17 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
             route.page = SettingsPage::DesktopCategories;
             route.focusId = "desktop.categoryCounts";
         }
+        else if (IsWidgetAppearanceFocus(route.focusId))
+        {
+            route.page = SettingsPage::AppearanceWidgets;
+        }
+        else
+        {
+            // Personalization remains a compatibility input only. Theme,
+            // surface-theme, context-menu, empty, and unknown legacy focus
+            // identifiers enter the stable first Appearance leaf.
+            route.page = SettingsPage::AppearanceTheme;
+        }
     }
     else if (route.page == SettingsPage::DockAndTaskbar)
     {
@@ -84,14 +130,36 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
             ? SettingsPage::Taskbar
             : SettingsPage::Dock;
     }
-    else if (route.page == SettingsPage::Desktop &&
-        (route.focusId == "desktop.categories" ||
-         route.focusId == "desktop.categoryRules" ||
-         route.focusId == "desktop.category.add" ||
-         route.focusId == "desktop.categoryLayout" ||
-         route.focusId == "desktop.categoryCounts"))
+    else if (route.page == SettingsPage::Desktop)
     {
-        route.page = SettingsPage::DesktopCategories;
+        if (route.focusId.starts_with("desktop.iconBeautify"))
+        {
+            route.page = SettingsPage::AppearanceIconBeautification;
+        }
+        else if (route.focusId == "desktop.categoryLayout" ||
+            route.focusId == "desktop.tabHeight")
+        {
+            route.page = SettingsPage::AppearanceWidgets;
+            route.focusId = "desktop.categoryLayout";
+        }
+        else if (route.focusId == "desktop.categories" ||
+            route.focusId.starts_with("desktop.categoryRules") ||
+            route.focusId == "desktop.category.add" ||
+            route.focusId == "desktop.categoryCounts")
+        {
+            route.page = SettingsPage::DesktopCategories;
+        }
+        else if (IsDesktopIconAppearanceFocus(route.focusId))
+        {
+            route.page = SettingsPage::AppearanceDesktopIcons;
+        }
+    }
+    else if (route.page == SettingsPage::DesktopCategories &&
+        (route.focusId == "desktop.categoryLayout" ||
+            route.focusId == "desktop.tabHeight"))
+    {
+        route.page = SettingsPage::AppearanceWidgets;
+        route.focusId = "desktop.categoryLayout";
     }
     return route;
 }
@@ -114,6 +182,10 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::Dock:
     case SettingsPage::Taskbar:
     case SettingsPage::DesktopCategories:
+    case SettingsPage::AppearanceTheme:
+    case SettingsPage::AppearanceWidgets:
+    case SettingsPage::AppearanceDesktopIcons:
+    case SettingsPage::AppearanceIconBeautification:
         break;
     default:
         return false;
@@ -142,6 +214,12 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::Dock: return "dock";
     case SettingsPage::Taskbar: return "taskbar";
     case SettingsPage::DesktopCategories: return "desktop-categories";
+    case SettingsPage::AppearanceTheme: return "appearance-theme";
+    case SettingsPage::AppearanceWidgets: return "appearance-widgets";
+    case SettingsPage::AppearanceDesktopIcons:
+        return "appearance-desktop-icons";
+    case SettingsPage::AppearanceIconBeautification:
+        return "appearance-icon-beautification";
     }
     return "home";
 }

@@ -43,6 +43,30 @@ void TestPresenterContract(const std::filesystem::path& repository)
             header.find("std::uint64_t generation") != std::string::npos &&
             header.find("Edit edit") != std::string::npos,
         "actions carry generation, update mode, and a latest-state edit");
+    Check(header.find("ThemeContent() const noexcept") !=
+                std::string::npos &&
+            header.find("WidgetAppearanceContent() const noexcept") !=
+                std::string::npos &&
+            header.find("\n        Content() const noexcept") ==
+                std::string::npos &&
+            source.find("impl_->themeRoot") != std::string::npos &&
+            source.find("impl_->widgetAppearanceRoot") != std::string::npos,
+        "theme and widget appearance expose independent cached page roots");
+    Check(source.find(
+              "InitializeCard(themeTargetsCard, cardStyle, themeRoot)") !=
+                std::string::npos &&
+            source.find(
+              "InitializeCard(widgetAppearanceCard, cardStyle,") !=
+                std::string::npos &&
+            source.find("widgetAppearanceRoot);") != std::string::npos &&
+            source.find(
+              "InitializeCard(contextMenuCard, cardStyle, themeRoot)") !=
+                std::string::npos &&
+            source.find(
+              "InitializeCard(layoutCard, cardStyle, widgetAppearanceRoot)") !=
+                std::string::npos &&
+            source.find("customCard") == std::string::npos,
+        "the former mixed custom card is split into page-owned theme and widget cards");
     Check(source.find("snapshot.domainRevisions.personalization") !=
                 std::string::npos &&
             source.find("SettingsSnapshot snapshot_") == std::string::npos &&
@@ -67,6 +91,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
     for (const char* member : {
              "widgetAlpha", "widgetBorderAlpha", "gradientEndA",
              "glassBlurRadius", "cornerRadius", "barHeight",
+             "categorizedTabHeight",
              "glassEnabled", "acrylicEnabled",
              "contentTheme", "contextMenuStyle",
              "widgetBgR", "widgetBorderR"})
@@ -74,16 +99,23 @@ void TestPresenterContract(const std::filesystem::path& repository)
         Check(source.find(member) != std::string::npos,
             "the declared personalization field has a real WinUI binding");
     }
-    Check(source.find("ContinuousControl categorizedTabHeight") ==
+    Check(source.find("ContinuousControl categorizedTabHeight") !=
+                std::string::npos &&
+            source.find(
+              "&PersonalizationSettings::categorizedTabHeight") !=
+                std::string::npos &&
+            source.find("SetContinuousText(categorizedTabHeight") !=
+                std::string::npos &&
+            source.find("\"desktop.categoryLayout\"") !=
+                std::string::npos &&
+            source.find("\"personalization.tabHeight\"") !=
                 std::string::npos &&
             source.find("showCategoryTabCountsToggle") ==
                 std::string::npos &&
             source.find("showCategoryCountsRow") == std::string::npos &&
-            source.find("SetContinuousText(categorizedTabHeight") ==
-                std::string::npos &&
             source.find("app.settings.category_show_count") ==
                 std::string::npos,
-        "category layout and count settings are not duplicated on the Personalization page");
+        "widget layout owns category tab height while category count behavior stays elsewhere");
     for (const char* control : {
              "muxc::Slider", "muxc::NumberBox",
              "muxc::ToggleSwitch", "muxc::ComboBox"})

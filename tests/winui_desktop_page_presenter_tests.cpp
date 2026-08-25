@@ -128,7 +128,6 @@ void TestPresenterContract(const std::filesystem::path& root)
     for (const char* field : {
              "iconSpacingScale", "itemIconSizeScale", "itemFontSizeCu",
              "listItemFontSizeCu", "itemFontWeight", "shortcutArrowMode",
-             "categorizedTabHeight",
              "showCategoryTabCounts", "backgroundOpacity",
              "gradientEnabled", "gradientDirection", "backgroundStartR",
              "backgroundEndR", "contentScale", "textureHighlightStrength",
@@ -155,24 +154,40 @@ void TestPresenterContract(const std::filesystem::path& root)
                 std::string::npos,
         "the retired category-tab font-size has no presenter UI while legacy configuration still loads and saves the field");
     const auto displaySection = source.find(
-        "InitializeCard(displayCard, cardStyle, appearanceRoot)");
+        "InitializeCard(displayCard, cardStyle, desktopIconsRoot)");
     const auto beautifySection = source.find(
-        "InitializeCard(beautifyCard, cardStyle, appearanceRoot)");
+        "beautifyCard, cardStyle, iconBeautificationRoot)");
     const auto categoryLayoutSection = source.find(
         "InitializeCard(categoryLayoutCard, cardStyle, categoryRoot)");
     Check(displaySection != std::string::npos &&
             beautifySection != std::string::npos &&
             categoryLayoutSection != std::string::npos &&
             source.find("hiddenCompatibilityRoot") == std::string::npos &&
-            source.find("DesktopPagePresenter::AppearanceContent()") !=
+            header.find("DesktopIconsContent() const noexcept") !=
                 std::string::npos &&
-            source.find("return impl_ ? impl_->appearanceRoot : nullptr") !=
+            header.find("IconBeautificationContent() const noexcept") !=
+                std::string::npos &&
+            header.find("AppearanceContent() const noexcept") ==
+                std::string::npos &&
+            source.find("DesktopPagePresenter::DesktopIconsContent()") !=
+                std::string::npos &&
+            source.find("return impl_ ? impl_->desktopIconsRoot : nullptr") !=
+                std::string::npos &&
+            source.find(
+              "DesktopPagePresenter::IconBeautificationContent()") !=
+                std::string::npos &&
+            source.find(
+              "return impl_ ? impl_->iconBeautificationRoot : nullptr") !=
                 std::string::npos &&
             source.find("DesktopPagePresenter::CategoryContent()") !=
                 std::string::npos &&
             source.find("return impl_ ? impl_->categoryRoot : nullptr") !=
                 std::string::npos,
-        "Desktop owns display and icon appearance while Categories exposes its layout and classification controls on the visible category root");
+        "desktop icons and icon beautification have independent roots while Categories exposes its count and classification controls");
+    Check(source.find("categorizedTabHeight") == std::string::npos &&
+            source.find("app.settings.tab_height") == std::string::npos &&
+            source.find("desktop.tabHeight") == std::string::npos,
+        "category-tab height has moved out of the Desktop presenter without a hidden compatibility editor");
     Check(source.find("CloseRuleRows") != std::string::npos &&
             source.find("SelectionChanged(shortcutArrowToken)") !=
                 std::string::npos &&

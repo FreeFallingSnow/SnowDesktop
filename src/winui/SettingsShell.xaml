@@ -147,47 +147,39 @@
                                     Visibility="Collapsed">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="GeneralItem" Tag="general">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/general.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="PersonalizationItem" Tag="personalization">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/appearance.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
+                <NavigationViewItem x:Name="GeneralItem" Tag="general" />
+                <NavigationViewItem x:Name="PersonalizationItem"
+                                    Tag="appearance"
+                                    IsExpanded="True"
+                                    SelectsOnInvoked="False">
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem x:Name="AppearanceThemeItem"
+                                            Tag="appearance-theme" />
+                        <NavigationViewItem x:Name="AppearanceWidgetsItem"
+                                            Tag="appearance-widgets" />
+                        <NavigationViewItem x:Name="AppearanceDesktopIconsItem"
+                                            Tag="appearance-desktop-icons" />
+                        <NavigationViewItem x:Name="AppearanceIconBeautificationItem"
+                                            Tag="appearance-icon-beautification" />
+                    </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
                 <NavigationViewItemHeader x:Name="DesktopShellHeader" />
-                <NavigationViewItem x:Name="DesktopItem" Tag="desktop">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/desktop.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/categories.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="DockItem" Tag="dock">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/dock.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/taskbar.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
-                <NavigationViewItem x:Name="WidgetsItem" Tag="widgets">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/widgets.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
+                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
+                <NavigationViewItem x:Name="DockItem" Tag="dock" />
+                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
+                <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
                 <NavigationViewItemHeader x:Name="DataHeader" />
-                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/backup.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem x:Name="AboutItem" Tag="about">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/about.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <NavigationViewItem x:Name="AboutItem" Tag="about" />
                 <NavigationViewItem x:Name="DeveloperItem"
                                     Tag="developer-tools"
-                                    Visibility="Collapsed">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/developer.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                                    Visibility="Collapsed" />
                 <NavigationViewItem x:Name="DebugItem"
                                     Tag="debug"
-                                    Visibility="Collapsed">
-                    <NavigationViewItem.Icon><ImageIcon Source="ms-appx:///Assets/Settings/Icons/debug.svg" Width="22" Height="22" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                                    Visibility="Collapsed" />
             </NavigationView.FooterMenuItems>
 
             <Grid>
@@ -233,6 +225,7 @@
                                         <TextBlock x:Name="PageTitle"
                                                    FontSize="32"
                                                    FontWeight="SemiBold"
+                                                   AutomationProperties.HeadingLevel="Level1"
                                                    TextWrapping="Wrap" />
                                         <TextBlock x:Name="PageSubtitle"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"

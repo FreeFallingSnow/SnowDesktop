@@ -26,6 +26,12 @@ enum class SettingsPage : std::uint8_t
     Dock,
     Taskbar,
     DesktopCategories,
+    // Appearance leaf destinations. Keep compatibility and existing page
+    // values stable by appending every new destination here.
+    AppearanceTheme,
+    AppearanceWidgets,
+    AppearanceDesktopIcons,
+    AppearanceIconBeautification,
 };
 
 /**

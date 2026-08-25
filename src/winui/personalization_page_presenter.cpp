@@ -138,10 +138,12 @@ struct PersonalizationPagePresenter::Impl
     LocalizeCallback localize;
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
-    muxc::StackPanel root{nullptr};
+    muxc::StackPanel themeRoot{nullptr};
+    muxc::StackPanel widgetAppearanceRoot{nullptr};
 
     SettingsCard themeCard;
-    SettingsCard customCard;
+    SettingsCard themeTargetsCard;
+    SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
 
@@ -161,6 +163,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::ComboBox contextMenuCombo{nullptr};
     ContinuousControl cornerRadius;
     ContinuousControl barHeight;
+    ContinuousControl categorizedTabHeight;
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -171,13 +174,14 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 6> continuousControls = {
+    std::array<ContinuousControl*, 7> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &gradientEndAlpha,
         &blurRadius,
         &cornerRadius,
         &barHeight,
+        &categorizedTabHeight,
     };
     std::array<ColorControl*, 2> colorControls = {
         &backgroundColor,
@@ -245,17 +249,19 @@ struct PersonalizationPagePresenter::Impl
 
     void BuildControls()
     {
-        root = muxc::StackPanel{};
-        root.Spacing(8.0);
+        themeRoot = muxc::StackPanel{};
+        themeRoot.Spacing(8.0);
+        widgetAppearanceRoot = muxc::StackPanel{};
+        widgetAppearanceRoot.Spacing(8.0);
 
-        InitializeCard(themeCard, cardStyle, root);
+        InitializeCard(themeCard, cardStyle, themeRoot);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
 
-        InitializeCard(customCard, cardStyle, root);
+        InitializeCard(themeTargetsCard, cardStyle, themeRoot);
         quickNavigationThemeCombo = muxc::ComboBox{};
         collectionPopupThemeCombo = muxc::ComboBox{};
         for (const auto& combo : {
@@ -266,8 +272,13 @@ struct PersonalizationPagePresenter::Impl
         }
         quickNavigationThemeRow.Initialize(quickNavigationThemeCombo);
         collectionPopupThemeRow.Initialize(collectionPopupThemeCombo);
-        customCard.content.Children().Append(quickNavigationThemeRow.root);
-        customCard.content.Children().Append(collectionPopupThemeRow.root);
+        themeTargetsCard.content.Children().Append(
+            quickNavigationThemeRow.root);
+        themeTargetsCard.content.Children().Append(
+            collectionPopupThemeRow.root);
+
+        InitializeCard(widgetAppearanceCard, cardStyle,
+            widgetAppearanceRoot);
         InitializeColorControl(backgroundColor,
             &PersonalizationSettings::widgetBgR,
             &PersonalizationSettings::widgetBgG,
@@ -276,8 +287,10 @@ struct PersonalizationPagePresenter::Impl
             &PersonalizationSettings::widgetBorderR,
             &PersonalizationSettings::widgetBorderG,
             &PersonalizationSettings::widgetBorderB);
-        customCard.content.Children().Append(backgroundColor.editor.row.root);
-        customCard.content.Children().Append(borderColor.editor.row.root);
+        widgetAppearanceCard.content.Children().Append(
+            backgroundColor.editor.row.root);
+        widgetAppearanceCard.content.Children().Append(
+            borderColor.editor.row.root);
 
         InitializeContinuousControl(widgetAlpha,
             &PersonalizationSettings::widgetAlpha, 0.0, 100.0, 1.0, 0.01);
@@ -294,15 +307,17 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(borderAlpha, L"%");
         SetUnit(gradientEndAlpha, L"%");
         SetUnit(blurRadius, L"px");
-        customCard.content.Children().Append(widgetAlpha.row.root);
-        customCard.content.Children().Append(borderAlpha.row.root);
+        widgetAppearanceCard.content.Children().Append(widgetAlpha.row.root);
+        widgetAppearanceCard.content.Children().Append(borderAlpha.row.root);
 
         gradientToggle = muxc::ToggleSwitch{};
         gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         gradientToggleRow.Initialize(gradientToggle);
         gradientToggleRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        customCard.content.Children().Append(gradientToggleRow.root);
-        customCard.content.Children().Append(gradientEndAlpha.row.root);
+        widgetAppearanceCard.content.Children().Append(
+            gradientToggleRow.root);
+        widgetAppearanceCard.content.Children().Append(
+            gradientEndAlpha.row.root);
 
         glassToggle = muxc::ToggleSwitch{};
         glassToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -312,18 +327,18 @@ struct PersonalizationPagePresenter::Impl
         acrylicRow.Initialize(acrylicToggle);
         glassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        customCard.content.Children().Append(glassRow.root);
-        customCard.content.Children().Append(blurRadius.row.root);
-        customCard.content.Children().Append(acrylicRow.root);
+        widgetAppearanceCard.content.Children().Append(glassRow.root);
+        widgetAppearanceCard.content.Children().Append(blurRadius.row.root);
+        widgetAppearanceCard.content.Children().Append(acrylicRow.root);
 
         contentThemeCombo = muxc::ComboBox{};
         contentThemeCombo.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         contentThemeCombo.MaxWidth(520.0);
         contentThemeRow.Initialize(contentThemeCombo);
-        customCard.content.Children().Append(contentThemeRow.root);
+        widgetAppearanceCard.content.Children().Append(contentThemeRow.root);
 
-        InitializeCard(contextMenuCard, cardStyle, root);
+        InitializeCard(contextMenuCard, cardStyle, themeRoot);
         contextMenuCombo = muxc::ComboBox{};
         contextMenuCombo.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
@@ -331,17 +346,22 @@ struct PersonalizationPagePresenter::Impl
         contextMenuRow.Initialize(contextMenuCombo);
         contextMenuCard.content.Children().Append(contextMenuRow.root);
 
-        InitializeCard(layoutCard, cardStyle, root);
+        InitializeCard(layoutCard, cardStyle, widgetAppearanceRoot);
         InitializeContinuousControl(cornerRadius,
             &PersonalizationSettings::cornerRadius,
             4.0, 28.0, 1.0, 1.0, 12.0);
         InitializeContinuousControl(barHeight,
             &PersonalizationSettings::barHeight,
             16.0, 48.0, 1.0, 1.0, 24.0);
+        InitializeContinuousControl(categorizedTabHeight,
+            &PersonalizationSettings::categorizedTabHeight,
+            24.0, 48.0, 1.0, 1.0, 34.0);
         SetUnit(cornerRadius, L"cu");
         SetUnit(barHeight, L"cu");
+        SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
+        layoutCard.content.Children().Append(categorizedTabHeight.row.root);
     }
 
     void InitializeColorControl(
@@ -743,7 +763,10 @@ struct PersonalizationPagePresenter::Impl
             return;
         const bool custom = presetCombo.SelectedIndex() ==
             static_cast<int>(kPresetIds.size() - 1);
-        customCard.root.Visibility(custom
+        themeTargetsCard.root.Visibility(custom
+                ? mux::Visibility::Visible
+                : mux::Visibility::Collapsed);
+        widgetAppearanceCard.root.Visibility(custom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         backgroundColor.editor.SetEnabled(custom);
@@ -820,7 +843,9 @@ struct PersonalizationPagePresenter::Impl
 
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
-        SetCardText(customCard,
+        SetCardText(themeTargetsCard,
+            "settings.personalization.theme", L"Theme and Material");
+        SetCardText(widgetAppearanceCard,
             "app.settings.component_bg", L"Widget Appearance");
         SetCardText(contextMenuCard,
             "app.settings.context_menu_appearance", L"Context Menu");
@@ -899,6 +924,8 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.corner_radius", L"Corner Radius");
         SetContinuousText(barHeight,
             "app.settings.bar_height", L"Bar Height");
+        SetContinuousText(categorizedTabHeight,
+            "app.settings.tab_height", L"Category Tab Height");
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -996,6 +1023,12 @@ struct PersonalizationPagePresenter::Impl
             return cornerRadius.slider;
         if (id == "personalization.barHeight")
             return barHeight.slider;
+        if (id == "desktop.categoryLayout" ||
+            id == "desktop.tabHeight" ||
+            id == "personalization.tabHeight")
+        {
+            return categorizedTabHeight.slider;
+        }
         return nullptr;
     }
 
@@ -1101,9 +1134,15 @@ void PersonalizationPagePresenter::SetActions(
         impl_->actions = std::move(actions);
 }
 
-mux::UIElement PersonalizationPagePresenter::Content() const noexcept
+mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {
-    return impl_ ? impl_->root : nullptr;
+    return impl_ ? impl_->themeRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::WidgetAppearanceContent()
+    const noexcept
+{
+    return impl_ ? impl_->widgetAppearanceRoot : nullptr;
 }
 
 void PersonalizationPagePresenter::ApplySnapshot(

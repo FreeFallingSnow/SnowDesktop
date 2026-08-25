@@ -29,6 +29,10 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::Dock:
     case SettingsPage::Taskbar:
     case SettingsPage::DesktopCategories:
+    case SettingsPage::AppearanceTheme:
+    case SettingsPage::AppearanceWidgets:
+    case SettingsPage::AppearanceDesktopIcons:
+    case SettingsPage::AppearanceIconBeautification:
         return true;
     default:
         return false;

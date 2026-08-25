@@ -55,6 +55,51 @@ void TestHostContract(const std::filesystem::path& repository)
         repository / "src/winui/SettingsShell.xaml.h");
     const std::string shell = ReadText(
         repository / "src/winui/SettingsShell.xaml.cpp");
+    const std::size_t staticSearchBegin = source.find(
+        "constexpr StaticSearchDefinition kStaticSearchDefinitions[]");
+    const std::size_t staticSearchEnd = source.find(
+        "\n};", staticSearchBegin);
+    const std::string_view staticSearchDefinitions =
+        staticSearchBegin != std::string::npos &&
+                staticSearchEnd != std::string::npos
+            ? std::string_view(source).substr(
+                staticSearchBegin, staticSearchEnd - staticSearchBegin)
+            : std::string_view{};
+    const auto staticSearchMapsTo = [&staticSearchDefinitions](
+        std::string_view focusId, std::string_view pageName) {
+        const std::string focusToken = "\"" + std::string(focusId) + "\"";
+        const std::size_t focus = staticSearchDefinitions.find(focusToken);
+        if (focus == std::string_view::npos)
+            return false;
+        const std::size_t entry = staticSearchDefinitions.rfind(
+            "{SettingsPage::", focus);
+        const std::size_t pageEnd = staticSearchDefinitions.find(',', entry);
+        if (entry == std::string_view::npos ||
+            pageEnd == std::string_view::npos || pageEnd > focus)
+        {
+            return false;
+        }
+        return staticSearchDefinitions.substr(
+                   entry + std::string_view("{SettingsPage::").size(),
+                   pageEnd - entry -
+                       std::string_view("{SettingsPage::").size()) ==
+            pageName;
+    };
+    const auto pageContextMapsTo = [&source](
+        std::string_view pageName, std::string_view localizationKey) {
+        const std::string caseToken =
+            "case SettingsPage::" + std::string(pageName) + ":";
+        const std::size_t begin = source.find(caseToken);
+        if (begin == std::string::npos)
+            return false;
+        const std::size_t end = source.find(
+            "case SettingsPage::", begin + caseToken.size());
+        const std::string expectedReturn =
+            "return L(\"" + std::string(localizationKey) + "\")";
+        return std::string_view(source).substr(
+                   begin, end == std::string::npos ? end : end - begin)
+                .find(expectedReturn) != std::string_view::npos;
+    };
     const std::size_t integratedTitleBarBegin =
         shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"");
     const std::size_t integratedTitleBarEnd = shellMarkup.find(
@@ -351,6 +396,39 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("\"desktop.categoryRules\"") !=
                 std::string::npos,
         "retired category font size is absent from search and focus registration while visible category layout and rules remain addressable");
+    Check(!staticSearchDefinitions.empty() &&
+            staticSearchMapsTo(
+                "personalization.theme", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.contextMenu", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.backgroundColor", "AppearanceWidgets") &&
+            staticSearchMapsTo(
+                "personalization.cornerRadius", "AppearanceWidgets") &&
+            staticSearchMapsTo(
+                "desktop.categoryLayout", "AppearanceWidgets") &&
+            staticSearchMapsTo(
+                "desktop.spacing", "AppearanceDesktopIcons") &&
+            staticSearchMapsTo(
+                "desktop.shortcutArrow", "AppearanceDesktopIcons") &&
+            staticSearchMapsTo("desktop.iconBeautify",
+                "AppearanceIconBeautification") &&
+            staticSearchMapsTo("desktop.iconBeautify.outlineColor",
+                "AppearanceIconBeautification") &&
+            staticSearchMapsTo(
+                "desktop.categoryCounts", "DesktopCategories") &&
+            staticSearchMapsTo(
+                "desktop.categoryRules", "DesktopCategories"),
+        "production search definitions route each Appearance leaf and keep category behavior with Categories");
+    Check(pageContextMapsTo(
+              "AppearanceTheme", "settings.personalization.theme") &&
+            pageContextMapsTo(
+              "AppearanceWidgets", "settings.personalization.widgets") &&
+            pageContextMapsTo(
+              "AppearanceDesktopIcons", "app.settings.desktop_icons") &&
+            pageContextMapsTo("AppearanceIconBeautification",
+              "app.settings.icon_beautify"),
+        "Appearance search results expose their localized leaf-page context");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&

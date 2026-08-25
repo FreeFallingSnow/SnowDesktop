@@ -68,10 +68,13 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Display and icon-beautification sections owned by Desktop. */
+    /** Desktop icon layout, typography, and shortcut-arrow controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        AppearanceContent() const noexcept;
-    /** Category layout and automatic-classification surface. */
+        DesktopIconsContent() const noexcept;
+    /** Icon-beautification preset and advanced appearance controls. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        IconBeautificationContent() const noexcept;
+    /** Category count and automatic-classification surface. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         CategoryContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
