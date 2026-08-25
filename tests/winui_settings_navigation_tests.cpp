@@ -490,7 +490,10 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find("actions.Children().Append(reset)") !=
                 std::string::npos &&
             presenter.find(
-              "reset.VerticalAlignment(mux::VerticalAlignment::Center)") !=
+              "reset.VerticalAlignment(mux::VerticalAlignment::Top)") !=
+                std::string::npos &&
+            sharedControls.find(
+              "controlHost.HorizontalAlignment(alignment)") !=
                 std::string::npos &&
             presenter.find(
               "autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right)") !=

@@ -90,6 +90,11 @@ struct SettingRow
 
     void SetControlAlignment(mux::HorizontalAlignment alignment)
     {
+        // ContentControl can still occupy the full editor column even when
+        // its ContentPresenter aligns a compact child.  Shrink and align the
+        // host as well so ToggleSwitch and other compact templates actually
+        // meet the right edge shared by full-width editors.
+        controlHost.HorizontalAlignment(alignment);
         controlHost.HorizontalContentAlignment(alignment);
     }
 

@@ -66,7 +66,10 @@ struct HotkeySettingRow
         recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         reset = muxc::Button{};
         reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        reset.VerticalAlignment(mux::VerticalAlignment::Center);
+        // The recorder owns a second line for availability/conflict status.
+        // Align the reset action with the recorder button instead of centering
+        // it against the combined editor-and-status height.
+        reset.VerticalAlignment(mux::VerticalAlignment::Top);
         reset.VerticalContentAlignment(mux::VerticalAlignment::Center);
         reset.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         reset.MinHeight(32.0);

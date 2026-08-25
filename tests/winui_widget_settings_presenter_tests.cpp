@@ -122,7 +122,9 @@ void TestSingleLineFieldRows(
               "kSettingControlWidth = 300.0",
               "muxc::Grid::SetColumn(text, 0)",
               "muxc::Grid::SetColumn(controlHost, 1)",
-              "void SetControlAlignment("}) &&
+              "void SetControlAlignment(",
+              "controlHost.HorizontalAlignment(alignment)",
+              "controlHost.HorizontalContentAlignment(alignment)"}) &&
             sharedControls.find("kSettingMinimumTextWidth") ==
                 std::string::npos &&
             sharedControls.find("controlRow") == std::string::npos &&
