@@ -264,6 +264,9 @@ void TestWidgetsPagePresenterContract(
     const std::string inlinePackageChangeRegion = sourceRegion(
         "[[nodiscard]] static bool HasOnlyInlinePackageStateChanges(",
         "[[nodiscard]] std::vector<std::wstring> VisiblePackageIds(");
+    const std::string packagePatchRegion = sourceRegion(
+        "void PatchPackageRowState(",
+        "[[nodiscard]] bool TryPatchInstalledRows(");
     const std::string installedRenderRegion = sourceRegion(
         "void RenderInstalledRows()", "void AddCatalogResult(");
     Check(packageRowRegion.find("packageExpansionState.find(") !=
@@ -333,9 +336,9 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             inlinePackageChangeRegion.find("previousStructure.development") !=
                 std::string::npos &&
-            installedPatchRegion.find("binding.name.Text(displayName)") !=
+            packagePatchRegion.find("binding.name.Text(displayName)") !=
                 std::string::npos &&
-            installedPatchRegion.find(
+            packagePatchRegion.find(
                 "binding.expander, packageState") !=
                 std::string::npos,
         "development source display changes update the existing row and its accessible status in place");
