@@ -1850,7 +1850,19 @@ struct DockPagePresenter::Impl
             set(numeric->slider, numeric->label.Text());
             set(numeric->number, numeric->label.Text());
             if (numeric->reset)
-                set(numeric->reset, numeric->label.Text());
+            {
+                const std::wstring action = ContextualText(
+                    L("app.settings.restore_default", L"Restore Default"),
+                    numeric->label.Text());
+                const std::wstring accessible =
+                    ContextualText(context, action);
+                muxc::ToolTipService::SetToolTip(
+                    numeric->reset, winrt::box_value(action));
+                muxa::AutomationProperties::SetName(
+                    numeric->reset, accessible);
+                muxa::AutomationProperties::SetHelpText(
+                    numeric->reset, accessible);
+            }
         }
         set(control.glass, control.glassRow.label.Text());
         set(control.acrylic, control.acrylicRow.label.Text());

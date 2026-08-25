@@ -219,7 +219,7 @@ struct KeycapPalette
     {
         muxc::TextBlock empty{};
         empty.Text(text.none);
-        empty.Opacity(0.72);
+        empty.Opacity(IsHighContrastEnabled() ? 1.0 : 0.72);
         empty.VerticalAlignment(mux::VerticalAlignment::Center);
         return empty;
     }
@@ -235,7 +235,7 @@ struct KeycapPalette
         {
             muxc::TextBlock plus{};
             plus.Text(L"+");
-            plus.Opacity(0.68);
+            plus.Opacity(IsHighContrastEnabled() ? 1.0 : 0.68);
             plus.VerticalAlignment(mux::VerticalAlignment::Center);
             panel.Children().Append(plus);
         }
@@ -301,7 +301,7 @@ void UpdateVisuals(const std::shared_ptr<HotkeyRecorderState>& state)
             break;
         case HotkeyAvailability::Available:
             statusText = L"✓ " + StatusWithDetails(
-                state->text.availableStatus, state->text.available);
+                state->text.availableStatus, state->text.captureActive);
             break;
         case HotkeyAvailability::Conflict:
             statusText = L"⚠ " + (state->conflictMessage.empty()

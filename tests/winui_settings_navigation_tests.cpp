@@ -338,7 +338,16 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             recorder.find("CreateKeycap(") != std::string::npos &&
             recorder.find("depth.Padding({0.0, 0.0, 0.0, 2.0})") !=
                 std::string::npos &&
+            recorder.find(
+              "Opacity(IsHighContrastEnabled() ? 1.0 : 0.72)") !=
+                std::string::npos &&
+            recorder.find(
+              "Opacity(IsHighContrastEnabled() ? 1.0 : 0.68)") !=
+                std::string::npos &&
             recorder.find("SetItemStatus(") != std::string::npos &&
+            recorder.find(
+              "state->text.availableStatus, state->text.captureActive") !=
+                std::string::npos &&
             recorder.find("ActualThemeChanged(") != std::string::npos &&
             recorder.find("IsHighContrastEnabled()") !=
                 std::string::npos,
@@ -721,6 +730,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "inline void ConfigureRestoreDefaultButton(") !=
                 std::string::npos &&
             sharedControls.find("button.Content(icon)") !=
+                std::string::npos &&
+            sharedControls.find("icon.FontSize(16.0)") !=
                 std::string::npos &&
             sharedControls.find("ToolTipService::SetToolTip(") !=
                 std::string::npos &&

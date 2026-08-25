@@ -196,6 +196,18 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("PrepareDynamicRuleTheme") != std::string::npos &&
             source.find("contentTheme =") != std::string::npos,
         "all three dynamic rules share enabled, theme, and content-theme bindings");
+    Check(source.find(
+              "L(\"app.settings.restore_default\", L\"Restore Default\")") !=
+                std::string::npos &&
+            source.find("ContextualText(context, action)") !=
+                std::string::npos &&
+            source.find("AutomationProperties::SetName(") !=
+                std::string::npos &&
+            source.find("AutomationProperties::SetHelpText(") !=
+                std::string::npos &&
+            source.find("numeric->reset, accessible") !=
+                std::string::npos,
+        "scenario restore buttons retain a contextual restore-default action name for assistive technology");
     const auto shellUiRule = source.find(
         "InitializeDynamicRule(shellUiRule");
     const auto maximizedRule = source.find(

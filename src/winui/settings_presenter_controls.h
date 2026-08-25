@@ -45,7 +45,7 @@ inline void ConfigureRestoreDefaultButton(
         return;
     muxc::FontIcon icon{};
     icon.Glyph(L"\xE777");
-    icon.FontSize(15.0);
+    icon.FontSize(16.0);
     button.Content(icon);
     button.Width(32.0);
     button.Height(32.0);

@@ -28,7 +28,7 @@ struct HotkeyRecorderText
     std::wstring cleared = L"Shortcut cleared";
     std::wstring none = L"None";
     std::wstring disabled = L"Disabled";
-    std::wstring captureActive = L"Shortcut recording is active";
+    std::wstring captureActive = L"Press Enter to save or Escape to cancel";
     std::wstring notSetWarning = L"No shortcut is configured";
     std::wstring availableStatus = L"Available";
     std::wstring inUseStatus = L"In use";

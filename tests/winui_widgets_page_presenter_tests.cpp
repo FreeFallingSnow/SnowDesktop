@@ -261,6 +261,9 @@ void TestWidgetsPagePresenterContract(
     const std::string installedPatchRegion = sourceRegion(
         "[[nodiscard]] bool TryPatchInstalledRows(",
         "void RenderInstalledRows()");
+    const std::string inlinePackageChangeRegion = sourceRegion(
+        "[[nodiscard]] static bool HasOnlyInlinePackageStateChanges(",
+        "[[nodiscard]] std::vector<std::wstring> VisiblePackageIds(");
     const std::string installedRenderRegion = sourceRegion(
         "void RenderInstalledRows()", "void AddCatalogResult(");
     Check(packageRowRegion.find("packageExpansionState.find(") !=
@@ -296,6 +299,59 @@ void TestWidgetsPagePresenterContract(
                 "HasOnlyInlinePackageStateChanges") !=
                 std::string::npos,
         "enabled, active and add-to-desktop state echoes patch existing package controls while structural package changes fall back to reconciliation");
+    Check(source.find("muxc::TextBlock name{nullptr}") !=
+                std::string::npos &&
+            source.find("muxc::TextBlock description{nullptr}") !=
+                std::string::npos &&
+            source.find("muxc::TextBlock version{nullptr}") !=
+                std::string::npos &&
+            source.find("muxc::TextBlock author{nullptr}") !=
+                std::string::npos &&
+            source.find("muxc::TextBlock sourceId{nullptr}") !=
+                std::string::npos &&
+            packageRowRegion.find("description.Visibility(") !=
+                std::string::npos &&
+            packageRowRegion.find("version.Visibility(") !=
+                std::string::npos &&
+            packageRowRegion.find("author.Visibility(") !=
+                std::string::npos,
+        "package display fields retain controls so source switches can patch text and visibility without rebuilding the row");
+    Check(inlinePackageChangeRegion.find("previousStructure.name") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find("previousStructure.description") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find("previousStructure.version") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find("previousStructure.author") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find("previousStructure.sourceId") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find("previousStructure.sourceName") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find(
+                "previousStructure.sourceExternalItemId") !=
+                std::string::npos &&
+            inlinePackageChangeRegion.find("previousStructure.development") !=
+                std::string::npos &&
+            installedPatchRegion.find("binding.name.Text(displayName)") !=
+                std::string::npos &&
+            installedPatchRegion.find(
+                "binding.expander, packageState") !=
+                std::string::npos,
+        "development source display changes update the existing row and its accessible status in place");
+    Check(permissionRegion.find("FindPackage(packageId)") !=
+                std::string::npos &&
+            permissionRegion.find("OpenPermissionEditor(*current)") !=
+                std::string::npos &&
+            legacyActionsRegion.find("FindPackage(packageId)") !=
+                std::string::npos &&
+            legacyActionsRegion.find("L\"steam-workshop\"") !=
+                std::string::npos &&
+            packageRowRegion.find("PackageDisplayName(*current)") !=
+                std::string::npos &&
+            installedRenderRegion.find("RevokePackageRowEvents();") !=
+                std::string::npos,
+        "package actions resolve the latest snapshot, Workshop identity remains stable, and row-local event handlers are revoked on structural rebuilds");
 
     const std::string sourceGroupRegion = sourceRegion(
         "void AddSourceGroup(", "void RenderSourceRows()");
