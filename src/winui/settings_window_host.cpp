@@ -1119,9 +1119,18 @@ struct SettingsWindowHost::Impl
                     settings.widgetDeveloperToolsEnabled = enabled;
                 });
             const auto snapshot = state->owner->controller->Snapshot();
-            return snapshot && snapshot->generation == generation &&
+            const bool applied = snapshot &&
+                snapshot->generation == generation &&
                 snapshot->values.general.widgetDeveloperToolsEnabled ==
                     enabled;
+            if (applied)
+            {
+                // Keep the conditional NavigationView item and its search
+                // entries in sync before the presenter optionally navigates
+                // to Developer Tools on this same click.
+                state->owner->RebuildSearchIndex();
+            }
+            return applied;
         };
         actions.reloadWidgetInstance = [weak](
                                            std::uint64_t generation,

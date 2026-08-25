@@ -566,6 +566,26 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("homeAboutPage_->DebugContent()") !=
                 std::string::npos,
         "conditional pages validate independent gates while Debug restores its legacy presenter");
+
+    const auto developerToggleStart = source.find(
+        "actions.setDeveloperToolsEnabled = [weak]");
+    const auto developerToggleEnd = source.find(
+        "actions.reloadWidgetInstance = [weak]", developerToggleStart);
+    const std::string developerToggle =
+        developerToggleStart != std::string::npos &&
+            developerToggleEnd != std::string::npos
+        ? source.substr(developerToggleStart,
+              developerToggleEnd - developerToggleStart)
+        : std::string{};
+    const auto appliedCheck = developerToggle.find("if (applied)");
+    const auto refreshVisibility = developerToggle.find(
+        "state->owner->RebuildSearchIndex()", appliedCheck);
+    const auto returnApplied = developerToggle.find(
+        "return applied", refreshVisibility);
+    Check(appliedCheck != std::string::npos &&
+            refreshVisibility != std::string::npos &&
+            returnApplied != std::string::npos,
+        "enabling Developer Tools refreshes conditional navigation and search before the presenter navigates");
 }
 } // namespace
 
