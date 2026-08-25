@@ -11,6 +11,7 @@
 #include <winrt/Windows.UI.h>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <string>
 #include <utility>
@@ -26,6 +27,20 @@ namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 
 inline constexpr double kSettingControlWidth = 300.0;
+
+/** Remove persisted float noise before a value reaches Slider/NumberBox. */
+inline double QuantizeNumericValue(
+    double value,
+    double minimum,
+    double maximum,
+    double step) noexcept
+{
+    value = std::clamp(value, minimum, maximum);
+    if (!std::isfinite(step) || step <= 0.0)
+        return value;
+    const double ticks = std::round((value - minimum) / step);
+    return std::clamp(minimum + ticks * step, minimum, maximum);
+}
 
 /**
  * Programmatic equivalent of the legacy BeginSettingRow contract.
@@ -298,6 +313,11 @@ struct ColorFlyoutEditor
     [[nodiscard]] winrt::Windows::UI::Color Color() const
     {
         return picker.Color();
+    }
+
+    [[nodiscard]] bool IsOpen() const noexcept
+    {
+        return open;
     }
 
     void SetEnabled(bool enabled)

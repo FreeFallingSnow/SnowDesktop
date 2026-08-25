@@ -22,6 +22,7 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
+using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
 namespace
@@ -700,8 +701,9 @@ struct PersonalizationPagePresenter::Impl
     {
         const double value = static_cast<double>(settings.*control.member) /
             control.scale;
-        const double clamped = std::clamp(
-            value, control.slider.Minimum(), control.slider.Maximum());
+        const double clamped = QuantizeNumericValue(value,
+            control.slider.Minimum(), control.slider.Maximum(),
+            control.slider.StepFrequency());
         control.slider.Value(clamped);
         control.number.Value(clamped);
     }

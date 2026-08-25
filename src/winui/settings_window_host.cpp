@@ -898,7 +898,11 @@ struct SettingsWindowHost::Impl
             return;
         if (!shell->ApplySnapshot(*snapshot))
             return;
-        QueueSystemBackdropUpdate();
+        // Ordinary controller revisions must not touch the Island's window-
+        // level backdrop. In particular, continuous Slider/ColorPicker
+        // previews publish here while WinUI owns pointer capture or a Flyout.
+        // Backdrop refresh remains tied to attach and system theme/contrast
+        // messages, where a window-level material transition is intentional.
         SynchronizePageBackends(*snapshot);
         if (options.homeAboutStatus)
         {

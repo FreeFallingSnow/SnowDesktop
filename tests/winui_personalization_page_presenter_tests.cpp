@@ -58,6 +58,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("LostFocus") != std::string::npos &&
             source.find("IsEnter(args)") != std::string::npos,
         "continuous controls preview and commit on interaction boundaries");
+    Check(source.find("QuantizeNumericValue(value,") !=
+                std::string::npos &&
+            controls.find("inline double QuantizeNumericValue(") !=
+                std::string::npos,
+        "personalization numeric snapshots are quantized to their declared slider step");
 
     for (const char* member : {
              "widgetAlpha", "widgetBorderAlpha", "gradientEndA",

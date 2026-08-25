@@ -25,6 +25,7 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
+using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
 namespace
@@ -158,6 +159,7 @@ struct NumericEditor
     muxc::Button reset{nullptr};
     ChangedCallback changed;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
+    double step = 1.0;
     bool updating = false;
     bool pendingCommit = false;
     bool interactionActive = false;
@@ -182,7 +184,7 @@ struct NumericEditor
         int fractionalDigits,
         ChangedCallback callback,
         double resetValue = std::numeric_limits<double>::quiet_NaN())
-        : changed(std::move(callback)), defaultValue(resetValue)
+        : changed(std::move(callback)), defaultValue(resetValue), step(step)
     {
         editors = muxc::Grid{};
         editors.ColumnSpacing(8.0);
@@ -262,18 +264,21 @@ struct NumericEditor
         sliderValueToken = slider.ValueChanged(
             [this](const auto&, const auto&) {
                 if (updating || closed) return;
+                const double value = Normalize(slider.Value());
                 updating = true;
-                number.Value(slider.Value());
+                number.Value(value);
                 updating = false;
-                PublishPreview(slider.Value());
+                PublishPreview(value);
             });
         numberValueToken = number.ValueChanged(
             [this](const auto&, const auto&) {
                 if (updating || closed || std::isnan(number.Value())) return;
+                const double value = Normalize(number.Value());
                 updating = true;
-                slider.Value(number.Value());
+                slider.Value(value);
+                number.Value(value);
                 updating = false;
-                PublishPreview(number.Value());
+                PublishPreview(value);
             });
 
         const auto pointerReleased = [this](const auto&, const auto&) {
@@ -322,7 +327,8 @@ struct NumericEditor
         if (!pendingCommit || closed) return;
         pendingCommit = false;
         if (changed)
-            changed(slider.Value(), SettingsUpdateMode::PreviewAndCommit);
+            changed(Normalize(slider.Value()),
+                SettingsUpdateMode::PreviewAndCommit);
     }
 
     void CancelPending() noexcept
@@ -342,12 +348,23 @@ struct NumericEditor
         // capture after its first movement. The editor already owns the newest
         // local value, so leave it untouched until focus exits the edit.
         if (interactionActive) return;
-        value = std::clamp(value, slider.Minimum(), slider.Maximum());
+        value = Normalize(value);
         const bool wasUpdating = updating;
         updating = true;
         slider.Value(value);
         number.Value(value);
         updating = wasUpdating;
+    }
+
+    [[nodiscard]] double Normalize(double value) const noexcept
+    {
+        return QuantizeNumericValue(
+            value, slider.Minimum(), slider.Maximum(), step);
+    }
+
+    [[nodiscard]] bool IsEditing() const noexcept
+    {
+        return interactionActive;
     }
 
     void SetLabel(std::wstring text, std::wstring help = {})
@@ -429,6 +446,11 @@ struct ColorEditor
     void SetColor(const winrt::Windows::UI::Color& value)
     {
         editor.SetColor(value);
+    }
+
+    [[nodiscard]] bool IsEditing() const noexcept
+    {
+        return editor.IsOpen();
     }
 
     void SetLabel(
@@ -1416,6 +1438,29 @@ struct DesktopPagePresenter::Impl
             value.outlineR, value.outlineG, value.outlineB));
     }
 
+    [[nodiscard]] bool HasActiveDesktopEdit() const noexcept
+    {
+        for (const NumericEditor* editor : {
+                 iconSpacing.get(), iconSize.get(), itemFontSize.get(),
+                 listFontSize.get(), itemFontWeight.get(),
+                 backgroundOpacity.get(), contentScale.get(),
+                 highlightStrength.get(), highlightSize.get(),
+                 highlightAngle.get(), shadeStrength.get(),
+                 edgeHighlight.get(), filterStrength.get(),
+                 shadowStrength.get(), outlineWidth.get(),
+                 outlineOpacity.get()})
+        {
+            if (editor->IsEditing()) return true;
+        }
+        for (const ColorEditor* editor : {
+                 backgroundStart.get(), backgroundEnd.get(),
+                 filterTint.get(), outlineColor.get()})
+        {
+            if (editor->IsEditing()) return true;
+        }
+        return false;
+    }
+
     void PatchCategory(const CategorySettings& settings)
     {
         tabFontSize->SetValue(settings.tabFontSize);
@@ -1482,14 +1527,21 @@ struct DesktopPagePresenter::Impl
             categoryDirtyKnown = false;
         }
         generation = snapshot.generation;
+        const bool desktopEditActive = HasActiveDesktopEdit();
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
         if (newGeneration ||
             snapshot.domainRevisions.desktop != desktopRevision)
         {
-            PatchDesktop(snapshot.values.desktop);
-            desktopRevision = snapshot.domainRevisions.desktop;
+            // A local continuous edit already owns the authoritative display
+            // value. Do not patch any sibling control in the same XAML tree
+            // until release/focus/idle commit publishes the next revision.
+            if (newGeneration || !desktopEditActive)
+            {
+                PatchDesktop(snapshot.values.desktop);
+                desktopRevision = snapshot.domainRevisions.desktop;
+            }
         }
         if (newGeneration ||
             snapshot.domainRevisions.category != categoryRevision)
@@ -1529,7 +1581,8 @@ struct DesktopPagePresenter::Impl
         categoryDirty = nextCategoryDirty;
         categoryDirtyKnown = true;
         hasSnapshot = true;
-        UpdateConditionalStates();
+        if (!desktopEditActive)
+            UpdateConditionalStates();
         updatingControls = wasUpdating;
     }
 

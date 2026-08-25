@@ -102,6 +102,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("std::chrono::milliseconds(650)") !=
                 std::string::npos,
         "continuous controls preview and commit on release, focus, Enter, or keyboard idle");
+    Check(source.find("QuantizeNumericValue(") != std::string::npos &&
+            source.find("control.slider.StepFrequency()") !=
+                std::string::npos &&
+            controls.find("inline double QuantizeNumericValue(") !=
+                std::string::npos,
+        "Dock numeric snapshots are quantized to their declared slider step");
     Check(source.find("SetUnit(control, L\"%\")") !=
                 std::string::npos &&
             source.find("SetUnit(control, L\"px\")") !=

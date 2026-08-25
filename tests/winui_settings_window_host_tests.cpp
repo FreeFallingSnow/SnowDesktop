@@ -247,6 +247,23 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("impl_->ApplySnapshotNow(snapshot);") !=
                 std::string::npos,
         "immutable revisioned snapshots coalesce independently of view epochs and Open applies the authoritative route immediately");
+    const std::size_t applySnapshotBegin = source.find(
+        "void ApplySnapshotNow", snapshotQueueBegin);
+    const std::size_t pendingWorkBegin = source.find(
+        "void QueuePendingFlush()", applySnapshotBegin);
+    const std::string_view applySnapshotFunction =
+        applySnapshotBegin != std::string::npos &&
+                pendingWorkBegin != std::string::npos
+            ? std::string_view(source).substr(
+                  applySnapshotBegin,
+                  pendingWorkBegin - applySnapshotBegin)
+            : std::string_view{};
+    Check(applySnapshotFunction.find("QueueSystemBackdropUpdate()") ==
+                std::string_view::npos &&
+            source.find("case WM_THEMECHANGED:") != std::string::npos &&
+            source.find("self->QueueSystemBackdropUpdate();") !=
+                std::string::npos,
+        "ordinary snapshots leave the Island backdrop untouched while system theme and contrast messages may refresh it");
 
     const std::size_t commitBegin = source.find(
         "bool CommitRoute(const SettingsRoute& route");

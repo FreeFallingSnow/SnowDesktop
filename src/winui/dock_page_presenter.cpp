@@ -26,6 +26,7 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
+using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
 namespace
@@ -1326,8 +1327,10 @@ struct DockPagePresenter::Impl
         ContinuousControl& control,
         const DockSettings& settings)
     {
-        const double value = std::clamp(ReadContinuous(control, settings),
-            control.slider.Minimum(), control.slider.Maximum());
+        const double value = QuantizeNumericValue(
+            ReadContinuous(control, settings),
+            control.slider.Minimum(), control.slider.Maximum(),
+            control.slider.StepFrequency());
         control.slider.Value(value);
         control.number.Value(value);
     }

@@ -67,8 +67,18 @@ void TestPresenterContract(const std::filesystem::path& root)
                 std::string::npos &&
             source.find("if (interactionActive) return;") !=
                 std::string::npos &&
+            source.find("HasActiveDesktopEdit()") !=
+                std::string::npos &&
+            source.find("if (newGeneration || !desktopEditActive)") !=
+                std::string::npos &&
             controls.find("if (open) return;") != std::string::npos,
-        "live desktop slider and color edits ignore their own snapshot echo while interaction remains active");
+        "live desktop slider and color edits defer the complete desktop snapshot patch while interaction remains active");
+    Check(source.find("QuantizeNumericValue(") != std::string::npos &&
+            controls.find("inline double QuantizeNumericValue(") !=
+                std::string::npos &&
+            controls.find("std::round((value - minimum) / step)") !=
+                std::string::npos,
+        "desktop numeric snapshots and edits are quantized to the declared control step");
     Check(source.find("void RollbackOpenColorEditors() noexcept") !=
                 std::string::npos &&
             source.find("impl_->RollbackOpenColorEditors();") !=
