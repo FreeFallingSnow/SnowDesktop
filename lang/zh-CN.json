@@ -57,6 +57,7 @@
     "app.settings.widgets_source_local": "本地组件",
     "app.settings.widgets_source_catalog": "组件目录",
     "app.settings.widgets_source_steam": "Steam 创意工坊订阅",
+    "app.settings.widgets_source_available": "可用",
     "app.settings.widgets_source_offline": "不可用",
     "app.settings.widgets_search": "搜索",
     "app.settings.widgets_search_hint": "搜索组件",

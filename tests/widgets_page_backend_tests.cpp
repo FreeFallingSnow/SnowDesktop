@@ -446,6 +446,13 @@ void TestUserVisibleFeedbackLocalization(const std::string& source)
             source.find("FormatLocalizedValue(L(") != std::string::npos &&
             source.find("{0}") != std::string::npos,
         "background and detail-bearing backend failures localize before publication");
+    Check(source.find("app.settings.widgets_source_available") !=
+                std::string::npos &&
+            source.find("app.settings.widgets_source_offline") !=
+                std::string::npos &&
+            source.find("source.status = Utf8ToWide(status)") ==
+                std::string::npos,
+        "source health labels use localized UI states instead of provider diagnostics");
 }
 
 void TestV2OnlyContract(const std::string& source)

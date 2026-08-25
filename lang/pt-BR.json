@@ -57,6 +57,7 @@
   "app.settings.widgets_source_local": "Widgets locais",
   "app.settings.widgets_source_catalog": "Catálogo de widgets",
   "app.settings.widgets_source_steam": "Assinaturas do Steam Workshop",
+  "app.settings.widgets_source_available": "Disponível",
   "app.settings.widgets_source_offline": "Indisponível",
   "app.settings.widgets_search": "Pesquisar",
   "app.settings.widgets_search_hint": "Pesquisar widgets",

@@ -515,6 +515,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto debugItem = shellXaml.find("x:Name=\"DebugItem\"");
     const auto homeCollapsed = shellXaml.find(
         "Visibility=\"Collapsed\"", homeItem);
+    const auto shellSearchAccelerator = shellXaml.find(
+        "x:Name=\"SearchKeyboardAccelerator\"");
+    const auto paneSearchStart = shellXaml.find(
+        "<NavigationView.AutoSuggestBox>");
+    const auto paneSearchEnd = shellXaml.find(
+        "</NavigationView.AutoSuggestBox>", paneSearchStart);
     Check(homeItem != std::string::npos &&
             homeItem < homeCollapsed && homeCollapsed < generalItem &&
             generalItem < appearanceItem &&
@@ -546,6 +552,10 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shellXaml.find("x:Name=\"TitleBarPaneToggleButton\"") !=
                 std::string::npos &&
+            shellSearchAccelerator != std::string::npos &&
+            shellSearchAccelerator < paneSearchStart &&
+            shellXaml.find("x:Name=\"SearchKeyboardAccelerator\"",
+                paneSearchStart) > paneSearchEnd &&
             shellXaml.find("<NavigationView.AutoSuggestBox>") !=
                 std::string::npos &&
             shellXaml.find("SelectsOnInvoked=\"False\"",

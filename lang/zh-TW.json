@@ -57,6 +57,7 @@
   "app.settings.widgets_source_local": "本機元件",
   "app.settings.widgets_source_catalog": "元件目錄",
   "app.settings.widgets_source_steam": "Steam 創意工坊訂閱",
+  "app.settings.widgets_source_available": "可用",
   "app.settings.widgets_source_offline": "不可用",
   "app.settings.widgets_search": "搜尋",
   "app.settings.widgets_search_hint": "搜尋元件",

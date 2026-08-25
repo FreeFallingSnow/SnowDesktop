@@ -56,6 +56,11 @@
 
     <Grid x:Name="ShellRoot"
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator x:Name="SearchKeyboardAccelerator"
+                                 Key="F"
+                                 Modifiers="Control" />
+        </Grid.KeyboardAccelerators>
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup x:Name="WindowWidthStates">
                 <VisualState x:Name="CompactContent">
@@ -133,13 +138,7 @@
                 <AutoSuggestBox x:Name="SettingsSearchBox"
                                 HorizontalAlignment="Stretch"
                                 QueryIcon="Find"
-                                UpdateTextOnSelect="False">
-                    <AutoSuggestBox.KeyboardAccelerators>
-                        <KeyboardAccelerator x:Name="SearchKeyboardAccelerator"
-                                             Key="F"
-                                             Modifiers="Control" />
-                    </AutoSuggestBox.KeyboardAccelerators>
-                </AutoSuggestBox>
+                                UpdateTextOnSelect="False" />
             </NavigationView.AutoSuggestBox>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="HomeItem"

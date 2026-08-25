@@ -57,6 +57,7 @@
   "app.settings.widgets_source_local": "ローカルコンポーネント",
   "app.settings.widgets_source_catalog": "コンポーネントカタログ",
   "app.settings.widgets_source_steam": "Steam ワークショップのサブスクリプション",
+  "app.settings.widgets_source_available": "利用可能",
   "app.settings.widgets_source_offline": "利用不可",
   "app.settings.widgets_search": "検索",
   "app.settings.widgets_search_hint": "検索コンポーネント",

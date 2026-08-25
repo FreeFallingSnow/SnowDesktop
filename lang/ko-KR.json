@@ -57,6 +57,7 @@
   "app.settings.widgets_source_local": "로컬 구성 요소",
   "app.settings.widgets_source_catalog": "부품 카탈로그",
   "app.settings.widgets_source_steam": "Steam 창작마당 구독",
+  "app.settings.widgets_source_available": "사용 가능",
   "app.settings.widgets_source_offline": "사용할 수 없음",
   "app.settings.widgets_search": "검색",
   "app.settings.widgets_search_hint": "검색 구성 요소",

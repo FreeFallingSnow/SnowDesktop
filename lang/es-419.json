@@ -57,6 +57,7 @@
   "app.settings.widgets_source_local": "Componentes locales",
   "app.settings.widgets_source_catalog": "Catálogo de componentes",
   "app.settings.widgets_source_steam": "Suscripciones a Steam Workshop",
+  "app.settings.widgets_source_available": "Disponible",
   "app.settings.widgets_source_offline": "No disponible",
   "app.settings.widgets_search": "Buscar",
   "app.settings.widgets_search_hint": "Buscar componentes",

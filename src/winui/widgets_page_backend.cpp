@@ -1726,9 +1726,9 @@ struct WidgetsPageBackend::Impl final
             source.name = SourceDisplayName(record.source.providerId);
             source.available = record.source.status.available &&
                 record.error.empty();
-            const std::string status = record.error.empty()
-                ? record.source.status.message : record.error;
-            source.status = Utf8ToWide(status);
+            source.status = source.available
+                ? L("app.settings.widgets_source_available", L"Available")
+                : L("app.settings.widgets_source_offline", L"Unavailable");
             source.supportsSearch = record.source.capabilities.query;
             source.supportsInstall = source.kind != WidgetSourceKind::BuiltIn &&
                 record.source.capabilities.query &&
