@@ -76,6 +76,16 @@ void TestHostContract(const std::filesystem::path& repository)
         ? std::string_view(shellMarkup).substr(
             paneHeaderBegin, paneHeaderEnd - paneHeaderBegin)
         : std::string_view{};
+    const std::size_t pageScrollerBegin =
+        shellMarkup.find("x:Name=\"PageScrollViewer\"");
+    const std::size_t pageScrollerEnd = shellMarkup.find(
+        "</ScrollViewer>", pageScrollerBegin);
+    const std::string_view pageScrollerMarkup =
+        pageScrollerBegin != std::string::npos &&
+                pageScrollerEnd != std::string::npos
+        ? std::string_view(shellMarkup).substr(
+            pageScrollerBegin, pageScrollerEnd - pageScrollerBegin)
+        : std::string_view{};
 
     Check(!header.empty() && !source.empty() && !runtimeHeader.empty() &&
             !runtime.empty() && !shellMarkup.empty() &&
@@ -189,6 +199,31 @@ void TestHostContract(const std::filesystem::path& repository)
             shellMarkup.find("ExpandedModeThresholdWidth") ==
                 std::string::npos,
         "the host enforces the supported fixed-width settings surface and expanded left navigation without a narrow adaptive state");
+    Check(pageScrollerMarkup.find(
+              "HorizontalContentAlignment=\"Stretch\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "HorizontalScrollMode=\"Disabled\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "HorizontalScrollBarVisibility=\"Disabled\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "x:Name=\"PageSurface\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "MaxWidth=\"1120\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "Margin=\"40,16,40,48\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "HorizontalAlignment=\"Center\"") !=
+                std::string_view::npos &&
+            pageScrollerMarkup.find(
+              "HorizontalAlignment=\"Stretch\"") ==
+                std::string_view::npos,
+        "the vertically scrolling page stretches its viewport while a centered max-width surface remains stable across window enlargement without horizontal drift");
     Check(source.find("case WM_GETMINMAXINFO:") != std::string::npos &&
             source.find("AdjustWindowRectExForDpi(&minimumBounds") !=
                 std::string::npos &&
