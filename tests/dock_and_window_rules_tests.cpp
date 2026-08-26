@@ -2375,6 +2375,23 @@ int main(int argc, char** argv)
             rules::IsTaskWindowProcessEligible(true, true) &&
             !rules::IsTaskWindowProcessEligible(true, false),
         "Dock discovery must include the application-level settings window while excluding other current-process surfaces");
+    Check(rules::IsTaskbarDocumentProxyEligible(
+            true, true, false, false,
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE),
+        "a recognized hidden ownerless taskbar tab proxy must remain eligible for preview discovery");
+    Check(!rules::IsTaskbarDocumentProxyEligible(
+            false, true, false, false,
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) &&
+            !rules::IsTaskbarDocumentProxyEligible(
+                true, true, true, false,
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) &&
+            !rules::IsTaskbarDocumentProxyEligible(
+                true, true, false, false,
+                WS_EX_TOOLWINDOW),
+        "ordinary hidden helpers and visible task windows must not be mistaken for taskbar document proxies");
+    Check(rules::ShouldPreferTaskbarDocumentProxyItems(1) &&
+            !rules::ShouldPreferTaskbarDocumentProxyItems(0),
+        "document proxies must replace the main frame only when at least one proxy was discovered");
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
@@ -4529,6 +4546,38 @@ int main(int argc, char** argv)
                   "target = std::move(floatingTarget)") !=
                     std::string::npos,
             "task thumbnails must reveal the floating Dock and refresh their moved anchor");
+        Check(dockPreviewSource.find(
+                  "IsDockTaskbarDocumentProxyWindow(window)") !=
+                    std::string::npos &&
+                dockPreviewSource.find(
+                  "ShouldPreferTaskbarDocumentProxyItems(proxyItems.size())") !=
+                    std::string::npos &&
+                dockPreviewSource.find(
+                  "identity, true, false") !=
+                    std::string::npos,
+            "taskbar document proxies must replace duplicate main-frame previews without changing application-close discovery");
+        const std::size_t proxyActivationBegin =
+            dockWindowTrackingSource.find(
+                "if (IsDockTaskbarDocumentProxyWindow(target))");
+        const std::size_t proxyForegroundRequest =
+            dockWindowTrackingSource.find(
+                "SetForegroundWindow(target);",
+                proxyActivationBegin);
+        const std::size_t proxyActivationReturn =
+            dockWindowTrackingSource.find(
+                "return;", proxyForegroundRequest);
+        const std::size_t ordinaryActivationRequest =
+            dockWindowTrackingSource.find(
+                "RequestDockWindowActivation(target, minimized);",
+                proxyActivationBegin);
+        Check(proxyActivationBegin != std::string::npos &&
+                proxyForegroundRequest != std::string::npos &&
+                proxyActivationReturn != std::string::npos &&
+                ordinaryActivationRequest != std::string::npos &&
+                proxyActivationBegin < proxyForegroundRequest &&
+                proxyForegroundRequest < proxyActivationReturn &&
+                proxyActivationReturn < ordinaryActivationRequest,
+            "taskbar document proxies must activate directly without showing the hidden helper window");
         Check(pointerContextSource.find(
                   "EnsureFloatingDockVisibleForAssociatedSurface(") !=
                     std::string::npos,

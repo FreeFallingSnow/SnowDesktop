@@ -450,6 +450,38 @@ constexpr bool IsTaskWindowProcessEligible(
 }
 
 /**
+ * @brief 判断隐藏顶层窗口是否具备已知任务栏文档代理的结构。
+ *
+ * MDI/TDI 应用可以用隐藏的 WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE 顶层
+ * 窗口向系统任务栏注册每个文档的独立缩略图。该例外只供预览枚举使用，
+ * 不能放宽普通 Dock 任务窗口发现规则。
+ */
+constexpr bool IsTaskbarDocumentProxyEligible(
+    bool recognizedClass,
+    bool topLevel,
+    bool visible,
+    bool hasOwner,
+    LONG_PTR extendedStyle) noexcept
+{
+    constexpr LONG_PTR requiredStyles =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    return recognizedClass && topLevel && !visible && !hasOwner &&
+        (extendedStyle & requiredStyles) == requiredStyles;
+}
+
+/**
+ * @brief 已发现文档代理时，用代理集合替换主框架任务窗口集合。
+ *
+ * 注册到任务栏的代理通常包含活动文档自身；若把代理追加到主框架后面，
+ * 当前文档会重复出现一次。
+ */
+constexpr bool ShouldPreferTaskbarDocumentProxyItems(
+    std::size_t proxyItemCount) noexcept
+{
+    return proxyItemCount != 0;
+}
+
+/**
  * @brief 判断恢复窗口时是否播放图标到窗口的过渡动画。
  *
  * Dock 图标点击与预览缩略图点击共用同一条窗口命令路径：窗口最小化

@@ -1154,7 +1154,8 @@ private:
     bool RequestTrackedDockWindowClose(HWND window);
     std::vector<DockWindowPreviewItem> CollectDockWindowPreviewItems(
         const DockAppIdentity& identity,
-        bool includeCloaked = false);
+        bool includeCloaked = false,
+        bool preferTaskbarDocumentProxies = true);
     void CloseDockWindowFromPreview(HWND window);
     void CloseDockApplicationWindows(
         const DockAppIdentity& identity);

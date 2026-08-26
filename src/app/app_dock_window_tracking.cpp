@@ -1042,6 +1042,15 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
 {
     if (!window || !IsWindow(window))
         return;
+    if (IsDockTaskbarDocumentProxyWindow(window))
+    {
+        // Registered MDI/TDI tab proxies are hidden by design. Activating the
+        // proxy asks its owner application to select and reveal the matching
+        // document; the ordinary path would incorrectly show the 0x0 helper
+        // window before trying to foreground it.
+        ActivateDockWindowFromPreview(window);
+        return;
+    }
     // Reuse the exact Dock-icon command path: restoring plays the icon-to-
     // window transition, activating moves the window to the foreground and
     // clicking a foreground window minimizes it back into the Dock. The
@@ -1129,6 +1138,12 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
             ShouldSuppressDockWindowCommand(
                 IsDockWindowClosePending(window)))
         return;
+
+    if (IsDockTaskbarDocumentProxyWindow(target))
+    {
+        SetForegroundWindow(target);
+        return;
+    }
 
     const bool minimized = restoring;
     const DockWindowActivationOutcome outcome =
