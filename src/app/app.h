@@ -1214,6 +1214,9 @@ private:
         snowdesktop::SettingsRoute route =
             snowdesktop::SettingsRoute::ForPage(
                 snowdesktop::SettingsPage::General));
+    /** Treat the settings host and its owned XAML surfaces as an app window. */
+    [[nodiscard]] bool IsSettingsApplicationWindow(
+        HWND window) const noexcept;
     /** Initialize the application-lifetime settings state owner. */
     void InitializeSettingsController();
     /** Release settings UI and services while their borrowed owners are alive. */

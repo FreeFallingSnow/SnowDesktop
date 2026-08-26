@@ -214,6 +214,11 @@ bool SettingsWindow::IsVisible() const noexcept
     return impl_->host && impl_->host->IsVisible();
 }
 
+HWND SettingsWindow::Window() const noexcept
+{
+    return impl_->host ? impl_->host->Window() : nullptr;
+}
+
 bool SettingsWindow::IsHotkeyCaptureActive() const noexcept
 {
     return impl_->host && impl_->host->IsHotkeyCaptureActive();

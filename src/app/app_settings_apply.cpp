@@ -1382,6 +1382,23 @@ void DesktopApp::ShowSettingsWindow(snowdesktop::SettingsRoute route)
     TryShowPendingSettingsWindow();
 }
 
+bool DesktopApp::IsSettingsApplicationWindow(HWND window) const noexcept
+{
+    if (!window || !settingsWindow_)
+        return false;
+    const HWND settings = settingsWindow_->Window();
+    if (!settings || !IsWindow(settings))
+        return false;
+
+    HWND root = GetAncestor(window, GA_ROOT);
+    if (!root)
+        root = window;
+    HWND rootOwner = GetAncestor(window, GA_ROOTOWNER);
+    if (!rootOwner)
+        rootOwner = root;
+    return root == settings || rootOwner == settings;
+}
+
 void DesktopApp::TryShowPendingSettingsWindow()
 {
     if (!settingsWindowOpenRequest_.Pending() ||
@@ -1396,6 +1413,7 @@ void DesktopApp::TryShowPendingSettingsWindow()
         settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
             KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
+        RefreshDockRunningWindows();
         WriteDiagnosticLogEntry(L"SettingsWindow shown");
         return;
     }

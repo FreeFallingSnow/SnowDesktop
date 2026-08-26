@@ -436,6 +436,20 @@ constexpr bool IsTaskWindowPresentationEligible(
 }
 
 /**
+ * @brief Decide whether a task-style window belongs in Dock discovery.
+ *
+ * SnowDesktop normally excludes its own process because desktop, Dock, and
+ * popup hosts are implementation surfaces. The settings host is deliberately
+ * an application-level window and must follow ordinary task-window behavior.
+ */
+constexpr bool IsTaskWindowProcessEligible(
+    bool ownedByCurrentProcess,
+    bool applicationLevelWindow) noexcept
+{
+    return !ownedByCurrentProcess || applicationLevelWindow;
+}
+
+/**
  * @brief 判断恢复窗口时是否播放图标到窗口的过渡动画。
  *
  * Dock 图标点击与预览缩略图点击共用同一条窗口命令路径：窗口最小化

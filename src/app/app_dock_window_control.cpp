@@ -67,13 +67,14 @@ DesktopApp::CollectDockWindowPreviewItems(
     PruneDockPendingCloseWindows();
     struct PreviewEnumerationContext
     {
+        DesktopApp* owner = nullptr;
         const DockAppIdentity* identity = nullptr;
         std::vector<DockWindowPreviewItem>* items = nullptr;
         const std::unordered_map<HWND, ULONGLONG>*
             pendingCloseWindows = nullptr;
         bool includeCloaked = false;
     } context{
-        &identity, nullptr, &dockPendingCloseWindows_,
+        this, &identity, nullptr, &dockPendingCloseWindows_,
         includeCloaked
     };
 
@@ -90,7 +91,16 @@ DesktopApp::CollectDockWindowPreviewItems(
 
         DWORD processId = 0;
         GetWindowThreadProcessId(window, &processId);
-        if (!processId || processId == GetCurrentProcessId())
+        const bool ownedByCurrentProcess =
+            processId == GetCurrentProcessId();
+        const bool applicationLevelWindow =
+            context->owner &&
+            context->owner->IsSettingsApplicationWindow(window);
+        if (!processId ||
+            !snowdesktop::dock_window_rules::
+                IsTaskWindowProcessEligible(
+                    ownedByCurrentProcess,
+                    applicationLevelWindow))
             return TRUE;
 
         DWORD cloaked = 0;

@@ -162,24 +162,27 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     if (!targetWindow && !pointOnHostedPopup)
         return;
     const DWORD currentProcessId = GetCurrentProcessId();
-    const auto belongsToCurrentProcess =
-        [currentProcessId](HWND window) {
+    const auto belongsToInternalSurface =
+        [this, currentProcessId](HWND window) {
             DWORD processId = 0;
             if (window)
                 GetWindowThreadProcessId(window, &processId);
-            return processId != 0 &&
-                processId == currentProcessId;
+            return snowdesktop::floating_popup_rules::
+                IsInternalPointerTarget(
+                    processId != 0 &&
+                        processId == currentProcessId,
+                    IsSettingsApplicationWindow(window));
         };
     // The desktop renderer is a child of Explorer's WorkerW. Test the direct
     // hit first so an in-process desktop/Dock click does not inherit the
     // external process identity of its shell-owned root.
-    bool targetBelongsToCurrentProcess =
+    bool targetBelongsToInternalSurface =
         pointOnHostedPopup ||
-        belongsToCurrentProcess(targetWindow);
-    if (!targetBelongsToCurrentProcess)
+        belongsToInternalSurface(targetWindow);
+    if (!targetBelongsToInternalSurface)
     {
-        targetBelongsToCurrentProcess =
-            belongsToCurrentProcess(
+        targetBelongsToInternalSurface =
+            belongsToInternalSurface(
                 GetAncestor(targetWindow, GA_ROOTOWNER));
     }
     const bool dragActive =
@@ -189,14 +192,14 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
         snowdesktop::floating_popup_rules::
             ShouldDismissForExternalPointerDown(
                 IsCollectionPopupHostedByFloatingWindow(),
-                targetBelongsToCurrentProcess,
+                targetBelongsToInternalSurface,
                 dragActive);
     const bool dismissLuaPanel =
         snowdesktop::floating_popup_rules::
             ShouldDismissLuaPanelForExternalPointerDown(
                 IsLuaPanelHostedByFloatingWindow(),
                 luaWidgetPanelRequest_.dismissOnOutside,
-                targetBelongsToCurrentProcess,
+                targetBelongsToInternalSurface,
                 dragActive);
     if (dismissCollection || dismissLuaPanel)
     {
@@ -207,7 +210,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
             generation,
             floatingPopupMouseHookGeneration_,
             targetWindow,
-            targetBelongsToCurrentProcess ? 1 : 0,
+            targetBelongsToInternalSurface ? 1 : 0,
             IsCollectionPopupHostedByFloatingWindow() ? 1 : 0,
             IsLuaPanelHostedByFloatingWindow() ? 1 : 0,
             dismissCollection ? 1 : 0,

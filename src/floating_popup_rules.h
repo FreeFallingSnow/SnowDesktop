@@ -124,6 +124,19 @@ constexpr bool IsPointOnHostedPopupSurface(
             luaPanelBounds, point);
 }
 
+/**
+ * Application-level windows owned by the SnowDesktop process behave like
+ * external applications for desktop popup dismissal. Other same-process
+ * windows remain internal interaction surfaces.
+ */
+constexpr bool IsInternalPointerTarget(
+    bool targetBelongsToCurrentProcess,
+    bool applicationLevelWindow)
+{
+    return targetBelongsToCurrentProcess &&
+        !applicationLevelWindow;
+}
+
 constexpr bool ShouldDismissForExternalPointerDown(
     bool popupVisible,
     bool targetBelongsToCurrentProcess,

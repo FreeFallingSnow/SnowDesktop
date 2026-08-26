@@ -2026,6 +2026,10 @@ int main(int argc, char** argv)
             !floatingPopup::IsPointOnHostedPopupSurface(
                 POINT{ 0, 0 }, RECT{}, RECT{}),
         "points outside every non-empty hosted region must remain external popup input");
+    Check(floatingPopup::IsInternalPointerTarget(true, false) &&
+            !floatingPopup::IsInternalPointerTarget(false, false) &&
+            !floatingPopup::IsInternalPointerTarget(true, true),
+        "an application-level settings window must remain external to desktop popup ownership even in the current process");
     Check(floatingPopup::ShouldDismissForExternalPointerDown(
             true, false, false),
         "an external application press must dismiss a visible shared popup");
@@ -2367,6 +2371,10 @@ int main(int argc, char** argv)
     Check(!rules::IsTaskWindowPresentationEligible(false, false) &&
             !rules::IsTaskWindowPresentationEligible(false, true),
         "hidden windows must stay out of the Dock even when still iconic");
+    Check(rules::IsTaskWindowProcessEligible(false, false) &&
+            rules::IsTaskWindowProcessEligible(true, true) &&
+            !rules::IsTaskWindowProcessEligible(true, false),
+        "Dock discovery must include the application-level settings window while excluding other current-process surfaces");
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");

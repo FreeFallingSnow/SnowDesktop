@@ -71,6 +71,8 @@ public:
     [[nodiscard]] bool PreTranslateMessage(MSG* message) noexcept;
     [[nodiscard]] bool ProcessTabNavigation(MSG* message) noexcept;
     [[nodiscard]] bool IsVisible() const noexcept;
+    /** Return the application-level settings HWND when its lazy host exists. */
+    [[nodiscard]] HWND Window() const noexcept;
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
 

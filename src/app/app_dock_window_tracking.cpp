@@ -432,6 +432,7 @@ void DesktopApp::RefreshDockRunningWindows(
     const HWND scoringForeground = preferredRoot ? preferredRoot : actualForeground;
     struct EnumContext
     {
+        DesktopApp* owner;
         std::vector<DockWindowTarget>* targets;
         HWND scoringForeground;
         HWND actualForeground;
@@ -441,7 +442,7 @@ void DesktopApp::RefreshDockRunningWindows(
         const std::unordered_map<HWND, ULONGLONG>*
             pendingCloseWindows;
         std::unordered_map<DWORD, std::wstring> processPaths;
-    } context{ &targets, scoringForeground, actualForeground, &fixedIdentities,
+    } context{ this, &targets, scoringForeground, actualForeground, &fixedIdentities,
         &runningCandidates, &runningCandidateIndices,
         &dockPendingCloseWindows_ };
 
@@ -456,7 +457,19 @@ void DesktopApp::RefreshDockRunningWindows(
 
             DWORD processId = 0;
             GetWindowThreadProcessId(window, &processId);
-            if (!processId || processId == GetCurrentProcessId()) return TRUE;
+            const bool ownedByCurrentProcess =
+                processId == GetCurrentProcessId();
+            const bool applicationLevelWindow =
+                context->owner &&
+                context->owner->IsSettingsApplicationWindow(window);
+            if (!processId ||
+                !snowdesktop::dock_window_rules::
+                    IsTaskWindowProcessEligible(
+                        ownedByCurrentProcess,
+                        applicationLevelWindow))
+            {
+                return TRUE;
+            }
             auto [pathIt, inserted] = context->processPaths.try_emplace(processId);
             if (inserted)
                 pathIt->second = QueryDockWindowExecutablePath(window);

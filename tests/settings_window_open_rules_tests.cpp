@@ -75,11 +75,25 @@ int main(int argc, char** argv)
         const std::string appRun = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_run.cpp");
+        const std::string appSettings = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_settings_apply.cpp");
+        const std::string dockTracking = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_dock_window_tracking.cpp");
+        const std::string dockControl = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_dock_window_control.cpp");
+        const std::string floatingPopup = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_floating_popup_window.cpp");
         const std::string tray = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_tray.cpp");
         Check(!source.empty(), "settings window source is readable");
-        Check(!header.empty() && !host.empty() && !appRun.empty(),
+        Check(!header.empty() && !host.empty() && !appRun.empty() &&
+                !appSettings.empty() && !dockTracking.empty() &&
+                !dockControl.empty() && !floatingPopup.empty(),
             "WinUI settings facade, host, and message pump are readable");
         const std::size_t oleInitialize = appRun.find(
             "const HRESULT oleInitializeResult = OleInitialize(nullptr);");
@@ -130,6 +144,47 @@ int main(int argc, char** argv)
                 source.find("SettingsRoute::ForWidget(widgetId)") !=
                     std::string::npos,
             "compatibility entry points canonicalize legacy routes and use current typed destinations");
+        Check(header.find("HWND Window() const noexcept") !=
+                    std::string::npos &&
+                source.find("HWND SettingsWindow::Window() const noexcept") !=
+                    std::string::npos &&
+                source.find("impl_->host->Window()") !=
+                    std::string::npos,
+            "the settings facade exposes its lazy application-level HWND for window classification");
+        Check(appSettings.find(
+                  "bool DesktopApp::IsSettingsApplicationWindow(") !=
+                    std::string::npos &&
+                appSettings.find("settingsWindow_->Window()") !=
+                    std::string::npos &&
+                appSettings.find("GetAncestor(window, GA_ROOTOWNER)") !=
+                    std::string::npos &&
+                dockTracking.find("IsSettingsApplicationWindow(window)") !=
+                    std::string::npos &&
+                dockTracking.find("IsTaskWindowProcessEligible(") !=
+                    std::string::npos &&
+                dockControl.find("IsSettingsApplicationWindow(window)") !=
+                    std::string::npos &&
+                dockControl.find("IsTaskWindowProcessEligible(") !=
+                    std::string::npos &&
+                floatingPopup.find("IsSettingsApplicationWindow(window)") !=
+                    std::string::npos &&
+                floatingPopup.find("IsInternalPointerTarget(") !=
+                    std::string::npos,
+            "Dock discovery, previews, and outside-click dismissal share the settings application-window identity");
+        const std::size_t markSettingsShown =
+            appSettings.find("settingsWindowOpenRequest_.MarkShown();");
+        const std::size_t refreshDockAfterShow =
+            appSettings.find("RefreshDockRunningWindows();",
+                markSettingsShown);
+        const std::size_t logSettingsShown =
+            appSettings.find("SettingsWindow shown",
+                refreshDockAfterShow);
+        Check(markSettingsShown != std::string::npos &&
+                refreshDockAfterShow != std::string::npos &&
+                logSettingsShown != std::string::npos &&
+                markSettingsShown < refreshDockAfterShow &&
+                refreshDockAfterShow < logSettingsShown,
+            "showing settings refreshes the Dock immediately after the window becomes visible");
         Check(source.find("bool EnsureInitialized()") !=
                     std::string::npos &&
                 source.find("auto candidate =") != std::string::npos &&
