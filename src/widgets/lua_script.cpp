@@ -621,19 +621,33 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (showCompactMoveHandle)
     {
         RECT move = app_->GetStandaloneWidgetCompactMoveHandleRect(*data_);
-        const int gripWidth = std::max(2, Cu(GetBarHeight() * 0.50f));
-        const int gripHeight = std::max(2, Cu(GetBarHeight() * 0.167f));
+        const int dotSize = std::max(2, Cu(GetBarHeight() * 0.125f));
+        const int dotGap = std::max(1, Cu(GetBarHeight() * 0.10f));
+        const int gripWidth = dotSize * 3 + dotGap * 2;
+        const int gripHeight = dotSize * 2 + dotGap;
         const int cx = move.left + (move.right - move.left) / 2;
         const int cy = move.top + (move.bottom - move.top) / 2;
-        const RECT gripRect = {
-            cx - gripWidth / 2,
-            cy - gripHeight / 2,
-            cx + (gripWidth + 1) / 2,
-            cy + (gripHeight + 1) / 2
-        };
-        app_->DrawD2DRoundedRectangle(
-            context, gripRect, static_cast<float>(gripHeight) / 2.0f,
-            handleFill, handleStroke);
+        const int gripLeft = cx - gripWidth / 2;
+        const int gripTop = cy - gripHeight / 2;
+        const D2D1_COLOR_F gripFill = selected
+            ? handleFill : handleStroke;
+        const D2D1_COLOR_F noStroke = D2D1::ColorF(
+            0.0f, 0.0f, 0.0f, 0.0f);
+        for (int row = 0; row < 2; ++row)
+        {
+            for (int column = 0; column < 3; ++column)
+            {
+                const int left = gripLeft + column * (dotSize + dotGap);
+                const int top = gripTop + row * (dotSize + dotGap);
+                const RECT dotRect = {
+                    left, top, left + dotSize, top + dotSize
+                };
+                app_->DrawD2DRoundedRectangle(
+                    context, dotRect,
+                    static_cast<float>(dotSize) / 2.0f,
+                    gripFill, noStroke);
+            }
+        }
     }
 
     if (!showResizeHandle) return;
