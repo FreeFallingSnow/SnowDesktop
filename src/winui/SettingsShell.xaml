@@ -25,15 +25,6 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="8" />
         </Style>
-        <Style x:Key="SettingsShellTitleBarButtonStyle" TargetType="Button">
-            <Setter Property="Width" Value="44" />
-            <Setter Property="Height" Value="32" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="CornerRadius" Value="0" />
-            <Setter Property="UseSystemFocusVisuals" Value="True" />
-        </Style>
         <DataTemplate x:Key="SettingsShellFluentGlyphTemplate">
             <Border Width="38" Height="38">
                 <TextBlock Text="{Binding}"
@@ -58,6 +49,9 @@
           Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
           KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator x:Name="BackKeyboardAccelerator"
+                                 Key="Left"
+                                 Modifiers="Menu" />
             <KeyboardAccelerator x:Name="SearchKeyboardAccelerator"
                                  Key="F"
                                  Modifiers="Control" />
@@ -73,7 +67,6 @@
                         <Setter Target="PageTitle.FontSize" Value="28" />
                         <Setter Target="PageHeaderIconHost.Width" Value="40" />
                         <Setter Target="PageHeaderIconHost.Height" Value="40" />
-                        <Setter Target="TitleBarBackButton.Width" Value="48" />
                     </VisualState.Setters>
                 </VisualState>
                 <VisualState x:Name="WideContent">
@@ -85,7 +78,6 @@
                         <Setter Target="PageTitle.FontSize" Value="32" />
                         <Setter Target="PageHeaderIconHost.Width" Value="44" />
                         <Setter Target="PageHeaderIconHost.Height" Value="44" />
-                        <Setter Target="TitleBarBackButton.Width" Value="44" />
                     </VisualState.Setters>
                 </VisualState>
             </VisualStateGroup>
@@ -101,29 +93,32 @@
               Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
             </Grid.ColumnDefinitions>
-            <Button x:Name="TitleBarBackButton"
-                    Grid.Column="1"
-                    Style="{StaticResource SettingsShellTitleBarButtonStyle}">
-                <Button.KeyboardAccelerators>
-                    <KeyboardAccelerator x:Name="BackKeyboardAccelerator"
-                                         Key="Left"
-                                         Modifiers="Menu" />
-                </Button.KeyboardAccelerators>
-                <FontIcon Glyph="&#xE72B;" FontSize="12" />
-            </Button>
-            <Button x:Name="TitleBarPaneToggleButton"
-                    Grid.Column="2"
-                    Style="{StaticResource SettingsShellTitleBarButtonStyle}">
-                <FontIcon Glyph="&#xE700;" FontSize="14" />
-            </Button>
             <Border x:Name="TitleBarDragRegion"
-                    Grid.Column="3"
-                    Background="Transparent" />
+                    Grid.Column="1"
+                    Background="Transparent">
+                <Grid Margin="12,0"
+                      ColumnSpacing="8"
+                      IsHitTestVisible="False">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Image x:Name="IntegratedTitleBarIcon"
+                           Width="16"
+                           Height="16"
+                           VerticalAlignment="Center"
+                           Source="ms-appx:///Assets/App/SnowDesktop.png"
+                           Stretch="Uniform" />
+                    <TextBlock x:Name="IntegratedTitleBarText"
+                               Grid.Column="1"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </Border>
         </Grid>
 
         <NavigationView
@@ -137,7 +132,7 @@
             CompactModeThresholdWidth="720"
             ExpandedModeThresholdWidth="1008"
             OpenPaneLength="260"
-            IsPaneToggleButtonVisible="False">
+            IsPaneToggleButtonVisible="True">
             <NavigationView.AutoSuggestBox>
                 <AutoSuggestBox x:Name="SettingsSearchBox"
                                 HorizontalAlignment="Stretch"

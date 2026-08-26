@@ -117,6 +117,7 @@ struct LocalizedFallback
 };
 
 constexpr std::array kFallbackStrings{
+    LocalizedFallback{"app.settings.title", L"SnowDesktop Settings"},
     LocalizedFallback{"settings.shell.title", L"Settings"},
     LocalizedFallback{"settings.shell.back", L"Back"},
     LocalizedFallback{"settings.shell.toggleNavigation", L"Toggle navigation pane"},
@@ -452,21 +453,12 @@ void SettingsShell::RefreshLocalizedText()
         Localize("settings.search.placeholder"));
     CancelOperationButton().Content(
         winrt::box_value(Localize("settings.progress.cancel")));
+    IntegratedTitleBarText().Text(Localize("app.settings.title"));
 
     muxa::AutomationProperties::SetName(
         NavigationRoot(), Localize("settings.shell.title"));
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
-    muxa::AutomationProperties::SetName(
-        TitleBarBackButton(), Localize("settings.shell.back"));
-    muxa::AutomationProperties::SetName(
-        TitleBarPaneToggleButton(), Localize("settings.shell.toggleNavigation"));
-    muxc::ToolTipService::SetToolTip(
-        TitleBarBackButton(),
-        winrt::box_value(Localize("settings.shell.back")));
-    muxc::ToolTipService::SetToolTip(
-        TitleBarPaneToggleButton(),
-        winrt::box_value(Localize("settings.shell.toggleNavigation")));
 
     ApplyNavigationIcons();
 
@@ -1302,17 +1294,6 @@ void SettingsShell::HookEvents()
                    const mux::SizeChangedEventArgs&) {
                 NotifyIntegratedTitleBarLayoutChanged();
             });
-    titleBarBackToken_ = TitleBarBackButton().Click(
-        [this](const winrt::Windows::Foundation::IInspectable&,
-               const mux::RoutedEventArgs&) {
-            NavigateBack();
-        });
-    titleBarPaneToggleToken_ = TitleBarPaneToggleButton().Click(
-        [this](const winrt::Windows::Foundation::IInspectable&,
-               const mux::RoutedEventArgs&) {
-            if (!closed_)
-                NavigationRoot().IsPaneOpen(!NavigationRoot().IsPaneOpen());
-        });
     backKeyboardAcceleratorToken_ = BackKeyboardAccelerator().Invoked(
         [this](const muxi::KeyboardAccelerator&,
                const muxi::KeyboardAcceleratorInvokedEventArgs& args) {
@@ -1430,10 +1411,6 @@ void SettingsShell::UnhookEvents() noexcept
             IntegratedTitleBarHost().SizeChanged(
                 integratedTitleBarSizeChangedToken_);
         }
-        if (titleBarBackToken_.value)
-            TitleBarBackButton().Click(titleBarBackToken_);
-        if (titleBarPaneToggleToken_.value)
-            TitleBarPaneToggleButton().Click(titleBarPaneToggleToken_);
         if (backKeyboardAcceleratorToken_.value)
             BackKeyboardAccelerator().Invoked(backKeyboardAcceleratorToken_);
         if (searchKeyboardAcceleratorToken_.value)
@@ -1457,8 +1434,6 @@ void SettingsShell::UnhookEvents() noexcept
     actualThemeChangedToken_ = {};
     integratedTitleBarLoadedToken_ = {};
     integratedTitleBarSizeChangedToken_ = {};
-    titleBarBackToken_ = {};
-    titleBarPaneToggleToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
     selectionChangedToken_ = {};
@@ -1510,7 +1485,6 @@ void SettingsShell::RenderNavigationSelection()
     }
     NavigationRoot().SelectedItem(NavigationItemForPage(selectedPage));
     const bool canGoBack = navigation_.CanGoBack();
-    TitleBarBackButton().IsEnabled(canGoBack);
     BackKeyboardAccelerator().IsEnabled(canGoBack);
     updatingNavigation_ = false;
 }

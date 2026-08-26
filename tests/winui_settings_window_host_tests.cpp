@@ -192,11 +192,13 @@ void TestHostContract(const std::filesystem::path& repository)
         "AppWindow uses standard caption height and transparent button backgrounds over one surface while Windows retains the three system buttons, Snap, and accessibility");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") ==
+            shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarBackButton\"") !=
+            shellMarkup.find("x:Name=\"IntegratedTitleBarIcon\"") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarPaneToggleButton\"") !=
+            shellMarkup.find("x:Name=\"TitleBarBackButton\"") ==
+                std::string::npos &&
+            shellMarkup.find("x:Name=\"TitleBarPaneToggleButton\"") ==
                 std::string::npos &&
             shellMarkup.find("x:Name=\"TitleBarDragRegion\"") !=
                 std::string::npos &&
@@ -210,28 +212,36 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("IsBackButtonVisible=\"Collapsed\"") !=
                 std::string::npos &&
-            shellMarkup.find("IsPaneToggleButtonVisible=\"False\"") !=
+            shellMarkup.find("IsPaneToggleButtonVisible=\"True\"") !=
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarInsets") !=
                 std::string::npos &&
             shellHeader.find("IntegratedTitleBarDragRectangles") !=
                 std::string::npos &&
-            shellHeader.find("titleBarBackToken_") !=
+            shellHeader.find("titleBarBackToken_") ==
                 std::string::npos &&
-            shellHeader.find("titleBarPaneToggleToken_") !=
+            shellHeader.find("titleBarPaneToggleToken_") ==
                 std::string::npos &&
-            shell.find("TitleBarBackButton().Click") != std::string::npos &&
-            shell.find("TitleBarPaneToggleButton().Click") !=
+            shell.find("TitleBarBackButton().Click") == std::string::npos &&
+            shell.find("TitleBarPaneToggleButton().Click") ==
+                std::string::npos &&
+            shell.find(
+              "IntegratedTitleBarText().Text(Localize(\"app.settings.title\"))") !=
                 std::string::npos &&
             shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
-        "the standard XAML caption owns back and pane navigation while NavigationView supplies its native search placement without duplicate controls");
+        "the standard XAML caption shows the localized app identity while NavigationView owns pane expansion and native search placement without duplicate controls");
     Check(integratedTitleBarMarkup.find("Height=\"32\"") !=
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("Height=\"48\"") ==
                 std::string_view::npos &&
-            Count(integratedTitleBarMarkup, "<Button x:Name=") == 2 &&
-            integratedTitleBarMarkup.find("<TextBlock") ==
+            Count(integratedTitleBarMarkup, "<Button x:Name=") == 0 &&
+            integratedTitleBarMarkup.find("<TextBlock") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find("<Image") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find(
+              "Source=\"ms-appx:///Assets/App/SnowDesktop.png\"") !=
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("<AutoSuggestBox") ==
                 std::string_view::npos &&
@@ -244,7 +254,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") ==
                 std::string_view::npos,
-        "the standard-height caption keeps only navigation controls and a dedicated drag region while NavigationView owns the stretch search surface and built-in clear affordance");
+        "the standard-height caption keeps only the app icon and localized title inside its drag region while NavigationView owns navigation and search affordances");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&
@@ -283,17 +293,13 @@ void TestHostContract(const std::filesystem::path& repository)
             shellMarkup.find(
               "Target=\"PageSurface.Margin\" Value=\"40,16,40,48\"") !=
                 std::string::npos &&
-            shellMarkup.find(
-              "Target=\"TitleBarBackButton.Width\" Value=\"48\"") !=
-                std::string::npos &&
-            shellMarkup.find(
-              "Target=\"TitleBarBackButton.Width\" Value=\"44\"") !=
+            shellMarkup.find("Target=\"TitleBarBackButton.Width\"") ==
                 std::string::npos &&
             shellMarkup.find("PaneDisplayMode=\"Left\"") ==
                 std::string::npos &&
             shellMarkup.find("IsPaneOpen=\"True\"") ==
                 std::string::npos,
-        "the minimum host size is retained while NavigationView, page margins, and the title-bar back button adapt between compact and wide window states");
+        "the minimum host size is retained while NavigationView and page margins adapt between compact and wide window states");
     Check(pageScrollerMarkup.find(
               "MaxWidth=\"1200\"") !=
                 std::string_view::npos &&
@@ -363,8 +369,10 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarWindowActive") ==
                 std::string::npos &&
-            shell.find("IntegratedTitleBarText") == std::string::npos,
-        "Windows owns caption activation visuals and the drag-only XAML caption contains no duplicate app identity");
+            shell.find(
+              "IntegratedTitleBarText().Text(Localize(\"app.settings.title\"))") !=
+                std::string::npos,
+        "Windows owns caption activation visuals while the drag-only XAML caption presents the localized app identity without custom activation state");
     Check(source.find("ApplySettingsWindowChrome(window, darkTheme)") !=
                 std::string::npos &&
             source.find("DWMWA_USE_IMMERSIVE_DARK_MODE") !=

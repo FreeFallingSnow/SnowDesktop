@@ -567,13 +567,13 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shellXaml.find("ExpandedModeThresholdWidth=\"1008\"") !=
                 std::string::npos &&
-            shellXaml.find("IsPaneToggleButtonVisible=\"False\"") !=
+            shellXaml.find("IsPaneToggleButtonVisible=\"True\"") !=
                 std::string::npos &&
             shellXaml.find("IsBackButtonVisible=\"Collapsed\"") !=
                 std::string::npos &&
-            shellXaml.find("x:Name=\"TitleBarBackButton\"") !=
+            shellXaml.find("x:Name=\"TitleBarBackButton\"") ==
                 std::string::npos &&
-            shellXaml.find("x:Name=\"TitleBarPaneToggleButton\"") !=
+            shellXaml.find("x:Name=\"TitleBarPaneToggleButton\"") ==
                 std::string::npos &&
             shellSearchAccelerator != std::string::npos &&
             shellSearchAccelerator < paneSearchStart &&
@@ -595,11 +595,11 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shell.find("DataHeader().Content(") != std::string::npos,
         "the adaptive NavigationView exposes a shallow Appearance tree plus Desktop and shell/data groups in task order with About and conditional tools in the footer");
-    Check(shellHeader.find("titleBarBackToken_") != std::string::npos &&
-            shellHeader.find("titleBarPaneToggleToken_") !=
+    Check(shellHeader.find("titleBarBackToken_") == std::string::npos &&
+            shellHeader.find("titleBarPaneToggleToken_") ==
                 std::string::npos &&
-            shell.find("TitleBarBackButton().Click") != std::string::npos &&
-            shell.find("TitleBarPaneToggleButton().Click") !=
+            shell.find("TitleBarBackButton().Click") == std::string::npos &&
+            shell.find("TitleBarPaneToggleButton().Click") ==
                 std::string::npos &&
             shellXaml.find("x:Name=\"BackKeyboardAccelerator\"") !=
                 std::string::npos &&
@@ -616,13 +616,13 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             shell.find("navigation_.GoBack()") != std::string::npos &&
             shell.find("const bool canGoBack = navigation_.CanGoBack()") !=
                 std::string::npos &&
-            shell.find("TitleBarBackButton().IsEnabled(canGoBack)") !=
+            shell.find("TitleBarBackButton().IsEnabled(canGoBack)") ==
                 std::string::npos &&
             shell.find("BackKeyboardAccelerator().IsEnabled(canGoBack)") !=
                 std::string::npos &&
-            shell.find("TitleBarBackButton().Click(titleBarBackToken_)") !=
+            shell.find("BackKeyboardAccelerator().Invoked(") !=
                 std::string::npos,
-        "title-bar navigation follows controller-owned history, updates enabled state, toggles the NavigationView pane, supports Alt+Left and Ctrl+F without a shell-wide accelerator tooltip, and revokes its event tokens");
+        "the native NavigationView owns pane expansion while controller-owned history remains available through Alt+Left and Ctrl+F still opens search without shell-wide accelerator tooltips");
     const auto numberDismissHandlerStart = shell.find(
         "ShellRoot().AddHandler(");
     const auto numberDismissHandlerEnd = shell.find(

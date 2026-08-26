@@ -85,7 +85,10 @@
     <ItemGroup>
       <_SnowDesktopSettingsIcon Include="$(SnowDesktopSourceDirectory)\assets\settings\icons\*.svg" />
     </ItemGroup>
-    <MakeDir Directories="$(TargetDir)Assets\Fonts;$(TargetDir)Assets\Settings\Icons" />
+    <MakeDir Directories="$(TargetDir)Assets\App;$(TargetDir)Assets\Fonts;$(TargetDir)Assets\Settings\Icons" />
+    <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\icon\icon_small.png"
+          DestinationFiles="$(TargetDir)Assets\App\SnowDesktop.png"
+          SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\FluentSystemIcons-Regular.ttf"
           DestinationFiles="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf"
           SkipUnchangedFiles="true" />
@@ -125,6 +128,11 @@
         <DeploymentPath>SnowDesktop.winmd</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\App\SnowDesktop.png">
+        <DeploymentPath>Assets\App\SnowDesktop.png</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Asset</DeploymentKind>
       </_SnowDesktopDeploymentFile>
       <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf">
         <DeploymentPath>Assets\Fonts\FluentSystemIcons-Regular.ttf</DeploymentPath>
