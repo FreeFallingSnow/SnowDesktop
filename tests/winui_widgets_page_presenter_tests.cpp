@@ -220,11 +220,20 @@ void TestWidgetsPagePresenterContract(
             source.find("developmentFilterButton.Visibility") !=
                 std::string::npos &&
             source.find("PackageFilter::BuiltIn") == std::string::npos &&
+            controlsRegion.find(
+                "managementRow.Initialize(managementActions, 0.0)") !=
+                std::string::npos &&
+            controlsRegion.find("searchBox.MaxWidth(") ==
+                std::string::npos &&
+            controlsRegion.find(
+                "filterActions.HorizontalAlignment("
+                "mux::HorizontalAlignment::Left)") !=
+                std::string::npos &&
             source.find("managementRow.SetControlAlignment(") !=
                 std::string::npos &&
             source.find("primaryActionsRow.SetControlAlignment(") !=
                 std::string::npos,
-        "legacy My Components toolbar, filter tags, included group and single-line right-aligned setting rows are retained");
+        "My Components actions use their measured width, search stretches, filter tags align left, and setting-row actions remain responsive");
     Check(packageRowStart != std::string::npos &&
             packageRowEnd != std::string::npos &&
             packageContentStretch != std::string::npos &&
@@ -278,6 +287,20 @@ void TestWidgetsPagePresenterContract(
             developmentOverrideRegion.find("row.IsExpanded(false)") !=
                 std::string::npos,
         "component package Expanders start collapsed and restore only expansion explicitly retained for the Presenter lifetime");
+    Check(source.find("void PopulatePackageTags(") != std::string::npos &&
+            packageRowRegion.find("PopulatePackageTags(tags, package)") !=
+                std::string::npos &&
+            packagePatchRegion.find(
+                "PopulatePackageTags(binding.tags, package)") !=
+                std::string::npos &&
+            source.find("IsInstalledPackage(package)") !=
+                std::string::npos &&
+            source.find("IsDevelopmentPackage(package)") !=
+                std::string::npos &&
+            installedRenderRegion.find(
+                "if (filter != PackageFilter::All)") !=
+                std::string::npos,
+        "each component card carries category tags whose shared predicates drive visible filtering, while included components stay in All");
     Check(source.find("struct PackageRowBinding") != std::string::npos &&
             source.find("CapturePackageExpansionState();") !=
                 std::string::npos &&

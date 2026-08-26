@@ -175,8 +175,11 @@ struct SettingRow
         labelColumn.Width(mux::GridLengthHelper::FromValueAndType(
             1.0, mux::GridUnitType::Star));
         muxc::ColumnDefinition controlColumn{};
-        controlColumn.Width(mux::GridLengthHelper::FromValueAndType(
-            controlWidth, mux::GridUnitType::Pixel));
+        const bool autoControlWidth = controlWidth <= 0.0;
+        controlColumn.Width(autoControlWidth
+                ? mux::GridLengthHelper::Auto()
+                : mux::GridLengthHelper::FromValueAndType(
+                      controlWidth, mux::GridUnitType::Pixel));
         root.ColumnDefinitions().Append(labelColumn);
         root.ColumnDefinitions().Append(controlColumn);
         muxc::RowDefinition labelRow{};
@@ -218,7 +221,8 @@ struct SettingRow
         const auto weakText = winrt::make_weak(text);
         const auto weakControlHost = winrt::make_weak(controlHost);
         root.SizeChanged(
-            [weakControlColumn, weakText, weakControlHost, controlWidth](
+            [weakControlColumn, weakText, weakControlHost, controlWidth,
+                autoControlWidth](
                 const auto& sender,
                 const mux::SizeChangedEventArgs& args) {
                 const auto grid = sender.template try_as<muxc::Grid>();
@@ -233,10 +237,13 @@ struct SettingRow
 
                 const bool stacked =
                     args.NewSize().Width < kSettingRowStackThreshold;
-                responsiveControlColumn.Width(
-                    mux::GridLengthHelper::FromValueAndType(
-                        stacked ? 0.0 : controlWidth,
-                        mux::GridUnitType::Pixel));
+                responsiveControlColumn.Width(stacked
+                        ? mux::GridLengthHelper::FromValueAndType(
+                              0.0, mux::GridUnitType::Pixel)
+                        : autoControlWidth
+                        ? mux::GridLengthHelper::Auto()
+                        : mux::GridLengthHelper::FromValueAndType(
+                              controlWidth, mux::GridUnitType::Pixel));
                 grid.ColumnSpacing(stacked ? 0.0 : 20.0);
                 grid.RowSpacing(stacked ? 10.0 : 0.0);
                 muxc::Grid::SetColumn(responsiveText, 0);
