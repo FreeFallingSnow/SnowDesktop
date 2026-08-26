@@ -44,6 +44,51 @@ using snowdesktop::SettingsSearchEntryKind;
         (state.dwFlags & HCF_HIGHCONTRASTON) != 0;
 }
 
+[[nodiscard]] mux::DependencyObject VisualParent(
+    const mux::DependencyObject& element) noexcept
+{
+    if (!element)
+        return nullptr;
+    try
+    {
+        return muxm::VisualTreeHelper::GetParent(element);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+
+[[nodiscard]] muxc::NumberBox FindNumberBoxAncestor(
+    const winrt::Windows::Foundation::IInspectable& element) noexcept
+{
+    auto current = element.try_as<mux::DependencyObject>();
+    while (current)
+    {
+        if (const auto number = current.try_as<muxc::NumberBox>())
+            return number;
+        current = VisualParent(current);
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool IsWithinNumberBox(
+    const winrt::Windows::Foundation::IInspectable& element,
+    const muxc::NumberBox& number) noexcept
+{
+    auto current = element.try_as<mux::DependencyObject>();
+    while (current)
+    {
+        if (const auto ancestor = current.try_as<muxc::NumberBox>();
+            ancestor && ancestor == number)
+        {
+            return true;
+        }
+        current = VisualParent(current);
+    }
+    return false;
+}
+
 [[nodiscard]] muxc::ImageIcon CreateColorNavigationIcon(
     std::wstring_view uri)
 {
@@ -1204,6 +1249,37 @@ void SettingsShell::ShowWidgetPermissionEditor(
 
 void SettingsShell::HookEvents()
 {
+    shellPointerPressedHandler_ = winrt::box_value(muxi::PointerEventHandler{
+        [this](const winrt::Windows::Foundation::IInspectable&,
+               const muxi::PointerRoutedEventArgs& args) {
+            if (closed_)
+                return;
+            const auto focused = muxi::FocusManager::GetFocusedElement(
+                ShellRoot().XamlRoot());
+            const auto focusedNumber = FindNumberBoxAncestor(focused);
+            if (!focusedNumber ||
+                IsWithinNumberBox(args.OriginalSource(), focusedNumber))
+            {
+                return;
+            }
+
+            auto current = args.OriginalSource().try_as<mux::DependencyObject>();
+            while (current)
+            {
+                if (const auto control = current.try_as<muxc::Control>();
+                    control && control.Focus(mux::FocusState::Pointer))
+                {
+                    return;
+                }
+                current = VisualParent(current);
+            }
+            (void)PageScrollViewer().Focus(mux::FocusState::Pointer);
+        }});
+    ShellRoot().AddHandler(
+        mux::UIElement::PointerPressedEvent(),
+        shellPointerPressedHandler_,
+        true);
+
     actualThemeChangedToken_ = ShellRoot().ActualThemeChanged(
         [this](const mux::FrameworkElement&,
                const winrt::Windows::Foundation::IInspectable&) {
@@ -1339,6 +1415,12 @@ void SettingsShell::UnhookEvents() noexcept
 {
     try
     {
+        if (shellPointerPressedHandler_)
+        {
+            ShellRoot().RemoveHandler(
+                mux::UIElement::PointerPressedEvent(),
+                shellPointerPressedHandler_);
+        }
         if (actualThemeChangedToken_.value)
             ShellRoot().ActualThemeChanged(actualThemeChangedToken_);
         if (integratedTitleBarLoadedToken_.value)
@@ -1385,6 +1467,7 @@ void SettingsShell::UnhookEvents() noexcept
     searchQuerySubmittedToken_ = {};
     searchSuggestionChosenToken_ = {};
     cancelOperationToken_ = {};
+    shellPointerPressedHandler_ = nullptr;
 }
 
 void SettingsShell::RenderRoute(

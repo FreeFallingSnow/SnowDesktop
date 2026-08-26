@@ -620,6 +620,33 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             shell.find("TitleBarBackButton().Click(titleBarBackToken_)") !=
                 std::string::npos,
         "title-bar navigation follows controller-owned history, updates enabled state, toggles the NavigationView pane, supports Alt+Left and Ctrl+F without a shell-wide accelerator tooltip, and revokes its event tokens");
+    const auto numberDismissHandlerStart = shell.find(
+        "ShellRoot().AddHandler(");
+    const auto numberDismissHandlerEnd = shell.find(
+        "true);", numberDismissHandlerStart);
+    const auto handledPointerRegistration = shell.find(
+        "shellPointerPressedHandler_", numberDismissHandlerStart);
+    Check(shellHeader.find("shellPointerPressedHandler_") !=
+                std::string::npos &&
+            shell.find("winrt::box_value(muxi::PointerEventHandler{") !=
+                std::string::npos &&
+            shell.find("FindNumberBoxAncestor(focused)") !=
+                std::string::npos &&
+            shell.find("IsWithinNumberBox(args.OriginalSource()") !=
+                std::string::npos &&
+            shell.find("FocusManager::GetFocusedElement(") !=
+                std::string::npos &&
+            shell.find("control.Focus(mux::FocusState::Pointer)") !=
+                std::string::npos &&
+            shell.find("PageScrollViewer().Focus(mux::FocusState::Pointer)") !=
+                std::string::npos &&
+            numberDismissHandlerStart != std::string::npos &&
+            shell.find("mux::UIElement::PointerPressedEvent()") !=
+                std::string::npos &&
+            handledPointerRegistration < numberDismissHandlerEnd &&
+            shell.find("ShellRoot().RemoveHandler(") !=
+                std::string::npos,
+        "pointer presses outside a focused NumberBox move pointer focus within the settings window so compact spin buttons dismiss, including handled child events, and the routed handler is removed on close");
 
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",

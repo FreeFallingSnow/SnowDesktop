@@ -317,6 +317,8 @@ private:
     winrt::event_token searchQuerySubmittedToken_{};
     winrt::event_token searchSuggestionChosenToken_{};
     winrt::event_token cancelOperationToken_{};
+    winrt::Windows::Foundation::IInspectable
+        shellPointerPressedHandler_{nullptr};
 };
 
 } // namespace winrt::SnowDesktop::implementation
