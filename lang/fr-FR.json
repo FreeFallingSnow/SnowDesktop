@@ -791,6 +791,7 @@
   "app.interact.hide_search_box": "Masquer le champ de recherche",
   "app.interact.open_folder": "Ouvrir le dossier",
   "app.interact.detailed_settings": "Paramètres des composants",
+  "app.interact.open_component_panel": "Ouvrir le panneau du composant",
   "app.interact.sort_date": "Date de modification",
   "app.interact.on": "Sur",
   "app.interact.off": "Hors",

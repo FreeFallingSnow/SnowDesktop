@@ -195,6 +195,10 @@ void TestLuaWidgetMenuScope()
     Check(
         contract::ResolveLuaWidgetMenuScope(true) == Scope::Element,
         "element actions must replace the widget menu at that target");
+    Check(
+        !contract::ShouldOfferComponentPanelShortcut(Scope::Widget) &&
+            contract::ShouldOfferComponentPanelShortcut(Scope::Element),
+        "only element menus expose the component-panel escape hatch");
     const std::vector<MenuItem> nestedComponentMenu = {
         MenuItem{ {}, false, false,
             { MenuItem{ "component-action", false, false, {} } } }

@@ -118,12 +118,19 @@ bool DesktopApp::ShowHostInputContextMenu(
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, flags(state.canSelectAll),
         kContextSelectAllCommand, _LW("app.menu.select_all"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING,
+        kContextWidgetOpenComponentPanel,
+        _LW("app.interact.open_component_panel"));
 
     SetMenuItemIcon(menu, kContextCutCommand, L"\uf0c4");
     SetMenuItemIcon(menu, kContextCopyCommand, L"\uf0c5");
     SetMenuItemIcon(menu, kContextPasteCommand, L"\uf0ea");
     SetMenuItemIcon(menu, kContextSelectAllCommand,
         snowdesktop::menu_fluent_glyphs::kSelectAll,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextWidgetOpenComponentPanel,
+        snowdesktop::menu_fluent_glyphs::kChevronRight,
         MenuIconFont::FluentRegular);
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);
@@ -136,6 +143,25 @@ bool DesktopApp::ShowHostInputContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
+
+    if (command == kContextWidgetOpenComponentPanel)
+    {
+        const size_t widgetIndex = FindWidgetIndexById(widgetId);
+        if (widgetIndex < widgets_.size())
+        {
+            ShowWidgetContextMenu(screenPoint, widgetIndex,
+                std::nullopt, std::nullopt, surface, true);
+        }
+        else
+        {
+            RestoreInteractionInputFocus();
+        }
+        interactionPinnedWidgetId_ = previousPinnedWidgetId;
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+
     RestoreInteractionInputFocus();
 
     using snowdesktop::widget_runtime::HostInputEditCommand;

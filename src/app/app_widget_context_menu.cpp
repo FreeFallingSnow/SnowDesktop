@@ -181,14 +181,36 @@ void DesktopApp::ShowLuaLogicalSlotItemContextMenu(
     AppendMenuW(menu, MF_STRING | (canRemove ? 0 : MF_GRAYED),
         kContextLuaLogicalSlotRemove,
         _LW("app.interact.logical_slot_remove"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING,
+        kContextWidgetOpenComponentPanel,
+        _LW("app.interact.open_component_panel"));
     SetMenuItemIcon(menu, kContextLuaLogicalSlotRemove,
         L"\uF34C", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextWidgetOpenComponentPanel,
+        snowdesktop::menu_fluent_glyphs::kChevronRight,
+        MenuIconFont::FluentRegular);
 
     SetForegroundWindow(hwnd_);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
+
+    if (command == kContextWidgetOpenComponentPanel)
+    {
+        const size_t widgetIndex = FindWidgetIndexById(widgetId);
+        if (widgetIndex < widgets_.size())
+        {
+            ShowWidgetContextMenu(screenPoint, widgetIndex,
+                std::nullopt, std::nullopt, "desktop", true);
+        }
+        else
+        {
+            RestoreInteractionInputFocus();
+        }
+        return;
+    }
 
     snowdesktop::widget_runtime::LogicalSlotChange change;
     std::string error;
@@ -227,7 +249,8 @@ void DesktopApp::ShowWidgetContextMenu(
     POINT screenPoint, size_t widgetIndex,
     std::optional<RECT> dockRenameAnchor,
     std::optional<POINT> luaLocalPoint,
-    std::string_view luaSurface)
+    std::string_view luaSurface,
+    bool forceComponentMenu)
 {
     if (widgetIndex >= widgets_.size()) return;
     PrepareMenuIconsForPoint(screenPoint);
@@ -329,6 +352,8 @@ void DesktopApp::ShowWidgetContextMenu(
             : _LW("app.interact.large_folder"));
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     std::vector<LuaWidgetMenuItem> luaMenuActions;
+    auto luaMenuScope = snowdesktop::right_click_contract::
+        LuaWidgetMenuScope::Widget;
     bool luaElementMenu = false;
     HMENU demoCategoryMenu = nullptr;
 
@@ -506,22 +531,25 @@ void DesktopApp::ShowWidgetContextMenu(
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
-            POINT clientPoint = screenPoint;
-            ScreenToClient(hwnd_, &clientPoint);
-            const RECT frame = GetStandaloneWidgetFrameRect(widget);
-            const POINT localPoint = luaLocalPoint.value_or(POINT{
-                clientPoint.x - frame.left,
-                clientPoint.y - frame.top });
-            luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
-                localPoint.x, localPoint.y, luaSurface);
-            const bool hasElementAction =
-                snowdesktop::right_click_contract::
-                    HasLuaElementMenuAction(luaMenuItems);
-            luaElementMenu =
-                snowdesktop::right_click_contract::
-                    ResolveLuaWidgetMenuScope(hasElementAction) ==
-                snowdesktop::right_click_contract::
-                    LuaWidgetMenuScope::Element;
+            if (!forceComponentMenu)
+            {
+                POINT clientPoint = screenPoint;
+                ScreenToClient(hwnd_, &clientPoint);
+                const RECT frame = GetStandaloneWidgetFrameRect(widget);
+                const POINT localPoint = luaLocalPoint.value_or(POINT{
+                    clientPoint.x - frame.left,
+                    clientPoint.y - frame.top });
+                luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
+                    localPoint.x, localPoint.y, luaSurface);
+                const bool hasElementAction =
+                    snowdesktop::right_click_contract::
+                        HasLuaElementMenuAction(luaMenuItems);
+                luaMenuScope = snowdesktop::right_click_contract::
+                    ResolveLuaWidgetMenuScope(hasElementAction);
+                luaElementMenu = luaMenuScope ==
+                    snowdesktop::right_click_contract::
+                        LuaWidgetMenuScope::Element;
+            }
             if (!luaElementMenu)
             {
                 AppendMenuW(menu, MF_STRING, kContextWidgetEdit,
@@ -593,6 +621,14 @@ void DesktopApp::ShowWidgetContextMenu(
                 }
             };
             appendLuaMenuItems(menu, luaMenuItems);
+            if (snowdesktop::right_click_contract::
+                    ShouldOfferComponentPanelShortcut(luaMenuScope))
+            {
+                AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                AppendMenuW(menu, MF_STRING,
+                    kContextWidgetOpenComponentPanel,
+                    _LW("app.interact.open_component_panel"));
+            }
         }
     }
 
@@ -728,6 +764,8 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions);
     setFluentIcon(menu, kContextWidgetEdit, L"\uF6A9");
+    setFluentIcon(menu, kContextWidgetOpenComponentPanel,
+        snowdesktop::menu_fluent_glyphs::kChevronRight);
     setFluentIcon(menu, kContextWidgetRename, L"\U000F0A39");
     setFluentIcon(menu, kContextWidgetDelete, L"\uF34C");
     SetMenuItemQuickAction(menu, kContextWidgetEdit);
@@ -817,6 +855,14 @@ void DesktopApp::ShowWidgetContextMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value());
     DestroyMenu(menu);
     ClearMenuIcons();
+
+    if (command == kContextWidgetOpenComponentPanel && luaElementMenu)
+    {
+        RestoreDesktopWindowLayer();
+        ShowWidgetContextMenu(screenPoint, widgetIndex,
+            dockRenameAnchor, std::nullopt, luaSurface, true);
+        return;
+    }
 
     if (command >= kContextLuaWidgetMenuFirst && command <= kContextLuaWidgetMenuLast)
     {

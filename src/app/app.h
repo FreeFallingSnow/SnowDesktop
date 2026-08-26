@@ -1680,7 +1680,8 @@ private:
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex,
         std::optional<RECT> dockRenameAnchor = std::nullopt,
         std::optional<POINT> luaLocalPoint = std::nullopt,
-        std::string_view luaSurface = "desktop");
+        std::string_view luaSurface = "desktop",
+        bool forceComponentMenu = false);
     bool ShowHostInputContextMenu(POINT screenPoint,
         const std::wstring& widgetId, POINT localPoint,
         std::string_view surface = "desktop");

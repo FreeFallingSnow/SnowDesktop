@@ -48,6 +48,12 @@ constexpr LuaWidgetMenuScope ResolveLuaWidgetMenuScope(
         : LuaWidgetMenuScope::Widget;
 }
 
+constexpr bool ShouldOfferComponentPanelShortcut(
+    LuaWidgetMenuScope scope) noexcept
+{
+    return scope == LuaWidgetMenuScope::Element;
+}
+
 template <typename MenuItems>
 constexpr bool HasLuaElementMenuAction(const MenuItems& items) noexcept
 {

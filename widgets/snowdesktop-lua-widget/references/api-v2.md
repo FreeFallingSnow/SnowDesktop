@@ -432,7 +432,8 @@ end
 hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 pointer enter/leave/
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
 `contextMenu` 动作默认 `scope="element"`：命中后菜单只显示该元素返回的操作，不混入组件
-设置、悬浮和移除等总菜单。覆盖整张组件表面的菜单应显式写
+设置、悬浮和移除等总菜单，但宿主会固定追加“打开组件面板”入口，确保组件总菜单始终可达。
+覆盖整张组件表面的菜单应显式写
 `{ id="component.menu", scope="component" }`，其返回项会附加到组件总菜单。
 
 事件名称和节点适用性由宿主公共契约固定，未知名称会拒绝整棵 scene，而不是被静默忽略：

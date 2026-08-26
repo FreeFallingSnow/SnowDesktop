@@ -791,6 +791,7 @@
   "app.interact.hide_search_box": "Suchfeld ausblenden",
   "app.interact.open_folder": "Ordner öffnen",
   "app.interact.detailed_settings": "Komponenteneinstellungen",
+  "app.interact.open_component_panel": "Komponentenbereich öffnen",
   "app.interact.sort_date": "Änderungsdatum",
   "app.interact.on": "Ein",
   "app.interact.off": "Aus",

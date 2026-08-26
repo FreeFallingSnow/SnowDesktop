@@ -791,6 +791,7 @@
   "app.interact.hide_search_box": "검색창 숨기기",
   "app.interact.open_folder": "폴더 열기",
   "app.interact.detailed_settings": "구성 요소 설정",
+  "app.interact.open_component_panel": "구성 요소 패널 열기",
   "app.interact.sort_date": "수정된 날짜",
   "app.interact.on": "켜짐",
   "app.interact.off": "끄기",

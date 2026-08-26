@@ -791,6 +791,7 @@
   "app.interact.hide_search_box": "Ocultar caixa de pesquisa",
   "app.interact.open_folder": "Abrir pasta",
   "app.interact.detailed_settings": "Configurações do widget",
+  "app.interact.open_component_panel": "Abrir painel do widget",
   "app.interact.sort_date": "Data de modificação",
   "app.interact.on": "Ativado",
   "app.interact.off": "Desativado",

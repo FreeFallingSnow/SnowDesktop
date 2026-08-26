@@ -791,6 +791,7 @@
   "app.interact.hide_search_box": "隱藏搜尋框",
   "app.interact.open_folder": "開啟資料夾",
   "app.interact.detailed_settings": "元件設定",
+  "app.interact.open_component_panel": "開啟元件面板",
   "app.interact.sort_date": "修改日期",
   "app.interact.on": "開",
   "app.interact.off": "關",

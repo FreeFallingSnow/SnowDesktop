@@ -791,6 +791,7 @@
     "app.interact.hide_search_box": "Hide Search Box",
     "app.interact.open_folder": "Open Folder",
     "app.interact.detailed_settings": "Component Settings",
+    "app.interact.open_component_panel": "Open Component Panel",
     "app.interact.sort_date": "Date Modified",
     "app.interact.on": "On",
     "app.interact.off": "Off",

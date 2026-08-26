@@ -791,6 +791,7 @@
   "app.interact.hide_search_box": "検索ボックスを非表示にする",
   "app.interact.open_folder": "フォルダーを開く",
   "app.interact.detailed_settings": "コンポーネントの設定",
+  "app.interact.open_component_panel": "コンポーネント パネルを開く",
   "app.interact.sort_date": "変更日",
   "app.interact.on": "オン",
   "app.interact.off": "オフ",
