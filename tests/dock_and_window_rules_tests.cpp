@@ -3964,6 +3964,48 @@ int main(int argc, char** argv)
                   "!quickNavigationAnimationCompositorDriven_") !=
                     std::string::npos,
             "acrylic quick navigation transforms must run on both compositors and use scheduler frames only as fallback");
+        const std::size_t quickNavigationRegionBegin =
+            quickNavigationWindowSource.find(
+                "void DesktopApp::UpdateQuickNavigationWindowRegion(");
+        const std::size_t quickNavigationRegionEnd =
+            quickNavigationWindowSource.find(
+                "void DesktopApp::InvalidateQuickNavigationWindow(",
+                quickNavigationRegionBegin);
+        const std::string quickNavigationRegionSource =
+            quickNavigationRegionBegin != std::string::npos &&
+                    quickNavigationRegionEnd != std::string::npos
+                ? quickNavigationWindowSource.substr(
+                    quickNavigationRegionBegin,
+                    quickNavigationRegionEnd -
+                        quickNavigationRegionBegin)
+                : std::string{};
+        const std::size_t backdropRegionBegin =
+            backdropCompositorSource.find(
+                "bool SyncPanelWindowRegion()");
+        const std::size_t backdropRegionEnd =
+            backdropCompositorSource.find(
+                "void SetAnimationPathRegionExpanded(",
+                backdropRegionBegin);
+        const std::string backdropRegionSource =
+            backdropRegionBegin != std::string::npos &&
+                    backdropRegionEnd != std::string::npos
+                ? backdropCompositorSource.substr(
+                    backdropRegionBegin,
+                    backdropRegionEnd - backdropRegionBegin)
+                : std::string{};
+        Check(!quickNavigationRegionSource.empty() &&
+                quickNavigationRegionSource.find(
+                    "CreateRectRgn(") != std::string::npos &&
+                quickNavigationRegionSource.find(
+                    "CreateRoundRectRgn(") == std::string::npos &&
+                quickNavigationWindowSource.find(
+                    "CreateRoundRectRgn(") == std::string::npos &&
+                !backdropRegionSource.empty() &&
+                backdropRegionSource.find(
+                    "CreateRectRgn(") != std::string::npos &&
+                backdropRegionSource.find(
+                    "CreateRoundRectRgn(") == std::string::npos,
+            "quick navigation content and backdrop HWND regions must preserve composition-antialiased rounded edges");
         Check(compositionAnimationSource.find(
                   "ScaleSegmentNormalizedStartSlope(") !=
                     std::string::npos &&

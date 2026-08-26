@@ -218,6 +218,9 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
         1, search.right - search.left - QuickNavScale(8));
     const int height = std::max<LONG>(
         1, search.bottom - search.top - QuickNavScale(10));
+    // The edit occupies only the solid center of the Direct2D search field.
+    // Leave its HWND rectangular: a Win32 rounded region is a binary mask and
+    // would add a non-antialiased edge inside the smooth Direct2D outline.
     SetWindowPos(
         quickNavigationSearchEdit_,
         quickNavigationTopmost_
@@ -227,15 +230,6 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
         search.top + virtualTop_ + QuickNavScale(6),
         width, height,
         SWP_NOACTIVATE);
-    if (HRGN editRegion = CreateRoundRectRgn(
-            0, 0, width + 1, height + 1,
-            QuickNavScale(8), QuickNavScale(8)))
-    {
-        if (!SetWindowRgn(
-                quickNavigationSearchEdit_,
-                editRegion, FALSE))
-            DeleteObject(editRegion);
-    }
 }
 
 std::wstring DesktopApp::GetQuickNavigationEffectiveSearchText() const
@@ -604,7 +598,7 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
 }
 
 /**
- * @brief 定位并显示快捷导航窗口（含圆角区域设置）
+ * @brief 定位并显示快捷导航窗口
  */
 void DesktopApp::PositionQuickNavigationWindow()
 {
@@ -680,12 +674,14 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
         quickNavigationRect_.right - quickNavigationHostRect_.left,
         quickNavigationRect_.bottom - quickNavigationHostRect_.top
     };
-    if (HRGN panelRegion = CreateRoundRectRgn(
+    // Keep the native region rectangular. The DComp surface owns the rounded
+    // alpha edge; applying a binary Win32 rounded region here clips away its
+    // partial-coverage pixels and leaves visibly jagged corners at rest.
+    if (HRGN panelRegion = CreateRectRgn(
             panelRegionRect.left,
             panelRegionRect.top,
             panelRegionRect.right + 1,
-            panelRegionRect.bottom + 1,
-            QuickNavScale(16), QuickNavScale(16)))
+            panelRegionRect.bottom + 1))
     {
         if (!SetWindowRgn(
                 quickNavigationHwnd_,

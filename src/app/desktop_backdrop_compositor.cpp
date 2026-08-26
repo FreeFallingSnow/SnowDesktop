@@ -373,18 +373,15 @@ struct DesktopBackdropCompositor::Impl
             return false;
         for (const PanelVisual& panel : panels)
         {
-            const int cornerDiameter = std::max(
-                2,
-                static_cast<int>(std::lround(
-                    static_cast<float>(
-                        panel.cornerRadius * 2))));
-            HRGN frameRegion = CreateRoundRectRgn(
+            // The CompositionRoundedRectangleGeometry below supplies the
+            // antialiased clip. Limit this helper HWND only to each panel's
+            // rectangular bounds so a binary GDI region cannot cut off the
+            // partially covered pixels along the rounded edge.
+            HRGN frameRegion = CreateRectRgn(
                 panel.frame.left,
                 panel.frame.top,
                 panel.frame.right + 1,
-                panel.frame.bottom + 1,
-                cornerDiameter,
-                cornerDiameter);
+                panel.frame.bottom + 1);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
