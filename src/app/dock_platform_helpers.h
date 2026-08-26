@@ -491,22 +491,17 @@ inline bool IsDockTaskWindow(HWND window)
     return true;
 }
 
-inline bool IsDockTaskbarDocumentProxyWindow(HWND window)
+inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)
 {
     if (!window || !IsWindow(window))
         return false;
-    wchar_t className[64]{};
-    GetClassNameW(
-        window, className,
-        static_cast<int>(std::size(className)));
-    const bool recognizedClass =
-        _wcsicmp(className, L"swThumbnailWnd") == 0;
     return snowdesktop::dock_window_rules::
-        IsTaskbarDocumentProxyEligible(
-            recognizedClass,
+        IsTaskbarDocumentProxyCandidateEligible(
             GetAncestor(window, GA_ROOT) == window,
             IsWindowVisible(window) != FALSE,
             GetWindow(window, GW_OWNER) != nullptr,
+            GetWindowTextLengthW(window) > 0,
+            GetWindowLongPtrW(window, GWL_STYLE),
             GetWindowLongPtrW(window, GWL_EXSTYLE));
 }
 

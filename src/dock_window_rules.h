@@ -450,35 +450,56 @@ constexpr bool IsTaskWindowProcessEligible(
 }
 
 /**
- * @brief 判断隐藏顶层窗口是否具备已知任务栏文档代理的结构。
+ * @brief 判断隐藏顶层窗口是否具备任务栏文档代理的候选结构。
  *
- * MDI/TDI 应用可以用隐藏的 WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE 顶层
- * 窗口向系统任务栏注册每个文档的独立缩略图。该例外只供预览枚举使用，
- * 不能放宽普通 Dock 任务窗口发现规则。
+ * MDI/TDI 应用通常用带标题的隐藏弹出窗口向任务栏注册文档缩略图。
+ * 单个窗口的结构仍可能与框架辅助窗重合，因此这里只产生候选；调用方
+ * 还必须按进程、类名和完整样式成组验证，不能直接放宽普通任务窗口规则。
  */
-constexpr bool IsTaskbarDocumentProxyEligible(
-    bool recognizedClass,
+constexpr bool IsTaskbarDocumentProxyCandidateEligible(
     bool topLevel,
     bool visible,
     bool hasOwner,
+    bool hasTitle,
+    LONG_PTR windowStyle,
     LONG_PTR extendedStyle) noexcept
 {
-    constexpr LONG_PTR requiredStyles =
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-    return recognizedClass && topLevel && !visible && !hasOwner &&
-        (extendedStyle & requiredStyles) == requiredStyles;
+    constexpr LONG_PTR requiredWindowStyles =
+        WS_POPUP | WS_CAPTION;
+    constexpr LONG_PTR requiredExtendedStyles =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_WINDOWEDGE;
+    constexpr LONG_PTR rejectedExtendedStyles =
+        WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT;
+    return topLevel && !visible && !hasOwner && hasTitle &&
+        (windowStyle & requiredWindowStyles) == requiredWindowStyles &&
+        (extendedStyle & requiredExtendedStyles) ==
+            requiredExtendedStyles &&
+        (extendedStyle & rejectedExtendedStyles) == 0;
 }
 
 /**
- * @brief 已发现文档代理时，用代理集合替换主框架任务窗口集合。
+ * @brief 判断同签名候选组是否足以代表多文档任务栏代理。
  *
- * 注册到任务栏的代理通常包含活动文档自身；若把代理追加到主框架后面，
- * 当前文档会重复出现一次。
+ * 单文档状态继续使用可见主窗口；只有至少两个不同标题的同组候选才
+ * 证明存在用户可切换的多文档集合，并能排除常见的单个监控/托盘窗口。
  */
-constexpr bool ShouldPreferTaskbarDocumentProxyItems(
-    std::size_t proxyItemCount) noexcept
+constexpr bool IsTaskbarDocumentProxyCohortEligible(
+    std::size_t proxyItemCount,
+    std::size_t distinctTitleCount) noexcept
 {
-    return proxyItemCount != 0;
+    return proxyItemCount >= 2 && distinctTitleCount >= 2;
+}
+
+/**
+ * @brief 仅在发现唯一可信候选组时用其替换主框架预览。
+ *
+ * 多个候选组意味着应用内部结构存在歧义；此时保留普通主窗口比误把
+ * 辅助窗口暴露为缩略图更安全。
+ */
+constexpr bool ShouldPreferTaskbarDocumentProxyCohort(
+    std::size_t qualifyingCohortCount) noexcept
+{
+    return qualifyingCohortCount == 1;
 }
 
 /**

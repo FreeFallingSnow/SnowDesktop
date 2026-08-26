@@ -2375,23 +2375,44 @@ int main(int argc, char** argv)
             rules::IsTaskWindowProcessEligible(true, true) &&
             !rules::IsTaskWindowProcessEligible(true, false),
         "Dock discovery must include the application-level settings window while excluding other current-process surfaces");
-    Check(rules::IsTaskbarDocumentProxyEligible(
-            true, true, false, false,
-            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE),
-        "a recognized hidden ownerless taskbar tab proxy must remain eligible for preview discovery");
-    Check(!rules::IsTaskbarDocumentProxyEligible(
-            false, true, false, false,
-            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) &&
-            !rules::IsTaskbarDocumentProxyEligible(
-                true, true, true, false,
-                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) &&
-            !rules::IsTaskbarDocumentProxyEligible(
-                true, true, false, false,
-                WS_EX_TOOLWINDOW),
-        "ordinary hidden helpers and visible task windows must not be mistaken for taskbar document proxies");
-    Check(rules::ShouldPreferTaskbarDocumentProxyItems(1) &&
-            !rules::ShouldPreferTaskbarDocumentProxyItems(0),
-        "document proxies must replace the main frame only when at least one proxy was discovered");
+    constexpr LONG_PTR taskbarProxyStyle =
+        WS_POPUP | WS_CAPTION;
+    constexpr LONG_PTR taskbarProxyExtendedStyle =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_WINDOWEDGE;
+    Check(rules::IsTaskbarDocumentProxyCandidateEligible(
+            true, false, false, true,
+            taskbarProxyStyle, taskbarProxyExtendedStyle),
+        "a titled hidden ownerless popup with taskbar proxy styles must become a class-independent candidate");
+    Check(!rules::IsTaskbarDocumentProxyCandidateEligible(
+            true, false, false, false,
+            taskbarProxyStyle, taskbarProxyExtendedStyle) &&
+            !rules::IsTaskbarDocumentProxyCandidateEligible(
+                true, true, false, true,
+                taskbarProxyStyle, taskbarProxyExtendedStyle) &&
+            !rules::IsTaskbarDocumentProxyCandidateEligible(
+                true, false, true, true,
+                taskbarProxyStyle, taskbarProxyExtendedStyle) &&
+            !rules::IsTaskbarDocumentProxyCandidateEligible(
+                true, false, false, true,
+                WS_POPUP, taskbarProxyExtendedStyle) &&
+            !rules::IsTaskbarDocumentProxyCandidateEligible(
+                true, false, false, true,
+                taskbarProxyStyle,
+                taskbarProxyExtendedStyle | WS_EX_TOPMOST) &&
+            !rules::IsTaskbarDocumentProxyCandidateEligible(
+                true, false, false, true,
+                taskbarProxyStyle,
+                WS_EX_TOOLWINDOW | WS_EX_WINDOWEDGE),
+        "untitled, visible, owned, captionless, topmost, and activatable helpers must not become proxy candidates");
+    Check(rules::IsTaskbarDocumentProxyCohortEligible(2, 2) &&
+            rules::IsTaskbarDocumentProxyCohortEligible(3, 3) &&
+            !rules::IsTaskbarDocumentProxyCohortEligible(1, 1) &&
+            !rules::IsTaskbarDocumentProxyCohortEligible(2, 1),
+        "only multi-window cohorts with distinct document titles may replace the main frame");
+    Check(rules::ShouldPreferTaskbarDocumentProxyCohort(1) &&
+            !rules::ShouldPreferTaskbarDocumentProxyCohort(0) &&
+            !rules::ShouldPreferTaskbarDocumentProxyCohort(2),
+        "ambiguous or absent proxy cohorts must fall back to ordinary task windows");
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
@@ -3684,6 +3705,9 @@ int main(int argc, char** argv)
         const std::string dockPreviewSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_dock_window_control.cpp");
+        const std::string dockPlatformHelpersSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "dock_platform_helpers.h");
         const std::string pointerContextSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_context.cpp");
@@ -4547,18 +4571,29 @@ int main(int argc, char** argv)
                     std::string::npos,
             "task thumbnails must reveal the floating Dock and refresh their moved anchor");
         Check(dockPreviewSource.find(
-                  "IsDockTaskbarDocumentProxyWindow(window)") !=
+                  "IsDockTaskbarDocumentProxyCandidate(window)") !=
                     std::string::npos &&
                 dockPreviewSource.find(
-                  "ShouldPreferTaskbarDocumentProxyItems(proxyItems.size())") !=
+                  "IsTaskbarDocumentProxyCohortEligible(") !=
+                    std::string::npos &&
+                dockPreviewSource.find(
+                  "ShouldPreferTaskbarDocumentProxyCohort(") !=
                     std::string::npos &&
                 dockPreviewSource.find(
                   "identity, true, false") !=
                     std::string::npos,
-            "taskbar document proxies must replace duplicate main-frame previews without changing application-close discovery");
+            "a unique multi-document proxy cohort must replace duplicate main-frame previews without changing application-close discovery");
+        Check(dockPlatformHelpersSource.find(
+                  "IsDockTaskbarDocumentProxyCandidate(HWND window)") !=
+                    std::string::npos &&
+                dockPlatformHelpersSource.find("swThumbnailWnd") ==
+                    std::string::npos &&
+                dockPlatformHelpersSource.find("PROME-TASKBAR") ==
+                    std::string::npos,
+            "taskbar document proxy discovery must not depend on per-application window-class allowlists");
         const std::size_t proxyActivationBegin =
             dockWindowTrackingSource.find(
-                "if (IsDockTaskbarDocumentProxyWindow(target))");
+                "if (IsDockTaskbarDocumentProxyCandidate(target))");
         const std::size_t proxyForegroundRequest =
             dockWindowTrackingSource.find(
                 "SetForegroundWindow(target);",

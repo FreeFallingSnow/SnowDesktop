@@ -1042,7 +1042,7 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
 {
     if (!window || !IsWindow(window))
         return;
-    if (IsDockTaskbarDocumentProxyWindow(window))
+    if (IsDockTaskbarDocumentProxyCandidate(window))
     {
         // Registered MDI/TDI tab proxies are hidden by design. Activating the
         // proxy asks its owner application to select and reveal the matching
@@ -1139,7 +1139,7 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
                 IsDockWindowClosePending(window)))
         return;
 
-    if (IsDockTaskbarDocumentProxyWindow(target))
+    if (IsDockTaskbarDocumentProxyCandidate(target))
     {
         SetForegroundWindow(target);
         return;
