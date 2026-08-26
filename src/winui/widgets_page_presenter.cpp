@@ -12,7 +12,6 @@
 #include <atomic>
 #include <cwchar>
 #include <cwctype>
-#include <unordered_map>
 #include <utility>
 
 namespace snowdesktop::winui
@@ -31,6 +30,7 @@ enum class PackageFilter : std::uint8_t
 {
     All,
     Installed,
+    Included,
     Development,
 };
 
@@ -179,7 +179,7 @@ struct WidgetsPagePresenter::Impl
     struct PackageRowBinding
     {
         std::wstring packageId;
-        muxc::Expander expander{nullptr};
+        muxc::Border card{nullptr};
         muxc::TextBlock name{nullptr};
         muxc::TextBlock metadata{nullptr};
         muxc::StackPanel tags{nullptr};
@@ -224,7 +224,7 @@ struct WidgetsPagePresenter::Impl
     muxc::InfoBar debugFeedbackBar{nullptr};
 
     SettingsCard searchCard;
-    SettingsCard installedCard;
+    SettingsCard filterCard;
     SettingsCard sourcesCard;
     SettingsCard developerOverridesCard;
     SettingsCard developerWorkspaceCard;
@@ -235,26 +235,21 @@ struct WidgetsPagePresenter::Impl
     SettingsCard debugRuntimeCard;
 
     muxc::AutoSuggestBox searchBox{nullptr};
-    presenter_controls::SettingRow managementRow;
     muxc::StackPanel filterActions{nullptr};
     muxcp::ToggleButton allFilterButton{nullptr};
     muxcp::ToggleButton installedFilterButton{nullptr};
+    muxcp::ToggleButton includedFilterButton{nullptr};
     muxcp::ToggleButton developmentFilterButton{nullptr};
     muxc::StackPanel managementActions{nullptr};
     muxc::Button installFileButton{nullptr};
     muxc::Button workshopButton{nullptr};
     muxcp::ToggleButton selfDevelopButton{nullptr};
-    muxc::TextBlock workshopHint{nullptr};
     muxc::StackPanel taskPanel{nullptr};
     muxc::ProgressRing taskRing{nullptr};
     muxc::ProgressBar taskProgress{nullptr};
     muxc::TextBlock taskStatus{nullptr};
     muxc::Button cancelTaskButton{nullptr};
     muxc::StackPanel installedRows{nullptr};
-    muxc::Expander includedExpander{nullptr};
-    muxc::TextBlock includedTitle{nullptr};
-    muxc::TextBlock includedDescription{nullptr};
-    muxc::StackPanel includedRows{nullptr};
     muxc::StackPanel sourceRows{nullptr};
     muxc::StackPanel developerOverrideRows{nullptr};
     presenter_controls::SettingRow agentSkillActionsRow;
@@ -288,6 +283,7 @@ struct WidgetsPagePresenter::Impl
     muxc::StackPanel debugDiagnosticRows{nullptr};
 
     mux::FrameworkElement firstPackageTarget{nullptr};
+    mux::FrameworkElement firstIncludedPackageTarget{nullptr};
     mux::FrameworkElement firstPermissionTarget{nullptr};
     mux::FrameworkElement firstSourceTarget{nullptr};
     mux::FrameworkElement firstDeveloperOverrideTarget{nullptr};
@@ -296,7 +292,6 @@ struct WidgetsPagePresenter::Impl
 
     std::vector<InstalledWidgetPackageSnapshot> packages;
     std::vector<PackageRowBinding> packageRowBindings;
-    std::unordered_map<std::wstring, bool> packageExpansionState;
     std::vector<WidgetAgentSkillTargetSnapshot> agentSkills;
     std::vector<WidgetRuntimeErrorSnapshot> errors;
     std::vector<WidgetRuntimeDiagnosticSnapshot> diagnostics;
@@ -330,6 +325,7 @@ struct WidgetsPagePresenter::Impl
     winrt::event_token searchChangedToken{};
     winrt::event_token allFilterToken{};
     winrt::event_token installedFilterToken{};
+    winrt::event_token includedFilterToken{};
     winrt::event_token developmentFilterToken{};
     winrt::event_token installFileToken{};
     winrt::event_token workshopToken{};
@@ -636,22 +632,15 @@ struct WidgetsPagePresenter::Impl
         selfDevelopButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         selfDevelopButton.UseSystemFocusVisuals(true);
         managementActions.Children().Append(selfDevelopButton);
-        // These localized actions vary substantially in width.  Let the
-        // editor column follow their measured width instead of clipping them
-        // to the default 300-DIP setting control column.
-        managementRow.Initialize(managementActions, 0.0);
-        managementRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        searchCard.content.Children().Append(managementRow.root);
+        searchCard.content.Children().Append(managementActions);
 
-        workshopHint = MakeSecondaryText(L"");
-        workshopHint.Visibility(mux::Visibility::Collapsed);
-        searchCard.content.Children().Append(workshopHint);
+        InitializeCard(filterCard, cardStyle, root);
 
         searchBox = muxc::AutoSuggestBox{};
         searchBox.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         searchBox.IsSuggestionListOpen(false);
         searchBox.UseSystemFocusVisuals(true);
-        searchCard.content.Children().Append(searchBox);
+        filterCard.content.Children().Append(searchBox);
 
         filterActions = muxc::StackPanel{};
         filterActions.Orientation(muxc::Orientation::Horizontal);
@@ -659,15 +648,17 @@ struct WidgetsPagePresenter::Impl
         filterActions.HorizontalAlignment(mux::HorizontalAlignment::Left);
         allFilterButton = muxcp::ToggleButton{};
         installedFilterButton = muxcp::ToggleButton{};
+        includedFilterButton = muxcp::ToggleButton{};
         developmentFilterButton = muxcp::ToggleButton{};
         for (const muxcp::ToggleButton& button : {allFilterButton,
-                 installedFilterButton, developmentFilterButton})
+                 installedFilterButton, includedFilterButton,
+                 developmentFilterButton})
         {
             button.UseSystemFocusVisuals(true);
             button.HorizontalAlignment(mux::HorizontalAlignment::Left);
             filterActions.Children().Append(button);
         }
-        searchCard.content.Children().Append(filterActions);
+        filterCard.content.Children().Append(filterActions);
 
         taskPanel = muxc::StackPanel{};
         taskPanel.Spacing(8.0);
@@ -689,38 +680,12 @@ struct WidgetsPagePresenter::Impl
         taskPanel.Children().Append(taskProgress);
         taskPanel.Children().Append(taskStatus);
         taskPanel.Children().Append(cancelTaskButton);
-        searchCard.content.Children().Append(taskPanel);
+        filterCard.content.Children().Append(taskPanel);
 
-        InitializeCard(installedCard, cardStyle, root);
         installedRows = muxc::StackPanel{};
         installedRows.Spacing(8.0);
         installedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        installedCard.content.Children().Append(installedRows);
-
-        includedExpander = muxc::Expander{};
-        includedExpander.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
-        includedExpander.HorizontalContentAlignment(
-            mux::HorizontalAlignment::Stretch);
-        includedExpander.IsExpanded(false);
-        muxc::StackPanel includedHeader;
-        includedHeader.Spacing(3.0);
-        includedTitle = muxc::TextBlock{};
-        includedTitle.FontWeight(
-            winrt::Windows::UI::Text::FontWeights::SemiBold());
-        includedTitle.TextWrapping(mux::TextWrapping::Wrap);
-        includedDescription = muxc::TextBlock{};
-        includedDescription.Opacity(0.72);
-        includedDescription.TextWrapping(mux::TextWrapping::Wrap);
-        includedHeader.Children().Append(includedTitle);
-        includedHeader.Children().Append(includedDescription);
-        includedExpander.Header(includedHeader);
-        includedRows = muxc::StackPanel{};
-        includedRows.Spacing(8.0);
-        includedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        includedExpander.Content(includedRows);
-        StretchExpanderBody(includedExpander, includedRows);
-        root.Children().Append(includedExpander);
+        root.Children().Append(installedRows);
 
         InitializeCard(sourcesCard, cardStyle, root);
         sourceRows = muxc::StackPanel{};
@@ -936,6 +901,12 @@ struct WidgetsPagePresenter::Impl
                 const winrt::Windows::Foundation::IInspectable&,
                 const mux::RoutedEventArgs&) {
                 selectFilter(PackageFilter::Installed);
+            });
+        includedFilterToken = includedFilterButton.Click(
+            [selectFilter](
+                const winrt::Windows::Foundation::IInspectable&,
+                const mux::RoutedEventArgs&) {
+                selectFilter(PackageFilter::Included);
             });
         developmentFilterToken = developmentFilterButton.Click(
             [selectFilter](
@@ -1218,6 +1189,10 @@ struct WidgetsPagePresenter::Impl
             if (!IsInstalledPackage(package))
                 return false;
             break;
+        case PackageFilter::Included:
+            if (!IsIncludedPackage(package))
+                return false;
+            break;
         case PackageFilter::Development:
             if (!IsDevelopmentPackage(package))
                 return false;
@@ -1229,38 +1204,32 @@ struct WidgetsPagePresenter::Impl
         return MatchesQuery(package);
     }
 
-    [[nodiscard]] static bool IsIncludedOnlyPackage(
+    [[nodiscard]] static bool IsIncludedPackage(
         const InstalledWidgetPackageSnapshot& package) noexcept
     {
-        return package.builtIn && !package.canEnable &&
-            !package.canUseDevelopmentOverride;
+        return package.builtIn;
     }
 
     [[nodiscard]] static bool IsInstalledPackage(
         const InstalledWidgetPackageSnapshot& package) noexcept
     {
-        return !IsIncludedOnlyPackage(package) &&
-            (package.canEnable || package.canUninstall ||
-                !package.workshopInstallFailures.empty());
+        return package.canEnable || package.canUninstall ||
+            !package.workshopInstallFailures.empty();
     }
 
     [[nodiscard]] static bool IsDevelopmentPackage(
         const InstalledWidgetPackageSnapshot& package) noexcept
     {
-        return !IsIncludedOnlyPackage(package) &&
-            (package.canUseDevelopmentOverride || package.development ||
-                std::any_of(package.invalidSources.begin(),
-                    package.invalidSources.end(), [](const auto& source) {
-                        return source.development;
-                    }));
+        return package.canUseDevelopmentOverride || package.development ||
+            std::any_of(package.invalidSources.begin(),
+                package.invalidSources.end(), [](const auto& source) {
+                    return source.development;
+                });
     }
 
-    [[nodiscard]] std::size_t UserPackageCount() const noexcept
+    [[nodiscard]] std::size_t PackageCount() const noexcept
     {
-        return static_cast<std::size_t>(std::count_if(
-            packages.begin(), packages.end(), [](const auto& package) {
-                return !IsIncludedOnlyPackage(package);
-            }));
+        return packages.size();
     }
 
     [[nodiscard]] std::size_t InstalledPackageCount() const noexcept
@@ -1273,6 +1242,12 @@ struct WidgetsPagePresenter::Impl
     {
         return static_cast<std::size_t>(std::count_if(
             packages.begin(), packages.end(), IsDevelopmentPackage));
+    }
+
+    [[nodiscard]] std::size_t IncludedPackageCount() const noexcept
+    {
+        return static_cast<std::size_t>(std::count_if(
+            packages.begin(), packages.end(), IsIncludedPackage));
     }
 
     [[nodiscard]] muxc::Border MakePackageTag(
@@ -1325,24 +1300,21 @@ struct WidgetsPagePresenter::Impl
         const InstalledWidgetPackageSnapshot& package) const
     {
         tags.Children().Clear();
-        if (IsIncludedOnlyPackage(package))
+        if (IsInstalledPackage(package))
+        {
+            tags.Children().Append(MakePackageTag(L(
+                "app.settings.widgets_filter_installed", L"Installed")));
+        }
+        if (IsIncludedPackage(package))
         {
             tags.Children().Append(MakePackageTag(L(
                 "app.settings.widgets_filter_builtin", L"Included")));
         }
-        else
+        if (IsDevelopmentPackage(package))
         {
-            if (IsInstalledPackage(package))
-            {
-                tags.Children().Append(MakePackageTag(L(
-                    "app.settings.widgets_filter_installed", L"Installed")));
-            }
-            if (IsDevelopmentPackage(package))
-            {
-                tags.Children().Append(MakePackageTag(L(
-                    "app.settings.widgets_filter_development",
-                    L"Local development")));
-            }
+            tags.Children().Append(MakePackageTag(L(
+                "app.settings.widgets_filter_development",
+                L"Local development")));
         }
         tags.Visibility(tags.Children().Size() == 0
                 ? mux::Visibility::Collapsed
@@ -1360,37 +1332,33 @@ struct WidgetsPagePresenter::Impl
     void RefreshFilterItems()
     {
         const std::size_t installedCount = InstalledPackageCount();
+        const std::size_t includedCount = IncludedPackageCount();
         const std::size_t developmentCount = DevelopmentPackageCount();
-        if ((filter == PackageFilter::Installed && installedCount == 0) ||
-            (filter == PackageFilter::Development &&
-                developmentCount == 0))
-        {
-            filter = PackageFilter::All;
-        }
         allFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_all", L"All", UserPackageCount())));
+            "app.settings.widgets_filter_all", L"All", PackageCount())));
         installedFilterButton.Content(winrt::box_value(FilterText(
             "app.settings.widgets_filter_installed", L"Installed",
             installedCount)));
+        includedFilterButton.Content(winrt::box_value(FilterText(
+            "app.settings.widgets_filter_builtin", L"Included",
+            includedCount)));
         developmentFilterButton.Content(winrt::box_value(FilterText(
             "app.settings.widgets_filter_development", L"Local development",
             developmentCount)));
-        installedFilterButton.Visibility(installedCount != 0
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        developmentFilterButton.Visibility(developmentCount != 0
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
         allFilterButton.IsChecked(filter == PackageFilter::All);
         installedFilterButton.IsChecked(filter == PackageFilter::Installed);
+        includedFilterButton.IsChecked(filter == PackageFilter::Included);
         developmentFilterButton.IsChecked(
             filter == PackageFilter::Development);
         SetAutomation(allFilterButton,
             FilterText("app.settings.widgets_filter_all", L"All",
-                UserPackageCount()));
+                PackageCount()));
         SetAutomation(installedFilterButton,
             FilterText("app.settings.widgets_filter_installed", L"Installed",
                 installedCount));
+        SetAutomation(includedFilterButton,
+            FilterText("app.settings.widgets_filter_builtin", L"Included",
+                includedCount));
         SetAutomation(developmentFilterButton,
             FilterText("app.settings.widgets_filter_development",
                 L"Local development", developmentCount));
@@ -2451,15 +2419,13 @@ struct WidgetsPagePresenter::Impl
         const InstalledWidgetPackageSnapshot& package,
         const muxc::StackPanel& targetRows)
     {
-        muxc::Expander row;
+        muxc::Border row;
         std::vector<std::function<void()>> revokers;
         std::vector<muxc::Button> advancedActions;
+        row.Style(cardStyle);
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        row.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        const auto savedExpansion =
-            packageExpansionState.find(package.packageId);
-        row.IsExpanded(savedExpansion != packageExpansionState.end() &&
-            savedExpansion->second);
+        row.IsTabStop(true);
+        row.UseSystemFocusVisuals(true);
 
         muxc::StackPanel header;
         header.Spacing(3.0);
@@ -2485,11 +2451,11 @@ struct WidgetsPagePresenter::Impl
         header.Children().Append(name);
         header.Children().Append(tags);
         header.Children().Append(metadata);
-        row.Header(header);
 
         muxc::StackPanel body;
         body.Spacing(9.0);
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        body.Children().Append(header);
         muxc::TextBlock description = MakeSecondaryText(package.description);
         description.Visibility(package.description.empty()
                 ? mux::Visibility::Collapsed
@@ -2722,12 +2688,13 @@ struct WidgetsPagePresenter::Impl
             body.Children().Append(uninstall);
         }
 
-        row.Content(body);
-        StretchExpanderBody(row, body);
+        row.Child(body);
         SetAutomation(row, name.Text(), package.description);
         muxa::AutomationProperties::SetItemStatus(row, packageState);
         if (!firstPackageTarget)
             firstPackageTarget = row;
+        if (IsIncludedPackage(package) && !firstIncludedPackageTarget)
+            firstIncludedPackageTarget = row;
         targetRows.Children().Append(row);
         packageRowBindings.push_back(PackageRowBinding{
             package.packageId, row, name, metadata, tags, description,
@@ -2784,18 +2751,6 @@ struct WidgetsPagePresenter::Impl
             });
     }
 
-    void CapturePackageExpansionState() noexcept
-    {
-        for (const PackageRowBinding& binding : packageRowBindings)
-        {
-            if (binding.expander)
-            {
-                packageExpansionState[binding.packageId] =
-                    binding.expander.IsExpanded();
-            }
-        }
-    }
-
     [[nodiscard]] static bool HasOnlyInlinePackageStateChanges(
         const InstalledWidgetPackageSnapshot& previous,
         const InstalledWidgetPackageSnapshot& current)
@@ -2827,13 +2782,7 @@ struct WidgetsPagePresenter::Impl
         result.reserve(values.size());
         for (const auto& package : values)
         {
-            if (!IsIncludedOnlyPackage(package) && MatchesFilter(package))
-                result.push_back(package.packageId);
-        }
-        for (const auto& package : values)
-        {
-            if (filter == PackageFilter::All &&
-                IsIncludedOnlyPackage(package) && MatchesQuery(package))
+            if (MatchesFilter(package))
                 result.push_back(package.packageId);
         }
         return result;
@@ -2874,9 +2823,9 @@ struct WidgetsPagePresenter::Impl
                     ? mux::Visibility::Collapsed
                     : mux::Visibility::Visible);
         }
-        SetAutomation(binding.expander, displayName, package.description);
+        SetAutomation(binding.card, displayName, package.description);
         muxa::AutomationProperties::SetItemStatus(
-            binding.expander, packageState);
+            binding.card, packageState);
         for (const muxc::Button& action : binding.advancedActions)
             muxa::AutomationProperties::SetHelpText(
                 action, package.description);
@@ -2973,52 +2922,26 @@ struct WidgetsPagePresenter::Impl
 
     void RenderInstalledRows()
     {
-        CapturePackageExpansionState();
         RevokePackageRowEvents();
         installedRows.Children().Clear();
-        includedRows.Children().Clear();
         packageRowBindings.clear();
         firstPackageTarget = nullptr;
+        firstIncludedPackageTarget = nullptr;
         firstPermissionTarget = nullptr;
 
-        bool anyUserPackage = false;
-        bool anyIncludedPackage = false;
+        bool anyPackage = false;
         for (const InstalledWidgetPackageSnapshot& package : packages)
         {
-            if (IsIncludedOnlyPackage(package))
-            {
-                continue;
-            }
             if (!MatchesFilter(package))
                 continue;
-            anyUserPackage = true;
+            anyPackage = true;
             AddPackageRow(package, installedRows);
         }
-        if (!anyUserPackage)
+        if (!anyPackage)
         {
             installedRows.Children().Append(MakeSecondaryText(
                 L("app.settings.widgets_filter_empty", L"No components")));
         }
-
-        for (const InstalledWidgetPackageSnapshot& package : packages)
-        {
-            if (filter != PackageFilter::All)
-                break;
-            if (!IsIncludedOnlyPackage(package))
-                continue;
-            if (!MatchesQuery(package))
-                continue;
-            anyIncludedPackage = true;
-            AddPackageRow(package, includedRows);
-        }
-        includedExpander.Visibility(anyIncludedPackage
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        includedTitle.Text(L(
-            "app.settings.widgets_filter_builtin", L"Included") + L" " +
-            std::to_wstring(includedRows.Children().Size()));
-        if (!query.empty() && anyIncludedPackage)
-            includedExpander.IsExpanded(true);
     }
 
     void AddCatalogResult(
@@ -3190,9 +3113,6 @@ struct WidgetsPagePresenter::Impl
                 : mux::Visibility::Collapsed);
         workshopButton.IsEnabled(workshopAvailable &&
             static_cast<bool>(actions.invoke));
-        workshopHint.Visibility(workshopAvailable
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
         selfDevelopButton.Visibility(actions.setDeveloperToolsEnabled
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
@@ -3348,23 +3268,14 @@ struct WidgetsPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
-        searchCard.title.Text(L("app.settings.widgets_my_components",
+        searchCard.title.Text(L("app.settings.widgets_management",
+            L"Add Components"));
+        searchCard.description.Text(L"");
+        searchCard.description.Visibility(mux::Visibility::Collapsed);
+        filterCard.title.Text(L("app.settings.widgets_my_components",
             L"My Components"));
-        searchCard.description.Text(L("app.settings.widgets_subtitle",
-            L"Browse, install, and manage desktop components."));
-        installedCard.title.Text(L("settings.widgets.installed",
-            L"Installed widgets"));
-        installedCard.description.Text(L(
-            "settings.widgets.installed.description",
-            L"Search, enable, disable or uninstall widgets."));
-        includedTitle.Text(L(
-            "app.settings.widgets_filter_builtin", L"Included") + L" " +
-            std::to_wstring(includedRows
-                    ? includedRows.Children().Size()
-                    : 0));
-        includedDescription.Text(L(
-            "app.settings.widgets_builtin",
-            L"Included with SnowDesktop"));
+        filterCard.description.Text(L"");
+        filterCard.description.Visibility(mux::Visibility::Collapsed);
         sourcesCard.title.Text(L("settings.widgets.sources",
             L"Sources and Workshop"));
         sourcesCard.description.Text(L(
@@ -3408,10 +3319,6 @@ struct WidgetsPagePresenter::Impl
 
         searchBox.PlaceholderText(L("app.settings.widgets_search_hint",
             L"Search components"));
-        managementRow.SetText(L(
-                "app.settings.widgets_management", L"Add Components"),
-            L("app.settings.widgets_subtitle",
-                L"Browse, install, and manage desktop components."));
         RefreshFilterItems();
         installFileButton.Content(winrt::box_value(L(
             "app.settings.widgets_install_package",
@@ -3421,9 +3328,6 @@ struct WidgetsPagePresenter::Impl
             L"Open Workshop")));
         selfDevelopButton.Content(winrt::box_value(L(
             "app.settings.widgets_self_develop", L"Develop Your Own")));
-        workshopHint.Text(L(
-            "app.settings.widgets_workshop_auto_sync_hint",
-            L"Workshop subscriptions synchronize automatically."));
         cancelTaskButton.Content(winrt::box_value(L(
             "settings.progress.cancel", L"Cancel")));
         developerRefreshButton.Content(winrt::box_value(L(
@@ -3475,6 +3379,7 @@ struct WidgetsPagePresenter::Impl
 
         SetAutomation(searchCard.root, searchCard.title.Text(),
             searchCard.description.Text());
+        SetAutomation(filterCard.root, filterCard.title.Text());
         SetAutomation(searchBox,
             L("app.settings.widgets_search", L"Search"),
             searchBox.PlaceholderText());
@@ -3492,10 +3397,6 @@ struct WidgetsPagePresenter::Impl
             L("app.settings.widgets_self_develop", L"Develop Your Own"),
             L("app.settings.widgets_developer_tools",
                 L"Component Developer Tools"));
-        SetAutomation(installedCard.root, installedCard.title.Text(),
-            installedCard.description.Text());
-        SetAutomation(includedExpander, includedTitle.Text(),
-            includedDescription.Text());
         SetAutomation(sourcesCard.root, sourcesCard.title.Text(),
             sourcesCard.description.Text());
         SetAutomation(developerOverridesCard.root,
@@ -3572,7 +3473,8 @@ struct WidgetsPagePresenter::Impl
         if (focusId == "widgets.installed")
             return firstPackageTarget ? firstPackageTarget : installedRows;
         if (focusId == "widgets.included")
-            return includedRows;
+            return firstIncludedPackageTarget
+                ? firstIncludedPackageTarget : installedRows;
         return nullptr;
     }
 
@@ -3676,6 +3578,7 @@ struct WidgetsPagePresenter::Impl
             searchBox.TextChanged(searchChangedToken);
             allFilterButton.Click(allFilterToken);
             installedFilterButton.Click(installedFilterToken);
+            includedFilterButton.Click(includedFilterToken);
             developmentFilterButton.Click(developmentFilterToken);
             installFileButton.Click(installFileToken);
             workshopButton.Click(workshopToken);

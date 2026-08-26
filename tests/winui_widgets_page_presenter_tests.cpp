@@ -152,10 +152,24 @@ void TestWidgetsPagePresenterContract(
 
     const std::string controlsRegion = sourceRegion(
         "void BuildControls()", "void HookStaticEvents()");
-    Check(stretchesAfterContent(controlsRegion,
-            "includedExpander.Content(includedRows)",
-            "StretchExpanderBody(includedExpander, includedRows)"),
-        "included components Expander content is stretched after attachment");
+    Check(controlsRegion.find(
+              "InitializeCard(searchCard, cardStyle, root)") !=
+                std::string::npos &&
+            controlsRegion.find(
+              "InitializeCard(filterCard, cardStyle, root)") !=
+                std::string::npos &&
+            controlsRegion.find(
+              "searchCard.content.Children().Append(managementActions)") !=
+                std::string::npos &&
+            controlsRegion.find(
+              "filterCard.content.Children().Append(searchBox)") !=
+                std::string::npos &&
+            controlsRegion.find(
+              "filterCard.content.Children().Append(filterActions)") !=
+                std::string::npos &&
+            controlsRegion.find("root.Children().Append(installedRows)") !=
+                std::string::npos,
+        "management, filtering, and flat package cards use separate sibling regions");
 
     const std::string developmentOverrideRegion = sourceRegion(
         "void AddDevelopmentOverrideRow(", "void AddDiagnosticRow(");
@@ -204,24 +218,35 @@ void TestWidgetsPagePresenterContract(
     const auto packageRowStart = source.find("void AddPackageRow(");
     const auto packageRowEnd = source.find("void RequestUninstall(",
         packageRowStart);
-    const auto packageContentStretch = source.find(
-        "row.HorizontalContentAlignment(", packageRowStart);
-    Check(source.find("presenter_controls::SettingRow managementRow") !=
+    Check(source.find("presenter_controls::SettingRow managementRow") ==
                 std::string::npos &&
+            source.find("SettingsCard filterCard") != std::string::npos &&
+            source.find(
+              "searchCard.description.Visibility(mux::Visibility::Collapsed)") !=
+                std::string::npos &&
+            source.find(
+              "filterCard.description.Visibility(mux::Visibility::Collapsed)") !=
+                std::string::npos &&
+            source.find("workshopHint") == std::string::npos &&
             source.find("presenter_controls::SettingRow primaryActionsRow") !=
                 std::string::npos &&
             source.find("presenter_controls::SettingRow developmentRow") !=
                 std::string::npos &&
-            source.find("includedExpander.IsExpanded(false)") !=
-                std::string::npos &&
             source.find("allFilterButton") != std::string::npos &&
-            source.find("installedFilterButton.Visibility") !=
+            source.find("installedFilterButton") !=
                 std::string::npos &&
-            source.find("developmentFilterButton.Visibility") !=
+            source.find("includedFilterButton") !=
                 std::string::npos &&
-            source.find("PackageFilter::BuiltIn") == std::string::npos &&
-            controlsRegion.find(
-                "managementRow.Initialize(managementActions, 0.0)") !=
+            source.find("developmentFilterButton") !=
+                std::string::npos &&
+            source.find("PackageFilter::Included") != std::string::npos &&
+            source.find("case PackageFilter::Included") !=
+                std::string::npos &&
+            source.find("installedFilterButton.Visibility") ==
+                std::string::npos &&
+            source.find("includedFilterButton.Visibility") ==
+                std::string::npos &&
+            source.find("developmentFilterButton.Visibility") ==
                 std::string::npos &&
             controlsRegion.find("searchBox.MaxWidth(") ==
                 std::string::npos &&
@@ -229,18 +254,17 @@ void TestWidgetsPagePresenterContract(
                 "filterActions.HorizontalAlignment("
                 "mux::HorizontalAlignment::Left)") !=
                 std::string::npos &&
-            source.find("managementRow.SetControlAlignment(") !=
-                std::string::npos &&
             source.find("primaryActionsRow.SetControlAlignment(") !=
                 std::string::npos,
-        "My Components actions use their measured width, search stretches, filter tags align left, and setting-row actions remain responsive");
+        "the dedicated filter card keeps full-width search and four always-visible left-aligned category controls");
     Check(packageRowStart != std::string::npos &&
             packageRowEnd != std::string::npos &&
-            packageContentStretch != std::string::npos &&
-            packageContentStretch < packageRowEnd &&
-            stretchesAfterContent(sourceRegion(
-                    "void AddPackageRow(", "void RequestUninstall("),
-                "row.Content(body)", "StretchExpanderBody(row, body)") &&
+            sourceRegion("void AddPackageRow(", "void RequestUninstall(")
+                    .find("muxc::Border row") != std::string::npos &&
+            sourceRegion("void AddPackageRow(", "void RequestUninstall(")
+                    .find("row.Style(cardStyle)") != std::string::npos &&
+            sourceRegion("void AddPackageRow(", "void RequestUninstall(")
+                    .find("row.Child(body)") != std::string::npos &&
             source.find("app.settings.widgets_package_id") !=
                 std::string::npos &&
             source.find("app.settings.widgets_provider_id") !=
@@ -263,7 +287,7 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             source.find("failureActions.HorizontalAlignment(") !=
                 std::string::npos,
-        "package and nested Expander content stretches across each card while natural-width actions align at the right edge");
+        "each package is a full independent card while nested details stretch and natural-width actions align at the right edge");
 
     const std::string packageRowRegion = sourceRegion(
         "void AddPackageRow(", "void RequestUninstall(");
@@ -278,15 +302,16 @@ void TestWidgetsPagePresenterContract(
         "[[nodiscard]] bool TryPatchInstalledRows(");
     const std::string installedRenderRegion = sourceRegion(
         "void RenderInstalledRows()", "void AddCatalogResult(");
-    Check(packageRowRegion.find("packageExpansionState.find(") !=
+    Check(packageRowRegion.find("muxc::Border row") !=
                 std::string::npos &&
-            packageRowRegion.find("row.IsExpanded(savedExpansion") !=
+            packageRowRegion.find("row.Header(") == std::string::npos &&
+            packageRowRegion.find("row.IsExpanded(") ==
                 std::string::npos &&
-            packageRowRegion.find("row.IsExpanded(true)") ==
+            packageRowRegion.find("row.Child(body)") !=
                 std::string::npos &&
             developmentOverrideRegion.find("row.IsExpanded(false)") !=
                 std::string::npos,
-        "component package Expanders start collapsed and restore only expansion explicitly retained for the Presenter lifetime");
+        "component cards expose their primary content directly while only nested development details remain collapsible");
     Check(source.find("void PopulatePackageTags(") != std::string::npos &&
             packageRowRegion.find("PopulatePackageTags(tags, package)") !=
                 std::string::npos &&
@@ -297,19 +322,19 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             source.find("IsDevelopmentPackage(package)") !=
                 std::string::npos &&
-            installedRenderRegion.find(
-                "if (filter != PackageFilter::All)") !=
-                std::string::npos,
-        "each component card carries category tags whose shared predicates drive visible filtering, while included components stay in All");
-    Check(source.find("struct PackageRowBinding") != std::string::npos &&
-            source.find("CapturePackageExpansionState();") !=
+            source.find("IsIncludedPackage(package)") !=
                 std::string::npos &&
-            installedRenderRegion.find("CapturePackageExpansionState();") <
-                installedRenderRegion.find(
-                    "installedRows.Children().Clear();") &&
+            source.find("IncludedPackageCount()") !=
+                std::string::npos &&
+            installedRenderRegion.find("MatchesFilter(package)") !=
+                std::string::npos,
+        "each component card carries category tags whose shared predicates drive All, Installed, Included, and Development filtering");
+    Check(source.find("struct PackageRowBinding") != std::string::npos &&
+            source.find("CapturePackageExpansionState();") ==
+                std::string::npos &&
             packageRowRegion.find("FindPackage(packageId)") !=
                 std::string::npos,
-        "package rows retain expansion and state-changing actions resolve the current snapshot instead of capturing stale enabled values");
+        "flat package cards avoid expansion state and state-changing actions resolve the current snapshot instead of capturing stale enabled values");
     Check(installedPatchRegion.find("PatchPackageRowState(") !=
                 std::string::npos &&
             installedPatchRegion.find("changedRows.push_back(index)") !=
@@ -362,7 +387,7 @@ void TestWidgetsPagePresenterContract(
             packagePatchRegion.find("binding.name.Text(displayName)") !=
                 std::string::npos &&
             packagePatchRegion.find(
-                "binding.expander, packageState") !=
+                "binding.card, packageState") !=
                 std::string::npos,
         "development source display changes update the existing row and its accessible status in place");
     Check(permissionRegion.find("FindPackage(packageId)") !=
@@ -545,7 +570,7 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             source.find("version = failure.version") !=
                 std::string::npos &&
-            source.find("if (!MatchesQuery(package))") !=
+            source.find("return MatchesQuery(package)") !=
                 std::string::npos &&
             source.find("app.settings.widgets_retry_install") !=
                 std::string::npos,
