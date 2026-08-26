@@ -9,7 +9,9 @@ param(
     [Parameter(Mandatory = $true)][string]$WindowsAppSdkNoticePath,
     [Parameter(Mandatory = $true)][string]$CppWinRtLicensePath,
     [Parameter(Mandatory = $true)][string]$WindowsMlLicensePath,
-    [Parameter(Mandatory = $true)][string]$WindowsMlNoticePath
+    [Parameter(Mandatory = $true)][string]$WindowsMlNoticePath,
+    [Parameter(Mandatory = $true)][string]$WebView2LicensePath,
+    [Parameter(Mandatory = $true)][string]$WebView2NoticePath
 )
 
 Set-StrictMode -Version Latest
@@ -167,7 +169,9 @@ $noticeSpecs = @(
     @($WindowsAppSdkNoticePath, "WindowsAppSDK-NOTICE.txt"),
     @($CppWinRtLicensePath, "CppWinRT-LICENSE.txt"),
     @($WindowsMlLicensePath, "WindowsML-LICENSE.txt"),
-    @($WindowsMlNoticePath, "WindowsML-NOTICE.txt")
+    @($WindowsMlNoticePath, "WindowsML-NOTICE.txt"),
+    @($WebView2LicensePath, "WebView2-LICENSE.txt"),
+    @($WebView2NoticePath, "WebView2-NOTICE.txt")
 )
 $notices = foreach ($spec in $noticeSpecs) {
     $source = [System.IO.Path]::GetFullPath([string]$spec[0])

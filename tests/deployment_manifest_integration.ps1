@@ -52,6 +52,12 @@ try {
         $windowsMlLicense, "fixture:WindowsML-LICENSE")
     [System.IO.File]::WriteAllText(
         $windowsMlNotice, "fixture:WindowsML-NOTICE")
+    $webView2License = Join-Path $intermediate "WebView2-LICENSE.txt"
+    $webView2Notice = Join-Path $intermediate "WebView2-NOTICE.txt"
+    [System.IO.File]::WriteAllText(
+        $webView2License, "fixture:WebView2-LICENSE")
+    [System.IO.File]::WriteAllText(
+        $webView2Notice, "fixture:WebView2-NOTICE")
 
     $nugetRoot = Join-Path $env:USERPROFILE ".nuget\packages"
     & (Join-Path $RepositoryRoot "scripts\write_deployment_manifest.ps1") `
@@ -67,7 +73,9 @@ try {
         -CppWinRtLicensePath (Join-Path $nugetRoot `
             "microsoft.windows.cppwinrt\3.0.260818.1\LICENSE") `
         -WindowsMlLicensePath $windowsMlLicense `
-        -WindowsMlNoticePath $windowsMlNotice
+        -WindowsMlNoticePath $windowsMlNotice `
+        -WebView2LicensePath $webView2License `
+        -WebView2NoticePath $webView2Notice
 
     Import-Module (Join-Path $RepositoryRoot `
         "scripts\deployment_payload.psm1") -Force
@@ -104,13 +112,15 @@ try {
     $namespace.AddNamespace(
         "m", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
     if (@($deployment.files).Count -ne 7 -or
-        @($deployment.notices).Count -ne 5 -or
+        @($deployment.notices).Count -ne 7 -or
         $xml.SelectNodes(
             "/m:Package/m:Extensions/m:Extension", $namespace).Count -ne 1 -or
         -not (Test-Path -LiteralPath (Join-Path $payload `
             "licenses\WindowsAppSDK-LICENSE.txt") -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $payload `
-            "licenses\WindowsML-NOTICE.txt") -PathType Leaf)) {
+            "licenses\WindowsML-NOTICE.txt") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $payload `
+            "licenses\WebView2-NOTICE.txt") -PathType Leaf)) {
         throw "Deployment integration assertions failed."
     }
     Write-Host "Deployment manifest integration checks passed."

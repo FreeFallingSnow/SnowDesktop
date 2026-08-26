@@ -130,6 +130,20 @@
         <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
         <DeploymentKind>WindowsAppSDK</DeploymentKind>
       </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-$(EffectivePlatform)\native_uap\Microsoft.Web.WebView2.Core.dll"
+          Condition="'$(WebView2UseWinRT)' == 'true' and Exists('$(PkgMicrosoft_Web_WebView2)\runtimes\win-$(EffectivePlatform)\native_uap\Microsoft.Web.WebView2.Core.dll')">
+        <DeploymentPath>Microsoft.Web.WebView2.Core.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Web.WebView2</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(PkgMicrosoft_Web_WebView2)\lib\Microsoft.Web.WebView2.Core.winmd"
+          Condition="'$(WebView2UseWinRT)' == 'true' and Exists('$(PkgMicrosoft_Web_WebView2)\lib\Microsoft.Web.WebView2.Core.winmd')">
+        <DeploymentPath>Microsoft.Web.WebView2.Core.winmd</DeploymentPath>
+        <SourcePackage>Microsoft.Web.WebView2</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
       <_SnowDesktopDeploymentFile Include="$(TargetDir)App.xbf">
         <DeploymentPath>App.xbf</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
@@ -176,6 +190,6 @@
         Lines="@(MicrosoftWindowsAppSDKAppxFragmentFiles)"
         Overwrite="true"
         Encoding="UTF-8" />
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot; -WindowsMlLicensePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\license.txt&quot; -WindowsMlNoticePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\ThirdPartyNotices.txt&quot;" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot; -WindowsMlLicensePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\license.txt&quot; -WindowsMlNoticePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\ThirdPartyNotices.txt&quot; -WebView2LicensePath &quot;$(PkgMicrosoft_Web_WebView2)\LICENSE.txt&quot; -WebView2NoticePath &quot;$(PkgMicrosoft_Web_WebView2)\NOTICE.txt&quot;" />
   </Target>
 </Project>

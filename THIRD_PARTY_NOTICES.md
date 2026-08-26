@@ -8,6 +8,8 @@ under `steam_bridge/` is licensed under the MIT License.
 | Component | Version | License | Copyright / source |
 | --- | --- | --- | --- |
 | Microsoft Windows App SDK | 2.4.0 NuGet package | Microsoft Software License Terms | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/WindowsAppSDK> |
+| Microsoft Windows ML Runtime | 2.1.74 NuGet package | Microsoft Software License Terms | Copyright (c) Microsoft Corporation; <https://learn.microsoft.com/windows/ai/new-windows-ml/> |
+| Microsoft Edge WebView2 SDK | 1.0.3719.77 NuGet package | BSD 3-Clause | Copyright (c) Microsoft Corporation; <https://developer.microsoft.com/microsoft-edge/webview2/> |
 | Microsoft.Windows.CppWinRT | 3.0.260818.1 NuGet package | MIT | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/cppwinrt> |
 | Dear ImGui | 1.92.5 WIP | MIT | Copyright (c) 2014-2025 Omar Cornut and contributors; <https://github.com/ocornut/imgui> |
 | Lua | 5.4.7 | MIT | Copyright (C) 1994-2024 Lua.org, PUC-Rio; <https://www.lua.org> |
@@ -34,7 +36,9 @@ The Microsoft Windows App SDK runtime is redistributed self-contained under
 the license terms and third-party NOTICE installed by the pinned 2.4.0 NuGet
 package. The build records those files in `SnowDesktop.deployment.json`, and all
 release packagers copy them to the payload `licenses` directory. The pinned
-Microsoft.Windows.CppWinRT 3.0.260818.1 MIT license is copied the same way.
+Windows ML 2.1.74 and WebView2 1.0.3719.77 licenses and third-party notices are
+copied the same way, along with the Microsoft.Windows.CppWinRT 3.0.260818.1 MIT
+license.
 
 ## TranslucentTB-derived portions
 
