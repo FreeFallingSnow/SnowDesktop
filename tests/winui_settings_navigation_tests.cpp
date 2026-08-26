@@ -345,13 +345,16 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "Opacity(IsHighContrastEnabled() ? 1.0 : 0.68)") !=
                 std::string::npos &&
             recorder.find("SetItemStatus(") != std::string::npos &&
-            recorder.find(
-              "state->text.availableStatus, state->text.captureActive") !=
+            recorder.find("CreateEditButtonContent(") !=
+                std::string::npos &&
+            recorder.find("state->captureSurface.Content(") !=
+                std::string::npos &&
+            recorder.find("state->dialogStatus.Text(dialogStatus)") !=
                 std::string::npos &&
             recorder.find("ActualThemeChanged(") != std::string::npos &&
             recorder.find("IsHighContrastEnabled()") !=
                 std::string::npos,
-        "hotkeys use a dedicated recorder button with layered keycaps, theme and High Contrast updates, accessible chord status, and a stable focus target");
+        "hotkeys use a compact edit button and dialog recording surface with layered keycaps, theme and High Contrast updates, accessible chord status, and a stable focus target");
     Check(recorderHeader.find(
               "SetValidationContext(bool enabled, bool localDesktopHotkey)") !=
                 std::string::npos &&
@@ -744,27 +747,23 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto numericResetCommit = desktop.find(
         "SettingsUpdateMode::PreviewAndCommit", numericResetPublish);
     const auto numericResetEnd = desktop.find(");", numericResetPublish);
-    Check(presenter.find(
-              "settings.modifiers = MOD_CONTROL | MOD_ALT") !=
-                std::string::npos &&
-            presenter.find("settings.virtualKey = VK_SPACE") !=
+    Check(presenter.find("quickNavigationHotkey.SetDefaultValue(") !=
                 std::string::npos &&
             presenter.find(
-              "settings.pageNavigationPreviousVirtualKey = VK_PRIOR") !=
+              "Chord(MOD_CONTROL | MOD_ALT, VK_SPACE)") !=
                 std::string::npos &&
             presenter.find(
-              "settings.pageNavigationNextVirtualKey = VK_NEXT") !=
+              "previousPageHotkey.SetDefaultValue(Chord(0, VK_PRIOR))") !=
                 std::string::npos &&
             presenter.find(
-              "settings.desktopPassthroughHotkeyVirtualKey =") !=
-                std::string::npos &&
-            presenter.find("VK_OEM_3;") != std::string::npos &&
-            presenter.find("floatingHotkeyVirtualKey = 'D'") !=
-                std::string::npos &&
-            presenter.find("actions.Children().Append(reset)") !=
+              "nextPageHotkey.SetDefaultValue(Chord(0, VK_NEXT))") !=
                 std::string::npos &&
             presenter.find(
-              "presenter_controls::ConfigureRestoreDefaultButton(") !=
+              "Chord(MOD_CONTROL | MOD_ALT, VK_OEM_3)") !=
+                std::string::npos &&
+            presenter.find("Chord(MOD_CONTROL | MOD_ALT, 'D')") !=
+                std::string::npos &&
+            presenter.find("actions.Children().Append(reset)") ==
                 std::string::npos &&
             sharedControls.find(
               "inline void ConfigureRestoreDefaultButton(") !=
@@ -778,8 +777,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             sharedControls.find(
               "AutomationProperties::SetHelpText(button, accessibleText)") !=
                 std::string::npos &&
-            presenter.find(
-              "reset.VerticalAlignment(mux::VerticalAlignment::Top)") !=
+            presenter.find("row.Initialize(recorder.Root())") !=
                 std::string::npos &&
             sharedControls.find(
               "controlHost.HorizontalAlignment(alignment)") !=
@@ -797,8 +795,28 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             presenter.find("floatingDockToggleRow.SetControlAlignment(") !=
                 std::string::npos &&
+            recorder.find("muxc::ContentDialog dialog") !=
+                std::string::npos &&
+            recorder.find(
+              "dialog.DefaultButton(muxc::ContentDialogButton::Primary)") !=
+                std::string::npos &&
+            recorder.find("co_await state->dialog.ShowAsync()") !=
+                std::string::npos &&
+            recorder.find("captureSurface.KeyDown") !=
+                std::string::npos &&
+            recorder.find("state->rules.Commit()") !=
+                std::string::npos &&
+            recorder.find("state->rules.Restore(state->defaultValue)") !=
+                std::string::npos &&
+            recorder.find("state->rules.Clear()") !=
+                std::string::npos &&
+            recorder.find("LostFocus(") == std::string::npos &&
             recorderRules.find(
-              "virtualKey == KeyBack || virtualKey == KeyDelete") !=
+              "virtualKey == KeyEnter || virtualKey == KeyEscape") !=
+                std::string::npos &&
+            recorderRules.find("HotkeyRecorderTransition Commit()") !=
+                std::string::npos &&
+            recorderRules.find("HotkeyRecorderTransition Restore(") !=
                 std::string::npos &&
             recorderRules.find("committed_ = {};") != std::string::npos &&
             recorderRules.find("HotkeyRecorderAction::Clear") !=
@@ -823,7 +841,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             personalization.find("1.0, 12.0") != std::string::npos &&
             personalization.find("1.0, 24.0") != std::string::npos &&
             dock.find("nullptr, 100.0") != std::string::npos,
-        "hotkey and numeric defaults retain their reset actions while low-risk restore buttons use compact accessible icon treatment");
+        "hotkeys use a PowerToys-style explicit edit dialog with compact previews, default/clear actions, and no focus-loss auto-commit while numeric defaults retain accessible reset actions");
 }
 }
 

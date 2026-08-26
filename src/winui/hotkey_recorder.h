@@ -21,14 +21,14 @@ struct HotkeyRecorderText
     std::wstring automationName = L"Keyboard shortcut recorder";
     std::wstring idleHint = L"Select to record a keyboard shortcut";
     std::wstring captureHint =
-        L"Press a shortcut. Enter saves, Escape cancels, Backspace or Delete clears.";
+        L"Press a shortcut";
     std::wstring checking = L"Checking shortcut availability";
     std::wstring available = L"Shortcut is available";
     std::wstring conflict = L"Shortcut conflicts with another command";
     std::wstring cleared = L"Shortcut cleared";
     std::wstring none = L"None";
     std::wstring disabled = L"Disabled";
-    std::wstring captureActive = L"Press Enter to save or Escape to cancel";
+    std::wstring captureActive = L"Press a shortcut, then select Apply.";
     std::wstring notSetWarning = L"No shortcut is configured";
     std::wstring availableStatus = L"Available";
     std::wstring inUseStatus = L"In use";
@@ -41,14 +41,19 @@ struct HotkeyRecorderText
     std::wstring alt = L"Alt";
     std::wstring shift = L"Shift";
     std::wstring windows = L"Win";
+    std::wstring apply = L"Apply";
+    std::wstring cancel = L"Cancel";
+    std::wstring clear = L"Clear";
+    std::wstring restoreDefault = L"Restore default";
 };
 
 /**
  * Programmatic WinUI 3 hotkey recorder suitable for insertion into a page.
  *
- * The visible element is a UserControl containing a theme-aware Button and a
- * live status TextBlock; it is deliberately not a TextBox. Availability may
- * complete asynchronously and is guarded by both generation and request id.
+ * The visible element mirrors the PowerToys shortcut control: a compact edit
+ * button opens a ContentDialog with a dedicated recording surface and explicit
+ * apply/cancel/reset/clear actions. Availability may complete asynchronously
+ * and is guarded by both generation and request id.
  */
 class HotkeyRecorder final
 {
@@ -88,6 +93,7 @@ public:
 
     /** Rebinds the control to an immutable settings generation. */
     void SetValue(HotkeyChord value, std::uint64_t generation);
+    void SetDefaultValue(HotkeyChord value);
     [[nodiscard]] HotkeyChord Value() const noexcept;
     [[nodiscard]] bool IsCapturing() const noexcept;
 

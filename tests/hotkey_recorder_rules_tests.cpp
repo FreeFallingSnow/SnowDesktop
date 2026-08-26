@@ -20,8 +20,11 @@ int main()
 
     HotkeyRecorderRules rules;
     rules.Reset({ HotkeyRecorderRules::ModifierControl, 'K' }, 7);
-    rules.BeginCapture();
+    const auto initial = rules.BeginCapture();
     Check(rules.Active(), "capture starts explicitly");
+    Check(initial.action == HotkeyRecorderAction::ProbeAvailability &&
+            initial.chord == rules.Committed(),
+        "opening the dialog rechecks the saved shortcut");
     Check(rules.KeyDown(HotkeyRecorderRules::KeyControl,
               HotkeyRecorderRules::ModifierControl).action ==
             HotkeyRecorderAction::None,
@@ -48,8 +51,8 @@ int main()
             rules.Availability() == HotkeyAvailability::Conflict,
         "an unavailable chord enters conflict state");
     Check(rules.KeyDown(HotkeyRecorderRules::KeyEnter, 0).action ==
-            HotkeyRecorderAction::None,
-        "Enter cannot commit a conflicting chord");
+            HotkeyRecorderAction::None && rules.Active(),
+        "Enter is reserved for the dialog and does not mutate the chord");
 
     const auto registered = rules.KeyDown('K',
         HotkeyRecorderRules::ModifierControl);
@@ -64,33 +67,49 @@ int main()
     Check(rules.ApplyAvailability(
             available.generation, available.requestId, true),
         "the current availability result is accepted");
-    const auto commit = rules.KeyDown(
-        HotkeyRecorderRules::KeyEnter, 0);
+    Check(rules.KeyDown(HotkeyRecorderRules::KeyTab, 0).action ==
+            HotkeyRecorderAction::None && rules.Active(),
+        "Tab is reserved for dialog focus navigation");
+    const auto commit = rules.Commit();
     Check(commit.action == HotkeyRecorderAction::Commit &&
             commit.chord == available.chord && !rules.Active(),
-        "Enter commits an available chord");
+        "the explicit dialog action commits an available chord");
 
-    rules.BeginCapture();
-    const auto cancel = rules.KeyDown(
-        HotkeyRecorderRules::KeyEscape, 0);
+    (void)rules.BeginCapture();
+    Check(rules.KeyDown(HotkeyRecorderRules::KeyEscape, 0).action ==
+            HotkeyRecorderAction::None && rules.Active(),
+        "Escape is reserved for ContentDialog cancellation");
+    const auto cancel = rules.CancelCapture();
     Check(cancel.action == HotkeyRecorderAction::Cancel &&
             rules.Committed() == commit.chord,
-        "Escape cancels and preserves the prior committed chord");
+        "explicit cancellation preserves the prior committed chord");
 
-    rules.BeginCapture();
-    const auto clear = rules.KeyDown(
-        HotkeyRecorderRules::KeyDelete, 0);
+    (void)rules.BeginCapture();
+    const auto deleteCandidate = rules.KeyDown(
+        HotkeyRecorderRules::KeyDelete,
+        HotkeyRecorderRules::ModifierControl);
+    Check(deleteCandidate.action == HotkeyRecorderAction::ProbeAvailability &&
+            deleteCandidate.chord.virtualKey ==
+                HotkeyRecorderRules::KeyDelete,
+        "Delete can be recorded as an action key");
+    const auto clear = rules.Clear();
     Check(clear.action == HotkeyRecorderAction::Clear &&
             rules.Committed().Empty() && !rules.Active(),
-        "Delete clears and commits an empty chord");
+        "the explicit Clear action commits an empty chord");
     rules.Reset({ HotkeyRecorderRules::ModifierAlt, 'A' }, 8);
-    rules.BeginCapture();
+    (void)rules.BeginCapture();
     Check(rules.KeyDown(HotkeyRecorderRules::KeyBack, 0).action ==
-            HotkeyRecorderAction::Clear && rules.Committed().Empty(),
-        "Backspace also clears the committed chord");
+            HotkeyRecorderAction::ProbeAvailability &&
+            rules.Committed().virtualKey == 'A',
+        "Backspace is recorded without clearing the saved shortcut");
+    const auto restored = rules.Restore(
+        {HotkeyRecorderRules::ModifierAlt, 'R'});
+    Check(restored.action == HotkeyRecorderAction::Commit &&
+            restored.chord.virtualKey == 'R' && !rules.Active(),
+        "Restore Default commits the supplied default shortcut");
 
     rules.Reset({ HotkeyRecorderRules::ModifierWindows, 'R' }, 20);
-    rules.BeginCapture();
+    (void)rules.BeginCapture();
     const auto focusCandidate = rules.KeyDown('D',
         HotkeyRecorderRules::ModifierWindows);
     Check(rules.ApplyAvailability(20, focusCandidate.requestId, true),
@@ -98,18 +117,24 @@ int main()
     Check(rules.KeyUp('D').action == HotkeyRecorderAction::None &&
             rules.Candidate() == focusCandidate.chord,
         "KeyUp preserves the sampled physical chord for confirmation");
-    Check(rules.LoseFocus().action == HotkeyRecorderAction::Commit,
-        "losing focus commits an available chord");
+    Check(rules.LoseFocus().action == HotkeyRecorderAction::None &&
+            rules.Active(),
+        "moving focus inside the dialog does not auto-commit");
+    Check(rules.Commit().action == HotkeyRecorderAction::Commit,
+        "the dialog can commit after focus navigation");
 
-    rules.BeginCapture();
+    (void)rules.BeginCapture();
     const auto conflicting = rules.KeyDown('X', 0);
     Check(rules.ApplyAvailability(20, conflicting.requestId, false),
         "focus test chord becomes conflicting");
-    Check(rules.LoseFocus().action == HotkeyRecorderAction::Cancel &&
+    Check(rules.LoseFocus().action == HotkeyRecorderAction::None &&
+            rules.Active(),
+        "focus changes do not dismiss a conflicting chord");
+    Check(rules.CancelCapture().action == HotkeyRecorderAction::Cancel &&
             rules.Committed().virtualKey == 'D',
-        "losing focus cancels a conflicting chord");
+        "dialog cancellation restores the saved chord after a conflict");
 
-    rules.BeginCapture();
+    (void)rules.BeginCapture();
     const auto closing = rules.KeyDown('Z', 0);
     rules.Close();
     Check(!rules.ApplyAvailability(

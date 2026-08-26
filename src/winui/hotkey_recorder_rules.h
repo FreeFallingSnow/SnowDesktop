@@ -49,6 +49,7 @@ public:
     static constexpr std::uint32_t ModifierWindows = 0x0008;
 
     static constexpr std::uint32_t KeyBack = 0x08;
+    static constexpr std::uint32_t KeyTab = 0x09;
     static constexpr std::uint32_t KeyEnter = 0x0D;
     static constexpr std::uint32_t KeyEscape = 0x1B;
     static constexpr std::uint32_t KeyDelete = 0x2E;
@@ -74,12 +75,19 @@ public:
         ++requestId_;
     }
 
-    void BeginCapture() noexcept
+    [[nodiscard]] HotkeyRecorderTransition BeginCapture() noexcept
     {
         candidate_ = committed_;
         active_ = true;
         availability_ = HotkeyAvailability::Unknown;
         ++requestId_;
+        if (candidate_.Empty())
+            return {};
+        availability_ = HotkeyAvailability::Checking;
+        return {
+            HotkeyRecorderAction::ProbeAvailability,
+            candidate_, generation_, requestId_
+        };
     }
 
     void Close() noexcept
@@ -96,26 +104,11 @@ public:
     {
         if (!active_)
             return {};
-        if (virtualKey == KeyEscape)
-            return Cancel();
-        if (virtualKey == KeyBack || virtualKey == KeyDelete)
-        {
-            candidate_ = {};
-            committed_ = {};
-            active_ = false;
-            availability_ = HotkeyAvailability::Available;
-            ++requestId_;
-            return { HotkeyRecorderAction::Clear, {}, generation_, requestId_ };
-        }
-        if (virtualKey == KeyEnter)
-        {
-            if (candidate_.Empty() ||
-                availability_ != HotkeyAvailability::Available)
-                return {};
-            committed_ = candidate_;
-            active_ = false;
-            return { HotkeyRecorderAction::Commit, committed_, generation_, requestId_ };
-        }
+        // ContentDialog owns navigation and commands. Enter applies through
+        // its default primary button, Escape cancels, and Tab changes focus.
+        if (virtualKey == KeyEnter || virtualKey == KeyEscape ||
+            virtualKey == KeyTab)
+            return {};
         if (IsModifierKey(virtualKey))
             return {};
 
@@ -147,16 +140,64 @@ public:
 
     [[nodiscard]] HotkeyRecorderTransition LoseFocus() noexcept
     {
+        // Focus is expected to move between the recorder surface and the
+        // dialog buttons. Only an explicit dialog action ends editing.
+        return {};
+    }
+
+    [[nodiscard]] HotkeyRecorderTransition Commit() noexcept
+    {
+        if (!active_ || candidate_.Empty() ||
+            availability_ != HotkeyAvailability::Available)
+            return {};
+        committed_ = candidate_;
+        active_ = false;
+        return {
+            HotkeyRecorderAction::Commit,
+            committed_, generation_, requestId_
+        };
+    }
+
+    [[nodiscard]] HotkeyRecorderTransition Clear() noexcept
+    {
         if (!active_)
             return {};
-        if (!candidate_.Empty() &&
-            availability_ == HotkeyAvailability::Available)
-        {
-            committed_ = candidate_;
-            active_ = false;
-            return { HotkeyRecorderAction::Commit, committed_, generation_, requestId_ };
-        }
-        return Cancel();
+        candidate_ = {};
+        committed_ = {};
+        active_ = false;
+        availability_ = HotkeyAvailability::Available;
+        ++requestId_;
+        return { HotkeyRecorderAction::Clear, {}, generation_, requestId_ };
+    }
+
+    [[nodiscard]] HotkeyRecorderTransition Restore(
+        HotkeyChord value) noexcept
+    {
+        if (!active_)
+            return {};
+        candidate_ = value;
+        committed_ = value;
+        active_ = false;
+        availability_ = HotkeyAvailability::Unknown;
+        ++requestId_;
+        return {
+            HotkeyRecorderAction::Commit,
+            committed_, generation_, requestId_
+        };
+    }
+
+    [[nodiscard]] HotkeyRecorderTransition CancelCapture() noexcept
+    {
+        if (!active_)
+            return {};
+        candidate_ = committed_;
+        active_ = false;
+        availability_ = HotkeyAvailability::Unknown;
+        ++requestId_;
+        return {
+            HotkeyRecorderAction::Cancel,
+            committed_, generation_, requestId_
+        };
     }
 
     [[nodiscard]] bool ApplyAvailability(
@@ -195,15 +236,6 @@ public:
     }
 
 private:
-    [[nodiscard]] HotkeyRecorderTransition Cancel() noexcept
-    {
-        candidate_ = committed_;
-        active_ = false;
-        availability_ = HotkeyAvailability::Unknown;
-        ++requestId_;
-        return { HotkeyRecorderAction::Cancel, committed_, generation_, requestId_ };
-    }
-
     HotkeyChord committed_;
     HotkeyChord candidate_;
     std::uint64_t generation_ = 0;

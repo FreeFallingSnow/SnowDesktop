@@ -48,35 +48,12 @@ void InitializeCard(
 struct HotkeySettingRow
 {
     SettingRow row;
-    muxc::Grid actions{nullptr};
-    muxc::Button reset{nullptr};
-    winrt::event_token resetToken{};
 
     void Initialize(HotkeyRecorder& recorder)
     {
-        actions = muxc::Grid{};
-        actions.ColumnSpacing(8.0);
-        muxc::ColumnDefinition recorderColumn{};
-        recorderColumn.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        muxc::ColumnDefinition resetColumn{};
-        resetColumn.Width(mux::GridLengthHelper::Auto());
-        actions.ColumnDefinitions().Append(recorderColumn);
-        actions.ColumnDefinitions().Append(resetColumn);
-        recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        reset = muxc::Button{};
-        reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        // The recorder owns a second line for availability/conflict status.
-        // Align the reset action with the recorder button instead of centering
-        // it against the combined editor-and-status height.
-        reset.VerticalAlignment(mux::VerticalAlignment::Top);
-        reset.VerticalContentAlignment(mux::VerticalAlignment::Center);
-        reset.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
-        reset.MinHeight(32.0);
-        muxc::Grid::SetColumn(reset, 1);
-        actions.Children().Append(recorder.Root());
-        actions.Children().Append(reset);
-        row.Initialize(actions);
+        recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Right);
+        row.Initialize(recorder.Root());
+        row.SetControlAlignment(mux::HorizontalAlignment::Right);
     }
 };
 
@@ -418,48 +395,6 @@ struct GeneralPagePresenter::Impl
                     settings.floatingShortcutMode = enabled;
                 });
             });
-        quickNavigationHotkeyRow.resetToken =
-            quickNavigationHotkeyRow.reset.Click(
-                [this](const auto&, const auto&) {
-                    CommitNavigation([](NavigationSettings& settings) {
-                        settings.modifiers = MOD_CONTROL | MOD_ALT;
-                        settings.virtualKey = VK_SPACE;
-                    });
-                });
-        previousPageHotkeyRow.resetToken =
-            previousPageHotkeyRow.reset.Click(
-                [this](const auto&, const auto&) {
-                    CommitGeneral([](GeneralSettings& settings) {
-                        settings.pageNavigationPreviousModifiers = 0;
-                        settings.pageNavigationPreviousVirtualKey = VK_PRIOR;
-                    });
-                });
-        nextPageHotkeyRow.resetToken = nextPageHotkeyRow.reset.Click(
-            [this](const auto&, const auto&) {
-                CommitGeneral([](GeneralSettings& settings) {
-                    settings.pageNavigationNextModifiers = 0;
-                    settings.pageNavigationNextVirtualKey = VK_NEXT;
-                });
-            });
-        desktopPassthroughHotkeyRow.resetToken =
-            desktopPassthroughHotkeyRow.reset.Click(
-                [this](const auto&, const auto&) {
-                    CommitGeneral([](GeneralSettings& settings) {
-                        settings.desktopPassthroughHotkeyModifiers =
-                            MOD_CONTROL | MOD_ALT;
-                        settings.desktopPassthroughHotkeyVirtualKey =
-                            VK_OEM_3;
-                    });
-                });
-        floatingDockHotkeyRow.resetToken =
-            floatingDockHotkeyRow.reset.Click(
-                [this](const auto&, const auto&) {
-                    CommitDock([](DockSettings& settings) {
-                        settings.floatingHotkeyModifiers =
-                            MOD_CONTROL | MOD_ALT;
-                        settings.floatingHotkeyVirtualKey = 'D';
-                    });
-                });
     }
 
     void BindHotkeyRecorder(
@@ -489,6 +424,15 @@ struct GeneralPagePresenter::Impl
 
     void BindHotkeyRecorders()
     {
+        quickNavigationHotkey.SetDefaultValue(
+            Chord(MOD_CONTROL | MOD_ALT, VK_SPACE));
+        previousPageHotkey.SetDefaultValue(Chord(0, VK_PRIOR));
+        nextPageHotkey.SetDefaultValue(Chord(0, VK_NEXT));
+        desktopPassthroughHotkey.SetDefaultValue(
+            Chord(MOD_CONTROL | MOD_ALT, VK_OEM_3));
+        floatingDockHotkey.SetDefaultValue(
+            Chord(MOD_CONTROL | MOD_ALT, 'D'));
+
         BindHotkeyRecorder(quickNavigationHotkey,
             SettingsHostActions::HotkeyTarget::QuickNavigation,
             [this](HotkeyChord chord) {
@@ -676,6 +620,10 @@ struct GeneralPagePresenter::Impl
         text.noModifierWarning =
             L("app.settings.hotkey_no_modifier_warning");
         text.systemConflict = L("app.settings.hotkey_conflict_system");
+        text.apply = L("app.settings.apply");
+        text.cancel = L("app.settings.cancel");
+        text.clear = L("app.settings.widget.clear");
+        text.restoreDefault = L("app.settings.restore_default");
         return text;
     }
 
@@ -731,19 +679,6 @@ struct GeneralPagePresenter::Impl
         floatingDockHotkeyRow.row.SetText(
             L("app.settings.hotkey"),
             L("app.settings.hotkey_capture_help"));
-
-        const std::wstring restoreDefault =
-            L("app.settings.restore_default");
-        for (const auto& button : {
-                 quickNavigationHotkeyRow.reset,
-                 previousPageHotkeyRow.reset,
-                 nextPageHotkeyRow.reset,
-                 desktopPassthroughHotkeyRow.reset,
-                 floatingDockHotkeyRow.reset})
-        {
-            presenter_controls::ConfigureRestoreDefaultButton(
-                button, restoreDefault);
-        }
 
         quickNavigationHotkey.SetText(HotkeyText(
             L("app.settings.quick_navigation") + L" — " +
@@ -891,15 +826,6 @@ struct GeneralPagePresenter::Impl
             pageNavigationToggle.Toggled(pageNavigationToken);
             desktopPassthroughToggle.Toggled(desktopPassthroughToken);
             floatingDockToggle.Toggled(floatingDockToken);
-            quickNavigationHotkeyRow.reset.Click(
-                quickNavigationHotkeyRow.resetToken);
-            previousPageHotkeyRow.reset.Click(
-                previousPageHotkeyRow.resetToken);
-            nextPageHotkeyRow.reset.Click(nextPageHotkeyRow.resetToken);
-            desktopPassthroughHotkeyRow.reset.Click(
-                desktopPassthroughHotkeyRow.resetToken);
-            floatingDockHotkeyRow.reset.Click(
-                floatingDockHotkeyRow.resetToken);
             openPortableStartupSettings.Click(
                 openPortableStartupSettingsToken);
             openInstalledStartupSettings.Click(
