@@ -132,12 +132,25 @@ int main(int argc, char** argv)
             "compatibility entry points canonicalize legacy routes and use current typed destinations");
         Check(source.find("bool EnsureInitialized()") !=
                     std::string::npos &&
+                source.find("bool ReleaseClosedHost() noexcept") !=
+                    std::string::npos &&
+                source.find("host->ShouldReleaseAfterClose()") !=
+                    std::string::npos &&
+                source.find("if (impl_->ReleaseClosedHost())") !=
+                    std::string::npos &&
                 source.find("auto candidate =") != std::string::npos &&
                 source.find("host = std::move(candidate)") !=
                     std::string::npos &&
                 source.find("return impl_->EnsureInitialized() &&") !=
                     std::string::npos,
             "each failed lazy initialization is retried with a newly constructed WinUI host");
+        Check(host.find("releaseAfterClose = true;") !=
+                    std::string::npos &&
+                host.find("PostMessageW(window, WM_NULL, 0, 0)") !=
+                    std::string::npos &&
+                host.find("!impl_->releaseAfterClose") !=
+                    std::string::npos,
+            "a successful close wakes the message loop and releases the WinUI host outside WM_CLOSE");
         Check(appRun.find("ensureWidgetSettingsInstance") !=
                     std::string::npos &&
                 appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=

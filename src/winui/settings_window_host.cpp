@@ -646,6 +646,7 @@ struct SettingsWindowHost::Impl
     bool shuttingDown = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
+    bool releaseAfterClose = false;
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
@@ -2589,6 +2590,11 @@ struct SettingsWindowHost::Impl
         if (widgetSettingsService)
             widgetSettingsService->CloseAll();
         ShowWindow(window, SW_HIDE);
+        releaseAfterClose = true;
+        // Wake the owner loop so SettingsWindow can destroy this host after
+        // WM_CLOSE has unwound instead of tearing down XAML from inside its
+        // own window procedure.
+        (void)PostMessageW(window, WM_NULL, 0, 0);
         return true;
     }
 };
@@ -2622,6 +2628,7 @@ bool SettingsWindowHost::Initialize(
     impl_->controller = &controller;
     impl_->widgetSettingsService = widgetSettingsService;
     impl_->options = std::move(options);
+    impl_->releaseAfterClose = false;
     impl_->lastError.clear();
 
     if (!impl_->runtime.Initialize() || !impl_->RegisterWindowClass() ||
@@ -2734,7 +2741,8 @@ void SettingsWindowHost::Shutdown() noexcept
 {
     if (!impl_ || impl_->shuttingDown)
         return;
-    if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)
+    if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller &&
+        !impl_->releaseAfterClose)
         (void)impl_->FlushPendingChanges();
     impl_->shuttingDown = true;
 
@@ -2785,6 +2793,7 @@ void SettingsWindowHost::Shutdown() noexcept
     impl_->instance = nullptr;
     impl_->initialized = false;
     impl_->interactionSuspended = true;
+    impl_->releaseAfterClose = false;
     impl_->ownerThreadId = 0;
     impl_->shuttingDown = false;
 }
@@ -2964,6 +2973,11 @@ bool SettingsWindowHost::IsInitialized() const noexcept
 bool SettingsWindowHost::IsVisible() const noexcept
 {
     return impl_->Visible();
+}
+
+bool SettingsWindowHost::ShouldReleaseAfterClose() const noexcept
+{
+    return impl_->releaseAfterClose;
 }
 
 HWND SettingsWindowHost::Window() const noexcept

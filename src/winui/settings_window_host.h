@@ -128,6 +128,11 @@ public:
 
     [[nodiscard]] bool IsInitialized() const noexcept;
     [[nodiscard]] bool IsVisible() const noexcept;
+    /**
+     * True after a successful user close. The facade consumes this on the
+     * next message-pump turn so the host is not destroyed inside WM_CLOSE.
+     */
+    [[nodiscard]] bool ShouldReleaseAfterClose() const noexcept;
     [[nodiscard]] HWND Window() const noexcept;
     [[nodiscard]] const std::wstring& LastError() const noexcept;
 
