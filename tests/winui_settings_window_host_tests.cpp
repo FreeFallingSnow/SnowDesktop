@@ -672,10 +672,20 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("rightInset != integratedTitleBarRightInset_") !=
                 std::string::npos,
         "live resize avoids redundant caption-inset layout writes and full-window class redraws");
-    Check(source.find(
-              "if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)") !=
+    const std::size_t shutdownStart = source.find(
+        "void SettingsWindowHost::Shutdown() noexcept");
+    const std::size_t shutdownEnd = source.find(
+        "bool SettingsWindowHost::Open(", shutdownStart);
+    const std::string shutdown = shutdownStart == std::string::npos ||
+            shutdownEnd == std::string::npos
+        ? std::string{}
+        : source.substr(shutdownStart, shutdownEnd - shutdownStart);
+    Check(shutdown.find("impl_->controller &&") != std::string::npos &&
+            shutdown.find("!impl_->releaseAfterClose") !=
+                std::string::npos &&
+            shutdown.find("impl_->FlushPendingChanges()") !=
                 std::string::npos,
-        "host shutdown attempts a final component and controller flush");
+        "ordinary shutdown flushes pending settings while a successfully closed session skips duplicate work");
     Check(source.find("viewEpoch") != std::string::npos &&
             source.find("expectedEpoch") != std::string::npos &&
             source.find("DispatcherQueue") != std::string::npos &&
