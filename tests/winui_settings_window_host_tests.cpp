@@ -269,6 +269,8 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("CompactModeThresholdWidth=\"720\"") !=
                 std::string::npos &&
+            shellMarkup.find("CompactPaneLength=\"48\"") !=
+                std::string::npos &&
             shellMarkup.find("ExpandedModeThresholdWidth=\"1008\"") !=
                 std::string::npos &&
             shellMarkup.find("AdaptiveTrigger MinWindowWidth=\"0\"") !=
@@ -281,11 +283,17 @@ void TestHostContract(const std::filesystem::path& repository)
             shellMarkup.find(
               "Target=\"PageSurface.Margin\" Value=\"40,16,40,48\"") !=
                 std::string::npos &&
+            shellMarkup.find(
+              "Target=\"TitleBarBackButton.Width\" Value=\"48\"") !=
+                std::string::npos &&
+            shellMarkup.find(
+              "Target=\"TitleBarBackButton.Width\" Value=\"44\"") !=
+                std::string::npos &&
             shellMarkup.find("PaneDisplayMode=\"Left\"") ==
                 std::string::npos &&
             shellMarkup.find("IsPaneOpen=\"True\"") ==
                 std::string::npos,
-        "the minimum host size is retained while NavigationView and page margins adapt between compact and wide window states");
+        "the minimum host size is retained while NavigationView, page margins, and the title-bar back button adapt between compact and wide window states");
     Check(pageScrollerMarkup.find(
               "MaxWidth=\"1200\"") !=
                 std::string_view::npos &&

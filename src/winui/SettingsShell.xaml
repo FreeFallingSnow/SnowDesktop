@@ -73,6 +73,7 @@
                         <Setter Target="PageTitle.FontSize" Value="28" />
                         <Setter Target="PageHeaderIconHost.Width" Value="40" />
                         <Setter Target="PageHeaderIconHost.Height" Value="40" />
+                        <Setter Target="TitleBarBackButton.Width" Value="48" />
                     </VisualState.Setters>
                 </VisualState>
                 <VisualState x:Name="WideContent">
@@ -84,6 +85,7 @@
                         <Setter Target="PageTitle.FontSize" Value="32" />
                         <Setter Target="PageHeaderIconHost.Width" Value="44" />
                         <Setter Target="PageHeaderIconHost.Height" Value="44" />
+                        <Setter Target="TitleBarBackButton.Width" Value="44" />
                     </VisualState.Setters>
                 </VisualState>
             </VisualStateGroup>
@@ -131,6 +133,7 @@
             IsSettingsVisible="False"
             IsBackButtonVisible="Collapsed"
             PaneDisplayMode="Auto"
+            CompactPaneLength="48"
             CompactModeThresholdWidth="720"
             ExpandedModeThresholdWidth="1008"
             OpenPaneLength="260"
