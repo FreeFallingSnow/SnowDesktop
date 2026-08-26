@@ -502,7 +502,7 @@ void TestHostContract(const std::filesystem::path& repository)
             staticSearchMapsTo(
                 "personalization.contextMenu", "AppearanceTheme") &&
             staticSearchMapsTo(
-                "personalization.backgroundColor", "AppearanceWidgets") &&
+                "personalization.backgroundColor", "AppearanceTheme") &&
             staticSearchMapsTo(
                 "personalization.cornerRadius", "AppearanceWidgets") &&
             staticSearchMapsTo(

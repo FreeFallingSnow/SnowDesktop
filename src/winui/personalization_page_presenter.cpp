@@ -139,7 +139,7 @@ struct PersonalizationPagePresenter::Impl
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel themeRoot{nullptr};
-    muxc::StackPanel widgetAppearanceRoot{nullptr};
+    muxc::StackPanel widgetLayoutRoot{nullptr};
 
     SettingsCard themeCard;
     SettingsCard themeTargetsCard;
@@ -251,8 +251,8 @@ struct PersonalizationPagePresenter::Impl
     {
         themeRoot = muxc::StackPanel{};
         themeRoot.Spacing(8.0);
-        widgetAppearanceRoot = muxc::StackPanel{};
-        widgetAppearanceRoot.Spacing(8.0);
+        widgetLayoutRoot = muxc::StackPanel{};
+        widgetLayoutRoot.Spacing(8.0);
 
         InitializeCard(themeCard, cardStyle, themeRoot);
         presetCombo = muxc::ComboBox{};
@@ -277,8 +277,7 @@ struct PersonalizationPagePresenter::Impl
         themeTargetsCard.content.Children().Append(
             collectionPopupThemeRow.root);
 
-        InitializeCard(widgetAppearanceCard, cardStyle,
-            widgetAppearanceRoot);
+        InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
         InitializeColorControl(backgroundColor,
             &PersonalizationSettings::widgetBgR,
             &PersonalizationSettings::widgetBgG,
@@ -346,7 +345,7 @@ struct PersonalizationPagePresenter::Impl
         contextMenuRow.Initialize(contextMenuCombo);
         contextMenuCard.content.Children().Append(contextMenuRow.root);
 
-        InitializeCard(layoutCard, cardStyle, widgetAppearanceRoot);
+        InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
         InitializeContinuousControl(cornerRadius,
             &PersonalizationSettings::cornerRadius,
             4.0, 28.0, 1.0, 1.0, 12.0);
@@ -1138,10 +1137,10 @@ mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
     return impl_ ? impl_->themeRoot : nullptr;
 }
 
-mux::UIElement PersonalizationPagePresenter::WidgetAppearanceContent()
+mux::UIElement PersonalizationPagePresenter::WidgetLayoutContent()
     const noexcept
 {
-    return impl_ ? impl_->widgetAppearanceRoot : nullptr;
+    return impl_ ? impl_->widgetLayoutRoot : nullptr;
 }
 
 void PersonalizationPagePresenter::ApplySnapshot(

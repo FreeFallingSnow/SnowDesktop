@@ -45,28 +45,27 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "actions carry generation, update mode, and a latest-state edit");
     Check(header.find("ThemeContent() const noexcept") !=
                 std::string::npos &&
-            header.find("WidgetAppearanceContent() const noexcept") !=
+            header.find("WidgetLayoutContent() const noexcept") !=
                 std::string::npos &&
             header.find("\n        Content() const noexcept") ==
                 std::string::npos &&
             source.find("impl_->themeRoot") != std::string::npos &&
-            source.find("impl_->widgetAppearanceRoot") != std::string::npos,
-        "theme and widget appearance expose independent cached page roots");
+            source.find("impl_->widgetLayoutRoot") != std::string::npos,
+        "theme and widget layout expose independent cached page roots");
     Check(source.find(
               "InitializeCard(themeTargetsCard, cardStyle, themeRoot)") !=
                 std::string::npos &&
             source.find(
-              "InitializeCard(widgetAppearanceCard, cardStyle,") !=
+              "InitializeCard(widgetAppearanceCard, cardStyle, themeRoot)") !=
                 std::string::npos &&
-            source.find("widgetAppearanceRoot);") != std::string::npos &&
             source.find(
               "InitializeCard(contextMenuCard, cardStyle, themeRoot)") !=
                 std::string::npos &&
             source.find(
-              "InitializeCard(layoutCard, cardStyle, widgetAppearanceRoot)") !=
+              "InitializeCard(layoutCard, cardStyle, widgetLayoutRoot)") !=
                 std::string::npos &&
             source.find("customCard") == std::string::npos,
-        "the former mixed custom card is split into page-owned theme and widget cards");
+        "custom theme controls stay on the theme page while layout owns the widget page");
     Check(source.find("snapshot.domainRevisions.personalization") !=
                 std::string::npos &&
             source.find("SettingsSnapshot snapshot_") == std::string::npos &&

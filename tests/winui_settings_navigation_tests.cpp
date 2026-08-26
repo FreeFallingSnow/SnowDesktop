@@ -470,10 +470,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     Check(personalizationSection.find(
               "personalizationPage_->ThemeContent()") !=
                 std::string_view::npos &&
-            personalizationSection.find("WidgetAppearanceContent()") ==
+            personalizationSection.find("personalization.backgroundColor") !=
                 std::string_view::npos &&
             widgetAppearanceSection.find(
-              "personalizationPage_->WidgetAppearanceContent()") !=
+              "personalizationPage_->WidgetLayoutContent()") !=
+                std::string_view::npos &&
+            widgetAppearanceSection.find("personalization.backgroundColor") ==
                 std::string_view::npos &&
             widgetAppearanceSection.find("desktop.categoryLayout") !=
                 std::string_view::npos &&

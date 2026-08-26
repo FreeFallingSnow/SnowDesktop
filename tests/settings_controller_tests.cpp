@@ -254,7 +254,7 @@ void TestRoutes()
             "personalization.showCounts"));
     Check(legacyAppearance.page == SettingsPage::AppearanceTheme &&
             legacyTheme.page == SettingsPage::AppearanceTheme &&
-            legacyWidgetAppearance.page == SettingsPage::AppearanceWidgets &&
+            legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
             legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
             legacyTabHeight.focusId == "desktop.categoryLayout" &&
             legacyCounts.page == SettingsPage::DesktopCategories &&

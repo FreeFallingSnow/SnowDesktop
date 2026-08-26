@@ -167,13 +167,13 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.navigation", L"Navigation and interaction"},
     LocalizedFallback{"settings.general.navigation.description", L"Configure paging, click-through and double-click behavior."},
     LocalizedFallback{"settings.personalization.theme", L"Theme and material"},
-    LocalizedFallback{"settings.personalization.theme.description", L"Set the global theme plus navigation, popup and context-menu appearance."},
+    LocalizedFallback{"settings.personalization.theme.description", L"Set themes plus widget-surface, navigation, popup and context-menu appearance."},
     LocalizedFallback{"settings.personalization.colors", L"Colors and gradients"},
     LocalizedFallback{"settings.personalization.colors.description", L"Customize accents, surfaces and gradients."},
     LocalizedFallback{"settings.personalization.menu", L"Context menu"},
     LocalizedFallback{"settings.personalization.menu.description", L"Configure SnowDesktop context-menu appearance."},
-    LocalizedFallback{"settings.personalization.widgets", L"Widget appearance"},
-    LocalizedFallback{"settings.personalization.widgets.description", L"Set widget surfaces, dimensions, category labels and search controls."},
+    LocalizedFallback{"settings.personalization.widgets", L"Widgets & layout"},
+    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust widget dimensions, category tabs and search controls."},
     LocalizedFallback{"settings.desktop.layout", L"Icon layout"},
     LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, spacing, fonts and shortcut arrows."},
     LocalizedFallback{"settings.desktop.beautify", L"Icon beautification"},
@@ -1977,8 +1977,18 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
+                "personalization.backgroundColor",
+                "personalization.borderColor",
+                "personalization.widgetAlpha",
+                "personalization.borderAlpha",
                 "personalization.quickNavigationTheme",
                 "personalization.collectionPopupTheme",
+                "personalization.enableGradient",
+                "personalization.gradientEndAlpha",
+                "personalization.glass",
+                "personalization.blurRadius",
+                "personalization.acrylic",
+                "personalization.contentTheme",
                 "personalization.contextMenu"});
             personalizationPage_->Activate();
         }
@@ -1987,18 +1997,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         if (personalizationPage_)
         {
             PageCards().Children().Append(
-                personalizationPage_->WidgetAppearanceContent());
+                personalizationPage_->WidgetLayoutContent());
             registerPersonalizationFocus({
-                "personalization.backgroundColor",
-                "personalization.borderColor",
-                "personalization.widgetAlpha",
-                "personalization.borderAlpha",
-                "personalization.enableGradient",
-                "personalization.gradientEndAlpha",
-                "personalization.glass",
-                "personalization.blurRadius",
-                "personalization.acrylic",
-                "personalization.contentTheme",
                 "personalization.cornerRadius",
                 "personalization.barHeight",
                 "desktop.categoryLayout",

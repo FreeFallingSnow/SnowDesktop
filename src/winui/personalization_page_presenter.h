@@ -59,12 +59,12 @@ public:
 
     void SetActions(PersonalizationPageActions actions);
 
-    /** Global, target-surface, and context-menu theme controls. */
+    /** Global, custom-surface, target-surface, and context-menu themes. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         ThemeContent() const noexcept;
-    /** Shared widget surface and layout controls. */
+    /** Shared widget dimension and layout controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        WidgetAppearanceContent() const noexcept;
+        WidgetLayoutContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
 

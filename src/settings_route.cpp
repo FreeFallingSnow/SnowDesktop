@@ -7,7 +7,7 @@ namespace snowdesktop
 namespace
 {
 
-bool IsWidgetAppearanceFocus(std::string_view focusId) noexcept
+bool IsCustomThemeFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.backgroundColor" ||
         focusId == "personalization.borderColor" ||
@@ -20,8 +20,12 @@ bool IsWidgetAppearanceFocus(std::string_view focusId) noexcept
         focusId == "personalization.glass" ||
         focusId == "personalization.acrylic" ||
         focusId == "personalization.blurRadius" ||
-        focusId == "personalization.contentTheme" ||
-        focusId == "personalization.cornerRadius" ||
+        focusId == "personalization.contentTheme";
+}
+
+bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
+{
+    return focusId == "personalization.cornerRadius" ||
         focusId == "personalization.barHeight";
 }
 
@@ -112,7 +116,11 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
             route.page = SettingsPage::DesktopCategories;
             route.focusId = "desktop.categoryCounts";
         }
-        else if (IsWidgetAppearanceFocus(route.focusId))
+        else if (IsCustomThemeFocus(route.focusId))
+        {
+            route.page = SettingsPage::AppearanceTheme;
+        }
+        else if (IsWidgetLayoutFocus(route.focusId))
         {
             route.page = SettingsPage::AppearanceWidgets;
         }
