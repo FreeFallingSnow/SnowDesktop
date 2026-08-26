@@ -64,6 +64,16 @@ public:
     static constexpr std::uint32_t KeyRightControl = 0xA3;
     static constexpr std::uint32_t KeyLeftAlt = 0xA4;
     static constexpr std::uint32_t KeyRightAlt = 0xA5;
+    static constexpr std::uint32_t KeyProcess = 0xE5;
+
+    [[nodiscard]] static std::uint32_t ResolveCapturedVirtualKey(
+        std::uint32_t routedVirtualKey,
+        std::uint32_t scanCodeVirtualKey) noexcept
+    {
+        if (routedVirtualKey != KeyProcess)
+            return routedVirtualKey;
+        return scanCodeVirtualKey == KeyProcess ? 0 : scanCodeVirtualKey;
+    }
 
     void Reset(HotkeyChord committed, std::uint64_t generation) noexcept
     {

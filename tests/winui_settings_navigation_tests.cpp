@@ -810,8 +810,11 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             recorder.find("captureSurface.KeyDown") !=
                 std::string::npos &&
-            recorder.find("static_cast<std::uint32_t>(args.Key())") !=
+            recorder.find("ResolveRoutedVirtualKey(args)") !=
                 std::string::npos &&
+            recorder.find("args.KeyStatus()") != std::string::npos &&
+            recorder.find("MapVirtualKeyExW(") != std::string::npos &&
+            recorder.find("MAPVK_VSC_TO_VK_EX") != std::string::npos &&
             recorder.find("args.OriginalKey()") == std::string::npos &&
             recorder.find("state->rules.Commit()") !=
                 std::string::npos &&

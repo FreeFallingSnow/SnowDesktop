@@ -19,6 +19,14 @@ int main()
     using namespace snowdesktop::winui;
 
     HotkeyRecorderRules rules;
+    Check(HotkeyRecorderRules::ResolveCapturedVirtualKey(
+              HotkeyRecorderRules::KeyProcess, 0x20) == 0x20,
+        "an IME process key resolves to the physical Space virtual key");
+    Check(HotkeyRecorderRules::ResolveCapturedVirtualKey(
+              HotkeyRecorderRules::KeyProcess, 0) == 0,
+        "an unrecoverable IME process key is ignored");
+    Check(HotkeyRecorderRules::ResolveCapturedVirtualKey('K', 'L') == 'K',
+        "ordinary routed keys do not use the scan-code fallback");
     rules.Reset({ HotkeyRecorderRules::ModifierControl, 'K' }, 7);
     const auto initial = rules.BeginCapture();
     Check(rules.Active(), "capture starts explicitly");

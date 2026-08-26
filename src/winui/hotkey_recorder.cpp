@@ -43,6 +43,28 @@ std::uint32_t SamplePhysicalModifiers() noexcept
     return modifiers;
 }
 
+std::uint32_t ResolveRoutedVirtualKey(
+    const muxi::KeyRoutedEventArgs& args) noexcept
+{
+    const auto routedVirtualKey =
+        static_cast<std::uint32_t>(args.Key());
+    if (routedVirtualKey != HotkeyRecorderRules::KeyProcess)
+        return routedVirtualKey;
+
+    const auto keyStatus = args.KeyStatus();
+    UINT scanCode = keyStatus.ScanCode;
+    if (scanCode == 0)
+        return 0;
+    if (keyStatus.IsExtendedKey)
+        scanCode |= 0xE000u;
+    const UINT scanCodeVirtualKey = MapVirtualKeyExW(
+        scanCode,
+        MAPVK_VSC_TO_VK_EX,
+        GetKeyboardLayout(0));
+    return HotkeyRecorderRules::ResolveCapturedVirtualKey(
+        routedVirtualKey, scanCodeVirtualKey);
+}
+
 std::wstring VirtualKeyName(std::uint32_t virtualKey)
 {
     switch (virtualKey)
@@ -723,10 +745,12 @@ HotkeyRecorder::HotkeyRecorder()
         [weak](const auto&, const muxi::KeyRoutedEventArgs& args) {
             const auto state = weak.lock();
             if (!state || !state->alive || !state->rules.Active()) return;
-            // Use the mapped semantic key. OriginalKey can expose the IME's
-            // VK_PROCESSKEY (0xE5) instead of the physical Space key.
-            const auto virtualKey =
-                static_cast<std::uint32_t>(args.Key());
+            const auto virtualKey = ResolveRoutedVirtualKey(args);
+            if (virtualKey == 0)
+            {
+                args.Handled(true);
+                return;
+            }
             if (virtualKey == HotkeyRecorderRules::KeyEnter ||
                 virtualKey == HotkeyRecorderRules::KeyEscape ||
                 virtualKey == HotkeyRecorderRules::KeyTab)
@@ -742,8 +766,12 @@ HotkeyRecorder::HotkeyRecorder()
         [weak](const auto&, const muxi::KeyRoutedEventArgs& args) {
             const auto state = weak.lock();
             if (!state || !state->alive || !state->rules.Active()) return;
-            const auto virtualKey =
-                static_cast<std::uint32_t>(args.Key());
+            const auto virtualKey = ResolveRoutedVirtualKey(args);
+            if (virtualKey == 0)
+            {
+                args.Handled(true);
+                return;
+            }
             if (virtualKey == HotkeyRecorderRules::KeyEnter ||
                 virtualKey == HotkeyRecorderRules::KeyEscape ||
                 virtualKey == HotkeyRecorderRules::KeyTab)
