@@ -2764,6 +2764,12 @@ private:
      */
     RECT GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) const;
     /**
+     * @brief 获取无底栏独立模式部件的紧凑移动手柄矩形。
+     * @param widget 部件引用
+     * @return 左下角移动手柄矩形
+     */
+    RECT GetStandaloneWidgetCompactMoveHandleRect(const DesktopWidget& widget) const;
+    /**
      * @brief 获取独立模式部件的缩放手柄矩形。
      * @param widget 部件引用
      * @return 缩放手柄矩形

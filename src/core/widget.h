@@ -55,7 +55,7 @@ struct WidgetPreviewItem;
 enum class WidgetHit {
     None,               ///< 未命中任何有效区域
     Content,            ///< 成员项区域（item 列表/网格区）
-    MoveHandle,         ///< 底栏（除右下角缩放角外）—— 拖拽移动组件
+    MoveHandle,         ///< 底栏或无底栏组件左下手柄——拖拽移动组件
     ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
     DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮

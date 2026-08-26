@@ -23,6 +23,20 @@ constexpr bool ShowsResizeHandle(
     return hovered || (HasBottomBar(showTitle) && !bottomBarHover);
 }
 
+constexpr bool ShowsCompactMoveHandle(
+    bool showTitle, bool hovered) noexcept
+{
+    return !HasBottomBar(showTitle) && hovered;
+}
+
+inline int CompactEdgeHandleWidth(
+    int availableWidth, int preferredWidth) noexcept
+{
+    return std::min(
+        std::max(0, preferredWidth),
+        std::max(0, availableWidth) / 2);
+}
+
 constexpr bool ReservesContentForBottomBar(
     bool showTitle, bool bottomBarHover) noexcept
 {

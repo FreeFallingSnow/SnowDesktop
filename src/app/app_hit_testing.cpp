@@ -144,6 +144,29 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 }
 
 /**
+ * @brief 获取无底栏独立窗口小部件的紧凑移动手柄矩形
+ * @param widget 桌面小部件引用
+ * @return 左下角移动手柄矩形
+ */
+RECT DesktopApp::GetStandaloneWidgetCompactMoveHandleRect(
+    const DesktopWidget& widget) const
+{
+    RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
+    const int preferredWidth = ScaleWidgetCu(
+        CurrentPersonalization().barHeight,
+        GetWidgetCellScale(widget));
+    const int handleWidth = snowdesktop::widget_chrome_rules::
+        CompactEdgeHandleWidth(
+            handle.right - handle.left, preferredWidth);
+    return {
+        handle.left,
+        handle.top,
+        handle.left + handleWidth,
+        handle.bottom
+    };
+}
+
+/**
  * @brief 获取独立窗口小部件的调整大小手柄矩形
  * @param widget 桌面小部件引用
  * @return 调整大小手柄矩形
@@ -152,7 +175,12 @@ RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
     const float barHeight = CurrentPersonalization().barHeight;
-    const int handleWidth = ScaleWidgetCu(barHeight, GetWidgetCellScale(widget));
+    const int preferredWidth = ScaleWidgetCu(
+        barHeight, GetWidgetCellScale(widget));
+    const int handleWidth = widget.showTitle
+        ? preferredWidth
+        : snowdesktop::widget_chrome_rules::CompactEdgeHandleWidth(
+            handle.right - handle.left, preferredWidth);
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,
@@ -180,7 +208,11 @@ WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) cons
     RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
     if (PtInRect(&resize, pt)) return WidgetHit::ResizeHandle;
     if (!snowdesktop::widget_chrome_rules::HasBottomBar(widget.showTitle))
+    {
+        RECT move = GetStandaloneWidgetCompactMoveHandleRect(widget);
+        if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
         return WidgetHit::Content;
+    }
     RECT move = GetStandaloneWidgetMoveHandleRect(widget);
     if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
     return WidgetHit::Content;

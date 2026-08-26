@@ -113,10 +113,10 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   5. 绘制圆角矩形背景与选中边框；
  *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
  *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
- *   8. 按组件底栏与悬停状态决定是否绘制底栏和缩放按钮；
+ *   8. 按组件底栏与悬停状态决定是否绘制底栏、移动和缩放手柄；
  *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
- *  11. 绘制右下角的缩放手柄（圆角小方块）。
+ *  11. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
  *
  * @param context  Direct2D 设备上下文，用于所有绘制调用
  * @param rect     控件的原始矩形区域（未使用，实际采用 GetStandaloneWidgetFrameRect）
@@ -543,7 +543,10 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const bool showResizeHandle =
         snowdesktop::widget_chrome_rules::ShowsResizeHandle(
             data_->showTitle, data_->bottomBarHover, hovered);
-    if (!showBottomBar && !showResizeHandle) return;
+    const bool showCompactMoveHandle =
+        snowdesktop::widget_chrome_rules::ShowsCompactMoveHandle(
+            data_->showTitle, hovered);
+    if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 
     if (showBottomBar)
     {
@@ -606,18 +609,40 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
+    const D2D1_COLOR_F handleFill = selected
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
+        : (lightTheme
+            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f));
+    const D2D1_COLOR_F handleStroke = lightTheme
+        ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
+
+    if (showCompactMoveHandle)
+    {
+        RECT move = app_->GetStandaloneWidgetCompactMoveHandleRect(*data_);
+        const int gripWidth = std::max(2, Cu(GetBarHeight() * 0.50f));
+        const int gripHeight = std::max(2, Cu(GetBarHeight() * 0.167f));
+        const int cx = move.left + (move.right - move.left) / 2;
+        const int cy = move.top + (move.bottom - move.top) / 2;
+        const RECT gripRect = {
+            cx - gripWidth / 2,
+            cy - gripHeight / 2,
+            cx + (gripWidth + 1) / 2,
+            cy + (gripHeight + 1) / 2
+        };
+        app_->DrawD2DRoundedRectangle(
+            context, gripRect, static_cast<float>(gripHeight) / 2.0f,
+            handleFill, handleStroke);
+    }
+
     if (!showResizeHandle) return;
     RECT resize = app_->GetStandaloneWidgetResizeHandleRect(*data_);
     const int dot = Cu(GetBarHeight() * 0.333f);
     int cx = resize.left + (resize.right - resize.left) / 2;
     int cy = resize.top + (resize.bottom - resize.top) / 2;
     RECT dotRect = { cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2 };
-    app_->DrawD2DRoundedRectangle(context, dotRect, static_cast<float>(Cu(4.0f * GetBarScale())),
-        selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-                 : (lightTheme
-                    ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
-                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f)),
-        lightTheme
-            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));
+    app_->DrawD2DRoundedRectangle(
+        context, dotRect, static_cast<float>(Cu(4.0f * GetBarScale())),
+        handleFill, handleStroke);
 }

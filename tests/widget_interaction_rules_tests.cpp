@@ -1019,7 +1019,17 @@ void TestBottomBarContentReservation()
             chromeRules::ShowsResizeHandle(false, false, true) &&
             chromeRules::ShowsResizeHandle(true, true, true) &&
             chromeRules::ShowsResizeHandle(true, false, false),
-        "titleless widgets must expose only a hovered resize handle");
+        "resize-handle drawing must preserve titleless hover access");
+    Check(
+        !chromeRules::ShowsCompactMoveHandle(false, false) &&
+            chromeRules::ShowsCompactMoveHandle(false, true) &&
+            !chromeRules::ShowsCompactMoveHandle(true, true),
+        "only hovered titleless widgets expose a compact move handle");
+    Check(
+        chromeRules::CompactEdgeHandleWidth(120, 24) == 24 &&
+            chromeRules::CompactEdgeHandleWidth(30, 24) == 15 &&
+            chromeRules::CompactEdgeHandleWidth(-1, 24) == 0,
+        "compact edge handles must remain disjoint on narrow widgets");
     Check(
         chromeRules::HostActionContentBottom(
             false, 0, 110, 80, 5) == 110,

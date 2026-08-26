@@ -175,8 +175,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的
   稳定 `anchorKey`；回调收到 `context.surface="popover"`。
-  `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，除悬停时
-  显示的右下角缩放按钮外，完整桌面 surface 均由组件内容和指针交互使用。
+  `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，悬停时
+  由宿主在左下角显示紧凑移动手柄、右下角显示缩放手柄，其余桌面 surface 均由组件内容和
+  指针交互使用。
   `bottomBarHover` 只控制已启用底栏是否仅悬停显示。
 - `widget.apiInfo()`：返回当前 API 版本、支持版本和 feature ID。
 - `widget.hasFeature(id)`：探测 feature。
