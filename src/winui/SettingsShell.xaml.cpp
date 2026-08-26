@@ -1283,13 +1283,13 @@ void SettingsShell::HookEvents()
             }
         });
 
-    integratedTitleBarLoadedToken_ = IntegratedTitleBarHost().Loaded(
+    titleBarDragRegionLoadedToken_ = TitleBarDragRegion().Loaded(
         [this](const winrt::Windows::Foundation::IInspectable&,
                const mux::RoutedEventArgs&) {
             NotifyIntegratedTitleBarLayoutChanged();
         });
-    integratedTitleBarSizeChangedToken_ =
-        IntegratedTitleBarHost().SizeChanged(
+    titleBarDragRegionSizeChangedToken_ =
+        TitleBarDragRegion().SizeChanged(
             [this](const winrt::Windows::Foundation::IInspectable&,
                    const mux::SizeChangedEventArgs&) {
                 NotifyIntegratedTitleBarLayoutChanged();
@@ -1404,12 +1404,12 @@ void SettingsShell::UnhookEvents() noexcept
         }
         if (actualThemeChangedToken_.value)
             ShellRoot().ActualThemeChanged(actualThemeChangedToken_);
-        if (integratedTitleBarLoadedToken_.value)
-            IntegratedTitleBarHost().Loaded(integratedTitleBarLoadedToken_);
-        if (integratedTitleBarSizeChangedToken_.value)
+        if (titleBarDragRegionLoadedToken_.value)
+            TitleBarDragRegion().Loaded(titleBarDragRegionLoadedToken_);
+        if (titleBarDragRegionSizeChangedToken_.value)
         {
-            IntegratedTitleBarHost().SizeChanged(
-                integratedTitleBarSizeChangedToken_);
+            TitleBarDragRegion().SizeChanged(
+                titleBarDragRegionSizeChangedToken_);
         }
         if (backKeyboardAcceleratorToken_.value)
             BackKeyboardAccelerator().Invoked(backKeyboardAcceleratorToken_);
@@ -1432,8 +1432,8 @@ void SettingsShell::UnhookEvents() noexcept
     {
     }
     actualThemeChangedToken_ = {};
-    integratedTitleBarLoadedToken_ = {};
-    integratedTitleBarSizeChangedToken_ = {};
+    titleBarDragRegionLoadedToken_ = {};
+    titleBarDragRegionSizeChangedToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
     selectionChangedToken_ = {};

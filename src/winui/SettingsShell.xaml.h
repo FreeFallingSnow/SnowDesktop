@@ -305,8 +305,8 @@ private:
     bool closed_ = false;
 
     winrt::event_token actualThemeChangedToken_{};
-    winrt::event_token integratedTitleBarLoadedToken_{};
-    winrt::event_token integratedTitleBarSizeChangedToken_{};
+    winrt::event_token titleBarDragRegionLoadedToken_{};
+    winrt::event_token titleBarDragRegionSizeChangedToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};
     winrt::event_token searchKeyboardAcceleratorToken_{};
     winrt::event_token selectionChangedToken_{};

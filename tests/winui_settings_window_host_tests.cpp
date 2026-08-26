@@ -180,6 +180,12 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("SetDragRectangles(rectangles)") !=
                 std::string::npos &&
+            shell.find("TitleBarDragRegion().Loaded(") !=
+                std::string::npos &&
+            shell.find("TitleBarDragRegion().SizeChanged(") !=
+                std::string::npos &&
+            shell.find("IntegratedTitleBarHost().SizeChanged(") ==
+                std::string::npos &&
             source.find("ButtonBackgroundColor(transparent)") !=
                 std::string::npos &&
             source.find("ButtonInactiveBackgroundColor(transparent)") !=
@@ -196,7 +202,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
-        "AppWindow uses standard caption height and transparent button backgrounds over one surface while Windows retains the three system buttons, Snap, and accessibility");
+        "AppWindow uses standard caption height and transparent button backgrounds over one surface, refreshes drag rectangles from the actual drag-region lifecycle, and leaves the three system buttons, Snap, and accessibility to Windows");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
