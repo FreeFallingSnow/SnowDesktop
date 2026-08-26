@@ -7,13 +7,27 @@ void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, floa
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+    DrawD2DRoundedRectangle(
+        ctx, ToD2DRect(rect), radius,
+        fill, stroke, strokeWidth);
+}
+
+void DesktopApp::DrawD2DRoundedRectangle(
+    ID2D1RenderTarget* ctx, D2D1_RECT_F rect,
+    float radius, D2D1_COLOR_F fill,
+    D2D1_COLOR_F stroke, float strokeWidth)
+{
+    if (!ctx || rect.right <= rect.left ||
+        rect.bottom <= rect.top)
+        return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {
         brushCache_.clear();
         brushCacheContext_ = ctx;
     }
 
-    D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
+    D2D1_ROUNDED_RECT rounded =
+        D2D1::RoundedRect(rect, radius, radius);
     if (fill.a > 0.0f)
     {
         std::uint64_t k = D2DColorBrushKey(fill);

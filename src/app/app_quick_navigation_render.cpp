@@ -389,13 +389,29 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             static_cast<float>(QuickNavScale(16)) / 2.0f,
             quickNavAppearance_.contentTheme == 1, screenOrigin);
     }
+    constexpr float windowBorderStrokeWidth = 1.0f;
+    constexpr float windowBorderInset =
+        windowBorderStrokeWidth * 0.5f;
+    const D2D1_RECT_F windowBorderRect =
+        D2D1::RectF(
+            static_cast<float>(overlay.left) +
+                windowBorderInset,
+            static_cast<float>(overlay.top) +
+                windowBorderInset,
+            static_cast<float>(overlay.right) -
+                windowBorderInset,
+            static_cast<float>(overlay.bottom) -
+                windowBorderInset);
     DrawD2DRoundedRectangle(ctx.Get(),
-        MakeRect(overlay.left, overlay.top, overlay.right - 1, overlay.bottom - 1),
-        windowCornerRadius,
+        windowBorderRect,
+        std::max(
+            0.0f,
+            windowCornerRadius - windowBorderInset),
         D2D1::ColorF(0, 0, 0, 0),
         D2D1::ColorF(quickNavAppearance_.widgetBorderR,
             quickNavAppearance_.widgetBorderG,
-            quickNavAppearance_.widgetBorderB, borderAlpha));
+            quickNavAppearance_.widgetBorderB, borderAlpha),
+        windowBorderStrokeWidth);
 
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();

@@ -2240,6 +2240,13 @@ private:
     void DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth = 1.0f);
     /**
+     * @brief 使用亚像素矩形绘制圆角填充与边框。
+     */
+    void DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx,
+        D2D1_RECT_F rect, float radius,
+        D2D1_COLOR_F fill, D2D1_COLOR_F stroke,
+        float strokeWidth = 1.0f);
+    /**
      * @brief 绘制填充矩形。
      * @param ctx D2D 上下文
      * @param rect 矩形区域

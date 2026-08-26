@@ -3765,6 +3765,9 @@ int main(int argc, char** argv)
         const std::string quickNavigationWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_window.cpp");
+        const std::string quickNavigationRenderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_quick_navigation_render.cpp");
         const std::string animationSchedulerSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_animation_scheduler.cpp");
@@ -4006,6 +4009,22 @@ int main(int argc, char** argv)
                 backdropRegionSource.find(
                     "CreateRoundRectRgn(") == std::string::npos,
             "quick navigation content and backdrop HWND regions must preserve composition-antialiased rounded edges");
+        Check(quickNavigationRenderSource.find(
+                  "windowBorderStrokeWidth * 0.5f") !=
+                    std::string::npos &&
+                quickNavigationRenderSource.find(
+                  "static_cast<float>(overlay.left) +\n                windowBorderInset") !=
+                    std::string::npos &&
+                quickNavigationRenderSource.find(
+                  "static_cast<float>(overlay.right) -\n                windowBorderInset") !=
+                    std::string::npos &&
+                quickNavigationRenderSource.find(
+                  "windowCornerRadius - windowBorderInset") !=
+                    std::string::npos &&
+                quickNavigationRenderSource.find(
+                  "overlay.right - 1") ==
+                    std::string::npos,
+            "quick navigation border must inset symmetrically and keep its outer radius aligned with the background edge");
         Check(compositionAnimationSource.find(
                   "ScaleSegmentNormalizedStartSlope(") !=
                     std::string::npos &&
