@@ -44,7 +44,7 @@ constexpr int kMinimumClientWidth = 840;
 constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
-constexpr UINT kUpdateIntegratedTitleBarMessage = WM_APP + 0x349;
+constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
 
 bool QueryHighContrastEnabled(bool& enabled) noexcept
 {
@@ -649,7 +649,7 @@ struct SettingsWindowHost::Impl
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
-    bool integratedTitleBarUpdateQueued = false;
+    bool integratedTitleBarInsetsUpdateQueued = false;
     std::wstring lastError;
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
@@ -783,8 +783,9 @@ struct SettingsWindowHost::Impl
 
         try
         {
-            appWindow = muw::AppWindow::GetFromWindowId(
-                winrt::Microsoft::UI::GetWindowIdFromWindow(window));
+            const auto windowId =
+                winrt::Microsoft::UI::GetWindowIdFromWindow(window);
+            appWindow = muw::AppWindow::GetFromWindowId(windowId);
             if (!appWindow)
             {
                 SetError(L"Get AppWindow for settings window failed");
@@ -796,10 +797,12 @@ struct SettingsWindowHost::Impl
                 SetError(L"Get settings AppWindowTitleBar failed");
                 return false;
             }
-
             // Use the WinAppSDK-owned full-customization path: XAML supplies
             // the title-bar content while Windows keeps caption buttons,
-            // maximize/Snap behavior and their accessibility providers.
+            // the default drag region, maximize/Snap behavior and their
+            // accessibility providers. The title bar has no interactive
+            // content, so the platform-owned default drag region must not be
+            // replaced with custom caption rectangles.
             appWindowTitleBar.ExtendsContentIntoTitleBar(true);
             appWindowTitleBar.PreferredHeightOption(
                 muw::TitleBarHeightOption::Standard);
@@ -827,11 +830,11 @@ struct SettingsWindowHost::Impl
         return false;
     }
 
-    void UpdateIntegratedTitleBarLayout() noexcept
+    void UpdateIntegratedTitleBarInsets() noexcept
     {
-        integratedTitleBarUpdateQueued = false;
+        integratedTitleBarInsetsUpdateQueued = false;
         if (shuttingDown || !runtime.IsAttached() || !shell ||
-            !appWindowTitleBar ||
+            !window || !IsWindow(window) || !appWindowTitleBar ||
             !appWindowTitleBar.ExtendsContentIntoTitleBar())
         {
             return;
@@ -839,40 +842,39 @@ struct SettingsWindowHost::Impl
 
         try
         {
-            const mux::XamlRoot xamlRoot = shell->XamlRoot();
-            if (!xamlRoot || xamlRoot.RasterizationScale() <= 0.0)
-                return;
-            const double scale = xamlRoot.RasterizationScale();
+            const UINT dpi = GetDpiForWindow(window);
+            const double scale = dpi > 0
+                ? static_cast<double>(dpi) / USER_DEFAULT_SCREEN_DPI
+                : 1.0;
             shell->SetIntegratedTitleBarInsets(
                 appWindowTitleBar.LeftInset() / scale,
                 appWindowTitleBar.RightInset() / scale);
-            const auto rectangles =
-                shell->IntegratedTitleBarDragRectangles();
-            if (!rectangles.empty())
-                appWindowTitleBar.SetDragRectangles(rectangles);
         }
         catch (...)
         {
-            // Retain the WinAppSDK default drag region if layout metrics are
-            // temporarily unavailable during attach, DPI or restore changes.
+            // Retain the last valid padding if caption metrics are temporarily
+            // unavailable during attach, DPI or restore changes.
         }
     }
 
-    void QueueIntegratedTitleBarUpdate(bool force = false) noexcept
+    void QueueIntegratedTitleBarInsetsUpdate() noexcept
     {
-        if ((!force && integratedTitleBarUpdateQueued) || shuttingDown ||
+        if (integratedTitleBarInsetsUpdateQueued || shuttingDown ||
             !window || !IsWindow(window) || !runtime.IsAttached() ||
             !appWindowTitleBar)
         {
             return;
         }
-        if (PostMessageW(window, kUpdateIntegratedTitleBarMessage, 0, 0))
-            integratedTitleBarUpdateQueued = true;
+        if (PostMessageW(
+                window, kUpdateIntegratedTitleBarInsetsMessage, 0, 0))
+        {
+            integratedTitleBarInsetsUpdateQueued = true;
+        }
     }
 
     void ResetIntegratedTitleBar() noexcept
     {
-        integratedTitleBarUpdateQueued = false;
+        integratedTitleBarInsetsUpdateQueued = false;
         if (appWindowTitleBar)
         {
             try
@@ -2427,8 +2429,8 @@ struct SettingsWindowHost::Impl
         case kApplyXamlBackdropMessage:
             self->ApplyDeferredSystemBackdrop();
             return 0;
-        case kUpdateIntegratedTitleBarMessage:
-            self->UpdateIntegratedTitleBarLayout();
+        case kUpdateIntegratedTitleBarInsetsMessage:
+            self->UpdateIntegratedTitleBarInsets();
             return 0;
         case kDispatchOwnerTaskMessage:
         {
@@ -2480,7 +2482,7 @@ struct SettingsWindowHost::Impl
             return 0;
         }
         case WM_SIZE:
-            self->QueueIntegratedTitleBarUpdate();
+            self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         case WM_DPICHANGED:
         {
@@ -2492,7 +2494,7 @@ struct SettingsWindowHost::Impl
                     suggested->bottom - suggested->top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
             }
-            self->QueueIntegratedTitleBarUpdate();
+            self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         }
         case WM_SETTINGCHANGE:
@@ -2502,11 +2504,11 @@ struct SettingsWindowHost::Impl
             ApplySettingsWindowChrome(hwnd, self->darkTheme);
             self->ApplyIntegratedTitleBarButtonColors();
             self->QueueSystemBackdropUpdate();
-            self->QueueIntegratedTitleBarUpdate();
+            self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         case WM_NCDESTROY:
             self->systemBackdropUpdateQueued = false;
-            self->integratedTitleBarUpdateQueued = false;
+            self->integratedTitleBarInsetsUpdateQueued = false;
             self->runtime.HandleWindowMessage(message, wParam, lParam);
             self->window = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -2672,14 +2674,6 @@ bool SettingsWindowHost::Initialize(
                 }
             });
         impl_->shell->SetCancelOperationCallback([](std::uint64_t) {});
-        impl_->shell->SetIntegratedTitleBarLayoutChangedCallback(
-            [weak]() {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->QueueIntegratedTitleBarUpdate();
-                }
-            });
         impl_->shell->SetWidgetSettingsService(widgetSettingsService);
         impl_->ConfigurePageActions();
         impl_->RebuildSearchIndex();
@@ -2700,7 +2694,7 @@ bool SettingsWindowHost::Initialize(
                     state->owner->ApplyActualTheme(darkTheme);
                 }
             });
-        impl_->QueueIntegratedTitleBarUpdate();
+        impl_->QueueIntegratedTitleBarInsetsUpdate();
         impl_->QueueSystemBackdropUpdate();
 
         controller.SetSnapshotChangedCallback(
@@ -2750,8 +2744,6 @@ void SettingsWindowHost::Shutdown() noexcept
 
     if (impl_->shell)
         impl_->shell->SetActualThemeChangedCallback({});
-    if (impl_->shell)
-        impl_->shell->SetIntegratedTitleBarLayoutChangedCallback({});
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(nullptr);
     impl_->DisposePageBackends();
@@ -2830,10 +2822,6 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         ShowWindow(impl_->window, SW_SHOWNORMAL);
     SetForegroundWindow(impl_->window);
     SetActiveWindow(impl_->window);
-    // XAML can finish its initial measure while the HWND is still hidden.
-    // Always post one fresh pass after the window becomes visible so an
-    // earlier coalesced update cannot leave stale AppWindow drag rectangles.
-    impl_->QueueIntegratedTitleBarUpdate(true);
 
     if (!reloadResult.Succeeded())
         impl_->ShowActionError(reloadResult);

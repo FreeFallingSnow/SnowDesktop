@@ -19,7 +19,6 @@ namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 namespace muxmi = winrt::Microsoft::UI::Xaml::Media::Imaging;
 namespace wfc = winrt::Windows::Foundation::Collections;
-namespace wg = winrt::Windows::Graphics;
 
 namespace
 {
@@ -395,7 +394,6 @@ void SettingsShell::Close() noexcept
     searchRequested_ = {};
     cancelOperation_ = {};
     actualThemeChanged_ = {};
-    integratedTitleBarLayoutChanged_ = {};
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -557,68 +555,6 @@ void SettingsShell::SetIntegratedTitleBarInsets(
         mux::GridLength{rightInset, mux::GridUnitType::Pixel});
 }
 
-std::vector<wg::RectInt32>
-SettingsShell::IntegratedTitleBarDragRectangles()
-{
-    std::vector<wg::RectInt32> rectangles;
-    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
-        return rectangles;
-
-    try
-    {
-        const mux::FrameworkElement host = IntegratedTitleBarHost();
-        const mux::XamlRoot xamlRoot = host.XamlRoot();
-        if (!xamlRoot || host.ActualWidth() <= 0.0 ||
-            host.ActualHeight() <= 0.0)
-        {
-            return rectangles;
-        }
-
-        const double scale = xamlRoot.RasterizationScale();
-        if (scale <= 0.0)
-            return rectangles;
-
-        const mux::FrameworkElement dragRegion = TitleBarDragRegion();
-        if (dragRegion.ActualWidth() <= 0.0 ||
-            dragRegion.ActualHeight() <= 0.0)
-        {
-            return rectangles;
-        }
-        const auto transform = dragRegion.TransformToVisual(host);
-        const auto origin = transform.TransformPoint(
-            winrt::Windows::Foundation::Point{0.0f, 0.0f});
-        const double titleLeft = std::max(0.0,
-            static_cast<double>(origin.X));
-        const double titleRight = std::min(host.ActualWidth(),
-            titleLeft + dragRegion.ActualWidth());
-        const int pixelHeight = std::max(1,
-            static_cast<int>(std::floor(host.ActualHeight() * scale)));
-        const int pixelLeft =
-            static_cast<int>(std::ceil(titleLeft * scale));
-        const int pixelRight =
-            static_cast<int>(std::floor(titleRight * scale));
-        if (pixelRight > pixelLeft)
-        {
-            rectangles.push_back(wg::RectInt32{pixelLeft, 0,
-                pixelRight - pixelLeft, pixelHeight});
-        }
-    }
-    catch (...)
-    {
-        rectangles.clear();
-    }
-    return rectangles;
-}
-
-void SettingsShell::SetIntegratedTitleBarLayoutChangedCallback(
-    IntegratedTitleBarLayoutChangedCallback callback)
-{
-    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
-        return;
-    integratedTitleBarLayoutChanged_ = std::move(callback);
-    NotifyIntegratedTitleBarLayoutChanged();
-}
-
 void SettingsShell::NotifyActualThemeChanged() noexcept
 {
     if (closed_ || ownerThreadId_ != GetCurrentThreadId())
@@ -636,22 +572,6 @@ void SettingsShell::NotifyActualThemeChanged() noexcept
     {
         // Theme notification is presentation-only and must not unwind through
         // the XAML event dispatcher or window initialization.
-    }
-}
-
-void SettingsShell::NotifyIntegratedTitleBarLayoutChanged() noexcept
-{
-    if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
-        !integratedTitleBarLayoutChanged_)
-    {
-        return;
-    }
-    try
-    {
-        integratedTitleBarLayoutChanged_();
-    }
-    catch (...)
-    {
     }
 }
 
@@ -1283,17 +1203,6 @@ void SettingsShell::HookEvents()
             }
         });
 
-    titleBarDragRegionLoadedToken_ = TitleBarDragRegion().Loaded(
-        [this](const winrt::Windows::Foundation::IInspectable&,
-               const mux::RoutedEventArgs&) {
-            NotifyIntegratedTitleBarLayoutChanged();
-        });
-    titleBarDragRegionSizeChangedToken_ =
-        TitleBarDragRegion().SizeChanged(
-            [this](const winrt::Windows::Foundation::IInspectable&,
-                   const mux::SizeChangedEventArgs&) {
-                NotifyIntegratedTitleBarLayoutChanged();
-            });
     backKeyboardAcceleratorToken_ = BackKeyboardAccelerator().Invoked(
         [this](const muxi::KeyboardAccelerator&,
                const muxi::KeyboardAcceleratorInvokedEventArgs& args) {
@@ -1404,13 +1313,6 @@ void SettingsShell::UnhookEvents() noexcept
         }
         if (actualThemeChangedToken_.value)
             ShellRoot().ActualThemeChanged(actualThemeChangedToken_);
-        if (titleBarDragRegionLoadedToken_.value)
-            TitleBarDragRegion().Loaded(titleBarDragRegionLoadedToken_);
-        if (titleBarDragRegionSizeChangedToken_.value)
-        {
-            TitleBarDragRegion().SizeChanged(
-                titleBarDragRegionSizeChangedToken_);
-        }
         if (backKeyboardAcceleratorToken_.value)
             BackKeyboardAccelerator().Invoked(backKeyboardAcceleratorToken_);
         if (searchKeyboardAcceleratorToken_.value)
@@ -1432,8 +1334,6 @@ void SettingsShell::UnhookEvents() noexcept
     {
     }
     actualThemeChangedToken_ = {};
-    titleBarDragRegionLoadedToken_ = {};
-    titleBarDragRegionSizeChangedToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
     selectionChangedToken_ = {};

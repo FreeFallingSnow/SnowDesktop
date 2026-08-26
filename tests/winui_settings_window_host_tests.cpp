@@ -111,10 +111,6 @@ void TestHostContract(const std::filesystem::path& repository)
             integratedTitleBarBegin,
             integratedTitleBarEnd - integratedTitleBarBegin)
         : std::string_view{};
-    const std::size_t titleBarDragRegionBegin =
-        integratedTitleBarMarkup.find("x:Name=\"TitleBarDragRegion\"");
-    const std::size_t titleBarDragRegionClose =
-        integratedTitleBarMarkup.find("/>", titleBarDragRegionBegin);
     const std::size_t titleBarIdentityBegin =
         integratedTitleBarMarkup.find(
             "x:Name=\"IntegratedTitleBarIdentity\"");
@@ -166,7 +162,7 @@ void TestHostContract(const std::filesystem::path& repository)
         "the reusable Win32 top-level HWND delegates its full measured client area, including the integrated title-bar row, to DesktopWindowXamlSource");
     Check(source.find("WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN") !=
                 std::string::npos &&
-            header.find("AppWindowTitleBar extends XAML into the caption") !=
+            header.find("platform default") !=
                 std::string::npos &&
             source.find("muw::AppWindow::GetFromWindowId") !=
                 std::string::npos &&
@@ -178,13 +174,14 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("muw::IconShowOptions::HideIconAndSystemMenu") !=
                 std::string::npos &&
-            source.find("SetDragRectangles(rectangles)") !=
+            source.find("SetDragRectangles(") ==
                 std::string::npos &&
-            shell.find("TitleBarDragRegion().Loaded(") !=
+            source.find("InputNonClientPointerSource") ==
                 std::string::npos &&
-            shell.find("TitleBarDragRegion().SizeChanged(") !=
+            source.find("SetRegionRects(") == std::string::npos &&
+            source.find("platform-owned default drag region") !=
                 std::string::npos &&
-            shell.find("IntegratedTitleBarHost().SizeChanged(") ==
+            source.find("GetDpiForWindow(window)") !=
                 std::string::npos &&
             source.find("ButtonBackgroundColor(transparent)") !=
                 std::string::npos &&
@@ -202,7 +199,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"CloseButton\"") ==
                 std::string::npos,
-        "AppWindow uses standard caption height and transparent button backgrounds over one surface, refreshes drag rectangles from the actual drag-region lifecycle, and leaves the three system buttons, Snap, and accessibility to Windows");
+        "AppWindow keeps its platform default drag region and system caption buttons over a non-interactive XAML identity surface without custom non-client rectangles");
     Check(shellMarkup.find("x:Name=\"IntegratedTitleBarHost\"") !=
                 std::string::npos &&
             shellMarkup.find("x:Name=\"IntegratedTitleBarText\"") !=
@@ -213,7 +210,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("x:Name=\"TitleBarPaneToggleButton\"") ==
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"TitleBarDragRegion\"") !=
+            shellMarkup.find("x:Name=\"TitleBarDragRegion\"") ==
                 std::string::npos &&
             shellMarkup.find("TitleBarLeftInsetColumn") !=
                 std::string::npos &&
@@ -229,7 +226,9 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellHeader.find("SetIntegratedTitleBarInsets") !=
                 std::string::npos &&
-            shellHeader.find("IntegratedTitleBarDragRectangles") !=
+            shellHeader.find("IntegratedTitleBarDragRectangles") ==
+                std::string::npos &&
+            shellHeader.find("IntegratedTitleBarLayoutChangedCallback") ==
                 std::string::npos &&
             shellHeader.find("titleBarBackToken_") ==
                 std::string::npos &&
@@ -258,10 +257,8 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("<AutoSuggestBox") ==
                 std::string_view::npos &&
-            integratedTitleBarMarkup.find("x:Name=\"TitleBarDragRegion\"") !=
+            integratedTitleBarMarkup.find("x:Name=\"TitleBarDragRegion\"") ==
                 std::string_view::npos &&
-            titleBarDragRegionClose != std::string_view::npos &&
-            titleBarDragRegionClose < titleBarIdentityBegin &&
             integratedTitleBarMarkup.find(
               "x:Name=\"IntegratedTitleBarIdentity\"") !=
                 std::string_view::npos &&
@@ -275,7 +272,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") ==
                 std::string_view::npos,
-        "the standard-height caption keeps app identity on a non-hit-test sibling above an empty dedicated drag region while NavigationView owns navigation and search affordances");
+        "the standard-height caption contains only non-interactive XAML app identity while NavigationView owns navigation and search affordances below it");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&
@@ -587,15 +584,17 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ShowWindow(window, SW_HIDE)") !=
                 std::string::npos,
         "closing flushes the controller and widget sessions before hiding");
-    const std::size_t firstShowWindow =
-        source.find("ShowWindow(impl_->window, SW_SHOWNORMAL)");
-    const std::size_t firstVisibleTitleBarRefresh = source.find(
-        "QueueIntegratedTitleBarUpdate(true)", firstShowWindow);
-    Check(firstShowWindow != std::string::npos &&
-            firstVisibleTitleBarRefresh != std::string::npos &&
-            source.find("(!force && integratedTitleBarUpdateQueued)") !=
+    Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
+                std::string::npos &&
+            source.find("bool force = false") == std::string::npos &&
+            source.find("QueueIntegratedTitleBarInsetsUpdate()") !=
+                std::string::npos &&
+            source.find("SetDragRectangles(") == std::string::npos &&
+            shell.find("TitleBarDragRegion().Loaded(") ==
+                std::string::npos &&
+            shell.find("TitleBarDragRegion().SizeChanged(") ==
                 std::string::npos,
-        "showing the settings window forces a fresh asynchronous title-bar drag-region update even when a hidden-window update is already queued");
+        "caption drag ownership no longer depends on hidden-window XAML layout or a post-show timing override; only caption-button insets are refreshed");
     Check(source.find(
               "if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)") !=
                 std::string::npos,
@@ -678,9 +677,6 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") !=
                 std::string_view::npos &&
-            shutdownFunction.find(
-                "SetIntegratedTitleBarLayoutChangedCallback({})") !=
-                std::string_view::npos &&
             shutdownFunction.find("callbacks->alive.store(false)") !=
                 std::string_view::npos &&
             shutdownFunction.find("shell->Close()") !=
@@ -691,16 +687,13 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") <
                 shutdownFunction.find("callbacks->alive.store(false)") &&
-            shutdownFunction.find(
-                "SetIntegratedTitleBarLayoutChangedCallback({})") <
-                shutdownFunction.find("callbacks->alive.store(false)") &&
             shutdownFunction.find("shell->Close()") <
                 shutdownFunction.find("runtime.Detach()") &&
             shutdownFunction.find("runtime.Detach()") <
                 shutdownFunction.find("ResetIntegratedTitleBar()") &&
             shutdownFunction.find("ResetIntegratedTitleBar()") <
                 shutdownFunction.find("DestroyWindow("),
-        "the Shell callbacks close before the Island detaches and AppWindow title-bar state resets ahead of HWND destruction");
+        "the Shell theme callback closes before the Island detaches and AppWindow title-bar state resets ahead of HWND destruction");
     Check(source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
             source.find("SupportsMicaBackdrop()") != std::string::npos &&

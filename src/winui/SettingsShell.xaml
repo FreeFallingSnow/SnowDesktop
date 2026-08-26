@@ -96,9 +96,6 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
             </Grid.ColumnDefinitions>
-            <Border x:Name="TitleBarDragRegion"
-                    Grid.Column="1"
-                    Background="Transparent" />
             <Grid x:Name="IntegratedTitleBarIdentity"
                   Grid.Column="1"
                   Margin="12,0"

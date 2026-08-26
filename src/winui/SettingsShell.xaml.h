@@ -15,8 +15,6 @@
 #include "widgets_page_presenter.h"
 
 #include <winrt/Microsoft.UI.Xaml.Media.h>
-#include <winrt/Windows.Graphics.h>
-
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -77,7 +75,6 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     using CancelOperationCallback =
         std::function<void(std::uint64_t generation)>;
     using ActualThemeChangedCallback = std::function<void(bool darkTheme)>;
-    using IntegratedTitleBarLayoutChangedCallback = std::function<void()>;
     using DialogCompletedCallback = std::function<void(bool confirmed)>;
 
     SettingsShell();
@@ -97,11 +94,6 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 
     /** Supplies AppWindow-reserved caption insets in XAML DIPs. */
     void SetIntegratedTitleBarInsets(double leftInset, double rightInset);
-    /** Returns non-interactive title-bar drag regions in client pixels. */
-    [[nodiscard]] std::vector<winrt::Windows::Graphics::RectInt32>
-        IntegratedTitleBarDragRectangles();
-    void SetIntegratedTitleBarLayoutChangedCallback(
-        IntegratedTitleBarLayoutChangedCallback callback);
 
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
@@ -213,7 +205,6 @@ private:
     void UnhookEvents() noexcept;
     void NavigateBack();
     void NotifyActualThemeChanged() noexcept;
-    void NotifyIntegratedTitleBarLayoutChanged() noexcept;
     void RenderRoute(
         bool forcePageCards = false,
         bool scheduleFocus = true);
@@ -265,8 +256,6 @@ private:
     SearchRequestedCallback searchRequested_;
     CancelOperationCallback cancelOperation_;
     ActualThemeChangedCallback actualThemeChanged_;
-    IntegratedTitleBarLayoutChangedCallback
-        integratedTitleBarLayoutChanged_;
 
     std::unique_ptr<snowdesktop::winui::GeneralPagePresenter> generalPage_;
     std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
@@ -305,8 +294,6 @@ private:
     bool closed_ = false;
 
     winrt::event_token actualThemeChangedToken_{};
-    winrt::event_token titleBarDragRegionLoadedToken_{};
-    winrt::event_token titleBarDragRegionSizeChangedToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};
     winrt::event_token searchKeyboardAcceleratorToken_{};
     winrt::event_token selectionChangedToken_{};

@@ -67,8 +67,8 @@ struct SettingsWindowHostOptions
 
 /**
  * Owns the Win32 top-level settings HWND and its full-client WinUI 3 Island.
- * AppWindowTitleBar extends XAML into the caption so the Shell can host its
- * navigation and search there, while Windows continues to own the caption
+ * AppWindowTitleBar extends XAML into the caption while its platform default
+ * drag region owns non-client input. Windows continues to own the caption
  * buttons, maximize/Snap behavior and their accessibility providers.
  *
  * The host does not own SettingsController or WidgetSettingsService. All
