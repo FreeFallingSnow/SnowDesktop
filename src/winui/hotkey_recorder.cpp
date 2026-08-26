@@ -723,8 +723,10 @@ HotkeyRecorder::HotkeyRecorder()
         [weak](const auto&, const muxi::KeyRoutedEventArgs& args) {
             const auto state = weak.lock();
             if (!state || !state->alive || !state->rules.Active()) return;
+            // Use the mapped semantic key. OriginalKey can expose the IME's
+            // VK_PROCESSKEY (0xE5) instead of the physical Space key.
             const auto virtualKey =
-                static_cast<std::uint32_t>(args.OriginalKey());
+                static_cast<std::uint32_t>(args.Key());
             if (virtualKey == HotkeyRecorderRules::KeyEnter ||
                 virtualKey == HotkeyRecorderRules::KeyEscape ||
                 virtualKey == HotkeyRecorderRules::KeyTab)
@@ -741,7 +743,7 @@ HotkeyRecorder::HotkeyRecorder()
             const auto state = weak.lock();
             if (!state || !state->alive || !state->rules.Active()) return;
             const auto virtualKey =
-                static_cast<std::uint32_t>(args.OriginalKey());
+                static_cast<std::uint32_t>(args.Key());
             if (virtualKey == HotkeyRecorderRules::KeyEnter ||
                 virtualKey == HotkeyRecorderRules::KeyEscape ||
                 virtualKey == HotkeyRecorderRules::KeyTab)

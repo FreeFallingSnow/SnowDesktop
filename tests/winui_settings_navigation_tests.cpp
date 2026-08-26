@@ -810,6 +810,9 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             recorder.find("captureSurface.KeyDown") !=
                 std::string::npos &&
+            recorder.find("static_cast<std::uint32_t>(args.Key())") !=
+                std::string::npos &&
+            recorder.find("args.OriginalKey()") == std::string::npos &&
             recorder.find("state->rules.Commit()") !=
                 std::string::npos &&
             recorder.find("state->rules.Restore(state->defaultValue)") !=
