@@ -680,12 +680,12 @@ void TestHostContract(const std::filesystem::path& repository)
             shutdownEnd == std::string::npos
         ? std::string{}
         : source.substr(shutdownStart, shutdownEnd - shutdownStart);
-    Check(shutdown.find("impl_->controller &&") != std::string::npos &&
-            shutdown.find("!impl_->releaseAfterClose") !=
-                std::string::npos &&
+    Check(shutdown.find("impl_->controller") != std::string::npos &&
             shutdown.find("impl_->FlushPendingChanges()") !=
+                std::string::npos &&
+            source.find("shell->ReleaseSessionResources();") !=
                 std::string::npos,
-        "ordinary shutdown flushes pending settings while a successfully closed session skips duplicate work");
+        "ordinary shutdown flushes pending settings while close releases only route-specific session resources");
     Check(source.find("viewEpoch") != std::string::npos &&
             source.find("expectedEpoch") != std::string::npos &&
             source.find("DispatcherQueue") != std::string::npos &&

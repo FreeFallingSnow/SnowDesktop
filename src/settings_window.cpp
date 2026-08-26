@@ -15,18 +15,8 @@ struct SettingsWindow::Impl
     std::unique_ptr<snowdesktop::winui::SettingsWindowHost> host;
     std::wstring lastError;
 
-    bool ReleaseClosedHost() noexcept
-    {
-        if (!host || !host->ShouldReleaseAfterClose())
-            return false;
-        host->Shutdown();
-        host.reset();
-        return true;
-    }
-
     bool EnsureInitialized()
     {
-        (void)ReleaseClosedHost();
         if (host && host->IsInitialized())
             return true;
         if (!instance || !controller)
@@ -211,8 +201,6 @@ bool SettingsWindow::PublishHomeAboutStatus(
 
 bool SettingsWindow::PreTranslateMessage(MSG* message) noexcept
 {
-    if (impl_->ReleaseClosedHost())
-        return true;
     return impl_->host && impl_->host->PreTranslateMessage(message);
 }
 

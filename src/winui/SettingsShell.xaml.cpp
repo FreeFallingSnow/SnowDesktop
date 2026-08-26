@@ -488,6 +488,81 @@ void SettingsShell::Close() noexcept
     focusTargets_.clear();
 }
 
+void SettingsShell::ReleaseSessionResources() noexcept
+{
+    if (closed_)
+        return;
+
+    sessionActive_ = false;
+    focusSearchWhenPaneOpens_ = false;
+    try
+    {
+        PageCards().Children().Clear();
+        if (generalPage_)
+        {
+            generalPage_->Deactivate();
+            generalPage_->Close();
+        }
+        if (personalizationPage_)
+        {
+            personalizationPage_->Deactivate();
+            personalizationPage_->Close();
+        }
+        if (desktopPage_)
+        {
+            desktopPage_->Deactivate();
+            desktopPage_->Close();
+        }
+        if (dockPage_)
+        {
+            dockPage_->Deactivate();
+            dockPage_->Close();
+        }
+        if (homeAboutPage_)
+        {
+            homeAboutPage_->Deactivate();
+            homeAboutPage_->Close();
+        }
+        if (widgetSettingsPage_)
+        {
+            widgetSettingsPage_->Deactivate();
+            widgetSettingsPage_->Close();
+        }
+        if (widgetSettingsService_)
+            widgetSettingsService_->SetEventCallbacks({}, {});
+        if (widgetsPage_)
+        {
+            widgetsPage_->Deactivate();
+            widgetsPage_->Close();
+        }
+        if (backupDataPage_)
+        {
+            backupDataPage_->Deactivate();
+            backupDataPage_->Close();
+        }
+        if (activeDialog_)
+            activeDialog_.Hide();
+        ClearSearch();
+    }
+    catch (...)
+    {
+    }
+
+    activeDialog_ = nullptr;
+    generalPage_.reset();
+    personalizationPage_.reset();
+    desktopPage_.reset();
+    dockPage_.reset();
+    homeAboutPage_.reset();
+    widgetSettingsPage_.reset();
+    widgetsPage_.reset();
+    backupDataPage_.reset();
+    searchResults_.clear();
+    breadcrumbRoutes_.clear();
+    focusTargets_.clear();
+    renderedPageRoute_.reset();
+}
+
 void SettingsShell::SetLocalizer(LocalizeCallback localizer)
 {
     localizer_ = std::move(localizer);

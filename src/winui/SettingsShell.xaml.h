@@ -84,6 +84,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     SettingsShell& operator=(const SettingsShell&) = delete;
 
     void Close() noexcept;
+    /** Release route-specific controls while retaining the process WinUI root. */
+    void ReleaseSessionResources() noexcept;
 
     void SetLocalizer(LocalizeCallback localizer);
     void RefreshLocalizedText();
