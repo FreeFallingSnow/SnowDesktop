@@ -583,7 +583,7 @@ void ApplyTransition(
 }
 
 winrt::fire_and_forget ShowShortcutDialog(
-    const std::shared_ptr<HotkeyRecorderState>& state)
+    std::shared_ptr<HotkeyRecorderState> state)
 {
     if (!state || !state->alive || !state->enabled || state->dialogOpen)
         co_return;

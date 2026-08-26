@@ -800,6 +800,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             recorder.find(
               "dialog.DefaultButton(muxc::ContentDialogButton::Primary)") !=
                 std::string::npos &&
+            recorder.find(
+              "ShowShortcutDialog(\n    std::shared_ptr<HotkeyRecorderState> state)") !=
+                std::string::npos &&
+            recorder.find(
+              "ShowShortcutDialog(\n    const std::shared_ptr<HotkeyRecorderState>& state)") ==
+                std::string::npos &&
             recorder.find("co_await state->dialog.ShowAsync()") !=
                 std::string::npos &&
             recorder.find("captureSurface.KeyDown") !=
