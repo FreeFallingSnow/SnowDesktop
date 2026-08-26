@@ -201,7 +201,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const std::size_t shellConstructorStart = shell.find(
         "SettingsShell::SettingsShell()");
     const std::size_t shellConstructorEnd = shell.find(
-        "SettingsShell::~SettingsShell()", shellConstructorStart);
+        "void SettingsShell::EnsurePresentersForPage(",
+        shellConstructorStart);
     const std::string shellConstructor =
         shellConstructorStart == std::string::npos ||
             shellConstructorEnd == std::string::npos
