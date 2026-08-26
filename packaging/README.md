@@ -24,8 +24,10 @@ Agent、CI 或其他自动化调用：
 scripts\release.bat status
 scripts\release.bat status -Json
 scripts\release.bat package
+scripts\release.bat package -ReloadShell
 scripts\release.bat sync-release
 scripts\release.bat prepare
+scripts\release.bat prepare -ReloadShell
 scripts\release.bat open
 ```
 
@@ -33,6 +35,11 @@ scripts\release.bat open
 提交或推送。如果二进制 Release 仓库在同步前已有未提交修改，Agent 必须先
 审查，再为 `sync-release` 或 `prepare` 增加
 `-Yes -ConfirmVersion A.B.C.0`。
+
+发布 CLI 默认不会关闭 SnowDesktop 或重启 Explorer。构建产物被正在运行的
+SnowDesktop 或 Explorer 任务栏 Hook 占用时，应先正常退出应用；需要自动解除占用时，
+为 `package` 或 `prepare` 增加 `-ReloadShell`。该选项会终止 SnowDesktop 并短暂重启
+Explorer。发布 TUI 检测到占用时会显示相同副作用并请求确认。
 
 会改变源码 Git 历史或远程状态的命令必须显式确认版本：
 

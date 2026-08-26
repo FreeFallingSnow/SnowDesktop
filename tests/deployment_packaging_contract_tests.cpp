@@ -121,6 +121,29 @@ void TestPackagers(const std::string& module,
             steam.find("$buildOutput + \"*\"") == std::string::npos,
         "shared deployment copying never globs the build directory");
 }
+
+void TestReleaseManagerShellReload(const std::string& manager,
+    const std::string& documentation)
+{
+    Check(manager.find("[switch]$ReloadShell") != std::string::npos &&
+            manager.find("\"--reload-shell\"") != std::string::npos &&
+            manager.find("-BatchArguments $buildArguments") !=
+                std::string::npos,
+        "release manager forwards the explicit shell reload option to the standard build");
+    Check(manager.find("Get-BuildOccupancy") != std::string::npos &&
+            manager.find("SnowDesktopTaskbarHook.dll") !=
+                std::string::npos &&
+            manager.find("-ReloadShellBeforeBuild:$ReloadShell") !=
+                std::string::npos,
+        "release CLI and TUI share build occupancy handling");
+    Check(documentation.find(
+              "scripts\\release.bat package -ReloadShell") !=
+            std::string::npos &&
+            documentation.find(
+              "scripts\\release.bat prepare -ReloadShell") !=
+                std::string::npos,
+        "release documentation describes shell reload for package and prepare");
+}
 }
 
 int main(int argc, char** argv)
@@ -137,6 +160,9 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/deployment_payload.psm1"),
             ReadText(root / "scripts/package_release.ps1"),
             ReadText(root / "scripts/package_steam.ps1"));
+        TestReleaseManagerShellReload(
+            ReadText(root / "scripts/release_manager.ps1"),
+            ReadText(root / "packaging/README.md"));
     }
 
     if (failures != 0)

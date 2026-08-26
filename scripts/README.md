@@ -30,11 +30,13 @@ scripts\steam-dev.bat bridge status
 scripts\release.bat
 scripts\release.bat status -Json
 scripts\release.bat package
+scripts\release.bat package -ReloadShell
 ```
 
 构建入口默认不会关闭 SnowDesktop 或重启 Explorer。若任务栏 Hook DLL 仍被占用，
 先正常退出 SnowDesktop；需要自动解除占用时传入 `--reload-shell`，脚本会明确提示并短暂
-重启 Shell。本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
+重启 Shell。发布 CLI 对应使用 `-ReloadShell`；发布 TUI 检测到占用时会在执行前请求一次
+明确确认。本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
 `scripts\widget-dev.bat` 需要先构建一次宿主。首次创建开发候选时会重启一次
 SnowDesktop 以发现组件；开发候选默认不覆盖已安装版本，需要在“我的组件”卡片中
