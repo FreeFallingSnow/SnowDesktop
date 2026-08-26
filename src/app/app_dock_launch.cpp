@@ -206,8 +206,20 @@ bool DesktopApp::LaunchDesktopItem(
     const bool wasClosed =
         GetDockWindowVisualState(itemIndex) ==
             DockWindowVisualState::Closed;
-    if (!shellLaunchWorker_.Enqueue(
-            hwnd_, items_[itemIndex].parsingName))
+    const DesktopItem& item = items_[itemIndex];
+    const wchar_t* extension =
+        PathFindExtensionW(item.parsingName.c_str());
+    const bool useShellItemActivation = item.isShortcut ||
+        (extension &&
+            (_wcsicmp(extension, L".lnk") == 0 ||
+                _wcsicmp(extension, L".url") == 0));
+    const bool launchAccepted =
+        useShellItemActivation && item.absolutePidl.get()
+        ? shellLaunchWorker_.EnqueueShellItem(
+            hwnd_, item.parsingName, item.absolutePidl.get())
+        : shellLaunchWorker_.Enqueue(
+            hwnd_, item.parsingName);
+    if (!launchAccepted)
         return false;
     RecordDockItemUsage(itemIndex);
     if (animateDockLaunch && wasClosed)

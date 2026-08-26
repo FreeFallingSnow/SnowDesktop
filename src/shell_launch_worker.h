@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <shlobj.h>
 
 #include <condition_variable>
 #include <deque>
@@ -10,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace snowdesktop
 {
@@ -17,15 +19,16 @@ namespace snowdesktop
 /**
  * @brief Dedicated STA worker for interactive Shell path launches.
  *
- * Enqueue only copies the launch request. ShellExecuteExW runs off the desktop
- * UI thread, so a slow shortcut resolver, DDE server, or execution delegate
- * cannot prevent pointer and foreground messages from being dispatched.
+ * Enqueue copies the launch request and, for Shell items, its absolute PIDL.
+ * Shell activation runs off the desktop UI thread, so a slow shortcut
+ * resolver, DDE server, or execution delegate cannot prevent pointer and
+ * foreground messages from being dispatched.
  */
 class ShellLaunchWorker
 {
 public:
     using Executor = std::function<bool(
-        HWND, const std::wstring&, int)>;
+        HWND, const std::wstring&, PCIDLIST_ABSOLUTE, int)>;
 
     ShellLaunchWorker();
     explicit ShellLaunchWorker(Executor executor);
@@ -41,6 +44,19 @@ public:
         int showCommand = SW_SHOWNORMAL);
 
     /**
+     * @brief Queue a Shell item activation using a private copy of its PIDL.
+     *
+     * Shortcut activation uses IContextMenu on the worker STA so it follows
+     * the same Shell handler path as Explorer's Open command. The path remains
+     * available as a compatibility fallback.
+     */
+    bool EnqueueShellItem(
+        HWND owner,
+        std::wstring path,
+        PCIDLIST_ABSOLUTE absolutePidl,
+        int showCommand = SW_SHOWNORMAL);
+
+    /**
      * @brief Stop accepting launches and discard requests not yet executing.
      *
      * An already-blocked Shell handler is allowed to finish on its detached
@@ -52,6 +68,7 @@ public:
     static bool Execute(
         HWND owner,
         const std::wstring& path,
+        PCIDLIST_ABSOLUTE absolutePidl,
         int showCommand = SW_SHOWNORMAL);
 
 private:
@@ -59,6 +76,7 @@ private:
     {
         HWND owner = nullptr;
         std::wstring path;
+        std::vector<unsigned char> absolutePidl;
         int showCommand = SW_SHOWNORMAL;
     };
 
@@ -75,6 +93,7 @@ private:
         bool stopping = false;
     };
 
+    bool EnqueueTask(Task task);
     static void Run(const std::shared_ptr<State>& state);
 
     std::shared_ptr<State> state_;
