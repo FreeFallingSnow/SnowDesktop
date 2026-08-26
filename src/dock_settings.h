@@ -57,6 +57,8 @@ enum class SystemTaskbarThemeMode
 
 struct SystemTaskbarDynamicRule
 {
+    bool operator==(const SystemTaskbarDynamicRule&) const = default;
+
     bool enabled = false;
     SystemTaskbarThemeMode themeMode = SystemTaskbarThemeMode::Native;
     int contentTheme = -1; // -1=follow selected theme
@@ -74,6 +76,8 @@ struct SystemTaskbarTargetAppearance
 
 struct DockSettings
 {
+    bool operator==(const DockSettings&) const = default;
+
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
     // Legacy field name retained in the persisted format. This now controls

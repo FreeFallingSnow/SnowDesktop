@@ -807,6 +807,39 @@ public:
         using snowdesktop::HasSettingsDomain;
         using snowdesktop::SettingsDomain;
 
+        // Shortcut edits only need to update the in-memory mirror and the
+        // relevant registration. Running the full domain pipeline here would
+        // rebuild desktop layout and erase the desktop host even though no
+        // desktop pixels changed. That erase is visible through the Settings
+        // backdrop as a brief black frame when the recorder closes.
+        if (domains == SettingsDomain::Navigation &&
+            snowdesktop::settings_update_rules::
+                IsNavigationShortcutOnlyCommit(
+                    app_.navigationSettings_, snapshot.values.navigation))
+        {
+            app_.navigationSettings_ = snapshot.values.navigation;
+            app_.ApplyNavigationHotkey();
+            return snowdesktop::SettingsActionResult::Success(domains);
+        }
+        if (domains == SettingsDomain::General &&
+            snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit(
+                app_.generalSettings_, snapshot.values.general))
+        {
+            app_.generalSettings_ = snapshot.values.general;
+            app_.ApplyDesktopPassthroughHotkey();
+            return snowdesktop::SettingsActionResult::Success(domains);
+        }
+        if (domains == SettingsDomain::Dock &&
+            snowdesktop::settings_update_rules::
+                IsFloatingDockShortcutOnlyCommit(
+                    app_.dockSettings_, snapshot.values.dock))
+        {
+            app_.dockSettings_ = snapshot.values.dock;
+            NormalizeDockSettings(app_.dockSettings_);
+            app_.ApplyFloatingDockHotkey();
+            return snowdesktop::SettingsActionResult::Success(domains);
+        }
+
         DockSettings requestedDockSettings = snapshot.values.dock;
         NormalizeDockSettings(requestedDockSettings);
         if (HasSettingsDomain(domains, SettingsDomain::Dock))

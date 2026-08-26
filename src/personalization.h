@@ -78,6 +78,8 @@ constexpr int AppearancePresetFromFourThemeSelection(int selection)
  */
 struct PersonalizationSettings
 {
+    bool operator==(const PersonalizationSettings&) const = default;
+
     /**
      * @name 组件背景色 (RGB)
      * @brief 组件背景填充色的 RGB 分量，取值范围 [0.0f, 1.0f]

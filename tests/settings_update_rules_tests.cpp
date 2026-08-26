@@ -17,7 +17,27 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    using snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit;
+    using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::ParseGitHubRelease;
+
+    GeneralSettings general;
+    GeneralSettings generalHotkey = general;
+    generalHotkey.pageNavigationPreviousVirtualKey = VK_LEFT;
+    Check(IsGeneralShortcutOnlyCommit(general, generalHotkey),
+        "a page-navigation chord is isolated from the full General refresh");
+    generalHotkey.demoModeEnabled = !general.demoModeEnabled;
+    Check(!IsGeneralShortcutOnlyCommit(general, generalHotkey),
+        "a visual General change still uses the full commit pipeline");
+
+    NavigationSettings navigation;
+    NavigationSettings navigationHotkey = navigation;
+    navigationHotkey.virtualKey = 'N';
+    Check(IsNavigationShortcutOnlyCommit(navigation, navigationHotkey),
+        "a quick-navigation chord is isolated from desktop refresh");
+    navigationHotkey.desktopViewMode = QuickNavigationDesktopViewMode::Source;
+    Check(!IsNavigationShortcutOnlyCommit(navigation, navigationHotkey),
+        "a navigation content change still uses the full commit pipeline");
 
     const auto newer = ParseGitHubRelease(
         R"({"tag_name":"v1.0.5.0","html_url":"https://github.com/FreeFallingSnow/SnowDesktop_Release/releases/tag/v1.0.5.0"})",
