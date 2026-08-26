@@ -541,9 +541,13 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto shellSearchAccelerator = shellXaml.find(
         "x:Name=\"SearchKeyboardAccelerator\"");
     const auto paneSearchStart = shellXaml.find(
-        "<NavigationView.AutoSuggestBox>");
+        "<NavigationView.PaneHeader>");
     const auto paneSearchEnd = shellXaml.find(
-        "</NavigationView.AutoSuggestBox>", paneSearchStart);
+        "</NavigationView.PaneHeader>", paneSearchStart);
+    const auto settingsSearchBox = shellXaml.find(
+        "x:Name=\"SettingsSearchBox\"");
+    const auto compactSearchButton = shellXaml.find(
+        "x:Name=\"CompactSearchButton\"");
     Check(homeItem != std::string::npos &&
             homeItem < homeCollapsed && homeCollapsed < generalItem &&
             generalItem < appearanceItem &&
@@ -576,10 +580,14 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             shellXaml.find("x:Name=\"TitleBarPaneToggleButton\"") ==
                 std::string::npos &&
             shellSearchAccelerator != std::string::npos &&
-            shellSearchAccelerator < paneSearchStart &&
             shellXaml.find("x:Name=\"SearchKeyboardAccelerator\"",
-                paneSearchStart) > paneSearchEnd &&
-            shellXaml.find("<NavigationView.AutoSuggestBox>") !=
+                shellSearchAccelerator + 1) == std::string::npos &&
+            paneSearchStart < settingsSearchBox &&
+            settingsSearchBox < paneSearchEnd &&
+            shellXaml.find("x:Name=\"SettingsSearchBox\"",
+                paneSearchEnd) == std::string::npos &&
+            compactSearchButton != std::string::npos &&
+            shellXaml.find("<NavigationView.AutoSuggestBox>") ==
                 std::string::npos &&
             shellXaml.find("SelectsOnInvoked=\"False\"",
               appearanceItem) < appearanceThemeItem &&
@@ -594,7 +602,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             shell.find("DesktopShellHeader().Content(") !=
                 std::string::npos &&
             shell.find("DataHeader().Content(") != std::string::npos,
-        "the adaptive NavigationView exposes a shallow Appearance tree plus Desktop and shell/data groups in task order with About and conditional tools in the footer");
+        "the adaptive NavigationView combines its built-in toggle with one PaneHeader search box, preserves a compact search affordance, and exposes the navigation groups in task order");
     Check(shellHeader.find("titleBarBackToken_") == std::string::npos &&
             shellHeader.find("titleBarPaneToggleToken_") ==
                 std::string::npos &&

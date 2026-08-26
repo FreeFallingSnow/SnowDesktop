@@ -317,8 +317,28 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shell.find(
               "SettingsSearchBox().Focus(mux::FocusState::Keyboard)") !=
+                std::string::npos &&
+            shell.find(
+              "CompactSearchButton().Click(compactSearchButtonClickToken_);") !=
+                std::string::npos &&
+            shell.find(
+              "NavigationRoot().PaneOpening(paneOpeningToken_);") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().PaneOpened(paneOpenedToken_);") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().PaneClosed(paneClosedToken_);") !=
+                std::string::npos &&
+            shell.find("compactSearchButtonClickToken_ = {};") !=
+                std::string::npos &&
+            shell.find("paneOpeningToken_ = {};") !=
+                std::string::npos &&
+            shell.find("paneOpenedToken_ = {};") !=
+                std::string::npos &&
+            shell.find("paneClosedToken_ = {};") !=
+                std::string::npos &&
+            shell.find("navigationDisplayModeChangedToken_ = {};") !=
                 std::string::npos,
-        "compact search and Ctrl+F keep the closed-rail button synchronized and focus the unique search box after the pane opens");
+        "compact search and Ctrl+F focus the unique search box after pane opening, and every added lifetime handler is unhooked during shutdown");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&
