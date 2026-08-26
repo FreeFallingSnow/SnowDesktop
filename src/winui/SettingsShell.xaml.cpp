@@ -555,10 +555,18 @@ void SettingsShell::SetIntegratedTitleBarInsets(
 
     leftInset = std::max(0.0, leftInset);
     rightInset = std::max(0.0, rightInset);
-    TitleBarLeftInsetColumn().Width(
-        mux::GridLength{leftInset, mux::GridUnitType::Pixel});
-    TitleBarRightInsetColumn().Width(
-        mux::GridLength{rightInset, mux::GridUnitType::Pixel});
+    if (leftInset != integratedTitleBarLeftInset_)
+    {
+        integratedTitleBarLeftInset_ = leftInset;
+        TitleBarLeftInsetColumn().Width(
+            mux::GridLength{leftInset, mux::GridUnitType::Pixel});
+    }
+    if (rightInset != integratedTitleBarRightInset_)
+    {
+        integratedTitleBarRightInset_ = rightInset;
+        TitleBarRightInsetColumn().Width(
+            mux::GridLength{rightInset, mux::GridUnitType::Pixel});
+    }
 }
 
 void SettingsShell::NotifyActualThemeChanged() noexcept

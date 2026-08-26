@@ -287,6 +287,8 @@ private:
     winrt::Microsoft::UI::Xaml::Controls::ContentDialog activeDialog_{nullptr};
     winrt::Microsoft::UI::Xaml::Media::Brush
         solidFallbackBackground_{nullptr};
+    double integratedTitleBarLeftInset_ = -1.0;
+    double integratedTitleBarRightInset_ = -1.0;
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;

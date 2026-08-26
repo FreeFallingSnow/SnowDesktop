@@ -2481,9 +2481,6 @@ struct SettingsWindowHost::Impl
             }
             return 0;
         }
-        case WM_SIZE:
-            self->QueueIntegratedTitleBarInsetsUpdate();
-            break;
         case WM_DPICHANGED:
         {
             const auto* suggested = reinterpret_cast<RECT*>(lParam);
@@ -2525,7 +2522,6 @@ struct SettingsWindowHost::Impl
     {
         WNDCLASSEXW windowClass{};
         windowClass.cbSize = sizeof(windowClass);
-        windowClass.style = CS_HREDRAW | CS_VREDRAW;
         windowClass.lpfnWndProc = WindowProcedure;
         windowClass.hInstance = instance;
         windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(101));

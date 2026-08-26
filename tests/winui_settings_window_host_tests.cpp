@@ -661,6 +661,17 @@ void TestHostContract(const std::filesystem::path& repository)
             shell.find("TitleBarDragRegion().SizeChanged(") ==
                 std::string::npos,
         "caption drag ownership no longer depends on hidden-window XAML layout or a post-show timing override; only caption-button insets are refreshed");
+    Check(source.find("case WM_SIZE:") == std::string::npos &&
+            source.find("CS_HREDRAW | CS_VREDRAW") == std::string::npos &&
+            shellHeader.find("integratedTitleBarLeftInset_") !=
+                std::string::npos &&
+            shellHeader.find("integratedTitleBarRightInset_") !=
+                std::string::npos &&
+            shell.find("leftInset != integratedTitleBarLeftInset_") !=
+                std::string::npos &&
+            shell.find("rightInset != integratedTitleBarRightInset_") !=
+                std::string::npos,
+        "live resize avoids redundant caption-inset layout writes and full-window class redraws");
     Check(source.find(
               "if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)") !=
                 std::string::npos,
