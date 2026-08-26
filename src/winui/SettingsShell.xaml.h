@@ -114,6 +114,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
+    /** Bind a current component snapshot; replaying the bound revision is safe. */
     [[nodiscard]] bool ApplyWidgetSettingsSnapshot(
         const snowdesktop::widget_runtime::WidgetSettingsSnapshot& snapshot);
     void SetWidgetsPageActions(

@@ -815,6 +815,33 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ApplyWidgetSettingsSnapshot(") !=
                 std::string::npos,
         "widget settings snapshots, service events, native content, and close flush are wired through the WinUI shell");
+    const std::size_t applyWidgetSnapshotBegin = shell.find(
+        "bool SettingsShell::ApplyWidgetSettingsSnapshot(");
+    const std::size_t setWidgetsActionsBegin = shell.find(
+        "void SettingsShell::SetWidgetsPageActions(",
+        applyWidgetSnapshotBegin);
+    const std::string_view applyWidgetSnapshotFunction =
+        applyWidgetSnapshotBegin != std::string::npos &&
+                setWidgetsActionsBegin != std::string::npos
+            ? std::string_view(shell).substr(
+                  applyWidgetSnapshotBegin,
+                  setWidgetsActionsBegin - applyWidgetSnapshotBegin)
+            : std::string_view{};
+    Check(applyWidgetSnapshotFunction.find("const bool alreadyApplied") !=
+                std::string_view::npos &&
+            applyWidgetSnapshotFunction.find(
+                "widgetSettingsPage_->WidgetId() == snapshot.widgetId") !=
+                std::string_view::npos &&
+            applyWidgetSnapshotFunction.find(
+                "widgetSettingsPage_->Generation() == snapshot.generation") !=
+                std::string_view::npos &&
+            applyWidgetSnapshotFunction.find(
+                "widgetSettingsPage_->Revision() == snapshot.revision") !=
+                std::string_view::npos &&
+            applyWidgetSnapshotFunction.find(
+                "!alreadyApplied && !widgetSettingsPage_->ApplySnapshot(snapshot)") !=
+                std::string_view::npos,
+        "reopening a component route accepts the exact snapshot already bound while constructing its presenter");
     const std::size_t languagePrepare = source.find(
         "[[nodiscard]] bool PrepareLanguageChange()");
     const std::size_t languageApply = source.find(

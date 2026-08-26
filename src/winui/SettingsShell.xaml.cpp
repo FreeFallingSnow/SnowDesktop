@@ -943,11 +943,22 @@ bool SettingsShell::ApplyWidgetSettingsSnapshot(
     if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
         !widgetSettingsPage_ ||
         navigation_.Route().page != SettingsPage::WidgetSettings ||
-        navigation_.Route().widgetInstanceId != snapshot.widgetId ||
-        !widgetSettingsPage_->ApplySnapshot(snapshot))
+        navigation_.Route().widgetInstanceId != snapshot.widgetId)
     {
         return false;
     }
+
+    // Creating the presenter for a newly reopened session binds the current
+    // service snapshot immediately so its controls exist before rendering.
+    // The host then submits that same authoritative snapshot to complete the
+    // route transaction. Treat that exact replay as an idempotent success;
+    // older or otherwise rejected publications must still fail.
+    const bool alreadyApplied =
+        widgetSettingsPage_->WidgetId() == snapshot.widgetId &&
+        widgetSettingsPage_->Generation() == snapshot.generation &&
+        widgetSettingsPage_->Revision() == snapshot.revision;
+    if (!alreadyApplied && !widgetSettingsPage_->ApplySnapshot(snapshot))
+        return false;
 
     renderedPageRoute_.reset();
     RenderPageCards(true);
