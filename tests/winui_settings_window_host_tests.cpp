@@ -587,6 +587,15 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ShowWindow(window, SW_HIDE)") !=
                 std::string::npos,
         "closing flushes the controller and widget sessions before hiding");
+    const std::size_t firstShowWindow =
+        source.find("ShowWindow(impl_->window, SW_SHOWNORMAL)");
+    const std::size_t firstVisibleTitleBarRefresh = source.find(
+        "QueueIntegratedTitleBarUpdate(true)", firstShowWindow);
+    Check(firstShowWindow != std::string::npos &&
+            firstVisibleTitleBarRefresh != std::string::npos &&
+            source.find("(!force && integratedTitleBarUpdateQueued)") !=
+                std::string::npos,
+        "showing the settings window forces a fresh asynchronous title-bar drag-region update even when a hidden-window update is already queued");
     Check(source.find(
               "if (impl_->initialized && impl_->OnOwnerThread() && impl_->controller)") !=
                 std::string::npos,

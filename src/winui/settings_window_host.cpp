@@ -858,10 +858,10 @@ struct SettingsWindowHost::Impl
         }
     }
 
-    void QueueIntegratedTitleBarUpdate() noexcept
+    void QueueIntegratedTitleBarUpdate(bool force = false) noexcept
     {
-        if (integratedTitleBarUpdateQueued || shuttingDown || !window ||
-            !IsWindow(window) || !runtime.IsAttached() ||
+        if ((!force && integratedTitleBarUpdateQueued) || shuttingDown ||
+            !window || !IsWindow(window) || !runtime.IsAttached() ||
             !appWindowTitleBar)
         {
             return;
@@ -2830,6 +2830,10 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         ShowWindow(impl_->window, SW_SHOWNORMAL);
     SetForegroundWindow(impl_->window);
     SetActiveWindow(impl_->window);
+    // XAML can finish its initial measure while the HWND is still hidden.
+    // Always post one fresh pass after the window becomes visible so an
+    // earlier coalesced update cannot leave stale AppWindow drag rectangles.
+    impl_->QueueIntegratedTitleBarUpdate(true);
 
     if (!reloadResult.Succeeded())
         impl_->ShowActionError(reloadResult);
