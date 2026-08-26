@@ -115,19 +115,30 @@ void TestHostContract(const std::filesystem::path& repository)
         integratedTitleBarMarkup.find(
             "x:Name=\"IntegratedTitleBarIdentity\"");
     const std::size_t paneHeaderBegin =
-        shellMarkup.find("<NavigationView.AutoSuggestBox>");
+        shellMarkup.find("<NavigationView.PaneHeader>");
     const std::size_t paneHeaderEnd = shellMarkup.find(
-        "</NavigationView.AutoSuggestBox>", paneHeaderBegin);
+        "</NavigationView.PaneHeader>", paneHeaderBegin);
     const std::string_view paneHeaderMarkup =
         paneHeaderBegin != std::string::npos &&
                 paneHeaderEnd != std::string::npos
         ? std::string_view(shellMarkup).substr(
             paneHeaderBegin, paneHeaderEnd - paneHeaderBegin)
         : std::string_view{};
+    const std::size_t paneCustomContentBegin =
+        shellMarkup.find("<NavigationView.PaneCustomContent>");
+    const std::size_t paneCustomContentEnd = shellMarkup.find(
+        "</NavigationView.PaneCustomContent>", paneCustomContentBegin);
+    const std::string_view paneCustomContentMarkup =
+        paneCustomContentBegin != std::string::npos &&
+                paneCustomContentEnd != std::string::npos
+        ? std::string_view(shellMarkup).substr(
+            paneCustomContentBegin,
+            paneCustomContentEnd - paneCustomContentBegin)
+        : std::string_view{};
     const std::size_t navigationRootBegin =
         shellMarkup.find("x:Name=\"NavigationRoot\"");
     const std::size_t navigationRootEnd = shellMarkup.find(
-        "<NavigationView.AutoSuggestBox>", navigationRootBegin);
+        "<NavigationView.PaneHeader>", navigationRootBegin);
     const std::string_view navigationRootMarkup =
         navigationRootBegin != std::string::npos &&
                 navigationRootEnd != std::string::npos
@@ -216,9 +227,12 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shellMarkup.find("TitleBarRightInsetColumn") !=
                 std::string::npos &&
-            shellMarkup.find("<NavigationView.AutoSuggestBox>") !=
+            shellMarkup.find("<NavigationView.PaneHeader>") !=
                 std::string::npos &&
-            shellMarkup.find("x:Name=\"SettingsSearchBox\"") !=
+            shellMarkup.find("<NavigationView.AutoSuggestBox>") ==
+                std::string::npos &&
+            Count(shellMarkup, "x:Name=\"SettingsSearchBox\"") == 1 &&
+            shellMarkup.find("<NavigationView.Template>") ==
                 std::string::npos &&
             shellMarkup.find("IsBackButtonVisible=\"Collapsed\"") !=
                 std::string::npos &&
@@ -242,7 +256,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             shell.find("NavigationRoot().PaneTitle(shellTitle)") ==
                 std::string::npos,
-        "the standard XAML caption shows the localized app identity while NavigationView owns pane expansion and native search placement without duplicate controls");
+        "the standard XAML caption shows the localized app identity while the built-in NavigationView toggle and one PaneHeader search box share the navigation row without a custom template");
     Check(integratedTitleBarMarkup.find("Height=\"32\"") !=
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("Height=\"48\"") ==
@@ -271,8 +285,40 @@ void TestHostContract(const std::filesystem::path& repository)
             paneHeaderMarkup.find("x:Name=\"SettingsSearchBox\"") !=
                 std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") ==
+                std::string_view::npos &&
+            paneCustomContentMarkup.find(
+              "x:Name=\"CompactSearchButton\"") !=
+                std::string_view::npos &&
+            paneCustomContentMarkup.find("Width=\"48\"") !=
+                std::string_view::npos &&
+            paneCustomContentMarkup.find(
+              "Style=\"{ThemeResource NavigationViewPaneSearchButtonStyle}\"") !=
                 std::string_view::npos,
-        "the standard-height caption contains only non-interactive XAML app identity while NavigationView owns navigation and search affordances below it");
+        "the expanded pane aligns its unique search box beside the built-in toggle while a platform-styled compact search button preserves the closed-rail affordance");
+    Check(shellHeader.find("OpenPaneAndFocusSearch()") !=
+                std::string::npos &&
+            shellHeader.find("focusSearchWhenPaneOpens_") !=
+                std::string::npos &&
+            shellHeader.find("compactSearchButtonClickToken_") !=
+                std::string::npos &&
+            shellHeader.find("paneOpenedToken_") !=
+                std::string::npos &&
+            shell.find("CompactSearchButton().Click(") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().PaneOpening(") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().PaneOpened(") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().PaneClosed(") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().DisplayModeChanged(") !=
+                std::string::npos &&
+            shell.find("NavigationRoot().IsPaneOpen(true);") !=
+                std::string::npos &&
+            shell.find(
+              "SettingsSearchBox().Focus(mux::FocusState::Keyboard)") !=
+                std::string::npos,
+        "compact search and Ctrl+F keep the closed-rail button synchronized and focus the unique search box after the pane opens");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&

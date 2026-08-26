@@ -204,6 +204,8 @@ private:
     void HookEvents();
     void UnhookEvents() noexcept;
     void NavigateBack();
+    void OpenPaneAndFocusSearch();
+    void UpdateCompactSearchButtonVisibility() noexcept;
     void NotifyActualThemeChanged() noexcept;
     void RenderRoute(
         bool forcePageCards = false,
@@ -291,11 +293,17 @@ private:
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
+    bool focusSearchWhenPaneOpens_ = false;
     bool closed_ = false;
 
     winrt::event_token actualThemeChangedToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};
     winrt::event_token searchKeyboardAcceleratorToken_{};
+    winrt::event_token compactSearchButtonClickToken_{};
+    winrt::event_token paneOpeningToken_{};
+    winrt::event_token paneOpenedToken_{};
+    winrt::event_token paneClosedToken_{};
+    winrt::event_token navigationDisplayModeChangedToken_{};
     winrt::event_token selectionChangedToken_{};
     winrt::event_token breadcrumbClickedToken_{};
     winrt::event_token searchTextChangedToken_{};

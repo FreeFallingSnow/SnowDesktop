@@ -338,6 +338,7 @@ void SettingsShell::Close() noexcept
     if (closed_)
         return;
     closed_ = true;
+    focusSearchWhenPaneOpens_ = false;
     try
     {
         UnhookEvents();
@@ -457,6 +458,11 @@ void SettingsShell::RefreshLocalizedText()
         NavigationRoot(), Localize("settings.shell.title"));
     muxa::AutomationProperties::SetName(
         SettingsSearchBox(), Localize("settings.search.placeholder"));
+    muxa::AutomationProperties::SetName(
+        CompactSearchButton(), Localize("settings.search.placeholder"));
+    muxc::ToolTipService::SetToolTip(
+        CompactSearchButton(),
+        winrt::box_value(Localize("settings.search.placeholder")));
 
     ApplyNavigationIcons();
 
@@ -1159,6 +1165,40 @@ void SettingsShell::ShowWidgetPermissionEditor(
         std::move(request), std::move(completed));
 }
 
+void SettingsShell::OpenPaneAndFocusSearch()
+{
+    if (closed_)
+        return;
+
+    if (NavigationRoot().IsPaneOpen())
+    {
+        focusSearchWhenPaneOpens_ = false;
+        (void)SettingsSearchBox().Focus(mux::FocusState::Keyboard);
+        return;
+    }
+
+    focusSearchWhenPaneOpens_ = true;
+    CompactSearchButton().Visibility(mux::Visibility::Collapsed);
+    NavigationRoot().IsPaneOpen(true);
+}
+
+void SettingsShell::UpdateCompactSearchButtonVisibility() noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+
+    try
+    {
+        CompactSearchButton().Visibility(
+            NavigationRoot().IsPaneOpen()
+                ? mux::Visibility::Collapsed
+                : mux::Visibility::Visible);
+    }
+    catch (...)
+    {
+    }
+}
+
 void SettingsShell::HookEvents()
 {
     shellPointerPressedHandler_ = winrt::box_value(muxi::PointerEventHandler{
@@ -1212,12 +1252,38 @@ void SettingsShell::HookEvents()
     searchKeyboardAcceleratorToken_ = SearchKeyboardAccelerator().Invoked(
         [this](const muxi::KeyboardAccelerator&,
                const muxi::KeyboardAcceleratorInvokedEventArgs& args) {
-            if (!closed_)
-            {
-                NavigationRoot().IsPaneOpen(true);
-                SettingsSearchBox().Focus(mux::FocusState::Keyboard);
-            }
+            OpenPaneAndFocusSearch();
             args.Handled(true);
+        });
+    compactSearchButtonClickToken_ = CompactSearchButton().Click(
+        [this](const winrt::Windows::Foundation::IInspectable&,
+               const mux::RoutedEventArgs&) {
+            OpenPaneAndFocusSearch();
+        });
+    paneOpeningToken_ = NavigationRoot().PaneOpening(
+        [this](const muxc::NavigationView&,
+               const winrt::Windows::Foundation::IInspectable&) {
+            CompactSearchButton().Visibility(mux::Visibility::Collapsed);
+        });
+    paneOpenedToken_ = NavigationRoot().PaneOpened(
+        [this](const muxc::NavigationView&,
+               const winrt::Windows::Foundation::IInspectable&) {
+            UpdateCompactSearchButtonVisibility();
+            if (closed_ || !focusSearchWhenPaneOpens_)
+                return;
+            focusSearchWhenPaneOpens_ = false;
+            (void)SettingsSearchBox().Focus(mux::FocusState::Keyboard);
+        });
+    paneClosedToken_ = NavigationRoot().PaneClosed(
+        [this](const muxc::NavigationView&,
+               const winrt::Windows::Foundation::IInspectable&) {
+            focusSearchWhenPaneOpens_ = false;
+            UpdateCompactSearchButtonVisibility();
+        });
+    navigationDisplayModeChangedToken_ = NavigationRoot().DisplayModeChanged(
+        [this](const muxc::NavigationView&,
+               const muxc::NavigationViewDisplayModeChangedEventArgs&) {
+            UpdateCompactSearchButtonVisibility();
         });
     selectionChangedToken_ = NavigationRoot().SelectionChanged(
         [this](const muxc::NavigationView&,
@@ -1299,6 +1365,7 @@ void SettingsShell::HookEvents()
             if (cancelOperation_)
                 cancelOperation_(progressGeneration_);
         });
+    UpdateCompactSearchButtonVisibility();
 }
 
 void SettingsShell::UnhookEvents() noexcept
@@ -1317,6 +1384,19 @@ void SettingsShell::UnhookEvents() noexcept
             BackKeyboardAccelerator().Invoked(backKeyboardAcceleratorToken_);
         if (searchKeyboardAcceleratorToken_.value)
             SearchKeyboardAccelerator().Invoked(searchKeyboardAcceleratorToken_);
+        if (compactSearchButtonClickToken_.value)
+            CompactSearchButton().Click(compactSearchButtonClickToken_);
+        if (paneOpeningToken_.value)
+            NavigationRoot().PaneOpening(paneOpeningToken_);
+        if (paneOpenedToken_.value)
+            NavigationRoot().PaneOpened(paneOpenedToken_);
+        if (paneClosedToken_.value)
+            NavigationRoot().PaneClosed(paneClosedToken_);
+        if (navigationDisplayModeChangedToken_.value)
+        {
+            NavigationRoot().DisplayModeChanged(
+                navigationDisplayModeChangedToken_);
+        }
         if (selectionChangedToken_.value)
             NavigationRoot().SelectionChanged(selectionChangedToken_);
         if (breadcrumbClickedToken_.value)
@@ -1336,6 +1416,11 @@ void SettingsShell::UnhookEvents() noexcept
     actualThemeChangedToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
+    compactSearchButtonClickToken_ = {};
+    paneOpeningToken_ = {};
+    paneOpenedToken_ = {};
+    paneClosedToken_ = {};
+    navigationDisplayModeChangedToken_ = {};
     selectionChangedToken_ = {};
     breadcrumbClickedToken_ = {};
     searchTextChangedToken_ = {};

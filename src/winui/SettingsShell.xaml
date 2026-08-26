@@ -131,12 +131,21 @@
             ExpandedModeThresholdWidth="1008"
             OpenPaneLength="260"
             IsPaneToggleButtonVisible="True">
-            <NavigationView.AutoSuggestBox>
+            <NavigationView.PaneHeader>
                 <AutoSuggestBox x:Name="SettingsSearchBox"
+                                Margin="0,0,8,0"
                                 HorizontalAlignment="Stretch"
+                                VerticalAlignment="Center"
                                 QueryIcon="Find"
                                 UpdateTextOnSelect="False" />
-            </NavigationView.AutoSuggestBox>
+            </NavigationView.PaneHeader>
+            <NavigationView.PaneCustomContent>
+                <Button x:Name="CompactSearchButton"
+                        Width="48"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed"
+                        Style="{ThemeResource NavigationViewPaneSearchButtonStyle}" />
+            </NavigationView.PaneCustomContent>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="HomeItem"
                                     Tag="home"
