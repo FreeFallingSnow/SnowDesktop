@@ -98,27 +98,28 @@
             </Grid.ColumnDefinitions>
             <Border x:Name="TitleBarDragRegion"
                     Grid.Column="1"
-                    Background="Transparent">
-                <Grid Margin="12,0"
-                      ColumnSpacing="8"
-                      IsHitTestVisible="False">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Image x:Name="IntegratedTitleBarIcon"
-                           Width="16"
-                           Height="16"
+                    Background="Transparent" />
+            <Grid x:Name="IntegratedTitleBarIdentity"
+                  Grid.Column="1"
+                  Margin="12,0"
+                  ColumnSpacing="8"
+                  IsHitTestVisible="False">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Image x:Name="IntegratedTitleBarIcon"
+                       Width="16"
+                       Height="16"
+                       VerticalAlignment="Center"
+                       Source="ms-appx:///Assets/App/SnowDesktop.png"
+                       Stretch="Uniform" />
+                <TextBlock x:Name="IntegratedTitleBarText"
+                           Grid.Column="1"
                            VerticalAlignment="Center"
-                           Source="ms-appx:///Assets/App/SnowDesktop.png"
-                           Stretch="Uniform" />
-                    <TextBlock x:Name="IntegratedTitleBarText"
-                               Grid.Column="1"
-                               VerticalAlignment="Center"
-                               FontSize="12"
-                               TextTrimming="CharacterEllipsis" />
-                </Grid>
-            </Border>
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
         </Grid>
 
         <NavigationView

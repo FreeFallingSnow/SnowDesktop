@@ -111,6 +111,13 @@ void TestHostContract(const std::filesystem::path& repository)
             integratedTitleBarBegin,
             integratedTitleBarEnd - integratedTitleBarBegin)
         : std::string_view{};
+    const std::size_t titleBarDragRegionBegin =
+        integratedTitleBarMarkup.find("x:Name=\"TitleBarDragRegion\"");
+    const std::size_t titleBarDragRegionClose =
+        integratedTitleBarMarkup.find("/>", titleBarDragRegionBegin);
+    const std::size_t titleBarIdentityBegin =
+        integratedTitleBarMarkup.find(
+            "x:Name=\"IntegratedTitleBarIdentity\"");
     const std::size_t paneHeaderBegin =
         shellMarkup.find("<NavigationView.AutoSuggestBox>");
     const std::size_t paneHeaderEnd = shellMarkup.find(
@@ -247,6 +254,14 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             integratedTitleBarMarkup.find("x:Name=\"TitleBarDragRegion\"") !=
                 std::string_view::npos &&
+            titleBarDragRegionClose != std::string_view::npos &&
+            titleBarDragRegionClose < titleBarIdentityBegin &&
+            integratedTitleBarMarkup.find(
+              "x:Name=\"IntegratedTitleBarIdentity\"") !=
+                std::string_view::npos &&
+            integratedTitleBarMarkup.find(
+              "IsHitTestVisible=\"False\"", titleBarIdentityBegin) !=
+                std::string_view::npos &&
             paneHeaderMarkup.find(
               "HorizontalAlignment=\"Stretch\"") !=
                 std::string_view::npos &&
@@ -254,7 +269,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             paneHeaderMarkup.find("x:Name=\"ClearSearchButton\"") ==
                 std::string_view::npos,
-        "the standard-height caption keeps only the app icon and localized title inside its drag region while NavigationView owns navigation and search affordances");
+        "the standard-height caption keeps app identity on a non-hit-test sibling above an empty dedicated drag region while NavigationView owns navigation and search affordances");
     Check(shellMarkup.find(
               "Background=\"{ThemeResource ApplicationPageBackgroundThemeBrush}\"") !=
                 std::string::npos &&
