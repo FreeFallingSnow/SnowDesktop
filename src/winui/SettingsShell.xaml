@@ -55,7 +55,8 @@
     </UserControl.Resources>
 
     <Grid x:Name="ShellRoot"
-          Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+          Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+          KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.KeyboardAccelerators>
             <KeyboardAccelerator x:Name="SearchKeyboardAccelerator"
                                  Key="F"

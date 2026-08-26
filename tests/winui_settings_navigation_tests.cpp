@@ -530,6 +530,11 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto debugItem = shellXaml.find("x:Name=\"DebugItem\"");
     const auto homeCollapsed = shellXaml.find(
         "Visibility=\"Collapsed\"", homeItem);
+    const auto shellRootStart = shellXaml.find(
+        "<Grid x:Name=\"ShellRoot\"");
+    const auto shellRootEnd = shellXaml.find('>', shellRootStart);
+    const auto hiddenShellAcceleratorHint = shellXaml.find(
+        "KeyboardAcceleratorPlacementMode=\"Hidden\"", shellRootStart);
     const auto shellSearchAccelerator = shellXaml.find(
         "x:Name=\"SearchKeyboardAccelerator\"");
     const auto paneSearchStart = shellXaml.find(
@@ -597,6 +602,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shellXaml.find("x:Name=\"SearchKeyboardAccelerator\"") !=
                 std::string::npos &&
+            shellRootStart != std::string::npos &&
+            hiddenShellAcceleratorHint < shellRootEnd &&
             shell.find("BackKeyboardAccelerator().Invoked") !=
                 std::string::npos &&
             shell.find("SearchKeyboardAccelerator().Invoked") !=
@@ -612,7 +619,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shell.find("TitleBarBackButton().Click(titleBarBackToken_)") !=
                 std::string::npos,
-        "title-bar navigation follows controller-owned history, updates enabled state, toggles the NavigationView pane, supports Alt+Left and Ctrl+F, and revokes its event tokens");
+        "title-bar navigation follows controller-owned history, updates enabled state, toggles the NavigationView pane, supports Alt+Left and Ctrl+F without a shell-wide accelerator tooltip, and revokes its event tokens");
 
     const auto dismissStart = sharedControls.find("void Dismiss() noexcept");
     const auto dismissEnd = sharedControls.find("void Close() noexcept",
