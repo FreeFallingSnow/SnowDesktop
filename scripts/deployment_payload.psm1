@@ -74,9 +74,29 @@ function Read-SnowDesktopDeploymentManifest {
             throw "Deployment manifest hash mismatch: $path"
         }
     }
+    $requiredNoticeDestinations = @(
+        "licenses/CppWinRT-LICENSE.txt",
+        "licenses/WindowsAppSDK-LICENSE.txt",
+        "licenses/WindowsAppSDK-NOTICE.txt",
+        "licenses/WindowsML-LICENSE.txt",
+        "licenses/WindowsML-NOTICE.txt"
+    )
+    $noticeDestinations = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in @($manifest.notices)) {
+        $destination = [string]$entry.destination
+        if (-not $noticeDestinations.Add($destination)) {
+            throw "Deployment manifest contains an invalid or duplicate notice destination."
+        }
+        [void](Resolve-SnowDesktopDeploymentPath `
+            -Root $BuildOutput -RelativePath $destination)
+    }
     if (@($manifest.files).Count -eq 0 -or
         @($manifest.appxFragments).Count -eq 0 -or
-        @($manifest.notices).Count -ne 3) {
+        @($manifest.notices).Count -ne $requiredNoticeDestinations.Count -or
+        @($requiredNoticeDestinations | Where-Object {
+            -not $noticeDestinations.Contains($_)
+        }).Count -ne 0) {
         throw "Deployment manifest must include runtime files, package fragments, and notices."
     }
     return $manifest

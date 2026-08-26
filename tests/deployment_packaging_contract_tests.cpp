@@ -52,7 +52,9 @@ void TestBuildManifest(const std::string& props,
              "App.xbf", "SettingsShell.xbf", "SnowDesktop.pri",
              "SnowDesktop.winmd", "FluentSystemIcons-Regular.ttf",
              "fa-solid-900.ttf", "assets\\icon\\icon_small.png",
-             "Assets\\App\\SnowDesktop.png"})
+             "Assets\\App\\SnowDesktop.png",
+             "Microsoft.Windows.AI.MachineLearning.dll",
+             "onnxruntime.dll", "DirectML.dll"})
     {
         Check(props.find(item) != std::string::npos,
             "MSBuild deployment target captures every required item class");
@@ -86,8 +88,10 @@ void TestBuildManifest(const std::string& props,
         "deployment manifest is deterministic, hashed, and requires official fragments");
     Check(writer.find("WindowsAppSDK-LICENSE.txt") != std::string::npos &&
             writer.find("WindowsAppSDK-NOTICE.txt") != std::string::npos &&
-            writer.find("CppWinRT-LICENSE.txt") != std::string::npos,
-        "deployment manifest carries the pinned NuGet license and notice files");
+            writer.find("CppWinRT-LICENSE.txt") != std::string::npos &&
+            writer.find("WindowsML-LICENSE.txt") != std::string::npos &&
+            writer.find("WindowsML-NOTICE.txt") != std::string::npos,
+        "deployment manifest carries the pinned NuGet license and notice files, including Windows ML");
     Check(writer.find("Get-ChildItem -LiteralPath $TargetDirectory") ==
             std::string::npos,
         "deployment manifest generation does not glob the build output");
@@ -100,8 +104,10 @@ void TestPackagers(const std::string& module,
     Check(module.find("Resolve-SnowDesktopDeploymentPath") !=
             std::string::npos &&
             module.find("IsPathRooted") != std::string::npos &&
-            module.find("hash mismatch") != std::string::npos,
-        "shared payload reader rejects unsafe and stale manifest entries");
+            module.find("hash mismatch") != std::string::npos &&
+            module.find("WindowsML-LICENSE.txt") != std::string::npos &&
+            module.find("WindowsML-NOTICE.txt") != std::string::npos,
+        "shared payload reader rejects unsafe or stale entries and requires Windows ML notices");
     Check(release.find("Copy-SnowDesktopDeploymentPayload") !=
             std::string::npos &&
             steam.find("Copy-SnowDesktopDeploymentPayload") !=

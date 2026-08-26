@@ -109,6 +109,27 @@
         <SourcePackage>Microsoft.WindowsAppSDK</SourcePackage>
         <DeploymentKind>WindowsAppSDK</DeploymentKind>
       </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(_WindowsMLLocalNativePath)\Microsoft.Windows.AI.MachineLearning.dll"
+          Condition="'$(WindowsAppSDKMLDeploymentMode)' == 'SelfContained' and Exists('$(_WindowsMLLocalNativePath)\Microsoft.Windows.AI.MachineLearning.dll')">
+        <DeploymentPath>Microsoft.Windows.AI.MachineLearning.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(_WindowsMLLocalNativePath)\onnxruntime.dll"
+          Condition="'$(WindowsAppSDKMLDeploymentMode)' == 'SelfContained' and Exists('$(_WindowsMLLocalNativePath)\onnxruntime.dll')">
+        <DeploymentPath>onnxruntime.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(_WindowsMLLocalNativePath)\DirectML.dll"
+          Condition="'$(WindowsAppSDKMLDeploymentMode)' == 'SelfContained' and Exists('$(_WindowsMLLocalNativePath)\DirectML.dll')">
+        <DeploymentPath>DirectML.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
       <_SnowDesktopDeploymentFile Include="$(TargetDir)App.xbf">
         <DeploymentPath>App.xbf</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
@@ -155,6 +176,6 @@
         Lines="@(MicrosoftWindowsAppSDKAppxFragmentFiles)"
         Overwrite="true"
         Encoding="UTF-8" />
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot;" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(NuGetPackageRoot)microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot; -WindowsMlLicensePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\license.txt&quot; -WindowsMlNoticePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\ThirdPartyNotices.txt&quot;" />
   </Target>
 </Project>

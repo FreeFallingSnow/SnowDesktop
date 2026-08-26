@@ -7,7 +7,9 @@ param(
     [Parameter(Mandatory = $true)][string]$CppWinRtVersion,
     [Parameter(Mandatory = $true)][string]$WindowsAppSdkLicensePath,
     [Parameter(Mandatory = $true)][string]$WindowsAppSdkNoticePath,
-    [Parameter(Mandatory = $true)][string]$CppWinRtLicensePath
+    [Parameter(Mandatory = $true)][string]$CppWinRtLicensePath,
+    [Parameter(Mandatory = $true)][string]$WindowsMlLicensePath,
+    [Parameter(Mandatory = $true)][string]$WindowsMlNoticePath
 )
 
 Set-StrictMode -Version Latest
@@ -163,7 +165,9 @@ New-Item -ItemType Directory -Path $licenseDirectory -Force | Out-Null
 $noticeSpecs = @(
     @($WindowsAppSdkLicensePath, "WindowsAppSDK-LICENSE.txt"),
     @($WindowsAppSdkNoticePath, "WindowsAppSDK-NOTICE.txt"),
-    @($CppWinRtLicensePath, "CppWinRT-LICENSE.txt")
+    @($CppWinRtLicensePath, "CppWinRT-LICENSE.txt"),
+    @($WindowsMlLicensePath, "WindowsML-LICENSE.txt"),
+    @($WindowsMlNoticePath, "WindowsML-NOTICE.txt")
 )
 $notices = foreach ($spec in $noticeSpecs) {
     $source = [System.IO.Path]::GetFullPath([string]$spec[0])

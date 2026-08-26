@@ -105,8 +105,10 @@ PRI、XBF、WinMD、资源文件、哈希及官方 `package.appxfragment`；携�
 路径穿越、大小写冲突、缺失文件及哈希不一致。MSIX 还会把清单列出的官方
 activatable-class 扩展合并进 `AppxManifest.xml`，因此目标机器无需预装 Windows
 App SDK Runtime。Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
-复制到载荷的 `licenses` 目录。携带版和 MSIX 同时包含创意工坊管理器及
-`snowwidget.exe`，并校验 Agent Skill 内嵌 CLI 与独立 CLI 完全一致。
+复制到载荷的 `licenses` 目录。Windows App SDK ML 以独立的 MSBuild 项提供
+Machine Learning、ONNX Runtime 和 DirectML DLL；清单会显式收集这三个文件及其许可和
+NOTICE，避免仅复制主 Windows App SDK 项时遗漏。携带版和 MSIX 同时包含创意工坊管理器
+及 `snowwidget.exe`，并校验 Agent Skill 内嵌 CLI 与独立 CLI 完全一致。
 
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过
