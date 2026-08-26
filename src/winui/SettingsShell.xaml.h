@@ -215,6 +215,8 @@ private:
     void RenderPageHeaderIcon();
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
+    void EnsurePresentersForPage(snowdesktop::SettingsPage page);
+    [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
@@ -258,6 +260,14 @@ private:
     SearchRequestedCallback searchRequested_;
     CancelOperationCallback cancelOperation_;
     ActualThemeChangedCallback actualThemeChanged_;
+    snowdesktop::winui::GeneralPageActions generalPageActions_;
+    snowdesktop::winui::PersonalizationPageActions
+        personalizationPageActions_;
+    snowdesktop::winui::DesktopPageActions desktopPageActions_;
+    snowdesktop::winui::DockPageActions dockPageActions_;
+    snowdesktop::winui::HomeAboutPageActions homeAboutPageActions_;
+    snowdesktop::winui::WidgetsPageActions widgetsPageActions_;
+    snowdesktop::winui::BackupDataPageActions backupDataPageActions_;
 
     std::unique_ptr<snowdesktop::winui::GeneralPagePresenter> generalPage_;
     std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
@@ -296,6 +306,7 @@ private:
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
     bool focusSearchWhenPaneOpens_ = false;
+    bool sessionActive_ = false;
     bool closed_ = false;
 
     winrt::event_token actualThemeChangedToken_{};

@@ -198,6 +198,25 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             shell.find("generalPage_->ApplySnapshot(snapshot)") !=
                 std::string::npos,
         "same-route controller revisions patch the cached page without rebuilding it");
+    const std::size_t shellConstructorStart = shell.find(
+        "SettingsShell::SettingsShell()");
+    const std::size_t shellConstructorEnd = shell.find(
+        "SettingsShell::~SettingsShell()", shellConstructorStart);
+    const std::string shellConstructor =
+        shellConstructorStart == std::string::npos ||
+            shellConstructorEnd == std::string::npos
+        ? std::string{}
+        : shell.substr(shellConstructorStart,
+              shellConstructorEnd - shellConstructorStart);
+    Check(shellConstructor.find("make_unique") == std::string::npos &&
+            shell.find("void SettingsShell::EnsurePresentersForPage(") !=
+                std::string::npos &&
+            shell.find("if (!sessionActive_)") != std::string::npos &&
+            shell.find("EnsureWidgetSettingsPresenter()") !=
+                std::string::npos &&
+            shellHeader.find("generalPageActions_") != std::string::npos &&
+            shellHeader.find("widgetsPageActions_") != std::string::npos,
+        "inactive settings sessions keep page trees uncreated and lazily bind saved actions for the active route");
 
     Check(presenter.find("snapshot.domainRevisions.general") !=
                 std::string::npos &&

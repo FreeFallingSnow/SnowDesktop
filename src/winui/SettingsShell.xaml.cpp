@@ -273,52 +273,6 @@ SettingsShell::SettingsShell()
     solidFallbackBackground_ = ShellRoot().Background();
     if (!solidFallbackBackground_)
         solidFallbackBackground_ = CreateSystemWindowFallbackBrush();
-    generalPage_ =
-        std::make_unique<snowdesktop::winui::GeneralPagePresenter>(
-            [this](std::string_view key) { return Localize(key); },
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
-    personalizationPage_ = std::make_unique<
-        snowdesktop::winui::PersonalizationPagePresenter>(
-            [this](std::string_view key) { return Localize(key); },
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
-    desktopPage_ =
-        std::make_unique<snowdesktop::winui::DesktopPagePresenter>(
-            [this](std::string_view key) { return Localize(key); },
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
-    dockPage_ = std::make_unique<snowdesktop::winui::DockPagePresenter>(
-        [this](std::string_view key) { return Localize(key); },
-        Resources().Lookup(
-            winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>());
-    homeAboutPage_ =
-        std::make_unique<snowdesktop::winui::HomeAboutPagePresenter>(
-            [this](std::string_view key) { return Localize(key); },
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardStyle"))
-                .as<mux::Style>(),
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardButtonStyle"))
-                .as<mux::Style>());
-    widgetsPage_ =
-        std::make_unique<snowdesktop::winui::WidgetsPagePresenter>(
-            [this](std::string_view key) { return Localize(key); },
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardStyle"))
-                .as<mux::Style>(),
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellFluentGlyphTemplate"))
-                .as<mux::DataTemplate>(),
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellFontAwesomeGlyphTemplate"))
-                .as<mux::DataTemplate>());
-    backupDataPage_ =
-        std::make_unique<snowdesktop::winui::BackupDataPagePresenter>(
-            [this](std::string_view key) { return Localize(key); },
-            Resources().Lookup(
-                winrt::box_value(L"SettingsShellCardStyle"))
-                .as<mux::Style>());
     searchItems_ = winrt::single_threaded_observable_vector<
         winrt::Windows::Foundation::IInspectable>();
     SettingsSearchBox().ItemsSource(searchItems_);
@@ -326,6 +280,123 @@ SettingsShell::SettingsShell()
     RefreshLocalizedText();
     RenderConditionalPages();
     RenderRoute();
+}
+
+void SettingsShell::EnsurePresentersForPage(SettingsPage page)
+{
+    const auto localize = [this](std::string_view key) {
+        return Localize(key);
+    };
+    const auto cardStyle = [this]() {
+        return Resources().Lookup(
+            winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>();
+    };
+    const auto ensureGeneral = [&]() {
+        if (generalPage_)
+            return;
+        generalPage_ =
+            std::make_unique<snowdesktop::winui::GeneralPagePresenter>(
+                localize, cardStyle());
+        generalPage_->SetActions(generalPageActions_);
+    };
+    const auto ensurePersonalization = [&]() {
+        if (personalizationPage_)
+            return;
+        personalizationPage_ = std::make_unique<
+            snowdesktop::winui::PersonalizationPagePresenter>(
+                localize, cardStyle());
+        personalizationPage_->SetActions(personalizationPageActions_);
+    };
+    const auto ensureDesktop = [&]() {
+        if (desktopPage_)
+            return;
+        desktopPage_ =
+            std::make_unique<snowdesktop::winui::DesktopPagePresenter>(
+                localize, cardStyle());
+        desktopPage_->SetActions(desktopPageActions_);
+    };
+    const auto ensureDock = [&]() {
+        if (dockPage_)
+            return;
+        dockPage_ =
+            std::make_unique<snowdesktop::winui::DockPagePresenter>(
+                localize, cardStyle());
+        dockPage_->SetActions(dockPageActions_);
+    };
+    const auto ensureHomeAbout = [&]() {
+        if (homeAboutPage_)
+            return;
+        homeAboutPage_ =
+            std::make_unique<snowdesktop::winui::HomeAboutPagePresenter>(
+                localize, cardStyle(),
+                Resources().Lookup(winrt::box_value(
+                    L"SettingsShellCardButtonStyle")).as<mux::Style>());
+        homeAboutPage_->SetActions(homeAboutPageActions_);
+    };
+    const auto ensureWidgets = [&]() {
+        if (widgetsPage_)
+            return;
+        widgetsPage_ =
+            std::make_unique<snowdesktop::winui::WidgetsPagePresenter>(
+                localize, cardStyle(),
+                Resources().Lookup(winrt::box_value(
+                    L"SettingsShellFluentGlyphTemplate"))
+                    .as<mux::DataTemplate>(),
+                Resources().Lookup(winrt::box_value(
+                    L"SettingsShellFontAwesomeGlyphTemplate"))
+                    .as<mux::DataTemplate>());
+        widgetsPage_->SetActions(widgetsPageActions_);
+    };
+    const auto ensureBackup = [&]() {
+        if (backupDataPage_)
+            return;
+        backupDataPage_ =
+            std::make_unique<snowdesktop::winui::BackupDataPagePresenter>(
+                localize, cardStyle());
+        backupDataPage_->SetActions(backupDataPageActions_);
+    };
+
+    switch (page)
+    {
+    case SettingsPage::Home:
+    case SettingsPage::About:
+    case SettingsPage::Debug:
+        ensureHomeAbout();
+        break;
+    case SettingsPage::General:
+    case SettingsPage::Desktop:
+        ensureGeneral();
+        break;
+    case SettingsPage::Personalization:
+    case SettingsPage::AppearanceTheme:
+    case SettingsPage::AppearanceWidgets:
+        ensurePersonalization();
+        break;
+    case SettingsPage::DesktopCategories:
+    case SettingsPage::AppearanceDesktopIcons:
+    case SettingsPage::AppearanceIconBeautification:
+        ensureDesktop();
+        break;
+    case SettingsPage::Dock:
+        ensureGeneral();
+        ensureDock();
+        break;
+    case SettingsPage::Taskbar:
+        ensureDock();
+        break;
+    case SettingsPage::Widgets:
+    case SettingsPage::DeveloperTools:
+        ensureWidgets();
+        break;
+    case SettingsPage::WidgetSettings:
+        (void)EnsureWidgetSettingsPresenter();
+        break;
+    case SettingsPage::BackupAndData:
+        ensureBackup();
+        break;
+    default:
+        break;
+    }
 }
 
 SettingsShell::~SettingsShell()
@@ -404,6 +475,13 @@ void SettingsShell::Close() noexcept
     widgetSettingsService_ = nullptr;
     widgetsPage_.reset();
     backupDataPage_.reset();
+    generalPageActions_ = {};
+    personalizationPageActions_ = {};
+    desktopPageActions_ = {};
+    dockPageActions_ = {};
+    homeAboutPageActions_ = {};
+    widgetsPageActions_ = {};
+    backupDataPageActions_ = {};
     localizer_ = {};
     searchResults_.clear();
     breadcrumbRoutes_.clear();
@@ -610,36 +688,41 @@ void SettingsShell::SetCancelOperationCallback(
 void SettingsShell::SetGeneralPageActions(
     snowdesktop::winui::GeneralPageActions actions)
 {
+    generalPageActions_ = std::move(actions);
     if (generalPage_)
-        generalPage_->SetActions(std::move(actions));
+        generalPage_->SetActions(generalPageActions_);
 }
 
 void SettingsShell::SetPersonalizationPageActions(
     snowdesktop::winui::PersonalizationPageActions actions)
 {
+    personalizationPageActions_ = std::move(actions);
     if (personalizationPage_)
-        personalizationPage_->SetActions(std::move(actions));
+        personalizationPage_->SetActions(personalizationPageActions_);
 }
 
 void SettingsShell::SetDesktopPageActions(
     snowdesktop::winui::DesktopPageActions actions)
 {
+    desktopPageActions_ = std::move(actions);
     if (desktopPage_)
-        desktopPage_->SetActions(std::move(actions));
+        desktopPage_->SetActions(desktopPageActions_);
 }
 
 void SettingsShell::SetDockPageActions(
     snowdesktop::winui::DockPageActions actions)
 {
+    dockPageActions_ = std::move(actions);
     if (dockPage_)
-        dockPage_->SetActions(std::move(actions));
+        dockPage_->SetActions(dockPageActions_);
 }
 
 void SettingsShell::SetHomeAboutPageActions(
     snowdesktop::winui::HomeAboutPageActions actions)
 {
+    homeAboutPageActions_ = std::move(actions);
     if (homeAboutPage_)
-        homeAboutPage_->SetActions(std::move(actions));
+        homeAboutPage_->SetActions(homeAboutPageActions_);
 }
 
 bool SettingsShell::ApplyHomeAboutStatusPatch(
@@ -651,11 +734,22 @@ bool SettingsShell::ApplyHomeAboutStatusPatch(
 void SettingsShell::SetWidgetSettingsService(
     snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
 {
-    if (closed_ ||
-        (widgetSettingsService_ == service && widgetSettingsPage_))
+    if (closed_)
         return;
     try
     {
+        if (widgetSettingsService_ == service)
+        {
+            if (sessionActive_ &&
+                navigation_.Route().page == SettingsPage::WidgetSettings &&
+                EnsureWidgetSettingsPresenter())
+            {
+                renderedPageRoute_.reset();
+                RenderPageCards(true);
+                ScheduleFocus();
+            }
+            return;
+        }
         if (widgetSettingsService_)
             widgetSettingsService_->SetEventCallbacks({}, {});
         if (widgetSettingsPage_)
@@ -666,9 +760,37 @@ void SettingsShell::SetWidgetSettingsService(
         }
 
         widgetSettingsService_ = service;
-        if (!widgetSettingsService_)
-            return;
+        if (widgetSettingsService_ && sessionActive_ &&
+            navigation_.Route().page == SettingsPage::WidgetSettings &&
+            EnsureWidgetSettingsPresenter())
+        {
+            renderedPageRoute_.reset();
+            RenderPageCards(true);
+            ScheduleFocus();
+        }
+    }
+    catch (...)
+    {
+        try
+        {
+            if (widgetSettingsService_)
+                widgetSettingsService_->SetEventCallbacks({}, {});
+        }
+        catch (...)
+        {
+        }
+        widgetSettingsPage_.reset();
+    }
+}
 
+bool SettingsShell::EnsureWidgetSettingsPresenter() noexcept
+{
+    if (widgetSettingsPage_)
+        return true;
+    if (!widgetSettingsService_)
+        return false;
+    try
+    {
         widgetSettingsPage_ = std::make_unique<
             snowdesktop::winui::WidgetSettingsPresenter>(
                 *widgetSettingsService_,
@@ -721,22 +843,22 @@ void SettingsShell::SetWidgetSettingsService(
             if (const auto snapshot = widgetSettingsService_->Snapshot(
                     route.widgetInstanceId))
             {
-                (void)ApplyWidgetSettingsSnapshot(*snapshot);
+                (void)widgetSettingsPage_->ApplySnapshot(*snapshot);
             }
         }
+        return true;
     }
     catch (...)
     {
         try
         {
-            if (widgetSettingsService_)
-                widgetSettingsService_->SetEventCallbacks({}, {});
+            widgetSettingsService_->SetEventCallbacks({}, {});
         }
         catch (...)
         {
         }
         widgetSettingsPage_.reset();
-        widgetSettingsService_ = nullptr;
+        return false;
     }
 }
 
@@ -761,8 +883,9 @@ bool SettingsShell::ApplyWidgetSettingsSnapshot(
 void SettingsShell::SetWidgetsPageActions(
     snowdesktop::winui::WidgetsPageActions actions)
 {
+    widgetsPageActions_ = std::move(actions);
     if (widgetsPage_)
-        widgetsPage_->SetActions(std::move(actions));
+        widgetsPage_->SetActions(widgetsPageActions_);
 }
 
 bool SettingsShell::ApplyWidgetsPageSnapshot(
@@ -778,8 +901,9 @@ bool SettingsShell::ApplyWidgetsPageSnapshot(
 void SettingsShell::SetBackupDataPageActions(
     snowdesktop::winui::BackupDataPageActions actions)
 {
+    backupDataPageActions_ = std::move(actions);
     if (backupDataPage_)
-        backupDataPage_->SetActions(std::move(actions));
+        backupDataPage_->SetActions(backupDataPageActions_);
 }
 
 bool SettingsShell::ApplyBackupDataPageSnapshot(
@@ -882,6 +1006,9 @@ bool SettingsShell::ApplySnapshot(
         {
             return false;
         }
+        sessionActive_ = snapshot.sessionActive;
+        if (sessionActive_)
+            EnsurePresentersForPage(navigation_.Route().page);
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
         if (personalizationPage_)
@@ -1609,6 +1736,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
 {
     SettingsRoute pageRoute = navigation_.Route();
     pageRoute.focusId.clear();
+    if (!sessionActive_)
+    {
+        PageCards().Children().Clear();
+        focusTargets_.clear();
+        renderedPageRoute_.reset();
+        return;
+    }
+    EnsurePresentersForPage(pageRoute.page);
     if (!forcePageCards && renderedPageRoute_ &&
         *renderedPageRoute_ == pageRoute)
     {
