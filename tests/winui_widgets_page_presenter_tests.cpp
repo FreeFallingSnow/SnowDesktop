@@ -81,7 +81,6 @@ void TestWidgetsPagePresenterContract(
              "WidgetsPageCommand::BrowseInstallPackage",
              "WidgetsPageCommand::SearchSources",
              "WidgetsPageCommand::CancelTask",
-             "WidgetsPageCommand::InstallCatalogItem",
              "WidgetsPageCommand::RetryWorkshopInstall",
              "WidgetsPageCommand::SetPackageEnabled",
              "WidgetsPageCommand::UninstallPackage",
@@ -93,7 +92,6 @@ void TestWidgetsPagePresenterContract(
              "WidgetsPageCommand::PublishDevelopmentPackage",
              "WidgetsPageCommand::OpenWorkshop",
              "WidgetsPageCommand::OpenWorkshopItem",
-             "WidgetsPageCommand::SynchronizeSource",
              "WidgetsPageCommand::AddPackageToDesktop",
              "WidgetsPageCommand::RefreshAgentSkills",
              "WidgetsPageCommand::ApplyAgentSkillSelection",
@@ -159,7 +157,10 @@ void TestWidgetsPagePresenterContract(
               "InitializeCard(filterCard, cardStyle, root)") !=
                 std::string::npos &&
             controlsRegion.find(
-              "searchCard.content.Children().Append(managementActions)") !=
+              "searchCard.content.Children().Append(managementRow.root)") !=
+                std::string::npos &&
+            controlsRegion.find(
+              "managementRow.Initialize(managementActions, 0.0)") !=
                 std::string::npos &&
             controlsRegion.find(
               "filterCard.content.Children().Append(searchBox)") !=
@@ -169,7 +170,7 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             controlsRegion.find("root.Children().Append(installedRows)") !=
                 std::string::npos,
-        "management, filtering, and flat package cards use separate sibling regions");
+        "management actions share one responsive row while filtering and flat package cards remain separate sibling regions");
 
     const std::string developmentOverrideRegion = sourceRegion(
         "void AddDevelopmentOverrideRow(", "void AddDiagnosticRow(");
@@ -218,7 +219,9 @@ void TestWidgetsPagePresenterContract(
     const auto packageRowStart = source.find("void AddPackageRow(");
     const auto packageRowEnd = source.find("void RequestUninstall(",
         packageRowStart);
-    Check(source.find("presenter_controls::SettingRow managementRow") ==
+    const std::string packageRowRegion = sourceRegion(
+        "void AddPackageRow(", "void RequestUninstall(");
+    Check(source.find("presenter_controls::SettingRow managementRow") !=
                 std::string::npos &&
             source.find("SettingsCard filterCard") != std::string::npos &&
             source.find(
@@ -228,7 +231,7 @@ void TestWidgetsPagePresenterContract(
               "filterCard.description.Visibility(mux::Visibility::Collapsed)") !=
                 std::string::npos &&
             source.find("workshopHint") == std::string::npos &&
-            source.find("presenter_controls::SettingRow primaryActionsRow") !=
+            source.find("presenter_controls::SettingRow summaryRow") !=
                 std::string::npos &&
             source.find("presenter_controls::SettingRow developmentRow") !=
                 std::string::npos &&
@@ -254,9 +257,9 @@ void TestWidgetsPagePresenterContract(
                 "filterActions.HorizontalAlignment("
                 "mux::HorizontalAlignment::Left)") !=
                 std::string::npos &&
-            source.find("primaryActionsRow.SetControlAlignment(") !=
+            source.find("summaryRow.SetControlAlignment(") !=
                 std::string::npos,
-        "the dedicated filter card keeps full-width search and four always-visible left-aligned category controls");
+        "management title and actions share a measured-width row while the filter card keeps full-width search and four left-aligned categories");
     Check(packageRowStart != std::string::npos &&
             packageRowEnd != std::string::npos &&
             sourceRegion("void AddPackageRow(", "void RequestUninstall(")
@@ -286,11 +289,16 @@ void TestWidgetsPagePresenterContract(
               "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos &&
             source.find("failureActions.HorizontalAlignment(") !=
-                std::string::npos,
-        "each package is a full independent card while nested details stretch and natural-width actions align at the right edge");
+                std::string::npos &&
+            packageRowRegion.find("description.MaxLines(2)") !=
+                std::string::npos &&
+            packageRowRegion.find("details.IsExpanded(false)") !=
+                std::string::npos &&
+            stretchesAfterContent(packageRowRegion,
+                "details.Content(detailsBody)",
+                "StretchExpanderBody(details, detailsBody)"),
+        "each package is a compact independent card with right-aligned primary actions and collapsed full-width details");
 
-    const std::string packageRowRegion = sourceRegion(
-        "void AddPackageRow(", "void RequestUninstall(");
     const std::string installedPatchRegion = sourceRegion(
         "[[nodiscard]] bool TryPatchInstalledRows(",
         "void RenderInstalledRows()");
@@ -301,7 +309,7 @@ void TestWidgetsPagePresenterContract(
         "void PatchPackageRowState(",
         "[[nodiscard]] bool TryPatchInstalledRows(");
     const std::string installedRenderRegion = sourceRegion(
-        "void RenderInstalledRows()", "void AddCatalogResult(");
+        "void RenderInstalledRows()", "void RenderManagementControls(");
     Check(packageRowRegion.find("muxc::Border row") !=
                 std::string::npos &&
             packageRowRegion.find("row.Header(") == std::string::npos &&
@@ -311,7 +319,7 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             developmentOverrideRegion.find("row.IsExpanded(false)") !=
                 std::string::npos,
-        "component cards expose their primary content directly while only nested development details remain collapsible");
+        "component cards expose compact summaries directly while secondary package information remains collapsible");
     Check(source.find("void PopulatePackageTags(") != std::string::npos &&
             packageRowRegion.find("PopulatePackageTags(tags, package)") !=
                 std::string::npos &&
@@ -404,12 +412,11 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos,
         "package actions resolve the latest snapshot, Workshop identity remains stable, and row-local event handlers are revoked on structural rebuilds");
 
-    const std::string sourceGroupRegion = sourceRegion(
-        "void AddSourceGroup(", "void RenderSourceRows()");
-    Check(stretchesAfterContent(sourceGroupRegion,
-            "expander.Content(body)",
-            "StretchExpanderBody(expander, body)"),
-        "source and Workshop Expander content is stretched after attachment");
+    Check(source.find("SettingsCard sourcesCard") == std::string::npos &&
+            source.find("void AddSourceGroup(") == std::string::npos &&
+            source.find("void RenderSourceRows()") == std::string::npos &&
+            source.find("return workshopButton;") != std::string::npos,
+        "the redundant Sources and Workshop card is removed while its focus route reaches the primary Workshop action");
 
     const auto commandRowsStart = source.find("const auto addCommandRow =");
     const auto commandRowsEnd = source.find(
@@ -522,9 +529,10 @@ void TestWidgetsPagePresenterContract(
                 std::string::npos &&
             applyRegion.find("if (debugPresentationChanged)") !=
                 std::string::npos &&
-            applyRegion.find("if (sourcePresentationChanged)") !=
+            applyRegion.find(
+              "if (installedPresentationChanged || sourcePresentationChanged)") !=
                 std::string::npos,
-        "snapshot updates rebuild only presentation regions whose data changed");
+        "snapshot updates rebuild only visible presentation regions whose data changed");
     Check(applyRegion.find("TryPatchInstalledRows(previousPackages") !=
                 std::string::npos &&
             applyRegion.find("if (!patched)") != std::string::npos &&
@@ -603,8 +611,9 @@ void TestWidgetsPagePresenterContract(
     Check(source.find("localize(key)") != std::string::npos &&
             source.find("RefreshLocalizedText()") != std::string::npos &&
             source.find("permission.labelKey") != std::string::npos &&
-            source.find("source.nameKey") != std::string::npos,
-        "static, permission and source labels use dynamic JSON localization");
+            source.find("std::wstring(searchCard.title.Text().c_str())") !=
+                std::string::npos,
+        "static, permission, and compact management labels use dynamic JSON localization");
 
     Check(source.find("AutomationProperties::SetName") !=
                 std::string::npos &&

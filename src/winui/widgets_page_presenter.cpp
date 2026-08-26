@@ -189,8 +189,6 @@ struct WidgetsPagePresenter::Impl
         muxc::TextBlock sourceId{nullptr};
         muxc::Button enabledAction{nullptr};
         muxc::Button addAction{nullptr};
-        muxc::TextBlock stateHelp{nullptr};
-        muxc::ContentControl stateControlHost{nullptr};
         muxc::Button developmentAction{nullptr};
         std::vector<muxc::Button> advancedActions;
         std::vector<std::function<void()>> revokers;
@@ -225,7 +223,6 @@ struct WidgetsPagePresenter::Impl
 
     SettingsCard searchCard;
     SettingsCard filterCard;
-    SettingsCard sourcesCard;
     SettingsCard developerOverridesCard;
     SettingsCard developerWorkspaceCard;
     SettingsCard developerCliCard;
@@ -240,6 +237,7 @@ struct WidgetsPagePresenter::Impl
     muxcp::ToggleButton installedFilterButton{nullptr};
     muxcp::ToggleButton includedFilterButton{nullptr};
     muxcp::ToggleButton developmentFilterButton{nullptr};
+    presenter_controls::SettingRow managementRow;
     muxc::StackPanel managementActions{nullptr};
     muxc::Button installFileButton{nullptr};
     muxc::Button workshopButton{nullptr};
@@ -250,7 +248,6 @@ struct WidgetsPagePresenter::Impl
     muxc::TextBlock taskStatus{nullptr};
     muxc::Button cancelTaskButton{nullptr};
     muxc::StackPanel installedRows{nullptr};
-    muxc::StackPanel sourceRows{nullptr};
     muxc::StackPanel developerOverrideRows{nullptr};
     presenter_controls::SettingRow agentSkillActionsRow;
     muxc::StackPanel agentSkillActions{nullptr};
@@ -285,7 +282,6 @@ struct WidgetsPagePresenter::Impl
     mux::FrameworkElement firstPackageTarget{nullptr};
     mux::FrameworkElement firstIncludedPackageTarget{nullptr};
     mux::FrameworkElement firstPermissionTarget{nullptr};
-    mux::FrameworkElement firstSourceTarget{nullptr};
     mux::FrameworkElement firstDeveloperOverrideTarget{nullptr};
     mux::FrameworkElement firstDeveloperDiagnosticTarget{nullptr};
     mux::FrameworkElement firstDebugDiagnosticTarget{nullptr};
@@ -318,7 +314,6 @@ struct WidgetsPagePresenter::Impl
     bool closed = false;
 
     std::shared_ptr<CallbackGenerationGate> callbackGate;
-    std::vector<std::function<void()>> sourceRevokers;
     std::vector<std::function<void()>> developerRevokers;
     std::vector<std::function<void()>> debugRevokers;
 
@@ -632,7 +627,9 @@ struct WidgetsPagePresenter::Impl
         selfDevelopButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         selfDevelopButton.UseSystemFocusVisuals(true);
         managementActions.Children().Append(selfDevelopButton);
-        searchCard.content.Children().Append(managementActions);
+        managementRow.Initialize(managementActions, 0.0);
+        managementRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        searchCard.content.Children().Append(managementRow.root);
 
         InitializeCard(filterCard, cardStyle, root);
 
@@ -686,12 +683,6 @@ struct WidgetsPagePresenter::Impl
         installedRows.Spacing(8.0);
         installedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         root.Children().Append(installedRows);
-
-        InitializeCard(sourcesCard, cardStyle, root);
-        sourceRows = muxc::StackPanel{};
-        sourceRows.Spacing(8.0);
-        sourceRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        sourcesCard.content.Children().Append(sourceRows);
 
         developerRoot = muxc::StackPanel{};
         developerRoot.Spacing(8.0);
@@ -875,7 +866,6 @@ struct WidgetsPagePresenter::Impl
                 }
                 query = sender.Text().c_str();
                 RenderInstalledRows();
-                RenderSourceRows();
                 WidgetsPageRequest request;
                 request.command = WidgetsPageCommand::SearchSources;
                 request.query = query;
@@ -2427,20 +2417,22 @@ struct WidgetsPagePresenter::Impl
         row.IsTabStop(true);
         row.UseSystemFocusVisuals(true);
 
-        muxc::StackPanel header;
-        header.Spacing(3.0);
-        header.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        muxc::TextBlock name;
-        name.Text(PackageDisplayName(package));
+        muxc::StackPanel primaryActions;
+        primaryActions.Orientation(muxc::Orientation::Horizontal);
+        primaryActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        primaryActions.Spacing(8.0);
+
+        presenter_controls::SettingRow summaryRow;
+        summaryRow.Initialize(primaryActions, 0.0);
+        summaryRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        summaryRow.SetText(PackageDisplayName(package), JoinMetadata(
+            {package.sourceName, PackageStateText(package)}));
+        muxc::TextBlock name = summaryRow.label;
         name.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         name.TextWrapping(mux::TextWrapping::Wrap);
-        muxc::TextBlock metadata;
+        muxc::TextBlock metadata = summaryRow.help;
         const std::wstring packageState = PackageStateText(package);
-        metadata.Text(JoinMetadata(
-            {package.sourceName, packageState}));
-        metadata.Opacity(0.72);
-        metadata.TextWrapping(mux::TextWrapping::Wrap);
         muxa::AutomationProperties::SetLiveSetting(metadata,
             muxa::Peers::AutomationLiveSetting::Polite);
         muxc::StackPanel tags;
@@ -2448,37 +2440,41 @@ struct WidgetsPagePresenter::Impl
         tags.Spacing(6.0);
         tags.HorizontalAlignment(mux::HorizontalAlignment::Left);
         PopulatePackageTags(tags, package);
-        header.Children().Append(name);
-        header.Children().Append(tags);
-        header.Children().Append(metadata);
 
         muxc::StackPanel body;
-        body.Spacing(9.0);
+        body.Spacing(8.0);
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        body.Children().Append(header);
+        body.Children().Append(summaryRow.root);
+        body.Children().Append(tags);
         muxc::TextBlock description = MakeSecondaryText(package.description);
+        description.MaxLines(2);
+        description.TextTrimming(mux::TextTrimming::CharacterEllipsis);
         description.Visibility(package.description.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
         body.Children().Append(description);
+
+        muxc::StackPanel detailsBody;
+        detailsBody.Spacing(8.0);
+        detailsBody.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         muxc::TextBlock version = MakeSecondaryText(
             L("app.settings.version", L"Version") + L": " +
             package.version);
         version.Visibility(package.version.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
-        body.Children().Append(version);
+        detailsBody.Children().Append(version);
         muxc::TextBlock author = MakeSecondaryText(
             L("app.settings.author", L"Author") + L": " +
             package.author);
         author.Visibility(package.author.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
-        body.Children().Append(author);
+        detailsBody.Children().Append(author);
 
         for (const auto& invalid : package.invalidSources)
         {
-            body.Children().Append(MakeSecondaryText(JoinMetadata({
+            detailsBody.Children().Append(MakeSecondaryText(JoinMetadata({
                 invalid.sourceName, invalid.version,
                 L("app.settings.invalid", L"Invalid")})));
             for (const auto& issue : invalid.issues)
@@ -2488,18 +2484,18 @@ struct WidgetsPagePresenter::Impl
                     text = L"[" + issue.code + L"] ";
                 text += issue.message;
                 if (!text.empty())
-                    body.Children().Append(MakeSecondaryText(text));
+                    detailsBody.Children().Append(MakeSecondaryText(text));
             }
         }
         for (const auto& failure : package.workshopInstallFailures)
         {
-            body.Children().Append(MakeSecondaryText(JoinMetadata({
+            detailsBody.Children().Append(MakeSecondaryText(JoinMetadata({
                 L("app.settings.widgets_source_steam", L"Steam Workshop"),
                 failure.version,
                 L("app.settings.widgets_workshop_install_failed",
                     L"Workshop install failed")})));
             if (!failure.error.empty())
-                body.Children().Append(MakeSecondaryText(failure.error));
+                detailsBody.Children().Append(MakeSecondaryText(failure.error));
             muxc::StackPanel failureActions;
             failureActions.Orientation(muxc::Orientation::Horizontal);
             failureActions.HorizontalAlignment(
@@ -2544,20 +2540,13 @@ struct WidgetsPagePresenter::Impl
                     }, revokers);
                 failureActions.Children().Append(open);
             }
-            body.Children().Append(failureActions);
+            detailsBody.Children().Append(failureActions);
         }
 
         muxc::Button enabledAction{nullptr};
         muxc::Button addAction{nullptr};
-        muxc::TextBlock stateHelp{nullptr};
-        muxc::ContentControl stateControlHost{nullptr};
         if (package.canEnable || package.showAddToDesktop)
         {
-            muxc::StackPanel primaryActions;
-            primaryActions.Orientation(muxc::Orientation::Horizontal);
-            primaryActions.HorizontalAlignment(
-                mux::HorizontalAlignment::Right);
-            primaryActions.Spacing(8.0);
             if (package.canEnable)
             {
                 enabledAction = MakeActionButton(L(
@@ -2603,16 +2592,6 @@ struct WidgetsPagePresenter::Impl
                     revokers);
                 primaryActions.Children().Append(addAction);
             }
-            presenter_controls::SettingRow primaryActionsRow;
-            primaryActionsRow.Initialize(primaryActions);
-            primaryActionsRow.SetControlAlignment(
-                mux::HorizontalAlignment::Right);
-            primaryActionsRow.SetText(
-                L("app.settings.widgets_enabled", L"Enabled"),
-                PackageStateText(package));
-            stateHelp = primaryActionsRow.help;
-            stateControlHost = primaryActionsRow.controlHost;
-            body.Children().Append(primaryActionsRow.root);
         }
 
         muxc::Button developmentAction{nullptr};
@@ -2653,16 +2632,16 @@ struct WidgetsPagePresenter::Impl
                     L"Development version"),
                 L("settings.developer.overrides.description",
                     L"Use the local development source."));
-            body.Children().Append(developmentRow.root);
+            detailsBody.Children().Append(developmentRow.root);
         }
 
         muxc::TextBlock sourceId{nullptr};
         if (package.valid)
         {
-            AddPermissionControls(package, body, revokers);
-            AddInstanceControls(package, body, revokers);
+            AddPermissionControls(package, detailsBody, revokers);
+            AddInstanceControls(package, detailsBody, revokers);
             muxc::TextBlock sourceIdText{nullptr};
-            AddLegacyPackageActions(package, body, revokers,
+            AddLegacyPackageActions(package, detailsBody, revokers,
                 sourceIdText, advancedActions);
             sourceId = sourceIdText;
         }
@@ -2685,7 +2664,24 @@ struct WidgetsPagePresenter::Impl
                         !current->workshopExternalItemId.empty());
                 },
                 revokers);
-            body.Children().Append(uninstall);
+            detailsBody.Children().Append(uninstall);
+        }
+
+        if (detailsBody.Children().Size() != 0)
+        {
+            muxc::Expander details;
+            details.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            details.HorizontalContentAlignment(
+                mux::HorizontalAlignment::Stretch);
+            details.IsExpanded(false);
+            const std::wstring detailsText = L(
+                "app.settings.widgets_technical_details",
+                L"Technical Details");
+            details.Header(winrt::box_value(detailsText));
+            details.Content(detailsBody);
+            StretchExpanderBody(details, detailsBody);
+            SetAutomation(details, detailsText);
+            body.Children().Append(details);
         }
 
         row.Child(body);
@@ -2698,8 +2694,8 @@ struct WidgetsPagePresenter::Impl
         targetRows.Children().Append(row);
         packageRowBindings.push_back(PackageRowBinding{
             package.packageId, row, name, metadata, tags, description,
-            version, author, sourceId, enabledAction, addAction, stateHelp,
-            stateControlHost, developmentAction,
+            version, author, sourceId, enabledAction, addAction,
+            developmentAction,
             std::move(advancedActions), std::move(revokers)});
     }
 
@@ -2841,19 +2837,6 @@ struct WidgetsPagePresenter::Impl
         }
         if (binding.addAction)
             binding.addAction.IsEnabled(package.canAddToDesktop);
-        if (binding.stateHelp)
-        {
-            binding.stateHelp.Text(packageState);
-            binding.stateHelp.Visibility(packageState.empty()
-                    ? mux::Visibility::Collapsed
-                    : mux::Visibility::Visible);
-        }
-        if (binding.stateControlHost)
-        {
-            SetAutomation(binding.stateControlHost,
-                L("app.settings.widgets_enabled", L"Enabled"),
-                packageState);
-        }
         if (binding.developmentAction)
         {
             const std::wstring label = L(
@@ -2944,160 +2927,6 @@ struct WidgetsPagePresenter::Impl
         }
     }
 
-    void AddCatalogResult(
-        const WidgetCatalogItemSnapshot& item,
-        const muxc::StackPanel& rows)
-    {
-        muxc::StackPanel row;
-        row.Spacing(4.0);
-        row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        muxc::TextBlock name;
-        name.Text(item.name.empty() ? item.packageId : item.name);
-        name.FontWeight(
-            winrt::Windows::UI::Text::FontWeights::SemiBold());
-        name.TextWrapping(mux::TextWrapping::Wrap);
-        row.Children().Append(name);
-        if (!item.description.empty())
-            row.Children().Append(MakeSecondaryText(item.description));
-        row.Children().Append(MakeSecondaryText(JoinMetadata(
-            {item.version, item.author})));
-
-        std::wstring actionText;
-        if (item.updateAvailable)
-            actionText = L("app.settings.widgets_update", L"Update");
-        else if (item.installed)
-            actionText = L("app.settings.widgets_installed", L"Installed");
-        else
-            actionText = L("app.settings.widgets_install", L"Install");
-
-        muxc::Button install = MakeActionButton(actionText, item.description);
-        install.IsEnabled(item.installAllowed &&
-            (!item.installed || item.updateAvailable));
-        HookClick(install,
-            [this, item](
-                const winrt::Windows::Foundation::IInspectable&,
-                const mux::RoutedEventArgs&) {
-                WidgetsPageRequest request;
-                request.command = WidgetsPageCommand::InstallCatalogItem;
-                request.packageId = item.packageId;
-                request.sourceId = item.sourceId;
-                request.externalItemId = item.externalItemId;
-                request.version = item.version;
-                Emit(std::move(request));
-            },
-            sourceRevokers);
-        row.Children().Append(install);
-        rows.Children().Append(row);
-    }
-
-    void AddSourceGroup(const WidgetSourceGroupSnapshot& source)
-    {
-        muxc::Expander expander;
-        expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        muxc::StackPanel header;
-        header.Spacing(3.0);
-        muxc::TextBlock name;
-        std::wstring sourceName = source.name;
-        if (!source.nameKey.empty())
-            sourceName = L(source.nameKey, sourceName);
-        if (sourceName.empty())
-            sourceName = source.sourceId;
-        name.Text(sourceName);
-        name.FontWeight(
-            winrt::Windows::UI::Text::FontWeights::SemiBold());
-        name.TextWrapping(mux::TextWrapping::Wrap);
-        muxc::TextBlock status = MakeSecondaryText(source.status);
-        header.Children().Append(name);
-        if (!source.status.empty())
-            header.Children().Append(status);
-        expander.Header(header);
-
-        muxc::StackPanel body;
-        body.Spacing(8.0);
-        body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-
-        if (source.workshop)
-        {
-            muxc::Button open = MakeActionButton(
-                L("app.settings.widgets_open_steam_workshop",
-                    L"Open Workshop"));
-            HookClick(open,
-                [this, sourceId = source.sourceId](
-                    const winrt::Windows::Foundation::IInspectable&,
-                    const mux::RoutedEventArgs&) {
-                    WidgetsPageRequest request;
-                    request.command = WidgetsPageCommand::OpenWorkshop;
-                    request.sourceId = sourceId;
-                    Emit(std::move(request));
-                },
-                sourceRevokers);
-            body.Children().Append(open);
-        }
-
-        if (source.supportsSynchronization)
-        {
-            muxc::Button synchronize = MakeActionButton(
-                L("app.menu.refresh", L"Synchronize"), source.status);
-            synchronize.IsEnabled(source.available);
-            HookClick(synchronize,
-                [this, sourceId = source.sourceId](
-                    const winrt::Windows::Foundation::IInspectable&,
-                    const mux::RoutedEventArgs&) {
-                    WidgetsPageRequest request;
-                    request.command = WidgetsPageCommand::SynchronizeSource;
-                    request.sourceId = sourceId;
-                    Emit(std::move(request));
-                },
-                sourceRevokers);
-            body.Children().Append(synchronize);
-        }
-
-        bool anyResult = false;
-        for (const WidgetCatalogItemSnapshot& result : source.results)
-        {
-            if (!ContainsInsensitive(result.name, query) &&
-                !ContainsInsensitive(result.description, query) &&
-                !ContainsInsensitive(result.packageId, query) &&
-                !ContainsInsensitive(result.author, query))
-            {
-                continue;
-            }
-            anyResult = true;
-            AddCatalogResult(result, body);
-        }
-
-        if (!anyResult)
-        {
-            body.Children().Append(MakeSecondaryText(
-                L("app.settings.widgets_catalog_empty",
-                    L"No matching components were found.")));
-        }
-
-        expander.Content(body);
-        StretchExpanderBody(expander, body);
-        SetAutomation(expander, sourceName, source.status);
-        if (!firstSourceTarget)
-            firstSourceTarget = expander;
-        sourceRows.Children().Append(expander);
-    }
-
-    void RenderSourceRows()
-    {
-        Revoke(sourceRevokers);
-        sourceRows.Children().Clear();
-        firstSourceTarget = nullptr;
-        if (sources.empty())
-        {
-            sourceRows.Children().Append(MakeSecondaryText(
-                L("app.settings.widgets_catalog_empty",
-                    L"No component sources are available.")));
-            return;
-        }
-        for (const WidgetSourceGroupSnapshot& source : sources)
-            AddSourceGroup(source);
-    }
-
     void RenderManagementControls()
     {
         const bool workshopAvailable = std::any_of(
@@ -3119,9 +2948,6 @@ struct WidgetsPagePresenter::Impl
         selfDevelopButton.IsEnabled(
             static_cast<bool>(actions.setDeveloperToolsEnabled));
         selfDevelopButton.IsChecked(developerOverridesVisible);
-        sourcesCard.root.Visibility(sources.empty()
-                ? mux::Visibility::Collapsed
-                : mux::Visibility::Visible);
     }
 
     void RenderTask()
@@ -3253,8 +3079,6 @@ struct WidgetsPagePresenter::Impl
             RenderDeveloperRows();
         if (debugPresentationChanged)
             RenderDebugRows();
-        if (sourcePresentationChanged)
-            RenderSourceRows();
         if (installedPresentationChanged || sourcePresentationChanged)
             RenderManagementControls();
         RenderTask();
@@ -3270,17 +3094,15 @@ struct WidgetsPagePresenter::Impl
 
         searchCard.title.Text(L("app.settings.widgets_management",
             L"Add Components"));
+        searchCard.title.Visibility(mux::Visibility::Collapsed);
         searchCard.description.Text(L"");
         searchCard.description.Visibility(mux::Visibility::Collapsed);
+        managementRow.SetText(
+            std::wstring(searchCard.title.Text().c_str()));
         filterCard.title.Text(L("app.settings.widgets_my_components",
             L"My Components"));
         filterCard.description.Text(L"");
         filterCard.description.Visibility(mux::Visibility::Collapsed);
-        sourcesCard.title.Text(L("settings.widgets.sources",
-            L"Sources and Workshop"));
-        sourcesCard.description.Text(L(
-            "settings.widgets.sources.description",
-            L"Install widgets and synchronize sources."));
         developerOverridesCard.title.Text(L(
             "app.settings.widgets_agent_skill", L"Agent Skill"));
         developerOverridesCard.description.Text(L(
@@ -3377,8 +3199,7 @@ struct WidgetsPagePresenter::Impl
             L"Click an icon to copy its character, then paste it into a Lua "
                 L"menu item's icon field.");
 
-        SetAutomation(searchCard.root, searchCard.title.Text(),
-            searchCard.description.Text());
+        SetAutomation(searchCard.root, managementRow.label.Text());
         SetAutomation(filterCard.root, filterCard.title.Text());
         SetAutomation(searchBox,
             L("app.settings.widgets_search", L"Search"),
@@ -3397,8 +3218,6 @@ struct WidgetsPagePresenter::Impl
             L("app.settings.widgets_self_develop", L"Develop Your Own"),
             L("app.settings.widgets_developer_tools",
                 L"Component Developer Tools"));
-        SetAutomation(sourcesCard.root, sourcesCard.title.Text(),
-            sourcesCard.description.Text());
         SetAutomation(developerOverridesCard.root,
             developerOverridesCard.title.Text(),
             developerOverridesCard.description.Text());
@@ -3445,7 +3264,6 @@ struct WidgetsPagePresenter::Impl
             debugRuntimeCard.description.Text());
 
         RenderInstalledRows();
-        RenderSourceRows();
         RenderDeveloperRows();
         RenderDebugRows();
         RenderTask();
@@ -3465,7 +3283,7 @@ struct WidgetsPagePresenter::Impl
         if (focusId == "widgets.developer")
             return selfDevelopButton;
         if (focusId == "widgets.sources")
-            return firstSourceTarget ? firstSourceTarget : sourceRows;
+            return workshopButton;
         if (focusId == "widgets.permissions")
             return firstPermissionTarget
                 ? firstPermissionTarget
@@ -3570,7 +3388,6 @@ struct WidgetsPagePresenter::Impl
         callbackGate->closed.store(true, std::memory_order_release);
 
         RevokePackageRowEvents();
-        Revoke(sourceRevokers);
         Revoke(developerRevokers);
         Revoke(debugRevokers);
         try
