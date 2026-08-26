@@ -1208,9 +1208,21 @@ void TestRuntimeCatalogMatrix(
     Check(koreanLanguageName == "韩语",
         "language names must be localized in the active language: got " +
             koreanLanguageName);
+    const std::string koreanSelectionLabel =
+        locale.GetLanguageSelectionLabel("ko-KR");
+    Check(koreanSelectionLabel == "韩语 (한국어)",
+        "language selection labels must add the native language name: got " +
+            koreanSelectionLabel);
     Check(locale.GetAvailableLanguages().empty() ||
             locale.GetAvailableLanguages().at(4).displayName == "한국어",
         "Korean must use a stable native language name");
+
+    locale.SetLanguage("ko-KR");
+    const std::string nativeKoreanSelectionLabel =
+        locale.GetLanguageSelectionLabel("ko-KR");
+    Check(nativeKoreanSelectionLabel == "한국어",
+        "language selection labels must not repeat identical localized and native names: got " +
+            nativeKoreanSelectionLabel);
 
     constexpr const char* arguments[]{
         "ARG0", "ARG1", "ARG2",

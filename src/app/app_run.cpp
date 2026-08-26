@@ -521,7 +521,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             Locale::Instance().GetAvailableLanguages())
         {
             languages.emplace_back(language.code,
-                Utf8ToWide(Locale::Instance().GetLocalizedLanguageName(
+                Utf8ToWide(Locale::Instance().GetLanguageSelectionLabel(
                     language.code)));
         }
         return languages;

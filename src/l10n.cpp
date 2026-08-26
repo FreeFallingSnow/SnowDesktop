@@ -299,6 +299,18 @@ std::string Locale::GetLocalizedLanguageName(
     return std::string(names->localizedNames[currentIndex]);
 }
 
+std::string Locale::GetLanguageSelectionLabel(
+    const std::string& language) const
+{
+    const std::string localizedName = GetLocalizedLanguageName(language);
+    const std::string nativeName = NativeLanguageName(language);
+    if (nativeName.empty() || localizedName == nativeName)
+        return localizedName;
+    if (localizedName.empty())
+        return nativeName;
+    return localizedName + " (" + nativeName + ")";
+}
+
 void Locale::LoadLanguage(const char* language)
 {
     strings_.clear();
