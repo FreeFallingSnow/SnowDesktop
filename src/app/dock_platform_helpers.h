@@ -302,6 +302,35 @@ inline int QueryDockGenericExecutableIconIndex()
     return iconIndex;
 }
 
+inline SIZE QueryDockWindowIconPixelSize(HICON icon)
+{
+    if (!icon)
+        return {};
+
+    ICONINFO iconInfo{};
+    if (!GetIconInfo(icon, &iconInfo))
+        return {};
+
+    BITMAP bitmapInfo{};
+    const HBITMAP sourceBitmap = iconInfo.hbmColor
+        ? iconInfo.hbmColor
+        : iconInfo.hbmMask;
+    const bool measured = sourceBitmap &&
+        GetObjectW(sourceBitmap, sizeof(bitmapInfo), &bitmapInfo) != 0;
+    if (iconInfo.hbmColor)
+        DeleteObject(iconInfo.hbmColor);
+    if (iconInfo.hbmMask)
+        DeleteObject(iconInfo.hbmMask);
+    if (!measured)
+        return {};
+
+    const int width = std::abs(bitmapInfo.bmWidth);
+    int height = std::abs(bitmapInfo.bmHeight);
+    if (!iconInfo.hbmColor)
+        height /= 2;
+    return { width, height };
+}
+
 inline HBITMAP CreateDockWindowProvidedIconBitmap(
     HWND window, SIZE& bitmapSize, int requestedSize)
 {
@@ -329,8 +358,15 @@ inline HBITMAP CreateDockWindowProvidedIconBitmap(
             GetClassLongPtrW(window, GCLP_HICONSM));
     if (!icon)
         return nullptr;
+
+    const SIZE nativeSize = QueryDockWindowIconPixelSize(icon);
+    const auto rasterSize =
+        snowdesktop::icon_render_rules::WindowIconRasterSize(
+            nativeSize.cx, nativeSize.cy, requestedSize);
+    if (rasterSize.width <= 0 || rasterSize.height <= 0)
+        return nullptr;
     return CreateAlphaBitmapFromIcon(
-        icon, requestedSize, requestedSize,
+        icon, rasterSize.width, rasterSize.height,
         bitmapSize);
 }
 

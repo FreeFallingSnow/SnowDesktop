@@ -626,7 +626,7 @@ void DesktopApp::RefreshDockRunningWindows(
 
     std::vector<DockRunningAppInfo> runningApps;
     runningApps.reserve(runningCandidates.size());
-    const int requiredIconSize = GetMaximumShellIconBitmapSize();
+    const int requiredIconSize = GetMaximumDockShellIconBitmapSize();
     std::vector<bool> reused(dockUnpinnedRunningApps_.size(), false);
     for (RunningWindowCandidate& candidate : runningCandidates)
     {

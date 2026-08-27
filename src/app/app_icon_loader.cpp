@@ -432,6 +432,21 @@ int DesktopApp::GetMaximumShellIconBitmapSize() const
         SourcePixelsForTarget(targetSize);
 }
 
+int DesktopApp::GetMaximumDockShellIconBitmapSize() const
+{
+    int targetSize = std::max(1, static_cast<int>(std::round(
+        kIconSize * ClampDockScale(dockSettings_.thicknessScale))));
+    for (const auto& page : gridPages_)
+    {
+        targetSize = std::max(targetSize,
+            std::max(1, static_cast<int>(std::round(
+                GetGridPageItemIconSize(page) *
+                ClampDockScale(dockSettings_.thicknessScale)))));
+    }
+    return snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
+}
+
 void DesktopApp::RefreshIconBitmapResolution()
 {
     const int desktopRequired = GetMaximumShellIconBitmapSize();

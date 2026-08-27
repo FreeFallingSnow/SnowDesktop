@@ -2455,6 +2455,7 @@ private:
     void CancelDockFolderPopupIconLoads();
     int GetShellIconBitmapSizeForPage(const std::wstring& pageId) const;
     int GetMaximumShellIconBitmapSize() const;
+    int GetMaximumDockShellIconBitmapSize() const;
     void RefreshIconBitmapResolution();
     void EnqueueIconLoad(IconLoadTask task);
     void OnIconLoaded(WPARAM wParam, LPARAM lParam);

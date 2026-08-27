@@ -79,4 +79,21 @@ inline FittedSize FitWithoutUpscaling(
     };
 }
 
+/**
+ * Preserve the native pixel size of a window-provided HICON while bounding
+ * larger sources to the requested Shell bucket. If Windows cannot report the
+ * native size, keep the existing requested-size fallback.
+ */
+inline FittedSize WindowIconRasterSize(
+    int nativeWidth, int nativeHeight, int requestedPixels)
+{
+    if (requestedPixels <= 0)
+        return {};
+    if (nativeWidth <= 0 || nativeHeight <= 0)
+        return { requestedPixels, requestedPixels };
+    return FitWithoutUpscaling(
+        nativeWidth, nativeHeight,
+        requestedPixels, requestedPixels);
+}
+
 } // namespace snowdesktop::icon_render_rules
