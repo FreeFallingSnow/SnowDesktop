@@ -1969,6 +1969,15 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldBeTopmost(true, 1) &&
             !floatingPopup::ShouldBeTopmost(false, 0),
         "native menus must temporarily outrank the shared popup host");
+    Check(floatingPopup::ResolveMenuZOrderOwner(
+              true, 101, true, 202) == 101 &&
+            floatingPopup::ResolveMenuZOrderOwner(
+              false, 101, true, 202) == 202 &&
+            floatingPopup::ResolveMenuZOrderOwner(
+              true, 0, true, 202) == 202 &&
+            floatingPopup::ResolveMenuZOrderOwner(
+              false, 101, false, 202) == 0,
+        "modern menus must prefer the shared popup as their Z-order owner and fall back to the floating Dock");
     const POINT popupAnimationOffset =
         floatingPopup::AnimationVisualOffset(
             RECT{ 460, 280, 1260, 880 },

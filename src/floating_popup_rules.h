@@ -64,6 +64,24 @@ constexpr bool ShouldBeTopmost(
     return visible && shellPopupMenuLayerDepth == 0;
 }
 
+template <typename Handle>
+constexpr Handle ResolveMenuZOrderOwner(
+    bool popupHostVisible,
+    Handle popupHost,
+    bool dockHostVisible,
+    Handle dockHost)
+{
+    // Menus opened from the shared popup are routed through the desktop input
+    // window, so their focus owner does not describe the surface they must
+    // outrank. Prefer the active popup host, then retain the floating Dock as
+    // the fallback for menus opened from that host.
+    if (popupHostVisible && popupHost != Handle{})
+        return popupHost;
+    if (dockHostVisible && dockHost != Handle{})
+        return dockHost;
+    return Handle{};
+}
+
 constexpr POINT AnimationVisualOffset(
     const RECT& animationBounds,
     const RECT& hostBounds)

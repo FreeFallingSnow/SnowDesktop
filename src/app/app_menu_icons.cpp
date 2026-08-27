@@ -653,18 +653,31 @@ UINT DesktopApp::ShowModernMenu(
     options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
     ConfigureModernMenuEventPump(options);
-    if (floatingDockVisible_ &&
+    const bool floatingPopupHostVisible =
+        ShouldShowFloatingPopupWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_) &&
+        IsWindowVisible(floatingPopupHwnd_);
+    const bool floatingDockHostVisible =
+        floatingDockVisible_ &&
         floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
+        IsWindow(floatingDockHwnd_);
+    const HWND zOrderOwner =
+        snowdesktop::floating_popup_rules::
+            ResolveMenuZOrderOwner(
+                floatingPopupHostVisible,
+                floatingPopupHwnd_,
+                floatingDockHostVisible,
+                floatingDockHwnd_);
+    if (zOrderOwner)
     {
-        // The floating Dock lives in the topmost band for its whole visible
-        // lifetime. Joining that band is insufficient because its internal
-        // order can still leave a menu below the expanded collection popup,
-        // which is rendered inside the Dock HWND. Make the menu an owned
-        // popup of the floating host so Windows keeps it above that host,
-        // while Options::owner continues to receive focus after dismissal.
+        // The shared popup host and floating Dock live in the topmost band.
+        // Joining that band is insufficient because its internal order can
+        // still leave a menu below its source surface. Make the menu an owned
+        // popup of the active floating host so Windows keeps it above that
+        // host, while Options::owner still receives focus after dismissal.
         options.topmost = true;
-        options.zOrderOwner = floatingDockHwnd_;
+        options.zOrderOwner = zOrderOwner;
     }
     if (placeAwayFromTaskbar)
     {
