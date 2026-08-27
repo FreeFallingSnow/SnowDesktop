@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$BuildOutput
+    [Parameter(Mandatory = $true)][string]$BuildOutput,
+    [switch]$AllowMissingFirstPartyRuntime
 )
 
 Set-StrictMode -Version Latest
@@ -166,9 +167,13 @@ try {
         "SnowDesktopWallpaperInjector32.exe"
     )
     foreach ($name in $firstPartyRuntimeFiles) {
-        [void](Copy-RequiredRuntimeFile `
+        $present = Copy-RequiredRuntimeFile `
             -Name $name -Root $BuildOutput `
-            -ExistingRuntimeRoot $runtimeRoot -StagingRoot $stagingRoot)
+            -ExistingRuntimeRoot $runtimeRoot -StagingRoot $stagingRoot `
+            -Optional:$AllowMissingFirstPartyRuntime
+        if (-not $present -and -not $AllowMissingFirstPartyRuntime) {
+            throw "Required SnowDesktop runtime file is missing: $name"
+        }
     }
     $additionalRuntimeDlls = [System.Collections.Generic.List[string]]::new()
     foreach ($name in @("Microsoft.WindowsAppRuntime.Bootstrap.dll")) {

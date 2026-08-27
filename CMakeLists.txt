@@ -1900,6 +1900,10 @@ if (BUILD_TESTING)
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
     add_custom_target(
         SnowDesktopTests
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_SOURCE_DIR}/scripts/arrange_build_output.ps1"
+            -BuildOutput "${CMAKE_BINARY_DIR}/$<CONFIG>"
+            -AllowMissingFirstPartyRuntime
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
 

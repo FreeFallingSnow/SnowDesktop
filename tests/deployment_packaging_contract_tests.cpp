@@ -185,12 +185,18 @@ void TestBuildOutputLayout(const std::string& cmake,
               "${CMAKE_BINARY_DIR}/$<CONFIG>/tests") !=
                 std::string::npos &&
             cmake.find("COMPILE_PDB_OUTPUT_DIRECTORY") !=
+                std::string::npos &&
+            cmake.find("scripts/arrange_build_output.ps1") !=
+                std::string::npos &&
+            cmake.find("-AllowMissingFirstPartyRuntime") !=
                 std::string::npos,
         "CTest executables and symbols use the dedicated configuration tests directory");
     Check(arranger.find("SnowDesktop.Runtime") != std::string::npos &&
             arranger.find("Enable-SnowDesktopPrivateRuntimeAssembly") !=
                 std::string::npos &&
             arranger.find("Microsoft.WindowsAppRuntime.Bootstrap.dll") !=
+                std::string::npos &&
+            arranger.find("AllowMissingFirstPartyRuntime") !=
                 std::string::npos &&
             arranger.find("buildPath") != std::string::npos &&
             arranger.find("Build output still contains root-level DLLs") !=
@@ -199,6 +205,8 @@ void TestBuildOutputLayout(const std::string& cmake,
     Check(testScript.find(".build\\Release\\tests") !=
                 std::string::npos &&
             testScript.find("rootTests.Count -ne 0") !=
+                std::string::npos &&
+            testScript.find("rootDlls.Count -ne 0") !=
                 std::string::npos,
         "the standard test entry point rejects flat test executables");
 }
