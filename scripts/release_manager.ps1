@@ -355,14 +355,21 @@ function Get-BuildOccupancy {
         @(Get-Process -Name "SnowDesktop" -ErrorAction SilentlyContinue).Count `
             -ne 0
     $explorerHookLoaded = $false
-    $taskListOutput = @(& tasklist.exe `
-        /m SnowDesktopTaskbarHook.dll `
-        /fi "IMAGENAME eq explorer.exe" `
-        /nh 2>$null)
-    if ($LASTEXITCODE -eq 0) {
-        $explorerHookLoaded = @($taskListOutput | Where-Object {
-            $_ -match "^\s*explorer\.exe\s+"
-        }).Count -ne 0
+    $buildHook = [System.IO.Path]::GetFullPath((Join-Path `
+        $repositoryRoot ".build\Release\SnowDesktopTaskbarHook.dll"))
+    try {
+        $explorerHookLoaded = @(Get-Process `
+            -Name "explorer" -ErrorAction Stop |
+            ForEach-Object { $_.Modules } |
+            Where-Object {
+                [string]::Equals($_.FileName, $buildHook,
+                    [System.StringComparison]::OrdinalIgnoreCase)
+            }).Count -ne 0
+    }
+    catch {
+        # Fail safe if Explorer modules cannot be inspected. The caller can
+        # still opt into the documented Shell reload path.
+        $explorerHookLoaded = $true
     }
 
     return [pscustomobject]@{
@@ -577,12 +584,12 @@ function Sync-ReleaseRepository {
             -LiteralPath $portablePath `
             -DestinationPath $temporary `
             -Force
+        $logsDirectory = Get-LogsDirectory -Context $context
+        $syncLog = Join-Path $logsDirectory `
+            "release-sync-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
         foreach ($name in @(
                 "SnowDesktop.exe",
-                "SnowDesktopTaskbarHook.dll",
-                "SnowDesktopWallpaperHook.dll",
-                "SnowDesktopWallpaperHook32.dll",
-                "SnowDesktopWallpaperInjector32.exe",
+                "snowwidget.exe",
                 "THIRD_PARTY_NOTICES.md",
                 "README.md",
                 "README.en.md")) {
@@ -594,6 +601,22 @@ function Sync-ReleaseRepository {
                 -LiteralPath $source `
                 -Destination (Join-Path $releaseRepository $name) `
                 -Force
+        }
+        Copy-MirroredDirectory `
+            -Source (Join-Path $temporary "SnowDesktop.Runtime") `
+            -Destination (Join-Path $releaseRepository `
+                "SnowDesktop.Runtime") `
+            -LogPath $syncLog
+        foreach ($legacyName in @(
+                "SnowDesktopTaskbarHook.dll",
+                "SnowDesktopWallpaperHook.dll",
+                "SnowDesktopWallpaperHook32.dll",
+                "SnowDesktopWallpaperInjector32.exe",
+                "SnowDesktopWorkshopManager.exe")) {
+            $legacyPath = Join-Path $releaseRepository $legacyName
+            if (Test-Path -LiteralPath $legacyPath -PathType Leaf) {
+                Remove-Item -LiteralPath $legacyPath -Force
+            }
         }
         $license = Join-Path $temporary "LICENSE"
         if (Test-Path -LiteralPath $license -PathType Leaf) {
@@ -611,9 +634,6 @@ function Sync-ReleaseRepository {
                 -Force
         }
 
-        $logsDirectory = Get-LogsDirectory -Context $context
-        $syncLog = Join-Path $logsDirectory `
-            "release-sync-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
         Copy-MirroredDirectory `
             -Source (Join-Path $temporary "widgets") `
             -Destination (Join-Path $releaseRepository "widgets") `

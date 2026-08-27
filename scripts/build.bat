@@ -33,7 +33,7 @@ if not errorlevel 1 (
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
-powershell -NoProfile -Command "$expected=[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll'); try { $loaded=@(Get-Process -Name explorer -Module -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { [string]::Equals($_.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
+powershell -NoProfile -Command "$expected=[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll'); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { [string]::Equals($_.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
 if not errorlevel 1 (
     echo Build preflight stopped: Explorer still has the Release build's SnowDesktopTaskbarHook.dll loaded.
     echo Run scripts\build.bat --reload-shell only when an Explorer restart is acceptable.

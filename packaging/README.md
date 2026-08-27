@@ -90,8 +90,7 @@ artifacts\
 
 ## 包内容与运行模式
 
-携带版和 MSIX 使用同一份 `SnowDesktop.exe` 与
-`SnowDesktopTaskbarHook.dll`。程序在运行时检查包身份：
+携带版和 MSIX 使用同一份 `SnowDesktop.exe` 与运行时载荷。程序在运行时检查包身份：
 
 - 携带版将数据写入 `exe\data`，通过注册表 Run 项管理开机自启；
 - MSIX 将数据写入 `LocalState\data`，通过 MSIX `StartupTask` 管理自启；
@@ -106,14 +105,23 @@ PRI、XBF、WinMD、资源文件、哈希及官方 `package.appxfragment`；携�
 activatable-class 扩展合并进 `AppxManifest.xml`，因此目标机器无需预装 Windows
 App SDK Runtime。清单中来源为 Windows App SDK、Windows ML 和 WebView2 的运行时
 DLL、PRI、WinMD、XAML 资源及语言卫星文件统一放在 `SnowDesktop.Runtime` 私有程序集
-目录；主程序的 XBF、PRI、WinMD 与应用资源仍保留在包根目录。打包脚本会将主程序内嵌
+目录；SnowDesktop 自带的任务栏/壁纸 Hook 与 32 位注入器也放在该目录。主程序的 XBF、
+PRI、WinMD 与应用资源仍保留在包根目录。打包脚本会将主程序内嵌
 WinRT 激活清单迁移到私有程序集清单，并同步重写 MSIX activatable-class 路径。
 Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
 复制到载荷的 `licenses` 目录。Windows App SDK ML 以独立的 MSBuild 项提供
 Machine Learning、ONNX Runtime 和 DirectML DLL；清单会显式收集这三个文件及其许可和
 NOTICE，避免仅复制主 Windows App SDK 项时遗漏。WebView2 WinRT Core DLL 与 WinMD 也
-来自独立的 NuGet 项，并以同样方式连同许可和 NOTICE 纳入清单。携带版和 MSIX 同时包含
-创意工坊管理器及 `snowwidget.exe`，并校验 Agent Skill 内嵌 CLI 与独立 CLI 完全一致。
+来自独立的 NuGet 项，并以同样方式连同许可和 NOTICE 纳入清单。携带版和 MSIX 包含
+`snowwidget.exe`，但不携带只适用于 Steam 的创意工坊管理器；Steam 包才包含管理器，且将
+`steam_api64.dll` 放入同一运行时目录并通过私有程序集加载。所有载荷都会校验 Agent Skill
+内嵌 CLI 与独立 CLI 完全一致。
+
+任务栏 Hook 通过 XAML Diagnostics TAP 接入 Explorer。该接口没有对应的进程级关闭 API，
+因此 Hook 模块可能一直映射到 Explorer 重启为止。SnowDesktop 不再直接注入构建或发行目录
+里的 DLL，而是先复制到 `%TEMP%\SnowDesktop\TaskbarHook\` 下的进程专属目录；正常退出后即使
+临时副本仍在 Explorer 中，也不会锁住便携目录、安装目录或下一次构建的输出文件。启动时会
+清理已经不再占用的旧临时副本。
 
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过

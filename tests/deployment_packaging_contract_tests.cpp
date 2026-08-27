@@ -127,11 +127,28 @@ void TestPackagers(const std::string& module,
             steam.find("-RuntimeDirectory $runtimeDirectory") !=
                 std::string::npos,
         "release payloads isolate third-party runtime files in one private assembly directory");
-    Check(release.find("SnowDesktopWorkshopManager.exe") !=
+    Check(release.find("SnowDesktopWorkshopManager.exe") ==
             std::string::npos &&
             release.find("widgets\\snowdesktop-lua-widget\\bin\\snowwidget.exe") !=
+                std::string::npos &&
+            steam.find("SnowDesktopWorkshopManager.exe") !=
                 std::string::npos,
-        "portable and MSIX payloads include component management and Agent Skill tools");
+        "only the Steam payload includes the Workshop manager while every release keeps the Agent Skill tool");
+    Check(release.find("$runtimeDestination") != std::string::npos &&
+            release.find("SnowDesktopWallpaperInjector32.exe") !=
+                std::string::npos &&
+            steam.find("$runtimeFiles = @(") != std::string::npos &&
+            steam.find(
+                "steamworksRedistributable = \"$runtimeDirectory/steam_api64.dll\"") !=
+                std::string::npos,
+        "first-party runtime helpers and the Steam redistributable are routed into the runtime directory");
+    Check(module.find("AdditionalRuntimeDlls") != std::string::npos &&
+            module.find("AdditionalExecutables") != std::string::npos &&
+            steam.find("-AdditionalRuntimeDlls @(") !=
+                std::string::npos &&
+            steam.find("$packagedConfigurationText") !=
+                std::string::npos,
+        "Steam tools declare and execute against the private Steamworks runtime");
     Check(release.find("Merge-SnowDesktopAppxFragments") !=
             std::string::npos &&
             module.find("windows.activatableClass.") != std::string::npos &&
@@ -161,9 +178,16 @@ void TestReleaseManagerShellReload(const std::string& manager,
     Check(manager.find("Get-BuildOccupancy") != std::string::npos &&
             manager.find("SnowDesktopTaskbarHook.dll") !=
                 std::string::npos &&
+            manager.find("$buildHook") != std::string::npos &&
             manager.find("-ReloadShellBeforeBuild:$ReloadShell") !=
                 std::string::npos,
-        "release CLI and TUI share build occupancy handling");
+        "release CLI and TUI only treat the build-directory hook as build occupancy");
+    Check(manager.find("SnowDesktop.Runtime") != std::string::npos &&
+            manager.find("SnowDesktopWorkshopManager.exe") !=
+                std::string::npos &&
+            manager.find("Remove-Item -LiteralPath $legacyPath") !=
+                std::string::npos,
+        "release repository synchronization mirrors the runtime directory and removes obsolete root helpers");
     Check(documentation.find(
               "scripts\\release.bat package -ReloadShell") !=
             std::string::npos &&
@@ -171,6 +195,43 @@ void TestReleaseManagerShellReload(const std::string& manager,
               "scripts\\release.bat prepare -ReloadShell") !=
                 std::string::npos,
         "release documentation describes shell reload for package and prepare");
+}
+
+void TestRuntimeResolution(const std::string& deploymentHeader,
+    const std::string& deploymentSource,
+    const std::string& wallpaperCapture,
+    const std::string& releaseBuild,
+    const std::string& debugBuild)
+{
+    Check(deploymentHeader.find("GetRuntimeFilePath") !=
+            std::string::npos &&
+            deploymentSource.find("SnowDesktop.Runtime") !=
+                std::string::npos,
+        "application runtime lookup prefers the packaged runtime directory");
+    Check(deploymentSource.find("DeployTaskbarHookCopy") !=
+            std::string::npos &&
+            deploymentSource.find("GetTemporaryDirectory") !=
+                std::string::npos &&
+            deploymentSource.find(
+                "static const std::wstring deployedPath") !=
+                std::string::npos,
+        "taskbar injection uses one process-specific temporary hook copy");
+    Check(wallpaperCapture.find("RuntimeFilePath") !=
+            std::string::npos &&
+            wallpaperCapture.find("SnowDesktop.Runtime") !=
+                std::string::npos &&
+            wallpaperCapture.find("injector.parent_path().c_str()") !=
+                std::string::npos,
+        "wallpaper hooks and the 32-bit injector resolve from the runtime directory");
+    Check(releaseBuild.find(
+              ".build\\Release\\SnowDesktopTaskbarHook.dll") !=
+            std::string::npos &&
+            debugBuild.find(
+              ".build_debug\\Debug\\SnowDesktopTaskbarHook.dll") !=
+                std::string::npos &&
+            releaseBuild.find("Get-Process -Name explorer -ErrorAction Stop") !=
+                std::string::npos,
+        "build preflight distinguishes build hooks from disposable temporary copies");
 }
 }
 
@@ -191,6 +252,12 @@ int main(int argc, char** argv)
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
             ReadText(root / "packaging/README.md"));
+        TestRuntimeResolution(
+            ReadText(root / "src/deployment_context.h"),
+            ReadText(root / "src/deployment_context.cpp"),
+            ReadText(root / "src/app/wallpaper_engine_capture.cpp"),
+            ReadText(root / "scripts/build.bat"),
+            ReadText(root / "scripts/build_debug.bat"));
     }
 
     if (failures != 0)

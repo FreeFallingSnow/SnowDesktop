@@ -11,7 +11,7 @@
 
 - `release_manager.ps1`：统一发布状态、打包、仓库同步、合并及发布流程；
 - `package_release.ps1`：生成携带版、MSIX、符号包和商店上传包；
-- `package_steam.ps1`：生成 Steam 专属载荷，只允许携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
+- `package_steam.ps1`：生成 Steam 专属载荷，只允许在 `SnowDesktop.Runtime` 中携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
 - `write_deployment_manifest.ps1`：由 MSBuild 调用，生成确定性的 WinAppSDK 自包含部署清单；
 - `deployment_payload.psm1`：供携带版、MSIX 与 Steam 打包共用的清单校验、第三方运行时隔离、复制和 AppX fragment 合并模块；
 - `squash_release_to_main.bat`：只执行本地 squash、提交和标签；
@@ -33,10 +33,11 @@ scripts\release.bat package
 scripts\release.bat package -ReloadShell
 ```
 
-构建入口默认不会关闭 SnowDesktop 或重启 Explorer。若任务栏 Hook DLL 仍被占用，
-先正常退出 SnowDesktop；需要自动解除占用时传入 `--reload-shell`，脚本会明确提示并短暂
-重启 Shell。发布 CLI 对应使用 `-ReloadShell`；发布 TUI 检测到占用时会在执行前请求一次
-明确确认。本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
+构建入口默认不会关闭 SnowDesktop 或重启 Explorer。任务栏 Hook 从临时副本注入，所以正常
+退出后残留在 Explorer 中的临时模块不会阻止下一次构建；只有旧版本仍直接加载构建目录 DLL
+等确实占用构建输出的情况才需要 `--reload-shell`。脚本会明确提示并短暂重启 Shell。发布 CLI
+对应使用 `-ReloadShell`；发布 TUI 检测到实际构建输出占用时会在执行前请求一次明确确认。
+本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
 `scripts\widget-dev.bat` 需要先构建一次宿主。首次创建开发候选时会重启一次
 SnowDesktop 以发现组件；开发候选默认不覆盖已安装版本，需要在“我的组件”卡片中
@@ -52,6 +53,7 @@ SnowDesktop 开发许可的 Steam 客户端。脚本从 `packaging\steam-identit
 Skill 一键同步到共享目录及 Codex、Claude Code、Cursor、GitHub Copilot、Gemini
 CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capabilities`、
 `api-contract`、`validate` 与 `pack` 命令。创意工坊管理器只处理 Steam 发布，并且默认只发现
-`.build\Release\data\widgets\dev` 中的开发组件，不读取内置组件。
+`.build\Release\data\widgets\dev` 中的开发组件，不读取内置组件；因此仅进入 Steam 载荷，
+携带版和 MSIX 均不分发该管理器。
 
 发布流程的完整说明见 `packaging\README.md`。
