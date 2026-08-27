@@ -117,7 +117,7 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     if (snowdesktop::widget_composition_layer_rules::
             ShouldDeferWidgetSurfaceDraw(
                 compositionPaintInProgress_,
-                floatingDockCompositionPaintInProgress_,
+                IsAnyPersistentDockHostPainting(),
                 floatingPopupCompositionPaintInProgress_))
         return true;
     if (!FlushPendingDesktopWidgetComposition())

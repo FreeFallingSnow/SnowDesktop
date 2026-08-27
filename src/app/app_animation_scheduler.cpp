@@ -258,7 +258,8 @@ void DesktopApp::EnsureUiAnimationFrame()
                         floatingDockHostActive_ &&
                         floatingDockHwnd_ &&
                         IsWindow(floatingDockHwnd_) &&
-                        !floatingDockCompositionPaintInProgress_)
+                        floatingDockHost_ &&
+                        !floatingDockHost_->compositionPaintInProgress)
                     {
                         floatingDockPointerPresentPending_ = false;
                         RECT update{};
@@ -266,7 +267,8 @@ void DesktopApp::EnsureUiAnimationFrame()
                                 floatingDockHwnd_, &update, FALSE))
                         {
                             ValidateRect(floatingDockHwnd_, &update);
-                            if (!RenderFloatingDockCompositionFrame())
+                            if (!RenderFloatingDockCompositionFrame(
+                                    *floatingDockHost_))
                             {
                                 InvalidateRect(
                                     floatingDockHwnd_, nullptr, FALSE);

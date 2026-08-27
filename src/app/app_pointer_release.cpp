@@ -64,6 +64,7 @@ void DesktopApp::OnMouseLeave()
             OwnsInteractionCapture(
                 captureWindow,
                 hwnd_, floatingDockHwnd_) ||
+        IsPersistentDockHostWindow(captureWindow) ||
         (captureWindow != nullptr &&
          captureWindow == floatingPopupHwnd_);
     const bool canClearPassiveHover =

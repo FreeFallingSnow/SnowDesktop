@@ -58,17 +58,13 @@ bool DesktopApp::SynchronizeDockContainerAreas()
 void DesktopApp::InvalidateDockRects(BOOL erase)
 {
     if (floatingDockHostActive_)
-        InvalidateFloatingDockWindow(true);
+        InvalidatePersistentDockHosts(true);
     if (!hwnd_) return;
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock ||
-            !snowdesktop::floating_dock_rules::
-                ShouldRenderDesktopDock(
-                    persistentDockHostOwnsVisual_,
-                    dock ==
-                        floatingDockContainer_))
+            IsDockHostedByPersistentHost(dock))
             continue;
         const RECT bounds = dock->GetInteractiveBounds();
         InvalidateRect(hwnd_, &bounds, erase);

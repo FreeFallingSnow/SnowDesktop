@@ -35,10 +35,8 @@ TryActivateDockPopupFromMenuPointerPress(
 {
     if (!HasActiveContextMenuSession())
         return false;
-    if (!floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_) ||
-        WindowFromPoint(screenPoint) !=
-            floatingDockHwnd_)
+    if (!IsPersistentDockHostWindow(
+            WindowFromPoint(screenPoint)))
     {
         return false;
     }
@@ -332,13 +330,18 @@ void DesktopApp::OpenDockFolderPopupAt(
         reverseClosingAnimation);
     if (floatingDockVisible_)
     {
-        floatingDockContainer_ =
+        DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint);
-        if (!floatingDockContainer_)
-            floatingDockContainer_ =
+        if (!dock)
+            dock =
                 SelectFloatingDockContainerForMonitor(
                     floatingDockMonitor_);
-        UpdateFloatingDockWindowBounds();
+        if (PersistentDockHost* host =
+                FindPersistentDockHost(dock))
+            SelectPersistentDockHost(host);
+        if (floatingDockHost_)
+            UpdateFloatingDockWindowBounds(
+                *floatingDockHost_);
         InvalidateFloatingDockWindow(true);
     }
     InvalidateDragStaticScene();

@@ -867,9 +867,8 @@ void DesktopApp::OnMouseMoveAt(
                                 ResumeNativeHeld)
                     {
                         const bool restoreFloatingDockCapture =
-                            nativeCaptureHwnd ==
-                                floatingDockHwnd_ &&
-                            floatingDockVisible_ &&
+                            IsPersistentDockHostWindow(
+                                nativeCaptureHwnd) &&
                             IsWindow(nativeCaptureHwnd) &&
                             IsWindowVisible(nativeCaptureHwnd);
                         const bool restoreFloatingPopupCapture =

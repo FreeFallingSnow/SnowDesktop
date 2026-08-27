@@ -198,7 +198,9 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                         dragDropController_.IsExternalDragActive(),
                     HasActiveContextMenuSession(),
                     desktopPoint,
-                    floatingDockRect_,
+                    floatingDockHost_
+                        ? floatingDockHost_->dockRect
+                        : RECT{},
                     dockPopupInteractionRect,
                     previewDesktopRect,
                     quickNavigationInteractionRect))

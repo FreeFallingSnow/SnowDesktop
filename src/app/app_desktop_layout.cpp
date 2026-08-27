@@ -85,6 +85,9 @@ void DesktopApp::RebuildContainersAndItems()
     ClearPopupMouseDownItem();
 
     floatingDockContainer_ = nullptr;
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            host->container = nullptr;
     containers_.clear();
     items_oo_.clear();
 
@@ -170,10 +173,10 @@ void DesktopApp::RebuildContainersAndItems()
                     std::make_unique<DockContainer>(this, &dockEntries_, dockArea));
         }
     }
-    // The selected Dock is always rendered by its persistent top-level host.
-    // Rebind after every runtime-tree rebuild because DockContainer pointers
-    // are invalidated above even when the monitor and HWND stay unchanged.
-    SyncPersistentDockHost(floatingDockMonitor_);
+    // Every Dock is rendered by its display's persistent top-level Host.
+    // Rebind after each runtime-tree rebuild because DockContainer pointers
+    // are invalidated even though the HWND and composition resources remain.
+    SyncPersistentDockHosts();
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {

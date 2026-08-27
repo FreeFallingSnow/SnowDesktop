@@ -102,10 +102,13 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     {
         if (renderingFloatingDock_)
         {
-            floatingDockBackdropCompositor_.AddPanel(
+            if (!renderingPersistentDockHost_)
+                return;
+            renderingPersistentDockHost_->backdrop.AddPanel(
                 snowdesktop::floating_dock_rules::
                     DesktopRectToWindowRect(
-                        frame, floatingDockSourceRect_),
+                        frame,
+                        renderingPersistentDockHost_->sourceRect),
                 radius, p.glassBlurRadius,
                 backdropOwnerKey);
         }

@@ -64,24 +64,24 @@ LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM 
 LRESULT CALLBACK DesktopApp::FloatingDockWndProc(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    DesktopApp* app = nullptr;
+    PersistentDockHost* host = nullptr;
     if (msg == WM_NCCREATE)
     {
         auto* create =
             reinterpret_cast<CREATESTRUCTW*>(lp);
-        app = static_cast<DesktopApp*>(
+        host = static_cast<PersistentDockHost*>(
             create->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-            reinterpret_cast<LONG_PTR>(app));
+            reinterpret_cast<LONG_PTR>(host));
     }
     else
     {
-        app = reinterpret_cast<DesktopApp*>(
+        host = reinterpret_cast<PersistentDockHost*>(
             GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
-    if (app)
-        return app->HandleFloatingDockMessage(
-            hwnd, msg, wp, lp);
+    if (host && host->owner)
+        return host->owner->HandleFloatingDockMessage(
+            *host, hwnd, msg, wp, lp);
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 

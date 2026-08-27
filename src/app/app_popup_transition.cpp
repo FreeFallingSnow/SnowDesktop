@@ -305,13 +305,18 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     StartCollectionPopupAnimation();
     if (floatingDockVisible_)
     {
-        floatingDockContainer_ =
+        DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint);
-        if (!floatingDockContainer_)
-            floatingDockContainer_ =
+        if (!dock)
+            dock =
                 SelectFloatingDockContainerForMonitor(
                     floatingDockMonitor_);
-        UpdateFloatingDockWindowBounds();
+        if (PersistentDockHost* host =
+                FindPersistentDockHost(dock))
+            SelectPersistentDockHost(host);
+        if (floatingDockHost_)
+            UpdateFloatingDockWindowBounds(
+                *floatingDockHost_);
         InvalidateFloatingDockWindow(true);
     }
     InvalidateDragStaticScene();

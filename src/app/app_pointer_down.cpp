@@ -139,10 +139,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     bool collectionPopupClosedByPointerDown = false;
     HWND interactionCaptureHwnd = hwnd_;
     if (handlingFloatingDockInput_ &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
+        handlingPersistentDockHost_ &&
+        handlingPersistentDockHost_->hwnd &&
+        IsWindow(handlingPersistentDockHost_->hwnd))
         interactionCaptureHwnd =
-            floatingDockHwnd_;
+            handlingPersistentDockHost_->hwnd;
     else if (handlingFloatingPopupInput_ &&
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_))

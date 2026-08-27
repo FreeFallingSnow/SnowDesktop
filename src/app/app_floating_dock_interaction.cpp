@@ -117,14 +117,29 @@ void DesktopApp::ToggleFloatingDock()
 void DesktopApp::InvalidateFloatingDockWindow(
     bool immediate)
 {
+    InvalidatePersistentDockHosts(immediate);
+}
+
+void DesktopApp::InvalidatePersistentDockHosts(
+    bool immediate)
+{
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            InvalidateFloatingDockWindow(
+                *host, immediate);
+}
+
+void DesktopApp::InvalidateFloatingDockWindow(
+    PersistentDockHost& host,
+    bool immediate)
+{
     if (snowdesktop::floating_dock_rules::
             ShouldRenderFloatingDockFrame(
-                floatingDockHostActive_) &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
+                host.active) &&
+        host.hwnd && IsWindow(host.hwnd))
     {
         InvalidateRect(
-            floatingDockHwnd_, nullptr, FALSE);
+            host.hwnd, nullptr, FALSE);
         // WM_MOUSEMOVE 和 OLE DragOver 会持续占满输入队列，只 InvalidateRect
         // 会让放大/插入预览等队列空闲才绘制，快速扫过时明显落后指针。
         // immediate 必须同步 UpdateWindow。历史回归：f29a882 曾改成
@@ -132,8 +147,8 @@ void DesktopApp::InvalidateFloatingDockWindow(
         // 导致浮动 Dock hover 和拖放反馈晚一帧；仅当合成绘制重入时才允许兜底。
         if (immediate)
         {
-            if (!floatingDockCompositionPaintInProgress_)
-                UpdateWindow(floatingDockHwnd_);
+            if (!host.compositionPaintInProgress)
+                UpdateWindow(host.hwnd);
             else
             {
                 floatingDockPointerPresentPending_ = true;
@@ -144,57 +159,58 @@ void DesktopApp::InvalidateFloatingDockWindow(
 }
 
 POINT DesktopApp::FloatingDockClientToDesktop(
+    const PersistentDockHost& host,
     POINT point) const
 {
-    if (floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_) &&
+    if (host.hwnd && IsWindow(host.hwnd) &&
         hwnd_ && IsWindow(hwnd_))
     {
         MapWindowPoints(
-            floatingDockHwnd_, hwnd_,
+            host.hwnd, hwnd_,
             &point, 1);
         return point;
     }
     return snowdesktop::floating_dock_rules::
         WindowPointToDesktopPoint(
-            point, floatingDockSourceRect_);
+            point, host.sourceRect);
 }
 
 HRESULT DesktopApp::
-CreateOrResizeFloatingDockCompositionSurface()
+CreateOrResizeFloatingDockCompositionSurface(
+    PersistentDockHost& host)
 {
-    if (!dcompDevice_ || !floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_))
+    if (!dcompDevice_ || !host.hwnd ||
+        !IsWindow(host.hwnd))
         return E_UNEXPECTED;
     RECT client{};
-    GetClientRect(floatingDockHwnd_, &client);
+    GetClientRect(host.hwnd, &client);
     const UINT width = static_cast<UINT>(
         std::max<LONG>(1, client.right));
     const UINT height = static_cast<UINT>(
         std::max<LONG>(1, client.bottom));
 
-    if (!floatingDockDcompTarget_)
+    if (!host.dcompTarget)
     {
         HRESULT hr = dcompDevice_->CreateTargetForHwnd(
-            floatingDockHwnd_, FALSE,
-            &floatingDockDcompTarget_);
+            host.hwnd, FALSE,
+            &host.dcompTarget);
         if (FAILED(hr))
             return hr;
     }
-    if (!floatingDockDcompVisual_)
+    if (!host.dcompVisual)
     {
         HRESULT hr = dcompDevice_->CreateVisual(
-            &floatingDockDcompVisual_);
-        if (FAILED(hr) || !floatingDockDcompVisual_)
+            &host.dcompVisual);
+        if (FAILED(hr) || !host.dcompVisual)
             return FAILED(hr) ? hr : E_FAIL;
-        hr = floatingDockDcompTarget_->SetRoot(
-            floatingDockDcompVisual_.Get());
+        hr = host.dcompTarget->SetRoot(
+            host.dcompVisual.Get());
         if (FAILED(hr))
             return hr;
     }
-    if (floatingDockDcompSurface_ &&
-        floatingDockCompWidth_ == width &&
-        floatingDockCompHeight_ == height)
+    if (host.dcompSurface &&
+        host.compWidth == width &&
+        host.compHeight == height)
         return S_OK;
 
     ComPtr<IDCompositionSurface> surface;
@@ -205,21 +221,22 @@ CreateOrResizeFloatingDockCompositionSurface()
         &surface);
     if (FAILED(hr))
         return hr;
-    hr = floatingDockDcompVisual_->SetContent(
+    hr = host.dcompVisual->SetContent(
         surface.Get());
     if (FAILED(hr))
         return hr;
     CommitCompositionAnimationFrame();
     if (!FlushPendingCompositionCommit())
         return E_FAIL;
-    floatingDockDcompSurface_ = surface;
-    floatingDockCompWidth_ = width;
-    floatingDockCompHeight_ = height;
+    host.dcompSurface = surface;
+    host.compWidth = width;
+    host.compHeight = height;
     return S_OK;
 }
 
 void DesktopApp::
 RecoverFloatingDockCompositionFailure(
+    PersistentDockHost& host,
     const wchar_t* stage, HRESULT hr)
 {
     wchar_t message[192]{};
@@ -228,13 +245,20 @@ RecoverFloatingDockCompositionFailure(
         stage ? stage : L"Render",
         static_cast<unsigned>(hr));
     WriteDiagnosticLogEntry(message);
-    ResetFloatingDockCompositionResources();
-    if (!floatingDockCompositionRenderRecoveryPending_ &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
+    ResetFloatingDockCompositionResources(host);
+    if (!host.compositionRenderRecoveryPending &&
+        host.hwnd && IsWindow(host.hwnd))
     {
-        floatingDockCompositionRenderRecoveryPending_ = true;
+        host.compositionRenderRecoveryPending = true;
         InvalidateRect(
-            floatingDockHwnd_, nullptr, FALSE);
+            host.hwnd, nullptr, FALSE);
     }
+}
+
+bool DesktopApp::IsAnyPersistentDockHostPainting() const
+{
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->compositionPaintInProgress)
+            return true;
+    return false;
 }

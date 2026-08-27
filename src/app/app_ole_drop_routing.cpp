@@ -83,7 +83,8 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
                 IsChild(candidate, window));
     };
 
-    if (belongsTo(floatingDockHwnd_) ||
+    if (IsPersistentDockHostWindow(window) ||
+        IsPersistentDockHostWindow(root) ||
         belongsTo(floatingPopupHwnd_) ||
         belongsTo(dragPreviewHwnd_) ||
         belongsTo(quickNavigationHwnd_))
@@ -93,8 +94,8 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         return true;
     return desktopBackdropCompositor_.IsBackdropWindow(window) ||
         desktopBackdropCompositor_.IsBackdropWindow(root) ||
-        floatingDockBackdropCompositor_.IsBackdropWindow(window) ||
-        floatingDockBackdropCompositor_.IsBackdropWindow(root) ||
+        IsPersistentDockBackdropWindow(window) ||
+        IsPersistentDockBackdropWindow(root) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(window) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(root) ||
         quickNavBackdropCompositor_.IsBackdropWindow(window) ||
@@ -149,7 +150,8 @@ bool DesktopApp::TryGetNativeDragResumePointFromCursor(
                 IsChild(candidate, hit));
     };
     if (!belongsTo(hwnd_) &&
-        !belongsTo(floatingDockHwnd_) &&
+        !IsPersistentDockHostWindow(hit) &&
+        !IsPersistentDockHostWindow(root) &&
         !belongsTo(floatingPopupHwnd_))
     {
         return false;

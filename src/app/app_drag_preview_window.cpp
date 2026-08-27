@@ -446,7 +446,7 @@ bool DesktopApp::IsDragPresentationOnlyWindow(HWND window) const
     if (window == dragPreviewHwnd_ ||
         window == hintHwnd_ ||
         desktopBackdropCompositor_.IsBackdropWindow(window) ||
-        floatingDockBackdropCompositor_.IsBackdropWindow(window) ||
+        IsPersistentDockBackdropWindow(window) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(window) ||
         quickNavBackdropCompositor_.IsBackdropWindow(window) ||
         (dockWindowTransition_ &&

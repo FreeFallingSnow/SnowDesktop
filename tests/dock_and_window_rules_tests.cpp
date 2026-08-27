@@ -4307,7 +4307,7 @@ int main(int argc, char** argv)
                   "CloseLuaWidgetPanel(") != std::string::npos &&
                 !dockDpiChangeHandler.empty() &&
                 dockDpiChangeHandler.find(
-                  "InvalidateFloatingDockWindow(false);") !=
+                  "InvalidateFloatingDockWindow(host, false);") !=
                     std::string::npos &&
                 dockDpiChangeHandler.find(
                   "CloseFloatingDock(") == std::string::npos &&
@@ -4486,7 +4486,7 @@ int main(int argc, char** argv)
 
         const std::size_t desktopBandPolicyBegin =
             shellMenuSource.find(
-                "if (!floatingDockVisible_)");
+                "if (!promoted)");
         const std::size_t floatingBandPolicyBegin =
             shellMenuSource.find(
                 "const bool shouldBeTopmost =",
@@ -4506,9 +4506,28 @@ int main(int argc, char** argv)
                 desktopBandPolicySource.find(
                   "GW_HWNDPREV") != std::string::npos &&
                 desktopBandPolicySource.find(
-                  "floatingDockBackdropCompositor_.Reattach(") !=
+                  "host.backdrop.Reattach(host.hwnd)") !=
                     std::string::npos,
             "desktop mode must place the persistent DockHost above WorkerW and keep its backdrop directly behind it");
+        Check(appHeaderSource.find(
+                  "struct PersistentDockHost") !=
+                    std::string::npos &&
+                appHeaderSource.find(
+                  "persistentDockHosts_") !=
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "existing->monitor == monitor") !=
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "created->monitor = monitor;") !=
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "CreateWindowExW(") !=
+                    std::string::npos &&
+                persistentShowSource.find(
+                  "CreateWindowExW(") ==
+                    std::string::npos,
+            "each monitor must retain its own persistent DockHost while promotion reuses the selected host");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");

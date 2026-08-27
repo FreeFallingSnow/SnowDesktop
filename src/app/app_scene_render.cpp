@@ -200,10 +200,7 @@ void DesktopApp::DrawDesktopForeground(
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock ||
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
-            !snowdesktop::floating_dock_rules::
-                ShouldRenderDesktopDock(
-                    persistentDockHostOwnsVisual_,
-                    dock == floatingDockContainer_))
+            IsDockHostedByPersistentHost(dock))
         {
             continue;
         }
@@ -375,13 +372,20 @@ void DesktopApp::DrawDynamicOverlays(
 
         if (!popupLayer)
         {
+            const auto* targetDock =
+                dynamic_cast<const DockContainer*>(
+                    targetContainer);
+            const bool targetHostedByDockHost =
+                targetDock &&
+                IsDockHostedByPersistentHost(targetDock);
             const bool targetIsFloatingDock =
-                floatingDockContainer_ &&
-                targetContainer == floatingDockContainer_;
+                renderingPersistentDockHost_ &&
+                targetContainer ==
+                    renderingPersistentDockHost_->container;
             if (!snowdesktop::drag_visual_rules::
                     DropPreviewBelongsToRenderSurface(
                         renderingFloatingDock_,
-                        persistentDockHostOwnsVisual_,
+                        targetHostedByDockHost,
                         targetIsFloatingDock))
             {
                 return;

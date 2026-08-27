@@ -1399,8 +1399,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 snowdesktop::drag_input_rules::
                     IsNativeDragMessageSurface(
                         msg.hwnd == hwnd_,
-                        floatingDockHwnd_ != nullptr &&
-                            msg.hwnd == floatingDockHwnd_,
+                        IsPersistentDockHostWindow(msg.hwnd),
                         floatingPopupHwnd_ != nullptr &&
                             msg.hwnd == floatingPopupHwnd_);
             snowdesktop::drag_input_rules::

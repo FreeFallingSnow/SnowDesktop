@@ -312,9 +312,10 @@ bool DesktopApp::FlushPendingCompositionCommit()
     compositionCommitPending_ = false;
     RecoverCompositionRenderFailure(
         L"Batched DComp Commit", hr);
-    if (floatingDockHostActive_)
-        RecoverFloatingDockCompositionFailure(
-            L"Batched DComp Commit", hr);
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->active)
+            RecoverFloatingDockCompositionFailure(
+                *host, L"Batched DComp Commit", hr);
     if (ShouldShowFloatingPopupWindow())
         RecoverFloatingPopupCompositionFailure(
             L"Batched DComp Commit", hr);
@@ -529,7 +530,7 @@ void DesktopApp::FlushNativeMenuPresentation()
                 shellPopupMenuLayerDepth_ > 0,
                 compositionPaintInProgress_,
                 quickNavCompositionPaintInProgress_,
-                floatingDockCompositionPaintInProgress_))
+                IsAnyPersistentDockHostPainting()))
         return;
 
     FlushPendingCompositionCommit();

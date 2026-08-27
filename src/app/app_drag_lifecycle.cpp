@@ -443,7 +443,7 @@ bool DesktopApp::IsOwnedPointerCaptureWindow(HWND window) const
 {
     return window &&
         (window == hwnd_ ||
-         window == floatingDockHwnd_ ||
+         IsPersistentDockHostWindow(window) ||
          window == floatingPopupHwnd_);
 }
 

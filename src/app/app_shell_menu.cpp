@@ -166,22 +166,32 @@ void DesktopApp::RestoreDesktopWindowLayer()
 
 void DesktopApp::ApplyFloatingDockLayerPolicy()
 {
-    if (!floatingDockHostActive_ ||
-        !floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_))
-        return;
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            ApplyFloatingDockLayerPolicy(*host);
+}
 
-    if (!floatingDockVisible_)
+void DesktopApp::ApplyFloatingDockLayerPolicy(
+    PersistentDockHost& host)
+{
+    if (!host.active || !host.hwnd ||
+        !IsWindow(host.hwnd))
+        return;
+    const bool promoted =
+        floatingDockVisible_ &&
+        floatingDockHost_ == &host;
+
+    if (!promoted)
     {
         // A desktop-band Dock is still a top-level no-activate window. Place
         // it immediately above Explorer's desktop host and therefore below
         // every ordinary application, while preserving the same HWND and
         // compositor resources used by floating mode.
         SetWindowPos(
-            floatingDockHwnd_, HWND_NOTOPMOST,
+            host.hwnd, HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        floatingDockBackdropCompositor_.SetPopupTopmost(false);
+        host.backdrop.SetPopupTopmost(false);
 
         HWND insertAfter = nullptr;
         const HWND desktopHost =
@@ -196,7 +206,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy()
                 GetClassNameW(
                     insertAfter, className,
                     static_cast<int>(std::size(className)));
-                if (insertAfter != floatingDockHwnd_ &&
+                if (!IsPersistentDockHostWindow(insertAfter) &&
                     _wcsicmp(
                         className,
                         L"SnowDesktopBackdropWindow") != 0)
@@ -208,12 +218,11 @@ void DesktopApp::ApplyFloatingDockLayerPolicy()
             }
         }
         SetWindowPos(
-            floatingDockHwnd_,
+            host.hwnd,
             insertAfter ? insertAfter : HWND_TOP,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        floatingDockBackdropCompositor_.Reattach(
-            floatingDockHwnd_);
+        host.backdrop.Reattach(host.hwnd);
         return;
     }
 
@@ -224,21 +233,21 @@ void DesktopApp::ApplyFloatingDockLayerPolicy()
                 shellPopupMenuLayerDepth_);
     const bool isTopmost =
         (GetWindowLongPtrW(
-            floatingDockHwnd_, GWL_EXSTYLE) &
+            host.hwnd, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0;
     if (snowdesktop::floating_dock_rules::
             ShouldChangeFloatingDockTopmost(
                 isTopmost, shouldBeTopmost))
     {
         SetWindowPos(
-            floatingDockHwnd_,
+            host.hwnd,
             shouldBeTopmost
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
                 SWP_NOACTIVATE);
     }
-    floatingDockBackdropCompositor_.
+    host.backdrop.
         SetPopupTopmost(shouldBeTopmost);
 }
 

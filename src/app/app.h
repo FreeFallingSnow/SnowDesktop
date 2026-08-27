@@ -704,6 +704,29 @@ public:
 
 private:
     // ── Window ──────────────────────────────────────────────
+    struct PersistentDockHost
+    {
+        DesktopApp* owner = nullptr;
+        DockContainer* container = nullptr;
+        HMONITOR monitor = nullptr;
+        HWND hwnd = nullptr;
+        RECT sourceRect{};
+        RECT dockRect{};
+        RECT popupRect{};
+        RECT tooltipRect{};
+        bool active = false;
+        bool revealPending = false;
+        bool frameReady = false;
+        bool compositionRenderRecoveryPending = false;
+        bool compositionPaintInProgress = false;
+        bool dropTargetRegistered = false;
+        DesktopBackdropCompositor backdrop;
+        ComPtr<IDCompositionTarget> dcompTarget;
+        ComPtr<IDCompositionVisual2> dcompVisual;
+        ComPtr<IDCompositionSurface> dcompSurface;
+        UINT compWidth = 0;
+        UINT compHeight = 0;
+    };
     /**
      * @brief 主窗口过程。
      * @param hwnd 窗口句柄
@@ -743,7 +766,9 @@ private:
      * @return 消息处理结果
      */
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-    LRESULT HandleFloatingDockMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    LRESULT HandleFloatingDockMessage(
+        PersistentDockHost& host,
+        HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleFloatingPopupMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleDragPreviewMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     /** @brief 创建桌面覆盖窗口，挂载到 Explorer 桌面上层。 @return 成功返回 true */
@@ -1009,13 +1034,29 @@ private:
     HWND ResolveWindowBelowDragPreviewAt(
         POINT screenPoint) const;
     void PrepareDockBackdropForDragTransition();
-    bool CreateFloatingDockWindow();
+    bool CreateFloatingDockWindow(PersistentDockHost& host);
     void DestroyFloatingDockWindow();
-    /** @brief 将当前显示器 Dock 绑定到常驻顶层 Host，并保持同一合成 surface。 */
+    void DestroyPersistentDockHost(PersistentDockHost& host);
+    PersistentDockHost* FindPersistentDockHost(HWND hwnd);
+    const PersistentDockHost* FindPersistentDockHost(HWND hwnd) const;
+    PersistentDockHost* FindPersistentDockHost(
+        DockContainer* container);
+    const PersistentDockHost* FindPersistentDockHost(
+        const DockContainer* container) const;
+    bool IsPersistentDockHostWindow(HWND hwnd) const;
+    bool IsPersistentDockBackdropWindow(HWND hwnd) const;
+    bool IsDockHostedByPersistentHost(
+        const DockContainer* container) const;
+    void SelectPersistentDockHost(PersistentDockHost* host);
+    /** @brief 为每个启用 Dock 的显示器同步一个常驻顶层 Host。 */
+    bool SyncPersistentDockHosts();
+    /** @brief 选择指定显示器的常驻 DockHost，不迁移其窗口或合成资源。 */
     bool SyncPersistentDockHost(
         HMONITOR preferredMonitor = nullptr);
-    /** @brief 根据桌面隐藏与悬浮状态显示或缓存常驻 DockHost。 */
+    /** @brief 根据桌面隐藏与悬浮状态显示或缓存所有常驻 DockHost。 */
     void UpdatePersistentDockHostVisibility();
+    void UpdatePersistentDockHostVisibility(
+        PersistentDockHost& host);
     void ShowFloatingDock(
         HMONITOR preferredMonitor = nullptr);
     bool EnsureFloatingDockVisibleForAssociatedSurface(
@@ -1042,17 +1083,33 @@ private:
     DockContainer* SelectFloatingDockContainerAtCursor() const;
     DockContainer* SelectFloatingDockContainerForMonitor(
         HMONITOR monitor) const;
-    RECT CalculateFloatingDockStableSourceRect() const;
+    RECT CalculateFloatingDockStableSourceRect(
+        const PersistentDockHost& host) const;
     void UpdateFloatingDockWindowBounds(
         bool immediatePresent = true);
+    void UpdateFloatingDockWindowBounds(
+        PersistentDockHost& host,
+        bool immediatePresent = true);
     void InvalidateFloatingDockWindow(bool immediate = false);
-    HRESULT CreateOrResizeFloatingDockCompositionSurface();
-    void ResetFloatingDockCompositionResources();
+    void InvalidateFloatingDockWindow(
+        PersistentDockHost& host,
+        bool immediate = false);
+    void InvalidatePersistentDockHosts(bool immediate = false);
+    HRESULT CreateOrResizeFloatingDockCompositionSurface(
+        PersistentDockHost& host);
+    void ResetFloatingDockCompositionResources(
+        PersistentDockHost& host);
     void RecoverFloatingDockCompositionFailure(
+        PersistentDockHost& host,
         const wchar_t* stage, HRESULT hr);
-    bool RenderFloatingDockCompositionFrame();
-    void PaintFloatingDockWindow(HWND hwnd);
-    POINT FloatingDockClientToDesktop(POINT point) const;
+    bool RenderFloatingDockCompositionFrame(
+        PersistentDockHost& host);
+    void PaintFloatingDockWindow(
+        PersistentDockHost& host, HWND hwnd);
+    POINT FloatingDockClientToDesktop(
+        const PersistentDockHost& host,
+        POINT point) const;
+    bool IsAnyPersistentDockHostPainting() const;
     bool IsCollectionPopupHostedByFloatingWindow() const;
     bool IsLuaPanelHostedByFloatingWindow() const;
     bool ShouldShowFloatingPopupWindow() const;
@@ -1783,6 +1840,8 @@ private:
     void RestoreDesktopWindowLayer();
     /** @brief 按当前可见性和原生菜单会话统一应用悬浮 Dock 层级。 */
     void ApplyFloatingDockLayerPolicy();
+    void ApplyFloatingDockLayerPolicy(
+        PersistentDockHost& host);
     void BeginShellPopupMenuLayer();
     void EndShellPopupMenuLayer();
     class ShellPopupMenuLayerGuard
@@ -3239,6 +3298,8 @@ private:
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
+    // Convenience aliases for the selected/promoted Host. Each display owns
+    // an independent PersistentDockHost and never transfers these resources.
     HWND floatingDockHwnd_ = nullptr;
     HWND floatingPopupHwnd_ = nullptr;
     HWND dragPreviewHwnd_ = nullptr;
@@ -3250,13 +3311,9 @@ private:
     UINT floatingDockPointerButtonsDown_ = 0;
     DockContainer* floatingDockContainer_ = nullptr;
     HMONITOR floatingDockMonitor_ = nullptr;
-    RECT floatingDockSourceRect_{};
-    RECT floatingDockRect_{};
-    RECT floatingDockPopupRect_{};
-    RECT floatingDockTooltipRect_{};
     RECT floatingDockHoverHandoffRect_{};
     bool floatingDockVisible_ = false;
-    // DockHost 在桌面态也持续拥有选中 Dock 的唯一视觉；visible 仅表示
+    // 每屏 DockHost 在桌面态也持续拥有唯一视觉；visible 仅表示选中的
     // Host 是否已提升到悬浮层，不再等同于 HWND/合成资源的生命周期。
     bool floatingDockHostActive_ = false;
     bool floatingDockKeyboardSessionActive_ = false;
@@ -3281,11 +3338,14 @@ private:
     bool shellReloadPending_ = false;
     bool shellReloadLayoutFromDiskPending_ = false;
     bool shellDockFolderPopupRefreshPending_ = false;
-    // The persistent top-level Host owns the selected Dock visual in both
-    // desktop and floating Z-order bands.
+    // Persistent top-level Hosts own every Dock visual in both desktop and
+    // floating Z-order bands.
     bool persistentDockHostOwnsVisual_ = false;
-    bool floatingDockRevealPending_ = false;
-    bool floatingDockFrameReady_ = false;
+    std::vector<std::unique_ptr<PersistentDockHost>>
+        persistentDockHosts_;
+    PersistentDockHost* floatingDockHost_ = nullptr;
+    PersistentDockHost* handlingPersistentDockHost_ = nullptr;
+    PersistentDockHost* renderingPersistentDockHost_ = nullptr;
     bool floatingDockHoverHandoffPending_ = false;
     std::function<void()> floatingDockPostCloseAction_;
     bool renderingFloatingDock_ = false;
@@ -3300,15 +3360,6 @@ private:
     int floatingDockHoverTargetKind_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
-    DesktopBackdropCompositor floatingDockBackdropCompositor_;
-    ComPtr<IDCompositionTarget> floatingDockDcompTarget_;
-    ComPtr<IDCompositionVisual2> floatingDockDcompVisual_;
-    ComPtr<IDCompositionSurface> floatingDockDcompSurface_;
-    UINT floatingDockCompWidth_ = 0;
-    UINT floatingDockCompHeight_ = 0;
-    bool floatingDockCompositionRenderRecoveryPending_ = false;
-    bool floatingDockCompositionPaintInProgress_ = false;
-    bool floatingDockDropTargetRegistered_ = false;
     ComPtr<IDCompositionTarget> dragPreviewDcompTarget_;
     ComPtr<IDCompositionVisual2> dragPreviewDcompVisual_;
     ComPtr<IDCompositionSurface> dragPreviewDcompSurface_;
