@@ -57,6 +57,8 @@ int main(int argc, char** argv)
         root / "src" / "app" / "app_settings_apply.cpp");
     const std::string dockSettings = ReadFile(
         root / "src" / "dock_settings.cpp");
+    const std::string taskbarHook = ReadFile(
+        root / "src" / "taskbar_hook" / "taskbar_hook.cpp");
     const std::string settingsWindow = ReadFile(
         root / "src" / "settings_window.cpp");
     const std::string settingsHost = ReadFile(
@@ -70,7 +72,8 @@ int main(int argc, char** argv)
     const std::string controlDispatch = ReadFile(
         root / "src" / "app" / "app_desktop_reload.cpp");
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
-            !dockSettings.empty() && !settingsWindow.empty() &&
+            !dockSettings.empty() && !taskbarHook.empty() &&
+            !settingsWindow.empty() &&
             !settingsHost.empty() && !dockPresenter.empty() &&
             !presenterControls.empty() &&
             !messageDispatch.empty() && !controlDispatch.empty(),
@@ -138,6 +141,26 @@ int main(int argc, char** argv)
             controller.find("ApplySystemTaskbarAlignmentCentered(alignment.value)") !=
                 std::string_view::npos,
         "blocking registry and Shell notification work executes in the worker");
+
+    const std::string_view backdropController = FunctionBody(dockSettings,
+        "class TaskbarBackdropController",
+        "TaskbarBackdropController& GetTaskbarBackdropController()");
+    Check(backdropController.find("if (hookEnabled)") !=
+                std::string_view::npos &&
+            backdropController.find("SendMessageTimeoutW(taskbar, applyMessage") !=
+                std::string_view::npos,
+        "graceful shutdown synchronously asks Explorer to restore the taskbar");
+
+    Check(taskbarHook.find(
+            "info.nativeRequestedTheme = info.rootElement.RequestedTheme();") !=
+                std::string::npos &&
+            taskbarHook.find(
+            "info.rootElement.RequestedTheme(info.nativeRequestedTheme);") !=
+                std::string::npos &&
+            taskbarHook.find(
+            "PostMessageW(info.taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);") !=
+                std::string::npos,
+        "taskbar hook restores Explorer's theme value and requests native recomposition");
 
     Check(settingsWindow.find("ImGui") == std::string::npos &&
             settingsWindow.find("ID3D11") == std::string::npos &&

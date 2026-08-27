@@ -663,23 +663,13 @@ public:
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
         {
-            // Shared memory is gone (process exited/crashed). Clear any
-            // applied content theme and backdrop on all registered taskbars.
+            // Shared memory is gone (process exited/crashed). Restore the
+            // values that Explorer owned before SnowDesktop changed them.
             for (auto& [handle, info] : taskbars_)
             {
                 (void)handle;
-                if (info.rootElement && info.appliedContentTheme >= 0)
-                {
-                    try
-                    {
-                        info.rootElement.ClearValue(
-                            wux::FrameworkElement::RequestedThemeProperty());
-                        info.appliedContentTheme = -1;
-                    }
-                    catch (...) {}
-                }
-                RestoreControl(info.background);
-                RestoreControl(info.border);
+                if (RestoreTaskbarVisuals(info) && info.taskbar)
+                    PostMessageW(info.taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);
             }
             return;
         }
@@ -725,17 +715,10 @@ public:
             // A native target still needs an explicit system-theme value while
             // the controller is active for other dynamic rules. Only remove our
             // local value when the controller itself is disabled or exits.
-            if (info.rootElement && !controllerEnabled &&
-                info.appliedContentTheme >= 0)
+            bool restoredNativeVisuals = false;
+            if (!controllerEnabled)
             {
-                try
-                {
-                    info.rootElement.ClearValue(
-                        wux::FrameworkElement::RequestedThemeProperty());
-                    info.rootElement.InvalidateArrange();
-                    info.appliedContentTheme = -1;
-                }
-                catch (...) {}
+                restoredNativeVisuals = RestoreContentTheme(info);
             }
             else if (info.rootElement && controllerEnabled)
             {
@@ -767,8 +750,10 @@ public:
 
             if (!enabled)
             {
-                RestoreControl(info.background);
-                RestoreControl(info.border);
+                restoredNativeVisuals = RestoreControl(info.background) ||
+                    restoredNativeVisuals;
+                restoredNativeVisuals = RestoreControl(info.border) ||
+                    restoredNativeVisuals;
             }
             else
             {
@@ -779,6 +764,13 @@ public:
             }
             info.appliedGeneration = snapshot.generation;
             info.appliedEnabled = enabled;
+            if (!controllerEnabled && restoredNativeVisuals && info.taskbar)
+            {
+                // Explorer owns the normal taskbar appearance. Replaying its
+                // composition-change path makes it re-evaluate current theme
+                // resources after our local XAML values have been removed.
+                PostMessageW(info.taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);
+            }
             applied = true;
         }
         if (applied)
@@ -808,8 +800,39 @@ private:
         HWND taskbar = nullptr;
         LONG appliedGeneration = -1;
         LONG appliedContentTheme = -1;
+        wux::ElementTheme nativeRequestedTheme = wux::ElementTheme::Default;
         bool appliedEnabled = false;
     };
+
+    static bool RestoreContentTheme(TaskbarInfo& info)
+    {
+        if (!info.rootElement || info.appliedContentTheme < 0)
+            return false;
+        try
+        {
+            // ClearValue would discard an explicit RequestedTheme that was
+            // already owned by Explorer. Restore the value observed before our
+            // first override so native light/dark detection remains intact.
+            info.rootElement.RequestedTheme(info.nativeRequestedTheme);
+            info.rootElement.InvalidateArrange();
+            info.appliedContentTheme = -1;
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    static bool RestoreTaskbarVisuals(TaskbarInfo& info)
+    {
+        bool restored = RestoreContentTheme(info);
+        restored = RestoreControl(info.background) || restored;
+        restored = RestoreControl(info.border) || restored;
+        info.appliedGeneration = -1;
+        info.appliedEnabled = false;
+        return restored;
+    }
 
     static void ApplyBackdrop(ControlInfo& control, const Snapshot& snapshot)
     {
@@ -928,12 +951,14 @@ private:
         control.appliedBlur = 0.0f;
     }
 
-    static void RestoreControl(ControlInfo& control)
+    static bool RestoreControl(ControlInfo& control)
     {
+        const bool wasApplied = control.appliedFill != nullptr;
         if (control.control && control.originalFill)
             control.control.Fill(control.originalFill);
         control.appliedFill = nullptr;
         control.appliedStyle = -1;
+        return wasApplied;
     }
 
     template<typename T>
@@ -990,6 +1015,8 @@ private:
             info.taskbar = taskbar;
             info.rootElement = rootGrid.try_as<wux::FrameworkElement>();
             info.appliedContentTheme = -1;
+            if (info.rootElement)
+                info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             if (taskbar && subclassedTaskbars_.insert(taskbar).second)
                 SetWindowSubclass(taskbar, TaskbarSubclassProc,
                     kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this));

@@ -568,7 +568,20 @@ public:
                 taskbars.push_back(target.taskbar);
         }
         for (HWND taskbar : taskbars)
-            PostMessageW(taskbar, applyMessage, 0, 0);
+        {
+            if (hookEnabled)
+            {
+                PostMessageW(taskbar, applyMessage, 0, 0);
+                continue;
+            }
+
+            // Process the restore while the shared state and owner process are
+            // still alive. The Explorer-side owner watcher remains a crash
+            // fallback, but graceful exit must not race an asynchronous post.
+            DWORD_PTR ignored = 0;
+            SendMessageTimeoutW(taskbar, applyMessage, 0, 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored);
+        }
 
         if (!hookEnabled)
         {
