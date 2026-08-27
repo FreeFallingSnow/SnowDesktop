@@ -672,14 +672,40 @@ void TestHostContract(const std::filesystem::path& repository)
             ? std::string_view(source).substr(
                 hideWindowBegin, hideWindowEnd - hideWindowBegin)
             : std::string_view{};
-    const std::size_t forcedDwmLeave = hideWindow.find(
-        "window, WM_NCMOUSELEAVE, 0, 0, &dwmResult");
     const std::size_t hideReusableWindow = hideWindow.find(
         "ShowWindow(window, SW_HIDE)");
-    Check(forcedDwmLeave != std::string_view::npos &&
-            hideReusableWindow != std::string_view::npos &&
-            forcedDwmLeave < hideReusableWindow,
-        "hiding the reusable settings HWND explicitly clears DWM caption hover");
+    const std::size_t resetHiddenTitleBar = hideWindow.find(
+        "ResetIntegratedTitleBar()");
+    Check(hideReusableWindow != std::string_view::npos &&
+            resetHiddenTitleBar != std::string_view::npos &&
+            hideReusableWindow < resetHiddenTitleBar,
+        "a hidden reusable settings HWND discards its customized caption state");
+    const std::size_t reopenWindowBegin = source.find(
+        "bool SettingsWindowHost::Open(");
+    const std::size_t reopenWindowEnd = source.find(
+        "bool SettingsWindowHost::Hide()", reopenWindowBegin);
+    const std::string_view reopenWindow =
+        reopenWindowBegin != std::string::npos &&
+                reopenWindowEnd != std::string::npos
+            ? std::string_view(source).substr(
+                reopenWindowBegin, reopenWindowEnd - reopenWindowBegin)
+            : std::string_view{};
+    const std::size_t missingTitleBarGuard = reopenWindow.find(
+        "!impl_->appWindowTitleBar");
+    const std::size_t reconfigureTitleBar = reopenWindow.find(
+        "impl_->ConfigureIntegratedTitleBar()");
+    const std::size_t refreshTitleBarInsets = reopenWindow.find(
+        "impl_->QueueIntegratedTitleBarInsetsUpdate()");
+    const std::size_t showReopenedWindow = reopenWindow.find(
+        "ShowWindow(impl_->window");
+    Check(missingTitleBarGuard != std::string_view::npos &&
+            reconfigureTitleBar != std::string_view::npos &&
+            refreshTitleBarInsets != std::string_view::npos &&
+            showReopenedWindow != std::string_view::npos &&
+            missingTitleBarGuard < reconfigureTitleBar &&
+            reconfigureTitleBar < refreshTitleBarInsets &&
+            refreshTitleBarInsets < showReopenedWindow,
+        "reopening rebuilds caption customization while the settings HWND remains hidden");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&

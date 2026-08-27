@@ -2604,14 +2604,11 @@ struct SettingsWindowHost::Impl
             widgetSettingsService->CloseAll();
         if (shell)
             shell->ReleaseSessionResources();
-
-        // Hiding a reusable HWND while the pointer is still over a caption
-        // button does not guarantee a subsequent WM_NCMOUSELEAVE. End DWM's
-        // non-client hover explicitly so the next Open starts from rest.
-        LRESULT dwmResult = 0;
-        (void)DwmDefWindowProc(
-            window, WM_NCMOUSELEAVE, 0, 0, &dwmResult);
         ShowWindow(window, SW_HIDE);
+        // AppWindow keeps caption-button interaction state with its customized
+        // title bar even while the HWND is hidden. Reset only that platform
+        // object after hiding; the XAML runtime and settings host stay alive.
+        ResetIntegratedTitleBar();
         return true;
     }
 };
@@ -2822,6 +2819,12 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     SettingsActionResult reloadResult = SettingsActionResult::Success();
     if (reopening)
     {
+        if (!impl_->appWindowTitleBar)
+        {
+            if (!impl_->ConfigureIntegratedTitleBar())
+                return false;
+            impl_->QueueIntegratedTitleBarInsetsUpdate();
+        }
         reloadResult = impl_->controller->Reload(
             SettingsReloadPolicy::PreservePendingChanges);
         if (impl_->options.refreshExternalState)
