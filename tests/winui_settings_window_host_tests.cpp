@@ -661,7 +661,25 @@ void TestHostContract(const std::filesystem::path& repository)
             closeMessage != std::string::npos &&
             nonClientLeave < dwmNonClientLeave &&
             dwmNonClientLeave < closeMessage,
-        "non-client leave reaches DWM so reused caption buttons clear hover before reopen");
+        "system-generated non-client leave reaches DWM for caption-button hover cleanup");
+    const std::size_t hideWindowBegin = source.find(
+        "[[nodiscard]] bool HideWindow()");
+    const std::size_t hideWindowEnd = source.find(
+        "SettingsWindowHost::SettingsWindowHost()", hideWindowBegin);
+    const std::string_view hideWindow =
+        hideWindowBegin != std::string::npos &&
+                hideWindowEnd != std::string::npos
+            ? std::string_view(source).substr(
+                hideWindowBegin, hideWindowEnd - hideWindowBegin)
+            : std::string_view{};
+    const std::size_t forcedDwmLeave = hideWindow.find(
+        "window, WM_NCMOUSELEAVE, 0, 0, &dwmResult");
+    const std::size_t hideReusableWindow = hideWindow.find(
+        "ShowWindow(window, SW_HIDE)");
+    Check(forcedDwmLeave != std::string_view::npos &&
+            hideReusableWindow != std::string_view::npos &&
+            forcedDwmLeave < hideReusableWindow,
+        "hiding the reusable settings HWND explicitly clears DWM caption hover");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&

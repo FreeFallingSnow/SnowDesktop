@@ -2604,6 +2604,13 @@ struct SettingsWindowHost::Impl
             widgetSettingsService->CloseAll();
         if (shell)
             shell->ReleaseSessionResources();
+
+        // Hiding a reusable HWND while the pointer is still over a caption
+        // button does not guarantee a subsequent WM_NCMOUSELEAVE. End DWM's
+        // non-client hover explicitly so the next Open starts from rest.
+        LRESULT dwmResult = 0;
+        (void)DwmDefWindowProc(
+            window, WM_NCMOUSELEAVE, 0, 0, &dwmResult);
         ShowWindow(window, SW_HIDE);
         return true;
     }
