@@ -4567,6 +4567,31 @@ int main(int argc, char** argv)
                   "CreateWindowExW(") ==
                     std::string::npos,
             "each monitor must retain its own persistent DockHost while promotion reuses the selected host");
+        const std::size_t syncDockHostsBegin =
+            floatingDockSource.find(
+                "bool DesktopApp::SyncPersistentDockHosts()");
+        const std::size_t syncDockHostsEnd =
+            floatingDockSource.find(
+                "bool DesktopApp::SyncPersistentDockHost(",
+                syncDockHostsBegin);
+        const std::string syncDockHostsSource =
+            syncDockHostsBegin != std::string::npos &&
+                    syncDockHostsEnd != std::string::npos
+                ? floatingDockSource.substr(
+                    syncDockHostsBegin,
+                    syncDockHostsEnd - syncDockHostsBegin)
+                : std::string{};
+        const std::size_t graphicsReadyGuard =
+            syncDockHostsSource.find(
+                "if (!d2dDevice_ || !dcompDevice_)");
+        const std::size_t dockHostCreated =
+            syncDockHostsSource.find(
+                "CreateFloatingDockWindow(host)");
+        Check(!syncDockHostsSource.empty() &&
+                graphicsReadyGuard != std::string::npos &&
+                dockHostCreated != std::string::npos &&
+                graphicsReadyGuard < dockHostCreated,
+            "persistent DockHosts must not be created before the graphics devices are ready");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");

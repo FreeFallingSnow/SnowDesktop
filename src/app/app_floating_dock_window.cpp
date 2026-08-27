@@ -121,6 +121,13 @@ void DesktopApp::DestroyPersistentDockHost(
 
 bool DesktopApp::SyncPersistentDockHosts()
 {
+    // Window creation can trigger an early layout pass before InitGraphics.
+    // Defer the first top-level DockHost allocation until both rendering
+    // devices exist, so startup never creates, hides, and then recovers a
+    // glass/content pair around an expected E_UNEXPECTED render failure.
+    if (!d2dDevice_ || !dcompDevice_)
+        return false;
+
     const HMONITOR previouslySelectedMonitor =
         floatingDockMonitor_;
     SelectPersistentDockHost(nullptr);
