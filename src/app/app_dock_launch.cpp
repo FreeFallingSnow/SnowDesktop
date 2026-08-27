@@ -167,7 +167,7 @@ void DesktopApp::InvalidateDockLaunchBounceRects()
                 static_cast<int>(std::ceil(
                     static_cast<double>(shortSide) * 0.42)));
             InflateRect(&dirty, padding, padding);
-            if (floatingDockVisible_ &&
+            if (floatingDockHostActive_ &&
                 dock == floatingDockContainer_)
             {
                 invalidateFloatingDock = true;

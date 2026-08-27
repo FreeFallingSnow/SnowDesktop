@@ -250,7 +250,7 @@ void DesktopApp::PresentPointerInteractionFrame(
     const bool immediateFloatingDockPresent =
         immediateDesktopPresent &&
         (!widgetPreviewActive || widgetDragFeedbackChanged);
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
     {
         const void* hoverOwner = nullptr;
         size_t hoverIndex = 0;
@@ -328,7 +328,7 @@ void DesktopApp::PresentPointerInteractionFrame(
                         if (floatingDockHoverTailToken_ != token)
                             return;
                         floatingDockHoverTailToken_ = 0;
-                        if (!floatingDockVisible_ ||
+                        if (!floatingDockHostActive_ ||
                             floatingDockClosePending_ ||
                             !floatingDockHwnd_ ||
                             !IsWindow(floatingDockHwnd_))

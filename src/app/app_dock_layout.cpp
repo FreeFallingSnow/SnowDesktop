@@ -57,7 +57,7 @@ bool DesktopApp::SynchronizeDockContainerAreas()
 
 void DesktopApp::InvalidateDockRects(BOOL erase)
 {
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
         InvalidateFloatingDockWindow(true);
     if (!hwnd_) return;
     for (const auto& container : containers_)

@@ -15,6 +15,39 @@ void DesktopApp::ShowFloatingDock(
             L"Floating Dock shortcut ignored: feature disabled");
         return;
     }
+    HideDockWindowPreview();
+    HMONITOR targetMonitor = preferredMonitor;
+    if (!targetMonitor)
+    {
+        POINT cursorScreen{};
+        GetCursorPos(&cursorScreen);
+        targetMonitor = MonitorFromPoint(
+            cursorScreen, MONITOR_DEFAULTTONEAREST);
+    }
+    if (!SyncPersistentDockHost(targetMonitor))
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating Dock persistent host unavailable");
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+
+    // The same HWND, DirectComposition surface and backdrop already render
+    // the desktop-band Dock. Summoning changes only its Z-order policy; no
+    // content copy, opacity exchange or presentation hand-off is required.
+    ++floatingDockBackdropCommitToken_;
+    floatingDockBackdropCleanupPending_ = false;
+    floatingDockRevealCommitPending_ = false;
+    floatingDockDesktopCommitPending_ = false;
+    floatingDockClosePending_ = false;
+    floatingDockVisible_ = true;
+    floatingDockLastPointerPresentTick_ = 0;
+    ApplyFloatingDockLayerPolicy();
+    UpdatePersistentDockHostVisibility();
+    InvalidateFloatingDockWindow(true);
+    BeginFloatingDockKeyboardSession();
+    return;
+
     if (!CreateFloatingDockWindow())
     {
         WriteDiagnosticLogEntry(
@@ -320,6 +353,33 @@ void DesktopApp::CloseFloatingDock(
     floatingDockHoverTargetKind_ = 0;
     if (floatingDockKeyboardSessionActive_)
         EndFloatingDockKeyboardSession(focusPolicy);
+    if (floatingDockHostActive_)
+    {
+        if (floatingDockVisible_)
+            DismissDockWindowPreviewUntilLeave();
+        floatingDockVisible_ = false;
+        floatingDockClosePending_ = false;
+        floatingDockBackdropCleanupPending_ = false;
+        floatingDockRevealCommitPending_ = false;
+        floatingDockDesktopCommitPending_ = false;
+        floatingDockPointerPresentPending_ = false;
+        floatingDockHoverHandoffPending_ = false;
+        floatingDockHoverHandoffRect_ = {};
+
+        // Closing now demotes the persistent Host back beside the desktop
+        // WorkerW. Its content surface and native glass remain attached, so
+        // the click that changes foreground can never expose a hand-off gap.
+        ApplyFloatingDockLayerPolicy();
+        UpdatePersistentDockHostVisibility();
+        InvalidateFloatingDockWindow(true);
+
+        std::function<void()> action =
+            std::move(floatingDockPostCloseAction_);
+        floatingDockPostCloseAction_ = {};
+        if (action)
+            action();
+        return;
+    }
     if (floatingDockClosePending_)
         return;
     if (!floatingDockVisible_ &&
@@ -505,14 +565,10 @@ void DesktopApp::CloseFloatingDockThen(
     std::function<void()> action,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
-    const bool floatingWindowVisible =
-        floatingDockHwnd_ &&
-        IsWindowVisible(floatingDockHwnd_);
     if (snowdesktop::floating_dock_rules::
             CanRunPostCloseActionImmediately(
                 floatingDockVisible_,
-                floatingDockClosePending_,
-                floatingWindowVisible))
+                floatingDockClosePending_))
     {
         if (action)
             action();
@@ -680,7 +736,7 @@ void DesktopApp::InvalidateFloatingDockWindow(
 {
     if (snowdesktop::floating_dock_rules::
             ShouldRenderFloatingDockFrame(
-                floatingDockVisible_,
+                floatingDockHostActive_,
                 floatingDockClosePending_) &&
         floatingDockHwnd_ &&
         IsWindow(floatingDockHwnd_))

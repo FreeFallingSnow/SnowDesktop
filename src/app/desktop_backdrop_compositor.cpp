@@ -718,8 +718,6 @@ void DesktopBackdropCompositor::Reattach(HWND contentWindow)
 {
     if (!impl_->available || !contentWindow || !IsWindow(contentWindow))
         return;
-    if (impl_->contentWindow == contentWindow)
-        return;
     impl_->contentWindow = contentWindow;
     impl_->SyncWindowPlacement();
 }
@@ -738,6 +736,69 @@ void DesktopBackdropCompositor::SetVisible(bool visible)
         impl_->SyncWindowPlacement();
     else
         ShowWindow(impl_->backdropWindow, SW_HIDE);
+}
+
+void DesktopBackdropCompositor::ShowPopupWindowPair(
+    HWND contentWindow)
+{
+    const bool contentValid =
+        contentWindow && IsWindow(contentWindow);
+    if (!impl_)
+    {
+        if (contentValid)
+            ShowWindow(contentWindow, SW_SHOWNOACTIVATE);
+        return;
+    }
+
+    HWND backdropWindow =
+        impl_->popupMode &&
+        impl_->backdropWindow &&
+        IsWindow(impl_->backdropWindow)
+            ? impl_->backdropWindow
+            : nullptr;
+    impl_->visible = true;
+    bool shownTogether = false;
+    if (contentValid && backdropWindow &&
+        impl_->contentWindow == contentWindow)
+    {
+        POINT origin{};
+        SIZE size{};
+        if (impl_->QueryContentPlacement(nullptr, origin, size))
+        {
+            // Establish the helper immediately behind the still-hidden
+            // content window, then reveal both HWNDs in one User32 batch.
+            SetWindowPos(
+                backdropWindow, contentWindow,
+                origin.x, origin.y, size.cx, size.cy,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            constexpr UINT showFlags =
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW;
+            HDWP deferred = BeginDeferWindowPos(2);
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, backdropWindow, nullptr,
+                    0, 0, 0, 0, showFlags);
+            }
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, contentWindow, nullptr,
+                    0, 0, 0, 0, showFlags);
+            }
+            if (deferred)
+                shownTogether = EndDeferWindowPos(deferred) != FALSE;
+        }
+    }
+
+    if (!shownTogether)
+    {
+        if (backdropWindow)
+            impl_->SyncWindowPlacement();
+        if (contentValid)
+            ShowWindow(contentWindow, SW_SHOWNOACTIVATE);
+    }
 }
 
 void DesktopBackdropCompositor::HidePopupWindowPair(

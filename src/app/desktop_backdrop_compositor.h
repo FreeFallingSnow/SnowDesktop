@@ -44,6 +44,8 @@ public:
     void Reattach(HWND contentWindow);
     /** @brief 显示或隐藏独立的 backdrop 辅助窗口。 */
     void SetVisible(bool visible);
+    /** @brief 在一个延迟窗口事务中同时显示 popup 内容与 backdrop。 */
+    void ShowPopupWindowPair(HWND contentWindow);
     /**
      * @brief 在一个延迟窗口事务中同时隐藏 popup 内容窗口和 backdrop。
      *

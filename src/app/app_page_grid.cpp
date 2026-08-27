@@ -357,7 +357,7 @@ void DesktopApp::PreviewItemIconSize(float value)
     }
     itemIconSizePreviewActive_ = true;
     InvalidateDragStaticScene();
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
         UpdateFloatingDockWindowBounds();
     if (hwnd_)
     {
@@ -386,7 +386,7 @@ void DesktopApp::SetItemIconSize(float value)
     InvalidateDragStaticScene();
     SaveLayoutSlots();
     itemIconSizePreviewActive_ = false;
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
         UpdateFloatingDockWindowBounds();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -428,7 +428,7 @@ void DesktopApp::SetItemFontSize(float valueCu)
     InvalidateDragStaticScene();
     SaveLayoutSlots();
     itemFontSizePreviewActive_ = false;
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
         UpdateFloatingDockWindowBounds();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -447,7 +447,7 @@ void DesktopApp::PreviewItemFontSize(float valueCu)
     LayoutItems();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
         UpdateFloatingDockWindowBounds();
     if (hwnd_)
     {

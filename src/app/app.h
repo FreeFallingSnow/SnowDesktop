@@ -1011,6 +1011,11 @@ private:
     void PrepareDockBackdropForDragTransition();
     bool CreateFloatingDockWindow();
     void DestroyFloatingDockWindow();
+    /** @brief 将当前显示器 Dock 绑定到常驻顶层 Host，并保持同一合成 surface。 */
+    bool SyncPersistentDockHost(
+        HMONITOR preferredMonitor = nullptr);
+    /** @brief 根据桌面隐藏与悬浮状态显示或缓存常驻 DockHost。 */
+    void UpdatePersistentDockHostVisibility();
     void ShowFloatingDock(
         HMONITOR preferredMonitor = nullptr);
     bool EnsureFloatingDockVisibleForAssociatedSurface(
@@ -3258,6 +3263,9 @@ private:
     RECT floatingDockHoverHandoffRect_{};
     RECT floatingDockCloseDesktopRect_{};
     bool floatingDockVisible_ = false;
+    // DockHost 在桌面态也持续拥有选中 Dock 的唯一视觉；visible 仅表示
+    // Host 是否已提升到悬浮层，不再等同于 HWND/合成资源的生命周期。
+    bool floatingDockHostActive_ = false;
     bool floatingDockKeyboardSessionActive_ = false;
     HWND floatingDockLogicalForegroundWindow_ = nullptr;
     int shellPopupMenuLayerDepth_ = 0;

@@ -166,10 +166,57 @@ void DesktopApp::RestoreDesktopWindowLayer()
 
 void DesktopApp::ApplyFloatingDockLayerPolicy()
 {
-    if (!floatingDockVisible_ ||
+    if (!floatingDockHostActive_ ||
         !floatingDockHwnd_ ||
         !IsWindow(floatingDockHwnd_))
         return;
+
+    if (!floatingDockVisible_)
+    {
+        // A desktop-band Dock is still a top-level no-activate window. Place
+        // it immediately above Explorer's desktop host and therefore below
+        // every ordinary application, while preserving the same HWND and
+        // compositor resources used by floating mode.
+        SetWindowPos(
+            floatingDockHwnd_, HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        floatingDockBackdropCompositor_.SetPopupTopmost(false);
+
+        HWND insertAfter = nullptr;
+        const HWND desktopHost =
+            desktopWindows_.host && IsWindow(desktopWindows_.host)
+                ? desktopWindows_.host : nullptr;
+        if (desktopHost)
+        {
+            insertAfter = GetWindow(desktopHost, GW_HWNDPREV);
+            while (insertAfter)
+            {
+                wchar_t className[96]{};
+                GetClassNameW(
+                    insertAfter, className,
+                    static_cast<int>(std::size(className)));
+                if (insertAfter != floatingDockHwnd_ &&
+                    _wcsicmp(
+                        className,
+                        L"SnowDesktopBackdropWindow") != 0)
+                {
+                    break;
+                }
+                insertAfter = GetWindow(
+                    insertAfter, GW_HWNDPREV);
+            }
+        }
+        SetWindowPos(
+            floatingDockHwnd_,
+            insertAfter ? insertAfter : HWND_TOP,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        floatingDockBackdropCompositor_.Reattach(
+            floatingDockHwnd_);
+        return;
+    }
+
     const bool shouldBeTopmost =
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(

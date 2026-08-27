@@ -575,6 +575,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         if (inputHwnd_ && IsWindow(inputHwnd_))
             ShowWindow(inputHwnd_, SW_HIDE);
         RestoreExplorerIcons();
+        UpdatePersistentDockHostVisibility();
         ApplyDesktopPassthroughHotkey();
         return;
     }
@@ -616,5 +617,6 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     InvalidateRect(hwnd_, nullptr, TRUE);
     if (!wasEnabled)
         ReloadItems();
+    UpdatePersistentDockHostVisibility();
     ApplyDesktopPassthroughHotkey();
 }

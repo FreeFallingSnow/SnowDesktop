@@ -29,6 +29,133 @@ bool DesktopApp::CreateFloatingDockWindow()
     return true;
 }
 
+bool DesktopApp::SyncPersistentDockHost(
+    HMONITOR preferredMonitor)
+{
+    if (!generalSettings_.dockEnabled)
+    {
+        floatingDockVisible_ = false;
+        floatingDockHostActive_ = false;
+        floatingDockDesktopCopySuppressed_ = false;
+        floatingDockContainer_ = nullptr;
+        UpdatePersistentDockHostVisibility();
+        return false;
+    }
+
+    DockContainer* target = preferredMonitor
+        ? SelectFloatingDockContainerForMonitor(preferredMonitor)
+        : floatingDockContainer_;
+    if (!target)
+        target = GetDockContainer();
+    if (!target)
+    {
+        floatingDockVisible_ = false;
+        floatingDockHostActive_ = false;
+        floatingDockDesktopCopySuppressed_ = false;
+        floatingDockContainer_ = nullptr;
+        UpdatePersistentDockHostVisibility();
+        return false;
+    }
+
+    const RECT previousDockRect = floatingDockContainer_
+        ? floatingDockContainer_->GetInteractiveBounds()
+        : RECT{};
+    const bool targetChanged =
+        floatingDockContainer_ != target;
+    floatingDockContainer_ = target;
+    const RECT selectedDockBounds = target->GetBounds();
+    const POINT selectedDockCenterScreen{
+        (selectedDockBounds.left + selectedDockBounds.right) / 2 +
+            virtualLeft_,
+        (selectedDockBounds.top + selectedDockBounds.bottom) / 2 +
+            virtualTop_,
+    };
+    floatingDockMonitor_ = MonitorFromPoint(
+        selectedDockCenterScreen, MONITOR_DEFAULTTONEAREST);
+    if (targetChanged)
+    {
+        floatingDockSourceRect_ = {};
+        floatingDockRect_ = {};
+        floatingDockPopupRect_ = {};
+        floatingDockTooltipRect_ = {};
+    }
+
+    if (!CreateFloatingDockWindow())
+    {
+        floatingDockHostActive_ = false;
+        floatingDockDesktopCopySuppressed_ = false;
+        return false;
+    }
+
+    floatingDockHostActive_ = true;
+    floatingDockDesktopCopySuppressed_ = true;
+    floatingDockClosePending_ = false;
+    floatingDockPersonalization_ = CurrentPersonalization();
+    floatingDockRevealPending_ =
+        !IsWindowVisible(floatingDockHwnd_);
+    UpdateFloatingDockWindowBounds(false);
+    if (!RenderFloatingDockCompositionFrame() ||
+        !floatingDockFrameReady_)
+    {
+        WriteDiagnosticLogEntry(
+            L"Persistent DockHost initial frame unavailable; desktop rendering restored");
+        floatingDockVisible_ = false;
+        floatingDockHostActive_ = false;
+        floatingDockDesktopCopySuppressed_ = false;
+        floatingDockRevealPending_ = false;
+        floatingDockBackdropCompositor_.HidePopupWindowPair(
+            floatingDockHwnd_);
+        return false;
+    }
+    ValidateRect(floatingDockHwnd_, nullptr);
+    if (floatingDockDcompEffect_)
+        floatingDockDcompEffect_->SetOpacity(1.0f);
+    CommitCompositionAnimationFrame();
+    FlushPendingCompositionCommit();
+    floatingDockRevealPending_ = false;
+    ApplyFloatingDockLayerPolicy();
+    UpdatePersistentDockHostVisibility();
+
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        if (!IsRectEmpty(&previousDockRect))
+            InvalidateRect(hwnd_, &previousDockRect, TRUE);
+        const RECT currentDockRect =
+            target->GetInteractiveBounds();
+        InvalidateRect(hwnd_, &currentDockRect, TRUE);
+    }
+    InvalidateDragStaticScene();
+    return true;
+}
+
+void DesktopApp::UpdatePersistentDockHostVisibility()
+{
+    if (!floatingDockHwnd_ || !IsWindow(floatingDockHwnd_))
+        return;
+    const bool shouldShow = floatingDockHostActive_ &&
+        (floatingDockVisible_ ||
+            (customDesktopVisible_ &&
+                (!desktopIconsHidden_ ||
+                    dockSettings_.keepWhenDesktopHidden)));
+    if (!shouldShow)
+    {
+        floatingDockBackdropCompositor_.HidePopupWindowPair(
+            floatingDockHwnd_);
+        return;
+    }
+
+    ApplyFloatingDockLayerPolicy();
+    if (floatingDockBackdropCompositor_.IsAvailable())
+    {
+        floatingDockBackdropCompositor_.ShowPopupWindowPair(
+            floatingDockHwnd_);
+    }
+    else
+    {
+        ShowWindow(floatingDockHwnd_, SW_SHOWNOACTIVATE);
+    }
+}
+
 void DesktopApp::ResetFloatingDockCompositionResources()
 {
     floatingDockFrameReady_ = false;
@@ -121,30 +248,12 @@ void DesktopApp::FinalizeFloatingDockBackdropCleanup(
         CompleteFloatingDockCloseHandoff();
         return;
     }
+    // The persistent DockHost keeps its HWND, DComp surface and backdrop in
+    // desktop mode. A stale completion may clear bookkeeping, but must never
+    // retire the visual tree that now owns the ordinary desktop Dock.
     floatingDockBackdropCleanupPending_ = false;
-    floatingDockBackdropCompositor_.SetVisible(false);
-    floatingDockBackdropCompositor_.Reset();
-    const bool hadCompositionSurface =
-        floatingDockDcompSurface_ != nullptr;
-    ResetFloatingDockCompositionResources();
-    if (hadCompositionSurface && dcompDevice_)
-    {
-        // The target can release its last full-size surface only after the
-        // backdrop ownership transaction has completed. Releasing it in the
-        // close call raced WinComp and exposed a one-frame glass hole.
-        CommitCompositionAnimationFrame();
-        const HRESULT hr = WaitForCompositionPresentation(
-                L"Floating Dock release surface")
-            ? S_OK : E_FAIL;
-        if (FAILED(hr))
-        {
-            wchar_t message[160]{};
-            wsprintfW(message,
-                L"FloatingDock release surface commit FAILED hr=0x%08X",
-                static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(message);
-        }
-    }
+    floatingDockRevealCommitPending_ = false;
+    floatingDockDesktopCommitPending_ = false;
 }
 
 void DesktopApp::DestroyFloatingDockWindow()
@@ -172,6 +281,7 @@ void DesktopApp::DestroyFloatingDockWindow()
     floatingDockHoverHandoffRect_ = {};
     floatingDockCloseDesktopRect_ = {};
     floatingDockVisible_ = false;
+    floatingDockHostActive_ = false;
     floatingDockDesktopCopySuppressed_ = false;
     floatingDockRevealPending_ = false;
     floatingDockContainer_ = nullptr;
@@ -267,14 +377,14 @@ CalculateFloatingDockStableSourceRect() const
 void DesktopApp::UpdateFloatingDockWindowBounds(
     bool immediatePresent)
 {
-    if (!floatingDockVisible_ || !floatingDockHwnd_ ||
+    if (!floatingDockHostActive_ || !floatingDockHwnd_ ||
         !IsWindow(floatingDockHwnd_) ||
         !floatingDockContainer_)
         return;
     const bool floatingLayerTopmost =
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(
-                true,
+                floatingDockVisible_,
                 shellPopupMenuLayerDepth_);
 
     const RECT nextDockRect =
@@ -417,9 +527,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !IsWindowVisible(floatingDockHwnd_);
     if (firstReveal)
     {
-        // A no-activate popup can otherwise remain underneath the foreground
-        // process. Keep the floating host topmost for its entire visible
-        // lifetime so shell operations and app windows cannot bury it.
+        // Create the hidden host in its eventual Z-order band. Desktop mode
+        // must never transiently enter the topmost band during first layout;
+        // promoted mode remains topmost so a no-activate popup is not buried.
         SetWindowPos(
             floatingDockHwnd_,
             floatingLayerTopmost

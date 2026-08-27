@@ -279,34 +279,25 @@ inline bool ShouldRetireDesktopDockCopy(
         presentationBarrierSucceeded;
 }
 
-/**
- * @brief A pending close owns a frozen hand-off surface.
- *
- * Once the backdrop transaction has been submitted, ordinary HWND paints or
- * pointer-message tail redraws must not mutate that shared surface before the
- * desktop copy has taken ownership.
- */
+/** @brief 常驻 DockHost 只要处于活动状态且未关闭事务挂起就可以继续绘制。 */
 inline bool ShouldRenderFloatingDockFrame(
-    bool floatingDockVisible,
+    bool dockHostActive,
     bool closePending)
 {
-    return floatingDockVisible && !closePending;
+    return dockHostActive && !closePending;
 }
 
 /**
- * @brief 仅当两个 Dock 之间已不存在任何可见或待完成的交接时执行后续动作。
+ * @brief 仅当 Dock 已降回桌面层且不存在待完成事务时执行后续动作。
  *
- * 最小化等延后命令会抓取或改变桌面画面；只检查逻辑 visible 会在
- * 异步合成回调尚未完成时提前执行，因此还必须检查待完成状态与 HWND。
+ * 常驻 Host 在桌面态继续可见，不能再把 HWND 可见性当成关闭完成条件。
  */
 inline bool CanRunPostCloseActionImmediately(
     bool floatingDockVisible,
-    bool closePending,
-    bool floatingDockWindowVisible)
+    bool closePending)
 {
     return !floatingDockVisible &&
-        !closePending &&
-        !floatingDockWindowVisible;
+        !closePending;
 }
 
 /**

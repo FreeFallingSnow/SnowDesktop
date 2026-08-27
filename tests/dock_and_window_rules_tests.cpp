@@ -2189,14 +2189,12 @@ int main(int argc, char** argv)
                 false, false),
         "a pending close must freeze the floating Dock hand-off surface");
     Check(floatingDock::CanRunPostCloseActionImmediately(
-            false, false, false) &&
+            false, false) &&
             !floatingDock::CanRunPostCloseActionImmediately(
-                true, false, true) &&
+                true, false) &&
             !floatingDock::CanRunPostCloseActionImmediately(
-                false, true, true) &&
-            !floatingDock::CanRunPostCloseActionImmediately(
-                false, false, true),
-        "window commands must wait until every floating Dock close layer is gone");
+                false, true),
+        "window commands may run once the persistent DockHost is back in the desktop band");
     Check(!floatingDock::
             ShouldInvalidateDesktopHover(true) &&
             floatingDock::
@@ -3780,6 +3778,9 @@ int main(int argc, char** argv)
         const std::string animationSchedulerSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_animation_scheduler.cpp");
+        const std::string shellMenuSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_shell_menu.cpp");
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
@@ -4120,6 +4121,36 @@ int main(int argc, char** argv)
                 hidePopupPairSource.find(
                   "SWP_HIDEWINDOW") != std::string::npos,
             "a popup backdrop must hide with its content host in one popup-only window transaction");
+        const std::size_t showPopupPairBegin =
+            backdropCompositorSource.find(
+                "void DesktopBackdropCompositor::ShowPopupWindowPair(");
+        const std::size_t showPopupPairEnd =
+            backdropCompositorSource.find(
+                "void DesktopBackdropCompositor::HidePopupWindowPair(",
+                showPopupPairBegin);
+        const std::string showPopupPairSource =
+            showPopupPairBegin != std::string::npos &&
+                    showPopupPairEnd != std::string::npos
+                ? backdropCompositorSource.substr(
+                    showPopupPairBegin,
+                    showPopupPairEnd - showPopupPairBegin)
+                : std::string{};
+        Check(!showPopupPairSource.empty() &&
+                showPopupPairSource.find(
+                  "impl_->contentWindow == contentWindow") !=
+                    std::string::npos &&
+                showPopupPairSource.find(
+                  "BeginDeferWindowPos(2)") !=
+                    std::string::npos &&
+                showPopupPairSource.find(
+                  "deferred, backdropWindow, nullptr") !=
+                    std::string::npos &&
+                showPopupPairSource.find(
+                  "deferred, contentWindow, nullptr") !=
+                    std::string::npos &&
+                showPopupPairSource.find(
+                  "SWP_SHOWWINDOW") != std::string::npos,
+            "a persistent popup host must reveal its content and backdrop in one window transaction");
         Check(luaPanelSource.find("ReleaseCapture();") ==
                     std::string::npos &&
                 CountOccurrences(
@@ -4382,101 +4413,133 @@ int main(int argc, char** argv)
                     closeFloatingDockBegin,
                     closeFloatingDockEnd - closeFloatingDockBegin)
                 : std::string{};
-        const std::size_t closeDesktopCacheVisible =
+        const std::size_t persistentCloseBegin =
             closeFloatingDockSource.find(
-                "floatingDockDesktopCacheEffect_->SetOpacity(1.0f)");
-        const std::size_t closeHandoffRectRefresh =
+                "if (floatingDockHostActive_)");
+        const std::size_t persistentCloseEnd =
             closeFloatingDockSource.find(
-                "floatingDockDesktopBackdropHandoffRect_ =",
-                closeFloatingDockSource.find(
-                    "desktopBackdropCompositor_.EndFrame(false);"));
-        const std::size_t closeFloatingContentHidden =
-            closeFloatingDockSource.find(
-                "floatingDockDcompEffect_->SetOpacity(0.0f)",
-                closeDesktopCacheVisible);
-        const std::size_t closeContentCommit =
-            closeFloatingDockSource.find(
-                "FlushPendingCompositionCommit()",
-                closeFloatingContentHidden);
-        const std::size_t closeDesktopGlassVisible =
-            closeFloatingDockSource.find(
-                "desktopBackdropCompositor_.SetPanelOpacity(",
-                closeContentCommit);
-        const std::size_t closeFloatingGlassHidden =
-            closeFloatingDockSource.find(
-                "SetVisualOpacity(0.0f)",
-                closeDesktopGlassVisible);
-        const std::size_t closeGlassCommit =
-            closeFloatingDockSource.find(
-                "CommitVisualChangesAndNotify(",
-                closeFloatingGlassHidden);
-        const std::size_t closeDeferredReturn =
-            closeFloatingDockSource.find(
-                "if (deferBackdropHandoff)",
-                closeGlassCommit);
-        Check(!closeFloatingDockSource.empty() &&
-                closeHandoffRectRefresh != std::string::npos &&
-                closeDesktopCacheVisible != std::string::npos &&
-                closeFloatingContentHidden != std::string::npos &&
-                closeContentCommit != std::string::npos &&
-                closeDesktopGlassVisible != std::string::npos &&
-                closeFloatingGlassHidden != std::string::npos &&
-                closeGlassCommit != std::string::npos &&
-                closeDeferredReturn != std::string::npos &&
-                closeHandoffRectRefresh < closeDesktopCacheVisible &&
-                closeDesktopCacheVisible < closeFloatingContentHidden &&
-                closeFloatingContentHidden < closeContentCommit &&
-                closeContentCommit < closeDesktopGlassVisible &&
-                closeDesktopGlassVisible < closeFloatingGlassHidden &&
-                closeFloatingGlassHidden < closeGlassCommit &&
-                closeGlassCommit < closeDeferredReturn,
-            "floating Dock close must queue content and glass ownership changes before awaiting either channel");
-        Check(closeHandoffRectRefresh != std::string::npos &&
-                closeFloatingDockSource.find(
-                    "desktopDockPanelRect;",
-                    closeHandoffRectRefresh) != std::string::npos,
-            "floating Dock close must retain the staged desktop glass at its current rectangle during intervening desktop paints");
-        const std::size_t completeFloatingDockBegin =
-            floatingDockInteractionSource.find(
-                "void DesktopApp::CompleteFloatingDockCloseHandoff()");
-        const std::size_t completeFloatingDockEnd =
-            floatingDockInteractionSource.find(
-                "void DesktopApp::FinishFloatingDockCloseHandoff()",
-                completeFloatingDockBegin);
-        const std::string completeFloatingDockSource =
-            completeFloatingDockBegin != std::string::npos &&
-                    completeFloatingDockEnd != std::string::npos
-                ? floatingDockInteractionSource.substr(
-                    completeFloatingDockBegin,
-                    completeFloatingDockEnd - completeFloatingDockBegin)
+                "if (floatingDockClosePending_)",
+                persistentCloseBegin);
+        const std::string persistentCloseSource =
+            persistentCloseBegin != std::string::npos &&
+                    persistentCloseEnd != std::string::npos
+                ? closeFloatingDockSource.substr(
+                    persistentCloseBegin,
+                    persistentCloseEnd - persistentCloseBegin)
                 : std::string{};
-        const std::size_t closeContentFence =
-            completeFloatingDockSource.find(
-                "WaitForCompositionPresentation(");
-        const std::size_t closeScreenFence =
-            completeFloatingDockSource.find(
-                "DwmFlush()", closeContentFence);
-        const std::size_t closePopupPair =
-            completeFloatingDockSource.find(
-                "floatingDockBackdropCompositor_.HidePopupWindowPair(",
-                closeScreenFence);
-        Check(!completeFloatingDockSource.empty() &&
-                closeContentFence != std::string::npos &&
-                closeScreenFence != std::string::npos &&
-                closePopupPair != std::string::npos &&
-                closeContentFence < closePopupPair &&
-                closeContentFence < closeScreenFence &&
-                closeScreenFence < closePopupPair &&
-                completeFloatingDockSource.find(
-                    "floatingDockDesktopCacheEffect_->SetOpacity(1.0f)") ==
-                        std::string::npos &&
-                completeFloatingDockSource.find(
-                    "floatingDockDcompEffect_->SetOpacity(0.0f)") ==
-                        std::string::npos &&
-                completeFloatingDockSource.find(
-                    "ShowWindow(floatingDockHwnd_, SW_HIDE)") ==
-                        std::string::npos,
-            "floating Dock completion must cross the screen-presentation boundary before hiding its content/backdrop windows together");
+        const std::size_t closeDemoted =
+            persistentCloseSource.find(
+                "floatingDockVisible_ = false;");
+        const std::size_t closeLayerApplied =
+            persistentCloseSource.find(
+                "ApplyFloatingDockLayerPolicy();",
+                closeDemoted);
+        const std::size_t closeVisibilityUpdated =
+            persistentCloseSource.find(
+                "UpdatePersistentDockHostVisibility();",
+                closeLayerApplied);
+        const std::size_t closeActionRun =
+            persistentCloseSource.find(
+                "if (action)",
+                closeVisibilityUpdated);
+        const std::size_t closePersistentReturn =
+            persistentCloseSource.find(
+                "return;", closeActionRun);
+        Check(!persistentCloseSource.empty() &&
+                closeDemoted != std::string::npos &&
+                closeLayerApplied != std::string::npos &&
+                closeVisibilityUpdated != std::string::npos &&
+                closeActionRun != std::string::npos &&
+                closePersistentReturn != std::string::npos &&
+                closeDemoted < closeLayerApplied &&
+                closeLayerApplied < closeVisibilityUpdated &&
+                closeVisibilityUpdated < closeActionRun &&
+                closeActionRun < closePersistentReturn &&
+                persistentCloseSource.find(
+                  "SetOpacity(") == std::string::npos &&
+                persistentCloseSource.find(
+                  "HidePopupWindowPair(") == std::string::npos &&
+                persistentCloseSource.find(
+                  "WaitForCompositionPresentation(") ==
+                    std::string::npos &&
+                persistentCloseSource.find(
+                  "DwmFlush()") == std::string::npos,
+            "closing a persistent DockHost must only demote its Z-order before running the queued command");
+
+        const std::size_t showFloatingDockBegin =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::ShowFloatingDock(");
+        const std::size_t legacyShowBegin =
+            floatingDockInteractionSource.find(
+                "if (!CreateFloatingDockWindow())",
+                showFloatingDockBegin);
+        const std::string persistentShowSource =
+            showFloatingDockBegin != std::string::npos &&
+                    legacyShowBegin != std::string::npos
+                ? floatingDockInteractionSource.substr(
+                    showFloatingDockBegin,
+                    legacyShowBegin - showFloatingDockBegin)
+                : std::string{};
+        const std::size_t showHostSynced =
+            persistentShowSource.find(
+                "SyncPersistentDockHost(targetMonitor)");
+        const std::size_t showPromoted =
+            persistentShowSource.find(
+                "floatingDockVisible_ = true;",
+                showHostSynced);
+        const std::size_t showLayerApplied =
+            persistentShowSource.find(
+                "ApplyFloatingDockLayerPolicy();",
+                showPromoted);
+        const std::size_t showVisibilityUpdated =
+            persistentShowSource.find(
+                "UpdatePersistentDockHostVisibility();",
+                showLayerApplied);
+        const std::size_t showPersistentReturn =
+            persistentShowSource.find(
+                "return;", showVisibilityUpdated);
+        Check(!persistentShowSource.empty() &&
+                showHostSynced != std::string::npos &&
+                showPromoted != std::string::npos &&
+                showLayerApplied != std::string::npos &&
+                showVisibilityUpdated != std::string::npos &&
+                showPersistentReturn != std::string::npos &&
+                showHostSynced < showPromoted &&
+                showPromoted < showLayerApplied &&
+                showLayerApplied < showVisibilityUpdated &&
+                showVisibilityUpdated < showPersistentReturn &&
+                persistentShowSource.find(
+                  "SetOpacity(") == std::string::npos &&
+                persistentShowSource.find(
+                  "WaitForCompositionPresentation(") ==
+                    std::string::npos,
+            "summoning a persistent DockHost must promote the existing host without a content hand-off");
+
+        const std::size_t desktopBandPolicyBegin =
+            shellMenuSource.find(
+                "if (!floatingDockVisible_)");
+        const std::size_t floatingBandPolicyBegin =
+            shellMenuSource.find(
+                "const bool shouldBeTopmost =",
+                desktopBandPolicyBegin);
+        const std::string desktopBandPolicySource =
+            desktopBandPolicyBegin != std::string::npos &&
+                    floatingBandPolicyBegin != std::string::npos
+                ? shellMenuSource.substr(
+                    desktopBandPolicyBegin,
+                    floatingBandPolicyBegin - desktopBandPolicyBegin)
+                : std::string{};
+        Check(!desktopBandPolicySource.empty() &&
+                desktopBandPolicySource.find(
+                  "HWND_NOTOPMOST") != std::string::npos &&
+                desktopBandPolicySource.find(
+                  "desktopWindows_.host") != std::string::npos &&
+                desktopBandPolicySource.find(
+                  "GW_HWNDPREV") != std::string::npos &&
+                desktopBandPolicySource.find(
+                  "floatingDockBackdropCompositor_.Reattach(") !=
+                    std::string::npos,
+            "desktop mode must place the persistent DockHost above WorkerW and keep its backdrop directly behind it");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");

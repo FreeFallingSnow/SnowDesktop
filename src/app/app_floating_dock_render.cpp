@@ -115,7 +115,7 @@ void DesktopApp::PaintFloatingDockWindow(
     const bool mayRender =
         snowdesktop::floating_dock_rules::
             ShouldRenderFloatingDockFrame(
-                floatingDockVisible_,
+                floatingDockHostActive_,
                 floatingDockClosePending_);
     const bool rendered = mayRender &&
         RenderFloatingDockCompositionFrame();
@@ -162,7 +162,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
     {
-        if (!floatingDockVisible_ ||
+        if (!floatingDockHostActive_ ||
             floatingDockClosePending_)
             return HTTRANSPARENT;
         POINT hitDesktopPoint{
@@ -221,7 +221,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         // replay full input from inside WM_MOUSELEAVE: the region can change
         // again during presentation and otherwise create a posted-message loop.
         if (floatingDockHoverHandoffPending_ &&
-            !floatingDockVisible_)
+            !floatingDockHostActive_)
         {
             floatingDockHoverHandoffPending_ = false;
             floatingDockHoverHandoffRect_ = {};

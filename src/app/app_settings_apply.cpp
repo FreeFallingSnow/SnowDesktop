@@ -1893,6 +1893,7 @@ void DesktopApp::ToggleDesktopIconsVisibility()
 
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdatePersistentDockHostVisibility();
 }
 
 bool DesktopApp::HasRetainedElements() const

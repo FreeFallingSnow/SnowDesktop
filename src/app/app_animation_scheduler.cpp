@@ -248,14 +248,14 @@ void DesktopApp::EnsureUiAnimationFrame()
                     }
 
                     if (floatingDockPointerPresentPending_ &&
-                        (!floatingDockVisible_ ||
+                        (!floatingDockHostActive_ ||
                          !floatingDockHwnd_ ||
                          !IsWindow(floatingDockHwnd_)))
                     {
                         floatingDockPointerPresentPending_ = false;
                     }
                     if (floatingDockPointerPresentPending_ &&
-                        floatingDockVisible_ &&
+                        floatingDockHostActive_ &&
                         floatingDockHwnd_ &&
                         IsWindow(floatingDockHwnd_) &&
                         !floatingDockCompositionPaintInProgress_)

@@ -312,7 +312,7 @@ bool DesktopApp::FlushPendingCompositionCommit()
     compositionCommitPending_ = false;
     RecoverCompositionRenderFailure(
         L"Batched DComp Commit", hr);
-    if (floatingDockVisible_)
+    if (floatingDockHostActive_)
         RecoverFloatingDockCompositionFailure(
             L"Batched DComp Commit", hr);
     if (ShouldShowFloatingPopupWindow())

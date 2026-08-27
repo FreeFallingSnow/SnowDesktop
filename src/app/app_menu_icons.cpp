@@ -659,7 +659,7 @@ UINT DesktopApp::ShowModernMenu(
         IsWindow(floatingPopupHwnd_) &&
         IsWindowVisible(floatingPopupHwnd_);
     const bool floatingDockHostVisible =
-        floatingDockVisible_ &&
+        floatingDockHostActive_ &&
         floatingDockHwnd_ &&
         IsWindow(floatingDockHwnd_);
     const HWND zOrderOwner =

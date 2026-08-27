@@ -127,7 +127,7 @@ bool DesktopApp::EnsureDragHintWindow()
     hintHwnd_ = nullptr;
     InvalidateDragHintRaster();
     const HWND owner =
-        floatingDockVisible_ && floatingDockHwnd_ &&
+        floatingDockHostActive_ && floatingDockHwnd_ &&
             IsWindow(floatingDockHwnd_)
         ? floatingDockHwnd_ : nullptr;
     hintHwnd_ = CreateWindowExW(
@@ -143,7 +143,7 @@ void DesktopApp::SyncDragHintWindowOwner()
     if (!hintHwnd_ || !IsWindow(hintHwnd_))
         return;
     const HWND requestedOwner =
-        floatingDockVisible_ && floatingDockHwnd_ &&
+        floatingDockHostActive_ && floatingDockHwnd_ &&
             IsWindow(floatingDockHwnd_)
         ? floatingDockHwnd_ : nullptr;
     const HWND currentOwner = reinterpret_cast<HWND>(
