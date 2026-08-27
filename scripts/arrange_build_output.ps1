@@ -151,7 +151,17 @@ try {
         Copy-Item -LiteralPath $source -Destination $target -Force
         $rootSource = Resolve-ContainedPath `
             -Root $BuildOutput -RelativePath ([string]$entry.path)
-        if (Test-Path -LiteralPath $rootSource -PathType Leaf) {
+        if (Test-SnowDesktopExecutableRootResource `
+                -RelativePath ([string]$entry.path)) {
+            New-Item -ItemType Directory `
+                -Path (Split-Path -Parent $rootSource) -Force | Out-Null
+            if (-not [string]::Equals(
+                    $source, $rootSource,
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                Copy-Item -LiteralPath $source -Destination $rootSource -Force
+            }
+        }
+        elseif (Test-Path -LiteralPath $rootSource -PathType Leaf) {
             $rootRuntimeSources.Add($rootSource)
         }
     }
@@ -249,7 +259,9 @@ try {
         }
     }
     foreach ($entry in @($deployment.files)) {
-        if ([string]$entry.source -ceq "SnowDesktop") {
+        if ([string]$entry.source -ceq "SnowDesktop" -or
+            (Test-SnowDesktopExecutableRootResource `
+                -RelativePath ([string]$entry.path))) {
             continue
         }
         $logicalRootSource = Resolve-ContainedPath `

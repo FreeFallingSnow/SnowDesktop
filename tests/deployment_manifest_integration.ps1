@@ -24,11 +24,16 @@ try {
         [pscustomobject]@{ name = "SnowDesktop.winmd"; source = "SnowDesktop" },
         [pscustomobject]@{ name = "Microsoft.WindowsAppRuntime.dll"; source = "Microsoft.WindowsAppSDK" },
         [pscustomobject]@{ name = "Microsoft.ui.xaml.dll"; source = "Microsoft.WindowsAppSDK" },
-        [pscustomobject]@{ name = "Microsoft.UI.Xaml.winmd"; source = "Microsoft.WindowsAppSDK" }
+        [pscustomobject]@{ name = "Microsoft.UI.Xaml.winmd"; source = "Microsoft.WindowsAppSDK" },
+        [pscustomobject]@{ name = "Microsoft.UI.Xaml/Assets/map.html"; source = "Microsoft.WindowsAppSDK" },
+        [pscustomobject]@{ name = "Microsoft.UI.Xaml/Assets/NoiseAsset_256X256_PNG.png"; source = "Microsoft.WindowsAppSDK" }
     )
     foreach ($entry in $required) {
+        $fixturePath = Join-Path $target $entry.name
+        New-Item -ItemType Directory `
+            -Path (Split-Path -Parent $fixturePath) -Force | Out-Null
         [System.IO.File]::WriteAllText(
-            (Join-Path $target $entry.name), "fixture:$($entry.name)")
+            $fixturePath, "fixture:$($entry.name)")
     }
     $fileList = Join-Path $intermediate "files.txt"
     [System.IO.File]::WriteAllLines(
@@ -140,7 +145,7 @@ try {
     $namespace = [System.Xml.XmlNamespaceManager]::new($xml.NameTable)
     $namespace.AddNamespace(
         "m", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
-    if (@($deployment.files).Count -ne 7 -or
+    if (@($deployment.files).Count -ne 9 -or
         @($deployment.notices).Count -ne 7 -or
         $xml.SelectNodes(
             "/m:Package/m:Extensions/m:Extension", $namespace).Count -ne 1 -or
@@ -151,6 +156,17 @@ try {
             "SnowDesktop.Runtime\Microsoft.ui.xaml.dll") -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $relocatedPayload `
             "SnowDesktop.Runtime\Microsoft.ui.xaml.dll") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $payload `
+            "Microsoft.UI.Xaml\Assets\NoiseAsset_256X256_PNG.png") `
+            -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $payload `
+            "SnowDesktop.Runtime\Microsoft.UI.Xaml\Assets\NoiseAsset_256X256_PNG.png") `
+            -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $relocatedPayload `
+            "Microsoft.UI.Xaml\Assets\map.html") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $relocatedPayload `
+            "SnowDesktop.Runtime\Microsoft.UI.Xaml\Assets\map.html") `
+            -PathType Leaf) -or
         (Test-Path -LiteralPath (Join-Path $payload `
             "Microsoft.ui.xaml.dll") -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $payload `

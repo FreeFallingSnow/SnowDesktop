@@ -130,6 +130,11 @@ void TestPackagers(const std::string& module,
         "portable, MSIX, and Steam payloads use the same deployment manifest");
     Check(module.find("Enable-SnowDesktopPrivateRuntimeAssembly") !=
             std::string::npos &&
+            module.find("Test-SnowDesktopExecutableRootResource") !=
+                std::string::npos &&
+            module.find("Microsoft.UI.Xaml/Assets/") !=
+                std::string::npos &&
+            module.find("$rootTarget") != std::string::npos &&
             module.find("SnowDesktop.Runtime") != std::string::npos &&
             release.find("-RuntimeDirectory $runtimeDirectory") !=
                 std::string::npos &&
@@ -193,6 +198,8 @@ void TestBuildOutputLayout(const std::string& cmake,
         "CTest executables and symbols use the dedicated configuration tests directory");
     Check(arranger.find("SnowDesktop.Runtime") != std::string::npos &&
             arranger.find("Enable-SnowDesktopPrivateRuntimeAssembly") !=
+                std::string::npos &&
+            arranger.find("Test-SnowDesktopExecutableRootResource") !=
                 std::string::npos &&
             arranger.find("Microsoft.WindowsAppRuntime.Bootstrap.dll") !=
                 std::string::npos &&

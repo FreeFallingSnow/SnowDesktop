@@ -142,6 +142,15 @@ function Get-SnowDesktopRuntimeRelativePath {
     return "$RuntimeDirectory/$relativePath"
 }
 
+function Test-SnowDesktopExecutableRootResource {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+
+    $normalized = $RelativePath.Replace("\", "/")
+    return $normalized.StartsWith(
+        "Microsoft.UI.Xaml/Assets/",
+        [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Copy-SnowDesktopDeploymentPayload {
     param(
         [Parameter(Mandatory = $true)][string]$BuildOutput,
@@ -167,6 +176,20 @@ function Copy-SnowDesktopDeploymentPayload {
         $parent = Split-Path -Parent $target
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $target -Force
+        if (-not [string]::IsNullOrWhiteSpace($RuntimeDirectory) -and
+            [string]$entry.source -cne "SnowDesktop" -and
+            (Test-SnowDesktopExecutableRootResource `
+                -RelativePath ([string]$entry.path))) {
+            # WinUI resolves these loose resources through the application's
+            # main PRI, so it expects them relative to the executable root
+            # even though the self-contained DLLs also live in the private
+            # runtime assembly.
+            $rootTarget = Resolve-SnowDesktopDeploymentPath `
+                -Root $Destination -RelativePath ([string]$entry.path)
+            New-Item -ItemType Directory `
+                -Path (Split-Path -Parent $rootTarget) -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination $rootTarget -Force
+        }
     }
     foreach ($entry in @($manifest.notices)) {
         $source = Resolve-SnowDesktopDeploymentPath `
@@ -597,5 +620,6 @@ function Merge-SnowDesktopAppxFragments {
 Export-ModuleMember -Function `
     Read-SnowDesktopDeploymentManifest, `
     Copy-SnowDesktopDeploymentPayload, `
+    Test-SnowDesktopExecutableRootResource, `
     Enable-SnowDesktopPrivateRuntimeAssembly, `
     Merge-SnowDesktopAppxFragments
