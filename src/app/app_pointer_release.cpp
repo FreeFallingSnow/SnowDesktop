@@ -585,12 +585,10 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     const bool popupEntryOnFloatingDock =
         (entryType == DockEntryType::Collection ||
          folderEntry) &&
-        floatingDockVisible_ &&
-        dock == floatingDockContainer_;
+        IsDockContainerPromoted(dock);
     if (hwnd_ && !popupEntryOnFloatingDock)
     {
-        if (floatingDockVisible_ &&
-            dock == floatingDockContainer_)
+        if (IsDockContainerPromoted(dock))
             InvalidateFloatingDockWindow(true);
         else
         {
@@ -662,7 +660,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             const bool requiresFloatingDockClose =
                 snowdesktop::dock_window_rules::
                     RequiresFloatingDockMinimizeCaptureIsolation(
-                        floatingDockVisible_,
+                        IsSelectedPersistentDockHostPromoted(),
                         pressedWindowAction);
             if (!requiresFloatingDockClose)
             {

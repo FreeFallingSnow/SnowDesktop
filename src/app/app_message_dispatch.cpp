@@ -439,27 +439,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             floatingDockHoverHandoffPending_ = false;
             floatingDockHoverHandoffRect_ = {};
         }
-        if (floatingDockVisible_ && floatingDockHost_)
+        if (floatingDockVisible_)
         {
             POINT cursor{};
             if (GetCursorPos(&cursor))
             {
                 ScreenToClient(hwnd_, &cursor);
-                const bool inFloatingLayer =
-                    PtInRect(
-                        &floatingDockHost_->dockRect,
-                        cursor) ||
-                    (!IsRectEmpty(
-                            &floatingDockHost_->popupRect) &&
-                        PtInRect(
-                            &floatingDockHost_->popupRect,
-                            cursor)) ||
-                    (!IsRectEmpty(
-                            &floatingDockHost_->tooltipRect) &&
-                        PtInRect(
-                            &floatingDockHost_->tooltipRect,
-                            cursor));
-                if (inFloatingLayer)
+                if (IsPointInPromotedDockLayer(cursor))
                     return 0;
             }
         }

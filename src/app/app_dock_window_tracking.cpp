@@ -819,7 +819,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
             : DockClickAction::Minimize;
     }
     const HWND transitionKeepBelowWindow =
-        floatingDockVisible_ && floatingDockHwnd_ &&
+        IsSelectedPersistentDockHostPromoted() &&
+            floatingDockHwnd_ &&
             IsWindowVisible(floatingDockHwnd_)
         ? floatingDockHwnd_ : nullptr;
 
@@ -951,7 +952,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             : DockClickAction::Minimize;
     }
     const HWND transitionKeepBelowWindow =
-        floatingDockVisible_ && floatingDockHwnd_ &&
+        IsSelectedPersistentDockHostPromoted() &&
+            floatingDockHwnd_ &&
             IsWindowVisible(floatingDockHwnd_)
         ? floatingDockHwnd_ : nullptr;
     bool nowMinimized = false;
@@ -1093,7 +1095,8 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
     const bool requiresFloatingDockClose =
         snowdesktop::dock_window_rules::
             RequiresFloatingDockMinimizeCaptureIsolation(
-                floatingDockVisible_, action);
+                IsSelectedPersistentDockHostPromoted(),
+                action);
     if (requiresFloatingDockClose &&
         command(DockWindowTransitionCapturePolicy::
             LiveThumbnailOnly))

@@ -1551,7 +1551,7 @@ void DesktopApp::BeginDesktopPassthroughHold()
     HideDragHintWindow();
 
     desktopPassthroughHoldActive_ = true;
-    CloseFloatingDockThen(
+    CloseAllFloatingDocksThen(
         [this]() {
             // The hotkey may have been released while the compositor hand-off
             // was pending. In that case the desktop must remain visible.
@@ -1919,7 +1919,9 @@ bool DesktopApp::IsOpenPopupRetained() const
         return false;
     if (dockFolderPopupOpen_ || popupAnchoredToDock_)
         return dockSettings_.keepWhenDesktopHidden ||
-            floatingDockVisible_;
+            (collectionPopupDockHost_ &&
+                IsPersistentDockHostPromoted(
+                    *collectionPopupDockHost_));
     return popupWidgetIndex_ < widgets_.size() &&
         widgets_[popupWidgetIndex_].keepWhenDesktopHidden;
 }
@@ -1933,8 +1935,8 @@ bool DesktopApp::IsRetainedContainer(
         return true;
     if (dynamic_cast<const DockContainer*>(container))
         return dockSettings_.keepWhenDesktopHidden ||
-            (floatingDockVisible_ &&
-                container == floatingDockContainer_);
+            IsDockContainerPromoted(
+                static_cast<const DockContainer*>(container));
     if (container == dockFolderPopupContainer_.get())
         return dockSettings_.keepWhenDesktopHidden;
     const auto* widget =
@@ -1958,8 +1960,7 @@ bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
             GetDockContainerAtPoint(pt);
         dock &&
         (dockSettings_.keepWhenDesktopHidden ||
-            (floatingDockVisible_ &&
-                dock == floatingDockContainer_)))
+            IsDockContainerPromoted(dock)))
         return true;
     for (const auto& widgetData : widgets_)
     {

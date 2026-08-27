@@ -715,6 +715,9 @@ private:
         RECT popupRect{};
         RECT tooltipRect{};
         bool active = false;
+        // Promotion is per monitor. Selection only identifies the Host that
+        // currently owns pointer/keyboard-associated actions.
+        bool promoted = false;
         bool revealPending = false;
         bool frameReady = false;
         bool compositionRenderRecoveryPending = false;
@@ -1047,6 +1050,15 @@ private:
     bool IsPersistentDockBackdropWindow(HWND hwnd) const;
     bool IsDockHostedByPersistentHost(
         const DockContainer* container) const;
+    bool IsPersistentDockHostPromoted(
+        const PersistentDockHost& host) const;
+    bool IsDockContainerPromoted(
+        const DockContainer* container) const;
+    bool IsSelectedPersistentDockHostPromoted() const;
+    bool HasPromotedDockHosts() const;
+    bool IsPointOnPromotedDock(POINT point) const;
+    bool IsPointInPromotedDockLayer(POINT point) const;
+    void RefreshFloatingDockVisibilityState();
     void SelectPersistentDockHost(PersistentDockHost* host);
     /** @brief 为每个启用 Dock 的显示器同步一个常驻顶层 Host。 */
     bool SyncPersistentDockHosts();
@@ -1064,8 +1076,19 @@ private:
     void CloseFloatingDock(
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
+    void CloseFloatingDock(
+        PersistentDockHost& host,
+        FloatingDockCloseFocusPolicy focusPolicy =
+            FloatingDockCloseFocusPolicy::RestorePrevious);
+    void CloseAllFloatingDocks(
+        FloatingDockCloseFocusPolicy focusPolicy =
+            FloatingDockCloseFocusPolicy::RestorePrevious);
     /** @brief 将常驻 DockHost 降回桌面层后执行动作。 */
     void CloseFloatingDockThen(
+        std::function<void()> action,
+        FloatingDockCloseFocusPolicy focusPolicy =
+            FloatingDockCloseFocusPolicy::RestorePrevious);
+    void CloseAllFloatingDocksThen(
         std::function<void()> action,
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
@@ -3298,8 +3321,8 @@ private:
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
-    // Convenience aliases for the selected/promoted Host. Each display owns
-    // an independent PersistentDockHost and never transfers these resources.
+    // Convenience aliases for the selected interaction Host. Each display
+    // owns an independent PersistentDockHost and never transfers resources.
     HWND floatingDockHwnd_ = nullptr;
     HWND floatingPopupHwnd_ = nullptr;
     HWND dragPreviewHwnd_ = nullptr;
@@ -3312,9 +3335,11 @@ private:
     DockContainer* floatingDockContainer_ = nullptr;
     HMONITOR floatingDockMonitor_ = nullptr;
     RECT floatingDockHoverHandoffRect_{};
+    // Aggregate cache: true when at least one per-monitor Host is promoted.
+    // It is not the owner of promotion; PersistentDockHost::promoted is.
     bool floatingDockVisible_ = false;
-    // 每屏 DockHost 在桌面态也持续拥有唯一视觉；visible 仅表示选中的
-    // Host 是否已提升到悬浮层，不再等同于 HWND/合成资源的生命周期。
+    // 每屏 DockHost 在桌面态也持续拥有唯一视觉；visible 不再等同于
+    // 单一 Host 所有权，也不等同于 HWND/合成资源的生命周期。
     bool floatingDockHostActive_ = false;
     bool floatingDockKeyboardSessionActive_ = false;
     HWND floatingDockLogicalForegroundWindow_ = nullptr;
@@ -3697,6 +3722,9 @@ private:
     int popupScrollOffset_ = 0;
     bool popupHasAnchor_ = false;
     bool popupAnchoredToDock_ = false;
+    // A shared popup keeps its own DockHost association; pointer selection
+    // may move to another simultaneously promoted Dock while it remains open.
+    PersistentDockHost* collectionPopupDockHost_ = nullptr;
     DockPosition popupDockPosition_ = DockPosition::Bottom;
     POINT popupAnchorPoint_{};
     std::wstring popupPageId_;

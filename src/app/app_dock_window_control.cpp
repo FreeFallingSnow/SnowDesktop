@@ -251,8 +251,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     if (!dock || !dock->ContainsInteractivePoint(clientPoint))
         return false;
     target.floatingLayer =
-        floatingDockHostActive_ &&
-        dock == floatingDockContainer_;
+        IsDockContainerPromoted(dock);
 
     RECT anchor{};
     bool found = false;

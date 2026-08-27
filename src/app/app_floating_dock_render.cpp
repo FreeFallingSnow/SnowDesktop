@@ -138,8 +138,6 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (!floatingDockVisible_)
-        SelectPersistentDockHost(&host);
     auto desktopPoint = [&]() {
         return FloatingDockClientToDesktop(
             host,
@@ -206,6 +204,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_MOUSEMOVE:
     {
+        SelectPersistentDockHost(&host);
         floatingDockHoverHandoffPending_ = false;
         floatingDockHoverHandoffRect_ = {};
         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
@@ -268,6 +267,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     }
     case WM_LBUTTONDOWN:
+        SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         OnLeftButtonDown(wp, desktopLParam());
@@ -276,6 +276,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         InvalidateFloatingDockWindow(host, true);
         return 0;
     case WM_LBUTTONUP:
+        SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         OnLeftButtonUpAt(
@@ -299,6 +300,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_LBUTTONDBLCLK:
     {
+        SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         const LRESULT result = HandleMessage(
@@ -310,18 +312,22 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     }
     case WM_MBUTTONDOWN:
     case WM_MBUTTONDBLCLK:
+        SelectPersistentDockHost(&host);
         OnMiddleButtonDown(wp, desktopLParam());
         return 0;
     case WM_MBUTTONUP:
+        SelectPersistentDockHost(&host);
         OnMiddleButtonUpAt(wp, desktopPoint());
         return 0;
     case WM_RBUTTONUP:
+        SelectPersistentDockHost(&host);
         handlingPersistentDockHost_ = &host;
         OnRightButtonUp(desktopLParam());
         handlingPersistentDockHost_ = nullptr;
         InvalidateFloatingDockWindow(host, true);
         return 0;
     case WM_MOUSEWHEEL:
+        SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         OnMouseWheel(wp, lp);
@@ -337,10 +343,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         InvalidateFloatingDockWindow(host, false);
         return 0;
     case WM_DISPLAYCHANGE:
-        CloseFloatingDock();
+        CloseAllFloatingDocks();
         return 0;
     case WM_CLOSE:
-        CloseFloatingDock();
+        CloseFloatingDock(host);
         return 0;
     case WM_DESTROY:
         host.hwnd = nullptr;

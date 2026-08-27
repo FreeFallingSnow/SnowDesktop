@@ -33,14 +33,16 @@ void DesktopApp::ShowFloatingDock(
         return;
     }
 
-    // The persistent Host already owns the only Dock visual. Summoning only
-    // promotes the content HWND and its paired backdrop to the floating band.
-    floatingDockVisible_ = true;
+    // Each monitor owns its persistent visual independently. Summoning this
+    // Host promotes only its content/backdrop pair and leaves other promoted
+    // monitors untouched.
+    floatingDockHost_->promoted = true;
+    RefreshFloatingDockVisibilityState();
     floatingDockLastPointerPresentTick_ = 0;
-    if (floatingDockHost_)
-        UpdatePersistentDockHostVisibility(
-            *floatingDockHost_);
-    InvalidateFloatingDockWindow(true);
+    UpdatePersistentDockHostVisibility(
+        *floatingDockHost_);
+    InvalidateFloatingDockWindow(
+        *floatingDockHost_, true);
     BeginFloatingDockKeyboardSession();
 }
 
@@ -48,20 +50,100 @@ bool DesktopApp::
 EnsureFloatingDockVisibleForAssociatedSurface(
     POINT anchorScreen)
 {
-    if (!snowdesktop::floating_dock_rules::
-            ShouldSummonForDockSurface(
-                true, floatingDockVisible_))
-    {
-        return floatingDockVisible_;
-    }
-
     const HMONITOR monitor = MonitorFromPoint(
         anchorScreen, MONITOR_DEFAULTTONEAREST);
+    if (!SyncPersistentDockHost(monitor) ||
+        !floatingDockHost_)
+    {
+        return false;
+    }
+    if (!snowdesktop::floating_dock_rules::
+            ShouldSummonForDockSurface(
+                true,
+                IsPersistentDockHostPromoted(
+                    *floatingDockHost_)))
+    {
+        return true;
+    }
+
     ShowFloatingDock(monitor);
-    return floatingDockVisible_;
+    return floatingDockHost_ &&
+        IsPersistentDockHostPromoted(
+            *floatingDockHost_);
 }
 
 void DesktopApp::CloseFloatingDock(
+    FloatingDockCloseFocusPolicy focusPolicy)
+{
+    if (!floatingDockHost_ ||
+        !IsPersistentDockHostPromoted(
+            *floatingDockHost_))
+    {
+        std::function<void()> action =
+            std::move(floatingDockPostCloseAction_);
+        floatingDockPostCloseAction_ = {};
+        if (action)
+            action();
+        return;
+    }
+    CloseFloatingDock(*floatingDockHost_, focusPolicy);
+}
+
+void DesktopApp::CloseFloatingDock(
+    PersistentDockHost& host,
+    FloatingDockCloseFocusPolicy focusPolicy)
+{
+    if (!IsPersistentDockHostPromoted(host))
+    {
+        std::function<void()> action =
+            std::move(floatingDockPostCloseAction_);
+        floatingDockPostCloseAction_ = {};
+        if (action)
+            action();
+        return;
+    }
+
+    const bool closingSelectedHost =
+        floatingDockHost_ == &host;
+    if (closingSelectedHost)
+    {
+        floatingDockHoverTargetOwner_ = nullptr;
+        floatingDockHoverTargetIndex_ = 0;
+        floatingDockHoverTargetKind_ = 0;
+        if (floatingDockKeyboardSessionActive_)
+            EndFloatingDockKeyboardSession(focusPolicy);
+        DismissDockWindowPreviewUntilLeave();
+        floatingDockPointerPresentPending_ = false;
+        floatingDockHoverHandoffPending_ = false;
+        floatingDockHoverHandoffRect_ = {};
+    }
+
+    host.promoted = false;
+    RefreshFloatingDockVisibilityState();
+    UpdatePersistentDockHostVisibility(host);
+    InvalidateFloatingDockWindow(host, true);
+
+    if (closingSelectedHost && floatingDockVisible_)
+    {
+        for (const auto& candidate : persistentDockHosts_)
+        {
+            if (candidate &&
+                IsPersistentDockHostPromoted(*candidate))
+            {
+                SelectPersistentDockHost(candidate.get());
+                break;
+            }
+        }
+    }
+
+    std::function<void()> action =
+        std::move(floatingDockPostCloseAction_);
+    floatingDockPostCloseAction_ = {};
+    if (action)
+        action();
+}
+
+void DesktopApp::CloseAllFloatingDocks(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
     floatingDockHoverTargetOwner_ = nullptr;
@@ -72,20 +154,22 @@ void DesktopApp::CloseFloatingDock(
 
     if (floatingDockVisible_)
         DismissDockWindowPreviewUntilLeave();
-    floatingDockVisible_ = false;
     floatingDockPointerPresentPending_ = false;
     floatingDockHoverHandoffPending_ = false;
     floatingDockHoverHandoffRect_ = {};
 
-    // Demote the same content/backdrop pair beside WorkerW. The HWND, DComp
-    // surface and native glass remain attached and continue rendering the
-    // ordinary desktop Dock without any opacity or ownership exchange.
-    if (floatingDockHost_)
+    for (const auto& host : persistentDockHosts_)
     {
-        UpdatePersistentDockHostVisibility(
-            *floatingDockHost_);
-        InvalidateFloatingDockWindow(
-            *floatingDockHost_, true);
+        if (host)
+            host->promoted = false;
+    }
+    RefreshFloatingDockVisibilityState();
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host)
+            continue;
+        UpdatePersistentDockHostVisibility(*host);
+        InvalidateFloatingDockWindow(*host, true);
     }
 
     std::function<void()> action =
@@ -99,7 +183,7 @@ void DesktopApp::CloseFloatingDockThen(
     std::function<void()> action,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
-    if (!floatingDockVisible_)
+    if (!IsSelectedPersistentDockHostPromoted())
     {
         if (action)
             action();
@@ -110,12 +194,34 @@ void DesktopApp::CloseFloatingDockThen(
     CloseFloatingDock(focusPolicy);
 }
 
+void DesktopApp::CloseAllFloatingDocksThen(
+    std::function<void()> action,
+    FloatingDockCloseFocusPolicy focusPolicy)
+{
+    if (!floatingDockVisible_)
+    {
+        if (action)
+            action();
+        return;
+    }
+
+    floatingDockPostCloseAction_ = std::move(action);
+    CloseAllFloatingDocks(focusPolicy);
+}
+
 void DesktopApp::ToggleFloatingDock()
 {
-    if (floatingDockVisible_)
-        CloseFloatingDock();
+    POINT cursorScreen{};
+    GetCursorPos(&cursorScreen);
+    const HMONITOR monitor = MonitorFromPoint(
+        cursorScreen, MONITOR_DEFAULTTONEAREST);
+    if (!SyncPersistentDockHost(monitor) ||
+        !floatingDockHost_)
+        return;
+    if (IsPersistentDockHostPromoted(*floatingDockHost_))
+        CloseFloatingDock(*floatingDockHost_);
     else
-        ShowFloatingDock();
+        ShowFloatingDock(monitor);
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(

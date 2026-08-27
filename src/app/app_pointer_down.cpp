@@ -520,8 +520,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (dock->ContainsInteractivePoint(pt))
         {
             const auto primeDockMinimizeSnapshot =
-                [this]() {
-                    if (floatingDockVisible_ ||
+                [this, dock]() {
+                    if (IsDockContainerPromoted(dock) ||
                         dockPressedWindowAction_ !=
                             snowdesktop::dock_window_rules::
                                 DockClickAction::Minimize ||

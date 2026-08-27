@@ -238,6 +238,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
     popupAnchoredToDock_ = false;
+    collectionPopupDockHost_ = nullptr;
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
@@ -276,6 +277,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                     dockItem->GetBounds(), anchorPoint);
                 popupDockPosition_ = dockSettings_.position;
                 popupAnchoredToDock_ = true;
+                collectionPopupDockHost_ =
+                    FindPersistentDockHost(dock);
                 switch (popupDockPosition_)
                 {
                 case DockPosition::Top:
@@ -303,21 +306,17 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     StartCollectionPopupAnimation();
-    if (floatingDockVisible_)
+    if (popupAnchoredToDock_)
     {
-        DockContainer* dock =
-            GetDockContainerAtPoint(anchorPoint);
-        if (!dock)
-            dock =
-                SelectFloatingDockContainerForMonitor(
-                    floatingDockMonitor_);
-        if (PersistentDockHost* host =
-                FindPersistentDockHost(dock))
-            SyncPersistentDockHost(host->monitor);
-        if (floatingDockHost_)
-            UpdateFloatingDockWindowBounds(
-                *floatingDockHost_);
-        InvalidateFloatingDockWindow(true);
+        PersistentDockHost* host =
+            collectionPopupDockHost_;
+        if (host &&
+            IsPersistentDockHostPromoted(*host))
+        {
+            SelectPersistentDockHost(host);
+            UpdateFloatingDockWindowBounds(*host);
+            InvalidateFloatingDockWindow(*host, true);
+        }
     }
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))

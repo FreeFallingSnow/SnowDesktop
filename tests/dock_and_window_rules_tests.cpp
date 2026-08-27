@@ -4346,7 +4346,7 @@ int main(int argc, char** argv)
                 dockDpiChangeHandler.find(
                   "CloseFloatingDock(") == std::string::npos &&
                 dockDisplayChangeHandler.find(
-                  "CloseFloatingDock();") != std::string::npos,
+                  "CloseAllFloatingDocks();") != std::string::npos,
             "cross-monitor DPI migration must preserve reusable popup and Dock hosts while a real display change may dismiss them");
         Check(floatingDockSource.find(
                   "ReserveCollectionPopupEnvelope") ==
@@ -4398,21 +4398,25 @@ int main(int argc, char** argv)
                     dockPointerSamplerBegin);
         const std::size_t outsideDockClose =
             dockPointerSamplerSource.find(
-                "CloseFloatingDock(");
+                "CloseAllFloatingDocks(");
         const std::size_t preserveOutsideForeground =
             dockPointerSamplerSource.find(
                 "FloatingDockCloseFocusPolicy::PreserveCurrent",
                 outsideDockClose);
         Check(!dockPointerSamplerSource.empty() &&
                 outsideDockClose != std::string::npos &&
+                dockPointerSamplerSource.find(
+                  "IsPointOnPromotedDock(desktopPoint)") !=
+                    std::string::npos &&
                 preserveOutsideForeground != std::string::npos,
-            "outside-click dismissal must preserve the foreground selected by the physical click");
+            "outside-click dismissal must ignore every promoted Dock and preserve the foreground selected by a true external click");
         const std::size_t closeFloatingDockBegin =
             floatingDockInteractionSource.find(
-                "void DesktopApp::CloseFloatingDock(");
+                "void DesktopApp::CloseFloatingDock(\n"
+                "    PersistentDockHost& host");
         const std::size_t closeFloatingDockEnd =
             floatingDockInteractionSource.find(
-                "void DesktopApp::CloseFloatingDockThen(",
+                "void DesktopApp::CloseAllFloatingDocks(",
                 closeFloatingDockBegin);
         const std::string closeFloatingDockSource =
             closeFloatingDockBegin != std::string::npos &&
@@ -4423,20 +4427,26 @@ int main(int argc, char** argv)
                 : std::string{};
         const std::size_t closeDemoted =
             closeFloatingDockSource.find(
-                "floatingDockVisible_ = false;");
+                "host.promoted = false;");
+        const std::size_t closeAggregateUpdated =
+            closeFloatingDockSource.find(
+                "RefreshFloatingDockVisibilityState();",
+                closeDemoted);
         const std::size_t closeVisibilityUpdated =
             closeFloatingDockSource.find(
                 "UpdatePersistentDockHostVisibility(",
-                closeDemoted);
+                closeAggregateUpdated);
         const std::size_t closeActionRun =
             closeFloatingDockSource.find(
                 "if (action)",
                 closeVisibilityUpdated);
         Check(!closeFloatingDockSource.empty() &&
                 closeDemoted != std::string::npos &&
+                closeAggregateUpdated != std::string::npos &&
                 closeVisibilityUpdated != std::string::npos &&
                 closeActionRun != std::string::npos &&
-                closeDemoted < closeVisibilityUpdated &&
+                closeDemoted < closeAggregateUpdated &&
+                closeAggregateUpdated < closeVisibilityUpdated &&
                 closeVisibilityUpdated < closeActionRun &&
                 closeFloatingDockSource.find(
                   "ApplyFloatingDockLayerPolicy();") ==
@@ -4471,18 +4481,26 @@ int main(int argc, char** argv)
                 "SyncPersistentDockHost(targetMonitor)");
         const std::size_t showPromoted =
             persistentShowSource.find(
-                "floatingDockVisible_ = true;",
+                "floatingDockHost_->promoted = true;",
                 showHostSynced);
+        const std::size_t showAggregateUpdated =
+            persistentShowSource.find(
+                "RefreshFloatingDockVisibilityState();",
+                showPromoted);
         const std::size_t showVisibilityUpdated =
             persistentShowSource.find(
                 "UpdatePersistentDockHostVisibility(",
-                showPromoted);
+                showAggregateUpdated);
         Check(!persistentShowSource.empty() &&
                 showHostSynced != std::string::npos &&
                 showPromoted != std::string::npos &&
+                showAggregateUpdated != std::string::npos &&
                 showVisibilityUpdated != std::string::npos &&
                 showHostSynced < showPromoted &&
-                showPromoted < showVisibilityUpdated &&
+                showPromoted < showAggregateUpdated &&
+                showAggregateUpdated < showVisibilityUpdated &&
+                persistentShowSource.find(
+                  "promoted = false") == std::string::npos &&
                 persistentShowSource.find(
                   "ApplyFloatingDockLayerPolicy();") ==
                     std::string::npos &&
@@ -4497,7 +4515,7 @@ int main(int argc, char** argv)
                 persistentShowSource.find(
                   "WaitForCompositionPresentation(") ==
                     std::string::npos,
-            "summoning a persistent DockHost must promote the existing host without a content hand-off");
+            "summoning a persistent DockHost must promote only the target host without a content hand-off or demoting its siblings");
         Check(floatingDockInteractionSource.find(
                   "CompleteFloatingDockCloseHandoff") ==
                     std::string::npos &&
@@ -4552,6 +4570,9 @@ int main(int argc, char** argv)
                   "struct PersistentDockHost") !=
                     std::string::npos &&
                 appHeaderSource.find(
+                  "bool promoted = false;") !=
+                    std::string::npos &&
+                appHeaderSource.find(
                   "persistentDockHosts_") !=
                     std::string::npos &&
                 floatingDockSource.find(
@@ -4566,7 +4587,29 @@ int main(int argc, char** argv)
                 persistentShowSource.find(
                   "CreateWindowExW(") ==
                     std::string::npos,
-            "each monitor must retain its own persistent DockHost while promotion reuses the selected host");
+            "each monitor must retain its own persistent DockHost and independent promotion state");
+        const std::size_t toggleFloatingDockBegin =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::ToggleFloatingDock()");
+        const std::string toggleFloatingDockSource =
+            toggleFloatingDockBegin == std::string::npos
+                ? std::string{}
+                : floatingDockInteractionSource.substr(
+                    toggleFloatingDockBegin);
+        Check(!toggleFloatingDockSource.empty() &&
+                toggleFloatingDockSource.find(
+                  "SyncPersistentDockHost(monitor)") !=
+                    std::string::npos &&
+                toggleFloatingDockSource.find(
+                  "IsPersistentDockHostPromoted(*floatingDockHost_)") !=
+                    std::string::npos &&
+                toggleFloatingDockSource.find(
+                  "CloseFloatingDock(*floatingDockHost_)") !=
+                    std::string::npos &&
+                toggleFloatingDockSource.find(
+                  "ShowFloatingDock(monitor)") !=
+                    std::string::npos,
+            "the shortcut must toggle the DockHost on the cursor monitor instead of treating any promoted host as a global singleton");
         const std::size_t syncDockHostsBegin =
             floatingDockSource.find(
                 "bool DesktopApp::SyncPersistentDockHosts()");
@@ -4592,6 +4635,16 @@ int main(int argc, char** argv)
                 dockHostCreated != std::string::npos &&
                 graphicsReadyGuard < dockHostCreated,
             "persistent DockHosts must not be created before the graphics devices are ready");
+        Check(floatingDockSource.find(
+                  "if (floatingDockVisible_ && previous != selected)") ==
+                    std::string::npos &&
+                popupLifecycleSource.find(
+                  "collectionPopupDockHost_") !=
+                    std::string::npos &&
+                popupTransitionSource.find(
+                  "collectionPopupDockHost_") !=
+                    std::string::npos,
+            "selecting another DockHost must not restack siblings, and a shared popup must retain its originating DockHost");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");

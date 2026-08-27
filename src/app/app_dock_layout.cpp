@@ -19,8 +19,7 @@ DockContainer* DesktopApp::GetDockContainerAtPoint(POINT point) const
         if (!dock) continue;
         if (desktopIconsHidden_ &&
             !dockSettings_.keepWhenDesktopHidden &&
-            !(floatingDockVisible_ &&
-                dock == floatingDockContainer_))
+            !IsDockContainerPromoted(dock))
             continue;
         if (dock->ContainsInteractivePoint(point)) return dock;
     }

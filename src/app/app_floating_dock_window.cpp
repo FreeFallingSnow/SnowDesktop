@@ -90,6 +90,78 @@ bool DesktopApp::IsDockHostedByPersistentHost(
     return host && host->active;
 }
 
+bool DesktopApp::IsPersistentDockHostPromoted(
+    const PersistentDockHost& host) const
+{
+    return host.active && host.promoted;
+}
+
+bool DesktopApp::IsDockContainerPromoted(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    return host && IsPersistentDockHostPromoted(*host);
+}
+
+bool DesktopApp::
+IsSelectedPersistentDockHostPromoted() const
+{
+    return floatingDockHost_ &&
+        IsPersistentDockHostPromoted(*floatingDockHost_);
+}
+
+bool DesktopApp::HasPromotedDockHosts() const
+{
+    return std::any_of(
+        persistentDockHosts_.begin(),
+        persistentDockHosts_.end(),
+        [this](const auto& host) {
+            return host &&
+                IsPersistentDockHostPromoted(*host);
+        });
+}
+
+bool DesktopApp::IsPointOnPromotedDock(
+    POINT point) const
+{
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (host &&
+            IsPersistentDockHostPromoted(*host) &&
+            PtInRect(&host->dockRect, point))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DesktopApp::IsPointInPromotedDockLayer(
+    POINT point) const
+{
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (host &&
+            IsPersistentDockHostPromoted(*host) &&
+            snowdesktop::floating_dock_rules::
+                IsPointInVisibleLayer(
+                    point,
+                    host->dockRect,
+                    host->popupRect,
+                    host->tooltipRect))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DesktopApp::RefreshFloatingDockVisibilityState()
+{
+    floatingDockVisible_ = HasPromotedDockHosts();
+}
+
 void DesktopApp::SelectPersistentDockHost(
     PersistentDockHost* host)
 {
@@ -102,7 +174,10 @@ void DesktopApp::SelectPersistentDockHost(
 void DesktopApp::DestroyPersistentDockHost(
     PersistentDockHost& host)
 {
+    if (collectionPopupDockHost_ == &host)
+        collectionPopupDockHost_ = nullptr;
     host.active = false;
+    host.promoted = false;
     host.revealPending = false;
     host.backdrop.Reset();
     if (host.dropTargetRegistered &&
@@ -198,7 +273,7 @@ bool DesktopApp::SyncPersistentDockHosts()
         floatingDockHostActive_;
     if (!floatingDockHostActive_)
     {
-        floatingDockVisible_ = false;
+        RefreshFloatingDockVisibilityState();
         return false;
     }
 
@@ -267,8 +342,7 @@ bool DesktopApp::SyncPersistentDockHosts()
         }
         SelectPersistentDockHost(selected);
     }
-    if (!selected)
-        floatingDockVisible_ = false;
+    RefreshFloatingDockVisibilityState();
     UpdatePersistentDockHostVisibility();
     InvalidateDragStaticScene();
     return selected != nullptr;
@@ -291,8 +365,6 @@ bool DesktopApp::SyncPersistentDockHost(
     if (requiresRebuild &&
         !SyncPersistentDockHosts())
         return false;
-    PersistentDockHost* const previous =
-        floatingDockHost_;
     PersistentDockHost* selected = nullptr;
     if (preferredMonitor)
     {
@@ -311,15 +383,6 @@ bool DesktopApp::SyncPersistentDockHost(
     if (!selected && !persistentDockHosts_.empty())
         selected = persistentDockHosts_.front().get();
     SelectPersistentDockHost(selected);
-    if (floatingDockVisible_ && previous != selected)
-    {
-        if (previous)
-            UpdatePersistentDockHostVisibility(
-                *previous);
-        if (selected)
-            UpdatePersistentDockHostVisibility(
-                *selected);
-    }
     return selected != nullptr;
 }
 
@@ -329,8 +392,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
     const bool promoted =
-        floatingDockVisible_ &&
-        floatingDockHost_ == &host;
+        IsPersistentDockHostPromoted(host);
     const bool shouldShow = host.active &&
         (promoted ||
             (customDesktopVisible_ &&
@@ -484,8 +546,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !host.container)
         return;
     const bool promoted =
-        floatingDockVisible_ &&
-        floatingDockHost_ == &host;
+        IsPersistentDockHostPromoted(host);
     const HWND dockHostHwnd = host.hwnd;
     RECT& floatingDockSourceRect_ = host.sourceRect;
     RECT& floatingDockRect_ = host.dockRect;

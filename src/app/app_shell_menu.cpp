@@ -178,8 +178,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         !IsWindow(host.hwnd))
         return;
     const bool promoted =
-        floatingDockVisible_ &&
-        floatingDockHost_ == &host;
+        IsPersistentDockHostPromoted(host);
 
     if (!promoted)
     {

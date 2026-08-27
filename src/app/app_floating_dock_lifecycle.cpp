@@ -30,7 +30,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
                 dockSettings_.floatingShortcutMode,
                 dockSettings_.floatingEdgeSwipeEnabled))
     {
-        CloseFloatingDock();
+        CloseAllFloatingDocks();
         return;
     }
 
@@ -192,15 +192,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 DockAssociatedPopupInteractionRect(
                     popupAnchoredToDock_,
                     floatingPopupCollectionRegion_);
-        if (snowdesktop::floating_dock_rules::
+        if (!IsPointOnPromotedDock(desktopPoint) &&
+            snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
                         dragDropController_.IsExternalDragActive(),
                     HasActiveContextMenuSession(),
                     desktopPoint,
-                    floatingDockHost_
-                        ? floatingDockHost_->dockRect
-                        : RECT{},
+                    RECT{},
                     dockPopupInteractionRect,
                     previewDesktopRect,
                     quickNavigationInteractionRect))
@@ -209,7 +208,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             // restore the window that preceded the floating Dock: doing so can
             // race the clicked window's activation and force two DWM/backdrop
             // source changes through the shared close handoff.
-            CloseFloatingDock(
+            CloseAllFloatingDocks(
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.Reset();
             return;
@@ -282,10 +281,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             dockSettings_.position,
             GetTickCount(), edgeBand,
             requiredTravel);
-    if (triggered && !floatingDockVisible_)
+    const PersistentDockHost* targetHost =
+        FindPersistentDockHost(dock);
+    if (triggered &&
+        (!targetHost ||
+            !IsPersistentDockHostPromoted(*targetHost)))
     {
         WriteDiagnosticLogEntry(
             L"Floating Dock edge swipe received");
-        ShowFloatingDock();
+        ShowFloatingDock(monitor);
     }
 }

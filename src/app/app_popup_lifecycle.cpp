@@ -164,6 +164,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     popupScrollOffset_ = 0;
     popupHasAnchor_ = true;
     popupAnchoredToDock_ = false;
+    collectionPopupDockHost_ = nullptr;
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_.clear();
 
@@ -295,6 +296,8 @@ void DesktopApp::OpenDockFolderPopupAt(
                     dockItem->GetBounds(), anchorPoint);
             popupDockPosition_ = dockSettings_.position;
             popupAnchoredToDock_ = true;
+            collectionPopupDockHost_ =
+                FindPersistentDockHost(dock);
             switch (popupDockPosition_)
             {
             case DockPosition::Top:
@@ -328,21 +331,17 @@ void DesktopApp::OpenDockFolderPopupAt(
     RefreshDockFolderPopup();
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
-    if (floatingDockVisible_)
+    if (popupAnchoredToDock_)
     {
-        DockContainer* dock =
-            GetDockContainerAtPoint(anchorPoint);
-        if (!dock)
-            dock =
-                SelectFloatingDockContainerForMonitor(
-                    floatingDockMonitor_);
-        if (PersistentDockHost* host =
-                FindPersistentDockHost(dock))
-            SyncPersistentDockHost(host->monitor);
-        if (floatingDockHost_)
-            UpdateFloatingDockWindowBounds(
-                *floatingDockHost_);
-        InvalidateFloatingDockWindow(true);
+        PersistentDockHost* host =
+            collectionPopupDockHost_;
+        if (host &&
+            IsPersistentDockHostPromoted(*host))
+        {
+            SelectPersistentDockHost(host);
+            UpdateFloatingDockWindowBounds(*host);
+            InvalidateFloatingDockWindow(*host, true);
+        }
     }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -457,6 +456,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
     popupAnchoredToDock_ = false;
+    collectionPopupDockHost_ = nullptr;
     popupAnchorPoint_ = {};
     popupPageId_.clear();
     popupCategoryId_.clear();

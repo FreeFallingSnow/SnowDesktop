@@ -503,7 +503,9 @@ void DesktopApp::DrawDynamicOverlays(
             : renderingFloatingDock_
             ? !collectionHostedByFloatingPopup &&
                 popupAnchoredToDock_ &&
-                floatingDockVisible_
+                renderingPersistentDockHost_ &&
+                IsPersistentDockHostPromoted(
+                    *renderingPersistentDockHost_)
             : !collectionHostedByFloatingPopup &&
                 !(popupAnchoredToDock_ &&
                     persistentDockHostOwnsVisual_);
