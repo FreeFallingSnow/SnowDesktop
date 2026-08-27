@@ -650,6 +650,18 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ShowWindow(window, SW_HIDE)") !=
                 std::string::npos,
         "closing flushes the controller and widget sessions before hiding");
+    const std::size_t nonClientLeave =
+        source.find("case WM_NCMOUSELEAVE:");
+    const std::size_t dwmNonClientLeave = source.find(
+        "DwmDefWindowProc(", nonClientLeave);
+    const std::size_t closeMessage = source.find(
+        "case WM_CLOSE:", nonClientLeave);
+    Check(nonClientLeave != std::string::npos &&
+            dwmNonClientLeave != std::string::npos &&
+            closeMessage != std::string::npos &&
+            nonClientLeave < dwmNonClientLeave &&
+            dwmNonClientLeave < closeMessage,
+        "non-client leave reaches DWM so reused caption buttons clear hover before reopen");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&

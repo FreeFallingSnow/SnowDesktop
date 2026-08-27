@@ -2448,6 +2448,20 @@ struct SettingsWindowHost::Impl
             }
             return 0;
         }
+        case WM_NCMOUSELEAVE:
+        {
+            // The integrated title bar keeps Windows-owned caption buttons.
+            // DWM must observe the non-client leave before a close hides this
+            // reusable HWND, otherwise its Close-button hover can survive the
+            // next ShowWindow call.
+            LRESULT dwmResult = 0;
+            if (DwmDefWindowProc(
+                    hwnd, message, wParam, lParam, &dwmResult))
+            {
+                return dwmResult;
+            }
+            break;
+        }
         case WM_CLOSE:
             (void)self->HideWindow();
             return 0;
