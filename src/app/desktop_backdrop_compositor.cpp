@@ -17,6 +17,7 @@
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <DispatcherQueue.h>
+#include <dwmapi.h>
 #include <windows.graphics.effects.interop.h>
 #include <windows.ui.composition.interop.h>
 
@@ -355,11 +356,57 @@ struct DesktopBackdropCompositor::Impl
         SIZE size{};
         if (!QueryContentPlacement(parent, origin, size))
             return false;
-        SetWindowPos(backdropWindow, contentWindow, origin.x, origin.y,
-            size.cx, size.cy, SWP_NOACTIVATE |
-            (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 
-        return true;
+        POINT screenOrigin = origin;
+        SetLastError(ERROR_SUCCESS);
+        if (!popupMode &&
+            MapWindowPoints(
+                parent, nullptr, &screenOrigin, 1) == 0 &&
+            GetLastError() != ERROR_SUCCESS)
+        {
+            return false;
+        }
+        const RECT expectedRect{
+            screenOrigin.x,
+            screenOrigin.y,
+            screenOrigin.x + size.cx,
+            screenOrigin.y + size.cy,
+        };
+        RECT currentRect{};
+        const bool placementMatches =
+            GetWindowRect(backdropWindow, &currentRect) &&
+            EqualRect(&currentRect, &expectedRect) != FALSE;
+        const bool pairedZOrder =
+            GetWindow(backdropWindow, GW_HWNDPREV) ==
+                contentWindow;
+        const bool currentlyVisible =
+            (GetWindowLongPtrW(
+                backdropWindow, GWL_STYLE) & WS_VISIBLE) != 0;
+        const bool visibilityMatches =
+            currentlyVisible == visible;
+        if (placementMatches && pairedZOrder &&
+            visibilityMatches)
+        {
+            // Ordinary panel paints do not own HWND placement. In
+            // particular, a Dock demotion has already moved the content and
+            // glass pair in one DeferWindowPos transaction; issuing another
+            // helper-only SetWindowPos/SWP_SHOWWINDOW here would make DWM
+            // re-evaluate the BackdropBrush source for an extra frame.
+            return true;
+        }
+
+        UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        if (placementMatches)
+            flags |= SWP_NOMOVE | SWP_NOSIZE;
+        if (pairedZOrder)
+            flags |= SWP_NOZORDER;
+        if (!visibilityMatches)
+            flags |= visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+        return SetWindowPos(
+            backdropWindow,
+            pairedZOrder ? nullptr : contentWindow,
+            origin.x, origin.y, size.cx, size.cy,
+            flags) != FALSE;
     }
 
     bool SyncPanelWindowRegion()
@@ -735,6 +782,11 @@ bool DesktopBackdropCompositor::InitializeInternal(
         impl_->contentWindow = nullptr;
         return false;
     }
+    const BOOL disableTransitions = TRUE;
+    DwmSetWindowAttribute(
+        impl_->backdropWindow,
+        DWMWA_TRANSITIONS_FORCEDISABLED,
+        &disableTransitions, sizeof(disableTransitions));
 
     try
     {

@@ -4169,6 +4169,43 @@ int main(int argc, char** argv)
                 zOrderContent < zOrderBackdrop &&
                 zOrderBackdrop < zOrderBatchEnd,
             "a popup content/backdrop pair must change Z-order in one window transaction");
+        const std::size_t syncBackdropPlacementBegin =
+            backdropCompositorSource.find(
+                "bool SyncWindowPlacement()");
+        const std::size_t syncBackdropPlacementEnd =
+            backdropCompositorSource.find(
+                "bool SyncPanelWindowRegion()",
+                syncBackdropPlacementBegin);
+        const std::string syncBackdropPlacementSource =
+            syncBackdropPlacementBegin != std::string::npos &&
+                    syncBackdropPlacementEnd != std::string::npos
+                ? backdropCompositorSource.substr(
+                    syncBackdropPlacementBegin,
+                    syncBackdropPlacementEnd -
+                        syncBackdropPlacementBegin)
+                : std::string{};
+        Check(!syncBackdropPlacementSource.empty() &&
+                syncBackdropPlacementSource.find(
+                  "const bool placementMatches =") !=
+                    std::string::npos &&
+                syncBackdropPlacementSource.find(
+                  "const bool pairedZOrder =") !=
+                    std::string::npos &&
+                syncBackdropPlacementSource.find(
+                  "const bool visibilityMatches =") !=
+                    std::string::npos &&
+                syncBackdropPlacementSource.find(
+                  "if (placementMatches && pairedZOrder &&\n"
+                  "            visibilityMatches)") !=
+                    std::string::npos &&
+                syncBackdropPlacementSource.find(
+                  "if (!visibilityMatches)\n"
+                  "            flags |= visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "DWMWA_TRANSITIONS_FORCEDISABLED") !=
+                    std::string::npos,
+            "an aligned backdrop helper must not receive a second Z-order/show transaction during paint, and it must disable native DWM transitions");
         Check(luaPanelSource.find("ReleaseCapture();") ==
                     std::string::npos &&
                 CountOccurrences(
@@ -4449,6 +4486,10 @@ int main(int argc, char** argv)
             closeFloatingDockSource.find(
                 "UpdatePersistentDockHostVisibility(",
                 closeAggregateUpdated);
+        const std::size_t closeKeyboardEnded =
+            closeFloatingDockSource.find(
+                "EndFloatingDockKeyboardSession(focusPolicy);",
+                closeVisibilityUpdated);
         const std::size_t closeActionRun =
             closeFloatingDockSource.find(
                 "if (action)",
@@ -4457,10 +4498,12 @@ int main(int argc, char** argv)
                 closeDemoted != std::string::npos &&
                 closeAggregateUpdated != std::string::npos &&
                 closeVisibilityUpdated != std::string::npos &&
+                closeKeyboardEnded != std::string::npos &&
                 closeActionRun != std::string::npos &&
                 closeDemoted < closeAggregateUpdated &&
                 closeAggregateUpdated < closeVisibilityUpdated &&
-                closeVisibilityUpdated < closeActionRun &&
+                closeVisibilityUpdated < closeKeyboardEnded &&
+                closeKeyboardEnded < closeActionRun &&
                 closeFloatingDockSource.find(
                   "ApplyFloatingDockLayerPolicy();") ==
                     std::string::npos &&
@@ -4473,7 +4516,40 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 closeFloatingDockSource.find(
                   "DwmFlush()") == std::string::npos,
-            "closing a persistent DockHost must only demote its Z-order before running the queued command");
+            "closing a persistent DockHost must demote its window pair before changing foreground focus or running the queued command");
+        const std::size_t closeAllFloatingDocksBegin =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::CloseAllFloatingDocks(");
+        const std::size_t closeAllFloatingDocksEnd =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::CloseFloatingDockThen(",
+                closeAllFloatingDocksBegin);
+        const std::string closeAllFloatingDocksSource =
+            closeAllFloatingDocksBegin != std::string::npos &&
+                    closeAllFloatingDocksEnd != std::string::npos
+                ? floatingDockInteractionSource.substr(
+                    closeAllFloatingDocksBegin,
+                    closeAllFloatingDocksEnd -
+                        closeAllFloatingDocksBegin)
+                : std::string{};
+        const std::size_t closeAllDemoted =
+            closeAllFloatingDocksSource.find(
+                "host->promoted = false;");
+        const std::size_t closeAllVisibilityUpdated =
+            closeAllFloatingDocksSource.find(
+                "UpdatePersistentDockHostVisibility(*host);",
+                closeAllDemoted);
+        const std::size_t closeAllKeyboardEnded =
+            closeAllFloatingDocksSource.find(
+                "EndFloatingDockKeyboardSession(focusPolicy);",
+                closeAllVisibilityUpdated);
+        Check(!closeAllFloatingDocksSource.empty() &&
+                closeAllDemoted != std::string::npos &&
+                closeAllVisibilityUpdated != std::string::npos &&
+                closeAllKeyboardEnded != std::string::npos &&
+                closeAllDemoted < closeAllVisibilityUpdated &&
+                closeAllVisibilityUpdated < closeAllKeyboardEnded,
+            "closing every promoted Dock must finish all pair demotions before the foreground input proxy is hidden");
 
         const std::size_t showFloatingDockBegin =
             floatingDockInteractionSource.find(

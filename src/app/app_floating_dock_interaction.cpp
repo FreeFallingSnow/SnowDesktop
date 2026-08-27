@@ -105,13 +105,14 @@ void DesktopApp::CloseFloatingDock(
 
     const bool closingSelectedHost =
         floatingDockHost_ == &host;
+    const bool endKeyboardSession =
+        closingSelectedHost &&
+        floatingDockKeyboardSessionActive_;
     if (closingSelectedHost)
     {
         floatingDockHoverTargetOwner_ = nullptr;
         floatingDockHoverTargetIndex_ = 0;
         floatingDockHoverTargetKind_ = 0;
-        if (floatingDockKeyboardSessionActive_)
-            EndFloatingDockKeyboardSession(focusPolicy);
         DismissDockWindowPreviewUntilLeave();
         floatingDockPointerPresentPending_ = false;
         floatingDockHoverHandoffPending_ = false;
@@ -122,6 +123,8 @@ void DesktopApp::CloseFloatingDock(
     RefreshFloatingDockVisibilityState();
     UpdatePersistentDockHostVisibility(host);
     InvalidateFloatingDockWindow(host, true);
+    if (endKeyboardSession)
+        EndFloatingDockKeyboardSession(focusPolicy);
 
     if (closingSelectedHost && floatingDockVisible_)
     {
@@ -146,12 +149,11 @@ void DesktopApp::CloseFloatingDock(
 void DesktopApp::CloseAllFloatingDocks(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    const bool endKeyboardSession =
+        floatingDockKeyboardSessionActive_;
     floatingDockHoverTargetOwner_ = nullptr;
     floatingDockHoverTargetIndex_ = 0;
     floatingDockHoverTargetKind_ = 0;
-    if (floatingDockKeyboardSessionActive_)
-        EndFloatingDockKeyboardSession(focusPolicy);
-
     if (floatingDockVisible_)
         DismissDockWindowPreviewUntilLeave();
     floatingDockPointerPresentPending_ = false;
@@ -171,6 +173,8 @@ void DesktopApp::CloseAllFloatingDocks(
         UpdatePersistentDockHostVisibility(*host);
         InvalidateFloatingDockWindow(*host, true);
     }
+    if (endKeyboardSession)
+        EndFloatingDockKeyboardSession(focusPolicy);
 
     std::function<void()> action =
         std::move(floatingDockPostCloseAction_);
