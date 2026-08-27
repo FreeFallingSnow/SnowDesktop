@@ -3956,7 +3956,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 CountOccurrences(
                   quickNavigationWindowSource,
-                  "StartQuickNavigationCompositionAnimation()") == 3 &&
+                  "StartQuickNavigationCompositionAnimation()") >= 3 &&
                 animationSchedulerSource.find(
                   "!quickNavigationAnimationCompositorDriven_") !=
                     std::string::npos,
@@ -4667,17 +4667,35 @@ int main(int argc, char** argv)
                   "collectionPopupDockHost_ == requestedDockHost") !=
                     std::string::npos,
             "popup toggle identity must include the originating DockHost when switching between monitors");
+        const std::size_t quickNavigationRetargetBegin =
+            quickNavigationWindowSource.find(
+                "if (quickNavigationOpen_)\n    {");
+        const std::size_t quickNavigationRetargetEnd =
+            quickNavigationWindowSource.find(
+                "quickNavigationPostCloseAction_ = {};",
+                quickNavigationRetargetBegin);
+        const std::string quickNavigationRetargetSource =
+            quickNavigationRetargetBegin != std::string::npos &&
+                    quickNavigationRetargetEnd != std::string::npos
+                ? quickNavigationWindowSource.substr(
+                    quickNavigationRetargetBegin,
+                    quickNavigationRetargetEnd -
+                        quickNavigationRetargetBegin)
+                : std::string{};
         Check(appHeaderSource.find(
                   "PersistentDockHost* quickNavigationDockHost_") !=
                     std::string::npos &&
                 quickNavigationInteractionSource.find(
                   "requestedDockHost != quickNavigationDockHost_") !=
                     std::string::npos &&
-                quickNavigationWindowSource.find(
+                quickNavigationRetargetSource.find(
                   "quickNavigationDockHost_ = requestedDockHost;") !=
                     std::string::npos &&
-                quickNavigationWindowSource.find(
+                quickNavigationRetargetSource.find(
                   "PositionQuickNavigationWindow();") !=
+                    std::string::npos &&
+                quickNavigationRetargetSource.find(
+                  "StartQuickNavigationCompositionAnimation();") !=
                     std::string::npos,
             "an open Dock-search panel must retarget its owner, anchor and monitor instead of consuming another Dock's search press");
         Check(floatingDockSource.find(
