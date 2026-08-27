@@ -237,6 +237,29 @@ function Get-MakeAppxPath {
     throw "makeappx.exe was not found in the Windows SDK."
 }
 
+function Disable-InputPriMerging {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    [xml]$config = Get-Content -LiteralPath $Path -Encoding UTF8 -Raw
+    $priIndexers = @($config.resources.index.'indexer-config' |
+        Where-Object { $_.type -eq "PRI" })
+    if ($priIndexers.Count -ne 1) {
+        throw "Expected one PRI indexer in the generated MakePri config, found $($priIndexers.Count)."
+    }
+
+    [void]$config.resources.index.RemoveChild($priIndexers[0])
+    $settings = [System.Xml.XmlWriterSettings]::new()
+    $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+    $settings.Indent = $true
+    $writer = [System.Xml.XmlWriter]::Create($Path, $settings)
+    try {
+        $config.Save($writer)
+    }
+    finally {
+        $writer.Dispose()
+    }
+}
+
 function Escape-XmlAttribute {
     param([Parameter(Mandatory = $true)][string]$Value)
     return [System.Security.SecurityElement]::Escape($Value)
@@ -497,6 +520,11 @@ $priConfig = Join-Path $stagingRoot "priconfig.xml"
 if ($LASTEXITCODE -ne 0) {
     throw "MakePri createconfig failed with exit code $LASTEXITCODE."
 }
+# The self-contained Windows App SDK payload already contains component PRI
+# files next to their loose resources. Merging those PRIs here would index the
+# same resources twice (for example Microsoft.UI.Xaml/Assets/NoiseAsset...),
+# while the package-level resources.pri only needs to index manifest assets.
+Disable-InputPriMerging -Path $priConfig
 & $makePri new `
     /pr $msixStage `
     /cf $priConfig `
