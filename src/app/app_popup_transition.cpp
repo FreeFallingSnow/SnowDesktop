@@ -313,7 +313,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                     floatingDockMonitor_);
         if (PersistentDockHost* host =
                 FindPersistentDockHost(dock))
-            SelectPersistentDockHost(host);
+            SyncPersistentDockHost(host->monitor);
         if (floatingDockHost_)
             UpdateFloatingDockWindowBounds(
                 *floatingDockHost_);

@@ -37,8 +37,9 @@ void DesktopApp::ShowFloatingDock(
     // promotes the content HWND and its paired backdrop to the floating band.
     floatingDockVisible_ = true;
     floatingDockLastPointerPresentTick_ = 0;
-    ApplyFloatingDockLayerPolicy();
-    UpdatePersistentDockHostVisibility();
+    if (floatingDockHost_)
+        UpdatePersistentDockHostVisibility(
+            *floatingDockHost_);
     InvalidateFloatingDockWindow(true);
     BeginFloatingDockKeyboardSession();
 }
@@ -79,10 +80,13 @@ void DesktopApp::CloseFloatingDock(
     // Demote the same content/backdrop pair beside WorkerW. The HWND, DComp
     // surface and native glass remain attached and continue rendering the
     // ordinary desktop Dock without any opacity or ownership exchange.
-    ApplyFloatingDockLayerPolicy();
-    UpdatePersistentDockHostVisibility();
-    if (floatingDockHostActive_)
-        InvalidateFloatingDockWindow(true);
+    if (floatingDockHost_)
+    {
+        UpdatePersistentDockHostVisibility(
+            *floatingDockHost_);
+        InvalidateFloatingDockWindow(
+            *floatingDockHost_, true);
+    }
 
     std::function<void()> action =
         std::move(floatingDockPostCloseAction_);

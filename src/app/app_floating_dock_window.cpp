@@ -236,6 +236,14 @@ bool DesktopApp::SyncPersistentDockHosts()
         ValidateRect(host.hwnd, nullptr);
         host.revealPending = false;
     }
+    floatingDockHostActive_ = std::any_of(
+        persistentDockHosts_.begin(),
+        persistentDockHosts_.end(),
+        [](const auto& host) {
+            return host && host->active;
+        });
+    persistentDockHostOwnsVisual_ =
+        floatingDockHostActive_;
     CommitCompositionAnimationFrame();
     FlushPendingCompositionCommit();
 
@@ -254,7 +262,6 @@ bool DesktopApp::SyncPersistentDockHosts()
     }
     if (!selected)
         floatingDockVisible_ = false;
-    ApplyFloatingDockLayerPolicy();
     UpdatePersistentDockHostVisibility();
     InvalidateDragStaticScene();
     return selected != nullptr;
@@ -277,6 +284,8 @@ bool DesktopApp::SyncPersistentDockHost(
     if (requiresRebuild &&
         !SyncPersistentDockHosts())
         return false;
+    PersistentDockHost* const previous =
+        floatingDockHost_;
     PersistentDockHost* selected = nullptr;
     if (preferredMonitor)
     {
@@ -295,8 +304,15 @@ bool DesktopApp::SyncPersistentDockHost(
     if (!selected && !persistentDockHosts_.empty())
         selected = persistentDockHosts_.front().get();
     SelectPersistentDockHost(selected);
-    ApplyFloatingDockLayerPolicy();
-    UpdatePersistentDockHostVisibility();
+    if (floatingDockVisible_ && previous != selected)
+    {
+        if (previous)
+            UpdatePersistentDockHostVisibility(
+                *previous);
+        if (selected)
+            UpdatePersistentDockHostVisibility(
+                *selected);
+    }
     return selected != nullptr;
 }
 
@@ -320,6 +336,11 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     }
 
     ApplyFloatingDockLayerPolicy(host);
+    // Desktop/floating transitions keep the pair visible and only change its
+    // Z-order band. Avoid issuing a redundant SHOWWINDOW transaction, which
+    // can make DWM re-evaluate the native backdrop source for one frame.
+    if (IsWindowVisible(host.hwnd))
+        return;
     if (host.backdrop.IsAvailable())
         host.backdrop.ShowPopupWindowPair(host.hwnd);
     else
@@ -458,7 +479,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     const bool promoted =
         floatingDockVisible_ &&
         floatingDockHost_ == &host;
-    const HWND floatingDockHwnd_ = host.hwnd;
+    const HWND dockHostHwnd = host.hwnd;
     RECT& floatingDockSourceRect_ = host.sourceRect;
     RECT& floatingDockRect_ = host.dockRect;
     RECT& floatingDockPopupRect_ = host.popupRect;
@@ -595,7 +616,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockTooltipRect_, 7);
     if (windowRegion &&
         !SetWindowRgn(
-            floatingDockHwnd_, windowRegion, FALSE))
+            dockHostHwnd, windowRegion, FALSE))
         DeleteObject(windowRegion);
 
     // Popup and title changes only alter the visible/input region inside the
@@ -603,7 +624,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     // surface after the floating Dock has been revealed.
     if (!dockGeometryChanged &&
         !sourceRectChanged &&
-        IsWindowVisible(floatingDockHwnd_))
+        IsWindowVisible(dockHostHwnd))
     {
         InvalidateFloatingDockWindow(
             host, immediatePresent);
@@ -612,14 +633,14 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 
     const bool firstReveal =
         floatingDockRevealPending_ ||
-        !IsWindowVisible(floatingDockHwnd_);
+        !IsWindowVisible(dockHostHwnd);
     if (firstReveal)
     {
         // Create the hidden host in its eventual Z-order band. Desktop mode
         // must never transiently enter the topmost band during first layout;
         // promoted mode remains topmost so a no-activate popup is not buried.
         SetWindowPos(
-            floatingDockHwnd_,
+            dockHostHwnd,
             floatingLayerTopmost
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             floatingDockSourceRect_.left +
@@ -636,7 +657,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         // Resize within the current Z band. Popup-only changes normally keep
         // the stable allocation, while a larger data set can expand it.
         SetWindowPos(
-            floatingDockHwnd_, nullptr,
+            dockHostHwnd, nullptr,
             floatingDockSourceRect_.left +
                 virtualLeft_,
             floatingDockSourceRect_.top +
@@ -666,14 +687,14 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockBackdropCompositor_.
             SetPopupTopmost(floatingLayerTopmost);
         floatingDockBackdropCompositor_.
-            Reattach(floatingDockHwnd_);
+            Reattach(dockHostHwnd);
     }
 
     if (!floatingDockBackdropCompositor_.IsAvailable())
     {
         if (!floatingDockBackdropCompositor_.
                 InitializePopup(
-                    floatingDockHwnd_,
+                    dockHostHwnd,
                     floatingLayerTopmost,
                     !floatingDockRevealPending_))
         {
@@ -687,7 +708,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (firstReveal)
     {
         SetWindowPos(
-            floatingDockHwnd_,
+            dockHostHwnd,
             floatingLayerTopmost
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
@@ -697,16 +718,16 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                     ? 0 : SWP_SHOWWINDOW));
     }
     RECT loggedRect{};
-    GetWindowRect(floatingDockHwnd_, &loggedRect);
+    GetWindowRect(dockHostHwnd, &loggedRect);
     wchar_t message[224]{};
     wsprintfW(message,
         L"Floating Dock shown rect=(%ld,%ld)-(%ld,%ld) exStyle=0x%08X topmost=%d",
         loggedRect.left, loggedRect.top,
         loggedRect.right, loggedRect.bottom,
         static_cast<unsigned>(GetWindowLongPtrW(
-            floatingDockHwnd_, GWL_EXSTYLE)),
+            dockHostHwnd, GWL_EXSTYLE)),
         (GetWindowLongPtrW(
-            floatingDockHwnd_, GWL_EXSTYLE) &
+            dockHostHwnd, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0);
     WriteDiagnosticLogEntry(message);
     if (!renderedResizeFrame)

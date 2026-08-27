@@ -4390,26 +4390,23 @@ int main(int argc, char** argv)
         const std::size_t closeDemoted =
             closeFloatingDockSource.find(
                 "floatingDockVisible_ = false;");
-        const std::size_t closeLayerApplied =
-            closeFloatingDockSource.find(
-                "ApplyFloatingDockLayerPolicy();",
-                closeDemoted);
         const std::size_t closeVisibilityUpdated =
             closeFloatingDockSource.find(
-                "UpdatePersistentDockHostVisibility();",
-                closeLayerApplied);
+                "UpdatePersistentDockHostVisibility(",
+                closeDemoted);
         const std::size_t closeActionRun =
             closeFloatingDockSource.find(
                 "if (action)",
                 closeVisibilityUpdated);
         Check(!closeFloatingDockSource.empty() &&
                 closeDemoted != std::string::npos &&
-                closeLayerApplied != std::string::npos &&
                 closeVisibilityUpdated != std::string::npos &&
                 closeActionRun != std::string::npos &&
-                closeDemoted < closeLayerApplied &&
-                closeLayerApplied < closeVisibilityUpdated &&
+                closeDemoted < closeVisibilityUpdated &&
                 closeVisibilityUpdated < closeActionRun &&
+                closeFloatingDockSource.find(
+                  "ApplyFloatingDockLayerPolicy();") ==
+                    std::string::npos &&
                 closeFloatingDockSource.find(
                   "SetOpacity(") == std::string::npos &&
                 closeFloatingDockSource.find(
@@ -4442,22 +4439,25 @@ int main(int argc, char** argv)
             persistentShowSource.find(
                 "floatingDockVisible_ = true;",
                 showHostSynced);
-        const std::size_t showLayerApplied =
-            persistentShowSource.find(
-                "ApplyFloatingDockLayerPolicy();",
-                showPromoted);
         const std::size_t showVisibilityUpdated =
             persistentShowSource.find(
-                "UpdatePersistentDockHostVisibility();",
-                showLayerApplied);
+                "UpdatePersistentDockHostVisibility(",
+                showPromoted);
         Check(!persistentShowSource.empty() &&
                 showHostSynced != std::string::npos &&
                 showPromoted != std::string::npos &&
-                showLayerApplied != std::string::npos &&
                 showVisibilityUpdated != std::string::npos &&
                 showHostSynced < showPromoted &&
-                showPromoted < showLayerApplied &&
-                showLayerApplied < showVisibilityUpdated &&
+                showPromoted < showVisibilityUpdated &&
+                persistentShowSource.find(
+                  "ApplyFloatingDockLayerPolicy();") ==
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "ApplyFloatingDockLayerPolicy(host);") !=
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "if (IsWindowVisible(host.hwnd))") !=
+                    std::string::npos &&
                 persistentShowSource.find(
                   "SetOpacity(") == std::string::npos &&
                 persistentShowSource.find(
