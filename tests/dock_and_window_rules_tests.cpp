@@ -4652,6 +4652,14 @@ int main(int argc, char** argv)
                 dockPlatformHelpersSource.find("PROME-TASKBAR") ==
                     std::string::npos,
             "taskbar document proxy discovery must not depend on per-application window-class allowlists");
+        Check(dockPlatformHelpersSource.find(
+                  "if (preferDirectResource)\n    {\n"
+                  "        bitmap = GetDirectIconResourceBitmap(") !=
+                    std::string::npos &&
+                dockPlatformHelpersSource.find(
+                  "executablePath, executableBitmapSize, requestedSize, true,") !=
+                    std::string::npos,
+            "classic Dock executables must bypass the Shell compatibility plate before using fallback icon sources");
         const std::size_t proxyActivationBegin =
             dockWindowTrackingSource.find(
                 "if (IsDockTaskbarDocumentProxyCandidate(target))");

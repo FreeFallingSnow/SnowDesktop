@@ -1164,6 +1164,19 @@ HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
 }
 } // namespace
 
+HBITMAP GetDirectIconResourceBitmap(std::wstring_view resourcePath,
+    int iconIndex, SIZE& bitmapSize, int requestedSize)
+{
+    bitmapSize = {};
+    if (resourcePath.empty())
+        return nullptr;
+
+    const int sourceSize =
+        snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
+    return ExtractIconResourceBitmap(
+        std::wstring(resourcePath), iconIndex, sourceSize, bitmapSize);
+}
+
 /**
  * @brief 获取 Shell 项的高分辨率图标位图。
  *

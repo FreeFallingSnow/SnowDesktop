@@ -260,6 +260,7 @@ inline std::wstring QueryDockWindowAppUserModelId(HWND window)
 inline HBITMAP CreateDockShellIconBitmap(
     const std::wstring& parsingName, SIZE& bitmapSize,
     int requestedSize,
+    bool preferDirectResource = false,
     int* systemIconIndex = nullptr)
 {
     if (systemIconIndex)
@@ -280,8 +281,17 @@ inline HBITMAP CreateDockShellIconBitmap(
     if (systemIconIndex)
         *systemIconIndex = fallbackIndex;
 
-    HBITMAP bitmap = GetHighResolutionShellIconBitmap(
-        pidl, fallbackIndex, bitmapSize, false, requestedSize, true);
+    HBITMAP bitmap = nullptr;
+    if (preferDirectResource)
+    {
+        bitmap = GetDirectIconResourceBitmap(
+            parsingName, 0, bitmapSize, requestedSize);
+    }
+    if (!bitmap)
+    {
+        bitmap = GetHighResolutionShellIconBitmap(
+            pidl, fallbackIndex, bitmapSize, false, requestedSize, true);
+    }
     CoTaskMemFree(pidl);
     return bitmap;
 }
@@ -355,7 +365,7 @@ inline HBITMAP CreateDockWindowIconBitmap(
     SIZE executableBitmapSize{};
     HBITMAP executableBitmap =
         CreateDockShellIconBitmap(
-            executablePath, executableBitmapSize, requestedSize,
+            executablePath, executableBitmapSize, requestedSize, true,
             &executableIconIndex);
     const int genericExecutableIconIndex =
         QueryDockGenericExecutableIconIndex();

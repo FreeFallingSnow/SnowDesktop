@@ -267,6 +267,21 @@ HBITMAP CopyBitmapToAlphaDib(HBITMAP source, SIZE& size);
 HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size);
 
 /**
+ * @brief 直接从文件资源提取图标位图
+ * @details 绕过 Shell 图标画布，按资源索引提取原始 HICON，并转换为
+ *          32 位带 Alpha 通道的 DIB 位图。适用于 Shell 为低分辨率图标
+ *          强制添加兼容外框的经典应用程序。
+ * @param resourcePath EXE、DLL 或 ICO 资源路径
+ * @param iconIndex 图标资源索引
+ * @param bitmapSize [out] 返回位图的实际尺寸
+ * @param requestedSize 目标源位图长边，内部会归一化到 64..256 像素档位
+ * @return 成功返回 DIB 位图句柄，失败返回 nullptr
+ */
+HBITMAP GetDirectIconResourceBitmap(std::wstring_view resourcePath,
+    int iconIndex, SIZE& bitmapSize,
+    int requestedSize = kIconBitmapSize);
+
+/**
  * @brief 获取高分辨率 Shell 图标位图
  * @details 通过 IShellIconImageSize 或 Shell_GetImageLists 接口获取桌面项
  *          的高分辨率图标，并转换为 32 位带 Alpha 通道的 DIB 位图。
