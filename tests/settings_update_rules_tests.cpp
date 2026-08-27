@@ -25,6 +25,9 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    using snowdesktop::dock_settings_rules::
+        DisableSummonOnlyWhenPrerequisiteDisabled;
+    using snowdesktop::dock_settings_rules::NormalizeSummonOnlyDependencies;
     using snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::IsFloatingDockShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
@@ -49,16 +52,59 @@ int main()
         "a navigation content change still uses the full commit pipeline");
 
     DockSettings dock;
-    Check(!dock.allowDesktopContentOverlap && !dock.autoHide,
-        "desktop overlap and Dock auto-hide are opt-in by default");
+    Check(!dock.allowDesktopContentOverlap &&
+            !dock.showOnlyWhenSummoned,
+        "desktop overlap and summon-only Dock display are opt-in by default");
+    DockSettings normalizedSummonOnly = dock;
+    normalizedSummonOnly.floatingEdgeSwipeEnabled = false;
+    normalizedSummonOnly.showOnlyWhenSummoned = true;
+    NormalizeDockSettings(normalizedSummonOnly);
+    Check(normalizedSummonOnly.showOnlyWhenSummoned &&
+            normalizedSummonOnly.allowDesktopContentOverlap &&
+            normalizedSummonOnly.floatingEdgeSwipeEnabled,
+        "normalization makes both reveal prerequisites follow summon-only Dock display");
+
+    bool showOnlyWhenSummoned = false;
+    bool allowDesktopContentOverlap = false;
+    bool floatingEdgeSwipeEnabled = false;
+    showOnlyWhenSummoned = true;
+    NormalizeSummonOnlyDependencies(showOnlyWhenSummoned,
+        allowDesktopContentOverlap, floatingEdgeSwipeEnabled);
+    Check(showOnlyWhenSummoned && allowDesktopContentOverlap &&
+            floatingEdgeSwipeEnabled,
+        "summon-only Dock display enables overlap and edge-swipe reveal");
+    showOnlyWhenSummoned = false;
+    NormalizeSummonOnlyDependencies(showOnlyWhenSummoned,
+        allowDesktopContentOverlap, floatingEdgeSwipeEnabled);
+    Check(!showOnlyWhenSummoned && allowDesktopContentOverlap &&
+            floatingEdgeSwipeEnabled,
+        "disabling summon-only display preserves its useful prerequisites");
+    allowDesktopContentOverlap = true;
+    DisableSummonOnlyWhenPrerequisiteDisabled(
+        allowDesktopContentOverlap, showOnlyWhenSummoned);
+    Check(allowDesktopContentOverlap && !showOnlyWhenSummoned,
+        "enabling one prerequisite alone does not enable summon-only display");
+    showOnlyWhenSummoned = true;
+    allowDesktopContentOverlap = false;
+    DisableSummonOnlyWhenPrerequisiteDisabled(
+        allowDesktopContentOverlap, showOnlyWhenSummoned);
+    Check(!allowDesktopContentOverlap && !showOnlyWhenSummoned,
+        "disabling desktop overlap also disables summon-only display");
+    showOnlyWhenSummoned = true;
+    floatingEdgeSwipeEnabled = false;
+    DisableSummonOnlyWhenPrerequisiteDisabled(
+        floatingEdgeSwipeEnabled, showOnlyWhenSummoned);
+    Check(!floatingEdgeSwipeEnabled && !showOnlyWhenSummoned,
+        "disabling edge-swipe reveal also disables summon-only display");
+
     DockSettings dockBehavior = dock;
     dockBehavior.allowDesktopContentOverlap = true;
     Check(!IsFloatingDockShortcutOnlyCommit(dock, dockBehavior),
         "desktop overlap uses the full Dock commit pipeline");
     dockBehavior = dock;
-    dockBehavior.autoHide = true;
+    dockBehavior.showOnlyWhenSummoned = true;
     Check(!IsFloatingDockShortcutOnlyCommit(dock, dockBehavior),
-        "Dock auto-hide uses the full Dock commit pipeline");
+        "summon-only Dock display uses the full Dock commit pipeline");
 
     const auto newer = ParseGitHubRelease(
         R"({"tag_name":"v1.0.5.0","html_url":"https://github.com/FreeFallingSnow/SnowDesktop_Release/releases/tag/v1.0.5.0"})",

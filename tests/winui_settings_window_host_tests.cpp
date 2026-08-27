@@ -522,12 +522,14 @@ void TestHostContract(const std::filesystem::path& repository)
         "production search definitions route each Appearance leaf and keep category behavior with Categories");
     Check(staticSearchMapsTo(
               "dock.allowDesktopContentOverlap", "Dock") &&
-            staticSearchMapsTo("dock.autoHide", "Dock") &&
+            staticSearchMapsTo("dock.showOnlyWhenSummoned", "Dock") &&
+            !staticSearchMapsTo("dock.autoHide", "Dock") &&
             shell.find("\"dock.allowDesktopContentOverlap\"") !=
                 std::string::npos &&
-            shell.find("\"dock.autoHide\"") !=
-                std::string::npos,
-        "Dock overlap and auto-hide settings are searchable and register stable focus targets");
+            shell.find("\"dock.showOnlyWhenSummoned\"") !=
+                std::string::npos &&
+            shell.find("\"dock.autoHide\"") == std::string::npos,
+        "Dock overlap and summon-only display are searchable and register stable focus targets");
     Check(pageContextMapsTo(
               "AppearanceTheme", "settings.personalization.theme") &&
             pageContextMapsTo(

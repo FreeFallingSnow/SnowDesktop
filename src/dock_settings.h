@@ -95,7 +95,7 @@ struct DockSettings
     bool showFrequentItems = false;
     bool keepWhenDesktopHidden = false;
     bool allowDesktopContentOverlap = false;
-    bool autoHide = false;
+    bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
     bool systemTaskbarAutoHide = false;
@@ -115,6 +115,10 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);
+    snowdesktop::dock_settings_rules::NormalizeSummonOnlyDependencies(
+        settings.showOnlyWhenSummoned,
+        settings.allowDesktopContentOverlap,
+        settings.floatingEdgeSwipeEnabled);
 }
 
 std::wstring GetDockSettingsPath();

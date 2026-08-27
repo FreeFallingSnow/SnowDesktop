@@ -2098,7 +2098,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
                 "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
-                "dock.allowDesktopContentOverlap", "dock.autoHide"});
+                "dock.allowDesktopContentOverlap",
+                "dock.showOnlyWhenSummoned"});
             generalPage_->Activate();
             dockPage_->Activate();
         }

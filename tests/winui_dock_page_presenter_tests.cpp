@@ -67,7 +67,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
              "floatingShortcutMode", "floatingEdgeSwipeEnabled",
              "monitorScope", "showWindowsButton", "showFrequentItems",
              "frequentItemCount", "keepWhenDesktopHidden",
-             "allowDesktopContentOverlap", "autoHide",
+             "allowDesktopContentOverlap", "showOnlyWhenSummoned",
              "thicknessScale", "systemTaskbarAutoHide",
              "systemTaskbarAlignment", "systemTaskbarBackdropEnabled",
              "systemTaskbarFollowPersonalization",
@@ -81,21 +81,40 @@ void TestPresenterContract(const std::filesystem::path& repository)
     Check(settingsHeader.find(
               "bool allowDesktopContentOverlap = false;") !=
                 std::string::npos &&
-            settingsHeader.find("bool autoHide = false;") !=
+            settingsHeader.find("bool showOnlyWhenSummoned = false;") !=
+                std::string::npos &&
+            settingsHeader.find("bool autoHide = false;") ==
                 std::string::npos &&
             settingsSource.find(
               "ReadBoolField(text, \"allowDesktopContentOverlap\"") !=
                 std::string::npos &&
             settingsSource.find(
-              "ReadBoolField(text, \"autoHide\", settings.autoHide)") !=
+              "if (!ReadBoolField(text, \"showOnlyWhenSummoned\"") !=
+                std::string::npos &&
+            settingsSource.find(
+              "ReadBoolField(text, \"autoHide\", settings.showOnlyWhenSummoned)") !=
                 std::string::npos &&
             settingsSource.find(
               "file << \"  \\\"allowDesktopContentOverlap\\\": \"") !=
                 std::string::npos &&
             settingsSource.find(
-              "file << \"  \\\"autoHide\\\": \"") !=
+              "file << \"  \\\"showOnlyWhenSummoned\\\": \"") !=
+                std::string::npos &&
+            settingsSource.find(
+              "file << \"  \\\"autoHide\\\": \"") ==
                 std::string::npos,
-        "desktop-overlap and Dock auto-hide default off and map to Dock JSON read/write fields");
+        "summon-only Dock display uses the new model and JSON key while accepting the legacy read key only");
+    Check(settingsHeader.find(
+              "NormalizeSummonOnlyDependencies(") != std::string::npos &&
+            settingsSource.find(
+              "NormalizeSummonOnlyDependencies(") != std::string::npos &&
+            settingsSource.find(
+              "(floatingEdgeSwipeEnabled ? \"true\" : \"false\")") !=
+                std::string::npos &&
+            settingsSource.find(
+              "(allowDesktopContentOverlap ? \"true\" : \"false\")") !=
+                std::string::npos,
+        "summon-only Dock dependencies are normalized after loading and before persistence");
     for (const char* control : {
              "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
              "muxc::NumberBox", "muxc::Button", "muxc::Expander",
@@ -372,30 +391,55 @@ void TestPresenterContract(const std::filesystem::path& repository)
     const auto overlapRow = source.find(
         "behaviorCard.content.Children().Append(\n"
         "            allowDesktopContentOverlapRow.root)");
-    const auto autoHideRow = source.find(
-        "behaviorCard.content.Children().Append(autoHideRow.root)");
+    const auto summonOnlyRow = source.find(
+        "behaviorCard.content.Children().Append(showOnlyWhenSummonedRow.root)");
     const auto windowsButtonRow = source.find(
         "behaviorCard.content.Children().Append(showWindowsButtonRow.root)");
     Check(overlapRow != std::string::npos &&
-            autoHideRow != std::string::npos &&
+            summonOnlyRow != std::string::npos &&
             windowsButtonRow != std::string::npos &&
-            overlapRow < autoHideRow && autoHideRow < windowsButtonRow &&
+            overlapRow < summonOnlyRow && summonOnlyRow < windowsButtonRow &&
             source.find(
               "allowDesktopContentOverlapRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
-            source.find("autoHideRow.SetEnabled(dockEnabled)") !=
+            source.find(
+              "showOnlyWhenSummonedRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
             source.find(
               "settings.allowDesktopContentOverlap = value") !=
                 std::string::npos &&
-            source.find("settings.autoHide = value") !=
+            source.find("settings.showOnlyWhenSummoned = value") !=
+                std::string::npos &&
+            source.find(
+              "DisableSummonOnlyWhenPrerequisiteDisabled(") !=
+                std::string::npos &&
+            source.find("NormalizeSummonOnlyDependencies(") !=
+                std::string::npos &&
+            source.find("Show Dock only when summoned") !=
+                std::string::npos &&
+            source.find("Keep the Dock hidden until summoned.") !=
+                std::string::npos &&
+            source.find("screen edge to show it as a floating Dock.") !=
+                std::string::npos &&
+            source.find(
+              "again after you click outside to dismiss it, while") !=
+                std::string::npos &&
+            source.find(
+              "moving a dragged item to that edge reveals it") !=
+                std::string::npos &&
+            source.find(
+              "temporarily. Enabling this also allows desktop content") !=
                 std::string::npos &&
             source.find(
               "id == \"dock.allowDesktopContentOverlap\"") !=
                 std::string::npos &&
+            source.find("id == \"dock.showOnlyWhenSummoned\"") !=
+                std::string::npos &&
             source.find("id == \"dock.autoHide\"") !=
+                std::string::npos &&
+            source.find("settings.dock.autoHide") ==
                 std::string::npos,
-        "desktop overlap and auto-hide are adjacent independent Dock rows with bindings and focus targets");
+        "summon-only Dock display is adjacent to overlap, binds both prerequisites, describes summon and dismissal accurately, and keeps the legacy focus alias only");
     Check(source.find("taskbarHookRequired = settings.systemTaskbarBackdropEnabled") !=
                 std::string::npos &&
             source.find("if (taskbarHookRequired)") !=

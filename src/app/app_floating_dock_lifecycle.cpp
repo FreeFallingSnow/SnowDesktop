@@ -25,10 +25,10 @@ void DesktopApp::ApplyFloatingDockHotkey()
 {
     UnregisterFloatingDockHotkey();
 
-    // Passive reveal belongs only to auto-hide. Clearing it here keeps a
-    // settings toggle from leaving a Host effectively promoted after ordinary
-    // desktop visibility has been restored.
-    if (!dockSettings_.autoHide)
+    // Passive drag reveal belongs only to summon-only mode. Clearing it here
+    // keeps a settings toggle from leaving a Host effectively floating after
+    // ordinary desktop visibility has been restored.
+    if (!dockSettings_.showOnlyWhenSummoned)
     {
         bool passiveStateChanged = false;
         for (const auto& host : persistentDockHosts_)
@@ -49,7 +49,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
     }
 
     if (!generalSettings_.dockEnabled ||
-        (!dockSettings_.autoHide &&
+        (!dockSettings_.showOnlyWhenSummoned &&
             !snowdesktop::floating_dock_rules::
                 HasAnySummonTrigger(
                     dockSettings_.floatingShortcutMode,
@@ -104,7 +104,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
         }
     }
 
-    // This lightweight control timer serves auto-hide edge projection,
+    // This lightweight control timer serves passive drag-edge reveal,
     // optional edge-swipe recognition and mandatory outside-click dismissal.
     // Keeping them in one sampler prevents competing GetAsyncKeyState calls
     // from consuming the same click transition. It also remains available
@@ -118,23 +118,25 @@ void DesktopApp::ApplyFloatingDockHotkey()
     }
 }
 
-bool DesktopApp::UpdateAutoHiddenDockHosts(
-    POINT cursorScreen, UINT buttonsDown)
+bool DesktopApp::UpdatePassiveDragRevealHosts(
+    POINT cursorScreen)
 {
     if (!generalSettings_.dockEnabled ||
-        !dockSettings_.autoHide)
+        !dockSettings_.showOnlyWhenSummoned)
     {
         return false;
     }
 
     const ULONGLONG now = GetTickCount64();
-    const bool interactionBusy =
-        buttonsDown != 0 || mouseDown_ ||
-        dragSession_.IsActive() ||
+    const bool internalDragActive =
+        dragSession_.IsActive();
+    const bool oleDragActive =
         dragDropController_.IsTransportActive();
+    const bool dragRevealActive =
+        internalDragActive || oleDragActive;
     const bool contextMenuActive =
         HasActiveContextMenuSession();
-    bool revealedThisSample = false;
+    bool passiveDragRevealedThisSample = false;
 
     for (const auto& ownedHost : persistentDockHosts_)
     {
@@ -178,7 +180,7 @@ bool DesktopApp::UpdateAutoHiddenDockHosts(
             snowdesktop::floating_dock_rules::
                 ScaleEdgeSwipeDip(
                     snowdesktop::floating_dock_rules::
-                        kAutoHideEdgeBandDip,
+                        kPassiveDragRevealEdgeBandDip,
                     dpiX);
         const bool pointerInEdgeProjection =
             snowdesktop::floating_dock_rules::
@@ -188,6 +190,12 @@ bool DesktopApp::UpdateAutoHiddenDockHosts(
                     dockScreenRect,
                     dockSettings_.position,
                     edgeBand);
+        const bool passiveDragRevealRequested =
+            snowdesktop::floating_dock_rules::
+                ShouldPassivelyRevealDockForDragAtEdge(
+                    pointerInEdgeProjection,
+                    internalDragActive,
+                    oleDragActive);
         const bool pointerInEdgeCorridor =
             snowdesktop::floating_dock_rules::
                 IsPointInDockEdgeCorridor(
@@ -216,23 +224,23 @@ bool DesktopApp::UpdateAutoHiddenDockHosts(
             collectionPopupDockHost_ == &host ||
             quickNavigationDockHost_ == &host ||
             previewAssociated;
-        const bool keepRevealed =
-            pointerInEdgeCorridor ||
+        const bool keepPassiveDragReveal =
             associatedSurfaceActive ||
-            interactionBusy;
+            (dragRevealActive &&
+                pointerInEdgeCorridor);
         const bool leaveDelayElapsed =
             snowdesktop::floating_dock_rules::
-                HasAutoHideLeaveDelayElapsed(
+                HasPassiveDragLeaveDelayElapsed(
                     host.passiveLeaveStartTick,
                     now);
         const auto action =
             snowdesktop::floating_dock_rules::
-                ResolveAutoHideUpdate(
+                ResolvePassiveDragRevealUpdate(
                     true,
                     host.promoted,
                     host.passivelyRevealed,
-                    pointerInEdgeProjection,
-                    keepRevealed,
+                    passiveDragRevealRequested,
+                    keepPassiveDragReveal,
                     host.passiveLeaveStartTick != 0,
                     leaveDelayElapsed);
 
@@ -240,30 +248,30 @@ bool DesktopApp::UpdateAutoHiddenDockHosts(
         switch (action)
         {
         case snowdesktop::floating_dock_rules::
-                AutoHideUpdateAction::Reveal:
+                PassiveDragRevealAction::Reveal:
             host.passivelyRevealed = true;
             host.passiveRevealTick = now;
             host.passiveLeaveStartTick = 0;
             visibilityChanged = true;
-            revealedThisSample = true;
+            passiveDragRevealedThisSample = true;
             break;
         case snowdesktop::floating_dock_rules::
-                AutoHideUpdateAction::BeginLeave:
+                PassiveDragRevealAction::BeginLeave:
             host.passiveLeaveStartTick = now;
             break;
         case snowdesktop::floating_dock_rules::
-                AutoHideUpdateAction::CancelLeave:
+                PassiveDragRevealAction::CancelLeave:
             host.passiveLeaveStartTick = 0;
             break;
         case snowdesktop::floating_dock_rules::
-                AutoHideUpdateAction::Hide:
+                PassiveDragRevealAction::Hide:
             host.passivelyRevealed = false;
             host.passiveRevealTick = 0;
             host.passiveLeaveStartTick = 0;
             visibilityChanged = true;
             break;
         case snowdesktop::floating_dock_rules::
-                AutoHideUpdateAction::None:
+                PassiveDragRevealAction::None:
         default:
             break;
         }
@@ -299,7 +307,7 @@ bool DesktopApp::UpdateAutoHiddenDockHosts(
         }
     }
 
-    return revealedThisSample;
+    return passiveDragRevealedThisSample;
 }
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
@@ -360,14 +368,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         desktopPoint.y -= virtualTop_;
     }
 
-    // Auto-hide must run before the legacy button/drag early return below.
-    // This global sampler is the only reliable reveal source while a hidden
-    // Host cannot receive WM_MOUSEMOVE or OLE DragEnter/DragOver itself.
-    const bool autoHideRevealedThisSample =
-        UpdateAutoHiddenDockHosts(cursor, buttonsDown);
+    // Passive drag reveal must run before the legacy button/drag early return
+    // below. An ordinary pointer still needs the existing edge-swipe gesture,
+    // which starts a manual floating session and remains visible until closed.
+    const bool passiveDragRevealedThisSample =
+        UpdatePassiveDragRevealHosts(cursor);
 
     if (floatingDockVisible_ && pointerPressed &&
-        !autoHideRevealedThisSample)
+        !passiveDragRevealedThisSample)
     {
         if (leftButtonPressed &&
             TryActivateDockPopupFromMenuPointerPress(
@@ -435,6 +443,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     if (!generalSettings_.dockEnabled ||
         !dockSettings_.floatingEdgeSwipeEnabled ||
         dragSession_.IsActive() ||
+        dragDropController_.IsTransportActive() ||
         buttonsDown != 0)
     {
         floatingDockEdgeSwipeDetector_.Reset();

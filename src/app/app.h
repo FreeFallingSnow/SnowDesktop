@@ -718,10 +718,10 @@ private:
         // Promotion is per monitor. Selection only identifies the Host that
         // currently owns pointer/keyboard-associated actions.
         bool promoted = false;
-        // Auto-hide edge reveal is intentionally separate from manual
+        // Passive drag-edge reveal is intentionally separate from manual
         // promotion. It may borrow the floating Z band without starting a
         // keyboard session, and its leave timer must never collapse a Host
-        // that the user promoted explicitly.
+        // that the user summoned explicitly.
         bool passivelyRevealed = false;
         ULONGLONG passiveRevealTick = 0;
         ULONGLONG passiveLeaveStartTick = 0;
@@ -1118,8 +1118,8 @@ private:
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
-    bool UpdateAutoHiddenDockHosts(
-        POINT cursorScreen, UINT buttonsDown);
+    bool UpdatePassiveDragRevealHosts(
+        POINT cursorScreen);
     void UpdateFloatingDockEdgeSwipe();
     DockContainer* SelectFloatingDockContainerAtCursor() const;
     DockContainer* SelectFloatingDockContainerForMonitor(

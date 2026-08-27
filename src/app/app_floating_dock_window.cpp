@@ -104,7 +104,7 @@ bool DesktopApp::IsPersistentDockHostEffectivelyFloating(
             IsDockEffectivelyPromoted(
                 host.promoted,
                 host.passivelyRevealed,
-                dockSettings_.autoHide);
+                dockSettings_.showOnlyWhenSummoned);
 }
 
 bool DesktopApp::ShouldShowPersistentDockHost(
@@ -114,7 +114,7 @@ bool DesktopApp::ShouldShowPersistentDockHost(
         ShouldShowPersistentDockHost(
             host.active,
             IsPersistentDockHostEffectivelyFloating(host),
-            dockSettings_.autoHide,
+            dockSettings_.showOnlyWhenSummoned,
             customDesktopVisible_,
             desktopIconsHidden_,
             dockSettings_.keepWhenDesktopHidden);

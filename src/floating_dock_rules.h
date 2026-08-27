@@ -17,8 +17,8 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
-inline constexpr int kAutoHideEdgeBandDip = 6;
-inline constexpr ULONGLONG kAutoHideLeaveDelayMs = 360;
+inline constexpr int kPassiveDragRevealEdgeBandDip = 6;
+inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 
 // 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
 // WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
@@ -32,29 +32,38 @@ inline bool HasAnySummonTrigger(
 
 inline bool IsDockEffectivelyPromoted(
     bool manuallyPromoted,
-    bool passivelyRevealed,
-    bool autoHideEnabled)
+    bool passiveDragRevealed,
+    bool summonOnlyEnabled)
 {
     return manuallyPromoted ||
-        (autoHideEnabled && passivelyRevealed);
+        (summonOnlyEnabled && passiveDragRevealed);
 }
 
 inline bool ShouldShowPersistentDockHost(
     bool active,
     bool effectivelyPromoted,
-    bool autoHideEnabled,
+    bool summonOnlyEnabled,
     bool customDesktopVisible,
     bool desktopIconsHidden,
     bool keepWhenDesktopHidden)
 {
     return active &&
         (effectivelyPromoted ||
-            (!autoHideEnabled && customDesktopVisible &&
+            (!summonOnlyEnabled && customDesktopVisible &&
                 (!desktopIconsHidden ||
                     keepWhenDesktopHidden)));
 }
 
-enum class AutoHideUpdateAction
+inline bool ShouldPassivelyRevealDockForDragAtEdge(
+    bool pointerInEdgeProjection,
+    bool internalDragActive,
+    bool oleDragActive)
+{
+    return pointerInEdgeProjection &&
+        (internalDragActive || oleDragActive);
+}
+
+enum class PassiveDragRevealAction
 {
     None,
     Reveal,
@@ -63,38 +72,38 @@ enum class AutoHideUpdateAction
     Hide,
 };
 
-inline AutoHideUpdateAction ResolveAutoHideUpdate(
-    bool autoHideEnabled,
+inline PassiveDragRevealAction ResolvePassiveDragRevealUpdate(
+    bool summonOnlyEnabled,
     bool manuallyPromoted,
-    bool passivelyRevealed,
-    bool pointerInEdgeProjection,
+    bool passiveDragRevealed,
+    bool revealRequested,
     bool keepRevealed,
     bool leavePending,
     bool leaveDelayElapsed)
 {
-    if (!autoHideEnabled || manuallyPromoted)
+    if (!summonOnlyEnabled || manuallyPromoted)
         return leavePending
-            ? AutoHideUpdateAction::CancelLeave
-            : AutoHideUpdateAction::None;
-    if (!passivelyRevealed)
-        return pointerInEdgeProjection
-            ? AutoHideUpdateAction::Reveal
-            : AutoHideUpdateAction::None;
+            ? PassiveDragRevealAction::CancelLeave
+            : PassiveDragRevealAction::None;
+    if (!passiveDragRevealed)
+        return revealRequested
+            ? PassiveDragRevealAction::Reveal
+            : PassiveDragRevealAction::None;
     if (keepRevealed)
         return leavePending
-            ? AutoHideUpdateAction::CancelLeave
-            : AutoHideUpdateAction::None;
+            ? PassiveDragRevealAction::CancelLeave
+            : PassiveDragRevealAction::None;
     if (!leavePending)
-        return AutoHideUpdateAction::BeginLeave;
+        return PassiveDragRevealAction::BeginLeave;
     return leaveDelayElapsed
-        ? AutoHideUpdateAction::Hide
-        : AutoHideUpdateAction::None;
+        ? PassiveDragRevealAction::Hide
+        : PassiveDragRevealAction::None;
 }
 
-inline bool HasAutoHideLeaveDelayElapsed(
+inline bool HasPassiveDragLeaveDelayElapsed(
     ULONGLONG leaveStartTick,
     ULONGLONG currentTick,
-    ULONGLONG delay = kAutoHideLeaveDelayMs)
+    ULONGLONG delay = kPassiveDragLeaveDelayMs)
 {
     return leaveStartTick != 0 &&
         currentTick >= leaveStartTick &&

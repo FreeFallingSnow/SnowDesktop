@@ -2347,14 +2347,23 @@ int main(int argc, char** argv)
               false, true, true) &&
             floatingDock::IsDockEffectivelyPromoted(
               true, false, false),
-        "passive reveal must borrow promotion only for auto-hide while manual promotion remains unconditional");
+        "passive drag reveal must borrow the floating band only in summon-only mode while manual promotion remains unconditional");
     Check(floatingDock::ShouldShowPersistentDockHost(
               true, false, false, true, false, false) &&
             !floatingDock::ShouldShowPersistentDockHost(
               true, false, true, true, false, false) &&
             floatingDock::ShouldShowPersistentDockHost(
               true, true, true, false, true, false),
-        "auto-hide must hide idle Hosts but retain every effectively promoted Host");
+        "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
+    Check(!floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
+              true, false, false) &&
+            floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
+              true, true, false) &&
+            floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
+              true, false, true) &&
+            !floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
+              false, true, true),
+        "edge contact must passively reveal a summon-only Dock only during an internal or OLE drag");
 
     const RECT bottomDockScreen{ -1500, 1000, -900, 1060 };
     Check(floatingDock::IsPointInDockEdgeProjection(
@@ -2366,7 +2375,7 @@ int main(int argc, char** argv)
             !floatingDock::IsPointInDockEdgeProjection(
               POINT{ -1200, 1070 }, negativeBottomMonitor,
               bottomDockScreen, DockPosition::Bottom, 6),
-        "an auto-hidden Dock must reveal only from its own projection on the monitor edge");
+        "a summon-only Dock must accept passive drag reveal only from its own projection on the monitor edge");
     Check(floatingDock::IsPointInDockEdgeCorridor(
               POINT{ -1200, 1070 }, negativeBottomMonitor,
               bottomDockScreen, DockPosition::Bottom) &&
@@ -2399,7 +2408,7 @@ int main(int argc, char** argv)
             !floatingDock::IsPointInDockEdgeCorridor(
               POINT{ 90, 600 }, rightMonitor,
               leftDockScreen, DockPosition::Left),
-        "vertical auto-hide projection and corridor rules must follow the configured Dock edge");
+        "vertical passive drag projection and corridor rules must follow the configured Dock edge");
 
     const RECT topDockScreen{ 800, 24, 1400, 84 };
     Check(floatingDock::IsPointInDockEdgeProjection(
@@ -2420,7 +2429,7 @@ int main(int argc, char** argv)
             !floatingDock::IsPointInDockEdgeCorridor(
               POINT{ 1000, 90 }, rightMonitor,
               topDockScreen, DockPosition::Top),
-        "top auto-hide projection and corridor must reject points outside its axis and beyond its inner edge");
+        "top passive drag projection and corridor must reject points outside its axis and beyond its inner edge");
 
     const RECT rightDockScreen{ 2476, 360, 2536, 960 };
     Check(floatingDock::IsPointInDockEdgeProjection(
@@ -2441,37 +2450,47 @@ int main(int argc, char** argv)
             !floatingDock::IsPointInDockEdgeCorridor(
               POINT{ 2460, 600 }, rightMonitor,
               rightDockScreen, DockPosition::Right),
-        "right auto-hide projection and corridor must reject points outside its axis and beyond its inner edge");
+        "right passive drag projection and corridor must reject points outside its axis and beyond its inner edge");
 
-    using AutoHideAction =
-        floatingDock::AutoHideUpdateAction;
-    Check(floatingDock::ResolveAutoHideUpdate(
+    using PassiveDragAction =
+        floatingDock::PassiveDragRevealAction;
+    Check(floatingDock::ResolvePassiveDragRevealUpdate(
               true, false, false, true,
               false, false, false) ==
-                AutoHideAction::Reveal &&
-            floatingDock::ResolveAutoHideUpdate(
+                PassiveDragAction::Reveal &&
+            floatingDock::ResolvePassiveDragRevealUpdate(
               true, false, true, false,
               true, true, false) ==
-                AutoHideAction::CancelLeave &&
-            floatingDock::ResolveAutoHideUpdate(
+                PassiveDragAction::CancelLeave &&
+            floatingDock::ResolvePassiveDragRevealUpdate(
               true, false, true, false,
               false, false, false) ==
-                AutoHideAction::BeginLeave &&
-            floatingDock::ResolveAutoHideUpdate(
+                PassiveDragAction::BeginLeave &&
+            floatingDock::ResolvePassiveDragRevealUpdate(
               true, false, true, false,
               false, true, true) ==
-                AutoHideAction::Hide,
-        "auto-hide state must reveal at the edge, cancel leave on re-entry and hide only after the delay");
-    Check(floatingDock::ResolveAutoHideUpdate(
+                PassiveDragAction::Hide,
+        "passive drag state must reveal at the edge, cancel leave on re-entry and hide only after the delay");
+    Check(floatingDock::ResolvePassiveDragRevealUpdate(
               true, true, true, false,
               false, true, true) ==
-                AutoHideAction::CancelLeave,
-        "a manually promoted Dock must never be collapsed by passive auto-hide");
-    Check(!floatingDock::HasAutoHideLeaveDelayElapsed(
+                PassiveDragAction::CancelLeave,
+        "a manually summoned Dock must never be collapsed by passive drag cleanup");
+    Check(floatingDock::ResolvePassiveDragRevealUpdate(
+              false, false, true, false,
+              false, true, true) ==
+                PassiveDragAction::CancelLeave,
+        "disabling summon-only mode must cancel passive cleanup instead of hiding an ordinarily visible Dock");
+    Check(floatingDock::ResolvePassiveDragRevealUpdate(
+              true, false, false, false,
+              false, false, false) ==
+                PassiveDragAction::None,
+        "a summon-only Dock must ignore an edge sample that was not authorized by a drag");
+    Check(!floatingDock::HasPassiveDragLeaveDelayElapsed(
               100, 459, 360) &&
-            floatingDock::HasAutoHideLeaveDelayElapsed(
+            floatingDock::HasPassiveDragLeaveDelayElapsed(
               100, 460, 360),
-        "auto-hide leave delay must expire at its exact monotonic deadline");
+        "passive drag leave delay must expire at its exact monotonic deadline");
 
     Check(rules::IsTaskWindowStyleEligible(0, false),
         "ordinary unowned windows must remain eligible");
@@ -3939,7 +3958,8 @@ int main(int argc, char** argv)
                 restorePageWorkArea != std::string::npos &&
                 preserveDockArea < overlapRestore &&
                 overlapRestore < restorePageWorkArea &&
-                dockReservationSource.find("autoHide") ==
+                dockReservationSource.find(
+                  "showOnlyWhenSummoned") ==
                     std::string::npos &&
                 desktopLayoutSource.find(
                   "for (const RECT& dockArea : dockAreas_)") !=
@@ -3947,7 +3967,7 @@ int main(int argc, char** argv)
                 desktopLayoutSource.find(
                   "std::make_unique<DockContainer>(this, &dockEntries_, dockArea)") !=
                     std::string::npos,
-            "overlap must preserve Dock geometry and container creation while restoring only the desktop work area, independently of auto-hide");
+            "overlap must preserve Dock geometry and container creation while restoring only the desktop work area, independently of summon-only visibility");
         Check(CountOccurrences(
                   dragHintWindowSource,
                   "SetWindowPos(hintHwnd_, HWND_TOPMOST") == 2 &&
@@ -4637,78 +4657,141 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 preserveOutsideForeground != std::string::npos,
             "outside-click dismissal must ignore every promoted Dock and preserve the foreground selected by a true external click");
-        const std::size_t autoHideUpdateBegin =
+        const std::size_t passiveDragUpdateBegin =
             floatingDockLifecycleSource.find(
-                "bool DesktopApp::UpdateAutoHiddenDockHosts(");
-        const std::size_t autoHideUpdateEnd =
+                "bool DesktopApp::UpdatePassiveDragRevealHosts(");
+        const std::size_t passiveDragUpdateEnd =
             floatingDockLifecycleSource.find(
                 "void DesktopApp::UpdateFloatingDockEdgeSwipe()",
-                autoHideUpdateBegin);
-        const std::string autoHideUpdateSource =
-            autoHideUpdateBegin != std::string::npos &&
-                    autoHideUpdateEnd != std::string::npos
+                passiveDragUpdateBegin);
+        const std::string passiveDragUpdateSource =
+            passiveDragUpdateBegin != std::string::npos &&
+                    passiveDragUpdateEnd != std::string::npos
                 ? floatingDockLifecycleSource.substr(
-                    autoHideUpdateBegin,
-                    autoHideUpdateEnd - autoHideUpdateBegin)
+                    passiveDragUpdateBegin,
+                    passiveDragUpdateEnd - passiveDragUpdateBegin)
                 : std::string{};
-        const std::size_t autoHideSamplerCall =
+        const std::size_t passiveDragSamplerCall =
             dockPointerSamplerSource.find(
-                "UpdateAutoHiddenDockHosts(cursor, buttonsDown)");
+                "UpdatePassiveDragRevealHosts(cursor)");
         const std::size_t legacyDragButtonGuard =
             dockPointerSamplerSource.find(
-                "dragSession_.IsActive() ||\n        buttonsDown != 0");
+                "dragSession_.IsActive() ||\n"
+                "        dragDropController_.IsTransportActive() ||\n"
+                "        buttonsDown != 0");
+        const std::size_t edgeSwipeDetectorUpdate =
+            dockPointerSamplerSource.find(
+                "floatingDockEdgeSwipeDetector_.Update(",
+                legacyDragButtonGuard);
+        const std::size_t edgeSwipeTriggerBranch =
+            dockPointerSamplerSource.find(
+                "if (triggered &&",
+                edgeSwipeDetectorUpdate);
+        const std::size_t edgeSwipeSummon =
+            dockPointerSamplerSource.find(
+                "ShowFloatingDock(monitor);",
+                edgeSwipeTriggerBranch);
+        const std::string edgeSwipeTriggerSource =
+            edgeSwipeTriggerBranch != std::string::npos &&
+                    edgeSwipeSummon != std::string::npos
+                ? dockPointerSamplerSource.substr(
+                    edgeSwipeTriggerBranch,
+                    edgeSwipeSummon - edgeSwipeTriggerBranch +
+                        sizeof("ShowFloatingDock(monitor);") - 1)
+                : std::string{};
+        const std::size_t directRevealGate =
+            passiveDragUpdateSource.find(
+                "ShouldPassivelyRevealDockForDragAtEdge(");
+        const std::size_t passiveDragReducer =
+            passiveDragUpdateSource.find(
+                "ResolvePassiveDragRevealUpdate(",
+                directRevealGate);
+        const std::size_t gatedRevealRequest =
+            passiveDragUpdateSource.find(
+                "passiveDragRevealRequested,",
+                passiveDragReducer);
+        const std::size_t passiveDragReducerEnd =
+            passiveDragUpdateSource.find(
+                "leaveDelayElapsed);",
+                passiveDragReducer);
+        const std::string passiveDragReducerCall =
+            passiveDragReducer != std::string::npos &&
+                    passiveDragReducerEnd != std::string::npos
+                ? passiveDragUpdateSource.substr(
+                    passiveDragReducer,
+                    passiveDragReducerEnd - passiveDragReducer)
+                : std::string{};
         const std::size_t prepareRevealFrame =
-            autoHideUpdateSource.find(
+            passiveDragUpdateSource.find(
                 "RenderFloatingDockCompositionFrame(host)");
         const std::size_t flushRevealFrame =
-            autoHideUpdateSource.find(
+            passiveDragUpdateSource.find(
                 "FlushPendingCompositionCommit()",
                 prepareRevealFrame);
         const std::size_t revealPairVisibility =
-            autoHideUpdateSource.find(
+            passiveDragUpdateSource.find(
                 "UpdatePersistentDockHostVisibility(host);",
                 flushRevealFrame);
-        Check(!autoHideUpdateSource.empty() &&
-                autoHideUpdateSource.find(
+        Check(!passiveDragUpdateSource.empty() &&
+                appHeaderSource.find(
+                  "bool UpdatePassiveDragRevealHosts(\n"
+                  "        POINT cursorScreen);") !=
+                    std::string::npos &&
+                passiveDragUpdateSource.find(
                   "IsPointInDockEdgeProjection(") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "IsPointInDockEdgeCorridor(") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "dragSession_.IsActive()") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "dragDropController_.IsTransportActive()") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
-                  "buttonsDown != 0") !=
+                passiveDragUpdateSource.find(
+                  "const bool keepPassiveDragReveal =") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
+                  "(dragRevealActive &&\n"
+                  "                pointerInEdgeCorridor);") !=
+                    std::string::npos &&
+                directRevealGate != std::string::npos &&
+                passiveDragReducer != std::string::npos &&
+                gatedRevealRequest != std::string::npos &&
+                directRevealGate < passiveDragReducer &&
+                passiveDragReducer < gatedRevealRequest &&
+                passiveDragReducerCall.find(
+                  "passiveDragRevealRequested,") !=
+                    std::string::npos &&
+                passiveDragReducerCall.find(
+                  "pointerInEdgeProjection,") ==
+                    std::string::npos &&
+                passiveDragUpdateSource.find(
                   "collectionPopupDockHost_ == &host") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "quickNavigationDockHost_ == &host") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "dockWindowPreview_->IsVisible()") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "HasActiveContextMenuSession()") !=
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "ShowFloatingDock(") ==
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "BeginFloatingDockKeyboardSession(") ==
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "SetForegroundWindow(") ==
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "RefocusFloatingDockKeyboardSession(") ==
                     std::string::npos &&
-                autoHideUpdateSource.find(
+                passiveDragUpdateSource.find(
                   "EnsureFloatingDockInputWindow(") ==
                     std::string::npos &&
                 prepareRevealFrame != std::string::npos &&
@@ -4716,11 +4799,23 @@ int main(int argc, char** argv)
                 revealPairVisibility != std::string::npos &&
                 prepareRevealFrame < flushRevealFrame &&
                 flushRevealFrame < revealPairVisibility,
-            "passive auto-hide reveal must be per-Host, focusless and retained by every Dock-associated surface");
-        Check(autoHideSamplerCall != std::string::npos &&
+            "passive drag reveal must be per-Host, focusless, pre-rendered and retained only by an active drag corridor or associated Dock surface");
+        Check(passiveDragSamplerCall != std::string::npos &&
                 legacyDragButtonGuard != std::string::npos &&
-                autoHideSamplerCall < legacyDragButtonGuard,
-            "auto-hide edge projection must run before internal/OLE drag and held-button suppression");
+                edgeSwipeDetectorUpdate != std::string::npos &&
+                edgeSwipeTriggerBranch != std::string::npos &&
+                edgeSwipeSummon != std::string::npos &&
+                edgeSwipeTriggerSource.find(
+                  "ShowFloatingDock(monitor);") !=
+                    std::string::npos &&
+                edgeSwipeTriggerSource.find(
+                  "showOnlyWhenSummoned") ==
+                    std::string::npos &&
+                passiveDragSamplerCall < legacyDragButtonGuard &&
+                legacyDragButtonGuard < edgeSwipeDetectorUpdate &&
+                edgeSwipeDetectorUpdate < edgeSwipeTriggerBranch &&
+                edgeSwipeTriggerBranch < edgeSwipeSummon,
+            "ordinary edge swipe must always keep the manual summon path while internal and OLE drags are excluded after passive reveal sampling");
         const std::size_t containsPointBegin =
             dockContainerSource.find(
                 "bool DockContainer::ContainsInteractivePoint(");
@@ -4804,7 +4899,7 @@ int main(int argc, char** argv)
                     effectiveFloatingBegin,
                     effectiveFloatingEnd - effectiveFloatingBegin)
                 : std::string{};
-        Check(autoHideUpdateSource.find(
+        Check(passiveDragUpdateSource.find(
                   "host.promoted,") !=
                     std::string::npos &&
                 manualPromotionSource.find(
@@ -4894,7 +4989,7 @@ int main(int argc, char** argv)
                 visibilityUpdateSource.find(
                   "ShowPopupWindowPair(host.hwnd)") !=
                     std::string::npos,
-            "hidden auto-hide Hosts must remain hidden across bounds, region and backdrop layout refreshes");
+            "idle summon-only Hosts must remain hidden across bounds, region and backdrop layout refreshes");
         const std::size_t closeFloatingDockBegin =
             floatingDockInteractionSource.find(
                 "void DesktopApp::CloseFloatingDock(\n"
@@ -5003,28 +5098,87 @@ int main(int argc, char** argv)
         const std::size_t showHostSynced =
             persistentShowSource.find(
                 "SyncPersistentDockHost(targetMonitor)");
+        const std::size_t showHostVisibilityCaptured =
+            persistentShowSource.find(
+                "const bool hostWasVisible =",
+                showHostSynced);
         const std::size_t showPromoted =
             persistentShowSource.find(
                 "floatingDockHost_->promoted = true;",
-                showHostSynced);
+                showHostVisibilityCaptured);
         const std::size_t showAggregateUpdated =
             persistentShowSource.find(
                 "RefreshFloatingDockVisibilityState();",
                 showPromoted);
+        const std::size_t showHiddenHostBranch =
+            persistentShowSource.find(
+                "if (!hostWasVisible)",
+                showAggregateUpdated);
+        const std::size_t showFrameRendered =
+            persistentShowSource.find(
+                "RenderFloatingDockCompositionFrame(*floatingDockHost_)",
+                showHiddenHostBranch);
+        const std::size_t showFrameFlushed =
+            persistentShowSource.find(
+                "FlushPendingCompositionCommit()",
+                showFrameRendered);
+        const std::size_t showFrameFailureGuard =
+            persistentShowSource.find(
+                "if (!revealFramePrepared)",
+                showFrameFlushed);
+        const std::size_t showFailureDemoted =
+            persistentShowSource.find(
+                "floatingDockHost_->promoted = false;",
+                showFrameFailureGuard);
+        const std::size_t showFailureReturned =
+            persistentShowSource.find(
+                "return;",
+                showFailureDemoted);
         const std::size_t showVisibilityUpdated =
             persistentShowSource.find(
                 "UpdatePersistentDockHostVisibility(",
-                showAggregateUpdated);
+                showFrameFailureGuard);
+        const std::size_t showVisibleHostBranch =
+            persistentShowSource.find(
+                "if (hostWasVisible)",
+                showVisibilityUpdated);
+        const std::size_t showVisibleHostRepaint =
+            persistentShowSource.find(
+                "InvalidateFloatingDockWindow(",
+                showVisibleHostBranch);
+        const std::size_t showKeyboardSessionStarted =
+            persistentShowSource.find(
+                "BeginFloatingDockKeyboardSession();",
+                showVisibleHostRepaint);
         Check(!persistentShowSource.empty() &&
                 showHostSynced != std::string::npos &&
+                showHostVisibilityCaptured != std::string::npos &&
                 showPromoted != std::string::npos &&
                 showAggregateUpdated != std::string::npos &&
+                showHiddenHostBranch != std::string::npos &&
+                showFrameRendered != std::string::npos &&
+                showFrameFlushed != std::string::npos &&
+                showFrameFailureGuard != std::string::npos &&
+                showFailureDemoted != std::string::npos &&
+                showFailureReturned != std::string::npos &&
                 showVisibilityUpdated != std::string::npos &&
+                showVisibleHostBranch != std::string::npos &&
+                showVisibleHostRepaint != std::string::npos &&
+                showKeyboardSessionStarted != std::string::npos &&
                 showHostSynced < showPromoted &&
+                showHostSynced < showHostVisibilityCaptured &&
+                showHostVisibilityCaptured < showPromoted &&
                 showPromoted < showAggregateUpdated &&
-                showAggregateUpdated < showVisibilityUpdated &&
-                persistentShowSource.find(
-                  "promoted = false") == std::string::npos &&
+                showAggregateUpdated < showHiddenHostBranch &&
+                showHiddenHostBranch < showFrameRendered &&
+                showFrameRendered < showFrameFlushed &&
+                showFrameFlushed < showFrameFailureGuard &&
+                showFrameFailureGuard < showFailureDemoted &&
+                showFailureDemoted < showFailureReturned &&
+                showFailureReturned < showVisibilityUpdated &&
+                showVisibilityUpdated < showVisibleHostBranch &&
+                showVisibleHostBranch < showVisibleHostRepaint &&
+                showVisibleHostRepaint < showKeyboardSessionStarted &&
                 persistentShowSource.find(
                   "ApplyFloatingDockLayerPolicy();") ==
                     std::string::npos &&
@@ -5039,7 +5193,7 @@ int main(int argc, char** argv)
                 persistentShowSource.find(
                   "WaitForCompositionPresentation(") ==
                     std::string::npos,
-            "summoning a persistent DockHost must promote only the target host without a content hand-off or demoting its siblings");
+            "summoning a hidden persistent DockHost must render and flush before its atomic show, defer on frame-preparation failure, and start keyboard input only after visibility is updated");
         Check(floatingDockInteractionSource.find(
                   "CompleteFloatingDockCloseHandoff") ==
                     std::string::npos &&

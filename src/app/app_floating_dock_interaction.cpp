@@ -33,6 +33,8 @@ void DesktopApp::ShowFloatingDock(
         return;
     }
 
+    const bool hostWasVisible =
+        ShouldShowPersistentDockHost(*floatingDockHost_);
     // Each monitor owns its persistent visual independently. Summoning this
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
@@ -42,10 +44,53 @@ void DesktopApp::ShowFloatingDock(
     floatingDockHost_->passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
     floatingDockLastPointerPresentTick_ = 0;
+    bool revealFramePrepared = false;
+    if (!hostWasVisible)
+    {
+        POINT cursorDesktop{};
+        if (GetCursorPos(&cursorDesktop))
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                ScreenToClient(hwnd_, &cursorDesktop);
+            else
+            {
+                cursorDesktop.x -= virtualLeft_;
+                cursorDesktop.y -= virtualTop_;
+            }
+            lastMousePoint_ = cursorDesktop;
+        }
+        // A summon-only Host is fully hidden between sessions. Prepare and
+        // commit its current Dock/backdrop frame before showing the pair so
+        // DWM cannot expose the surface retained from the previous session.
+        revealFramePrepared =
+            RenderFloatingDockCompositionFrame(*floatingDockHost_);
+        if (revealFramePrepared)
+            revealFramePrepared =
+                FlushPendingCompositionCommit();
+        if (!revealFramePrepared)
+        {
+            // Do not trade availability for a stale or blank first frame.
+            // Keep the pair hidden, restore the idle state and leave an
+            // immediate paint queued so the next summon can reuse a fresh
+            // composition surface after recovery.
+            floatingDockHost_->promoted = false;
+            RefreshFloatingDockVisibilityState();
+            InvalidateFloatingDockWindow(
+                *floatingDockHost_, true);
+            WriteDiagnosticLogEntry(
+                L"Floating Dock summon deferred: frame not ready");
+            return;
+        }
+    }
     UpdatePersistentDockHostVisibility(
         *floatingDockHost_);
-    InvalidateFloatingDockWindow(
-        *floatingDockHost_, true);
+    if (hostWasVisible)
+    {
+        // A visible desktop-layer Host needs only the existing immediate
+        // repaint after its Z-order promotion; no SHOW transaction occurs.
+        InvalidateFloatingDockWindow(
+            *floatingDockHost_, true);
+    }
     BeginFloatingDockKeyboardSession();
 }
 

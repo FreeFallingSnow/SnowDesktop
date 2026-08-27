@@ -987,7 +987,13 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.keepWhenDesktopHidden);
     ReadBoolField(text, "allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
-    ReadBoolField(text, "autoHide", settings.autoHide);
+    if (!ReadBoolField(text, "showOnlyWhenSummoned",
+            settings.showOnlyWhenSummoned))
+    {
+        // Compatibility with development builds that briefly described this
+        // summon-only behavior as automatic hiding.
+        ReadBoolField(text, "autoHide", settings.showOnlyWhenSummoned);
+    }
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
@@ -1039,6 +1045,12 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
+    bool floatingEdgeSwipeEnabled = settings.floatingEdgeSwipeEnabled;
+    bool allowDesktopContentOverlap = settings.allowDesktopContentOverlap;
+    snowdesktop::dock_settings_rules::NormalizeSummonOnlyDependencies(
+        settings.showOnlyWhenSummoned,
+        allowDesktopContentOverlap,
+        floatingEdgeSwipeEnabled);
     const PersonalizationSettings& taskbarStyle = settings.systemTaskbarAppearance;
     file << "{\n";
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
@@ -1051,7 +1063,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"floatingHotkeyVirtualKey\": "
          << settings.floatingHotkeyVirtualKey << ",\n";
     file << "  \"floatingEdgeSwipeEnabled\": "
-         << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
+         << (floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
@@ -1066,10 +1078,10 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"keepWhenDesktopHidden\": "
          << (settings.keepWhenDesktopHidden ? "true" : "false") << ",\n";
     file << "  \"allowDesktopContentOverlap\": "
-         << (settings.allowDesktopContentOverlap ? "true" : "false")
+         << (allowDesktopContentOverlap ? "true" : "false")
          << ",\n";
-    file << "  \"autoHide\": "
-         << (settings.autoHide ? "true" : "false") << ",\n";
+    file << "  \"showOnlyWhenSummoned\": "
+         << (settings.showOnlyWhenSummoned ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "

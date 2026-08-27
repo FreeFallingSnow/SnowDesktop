@@ -11,6 +11,25 @@ inline void NormalizeAlwaysEnabledFeatures(
     showWindowPreviews = true;
 }
 
+inline void NormalizeSummonOnlyDependencies(
+    bool showOnlyWhenSummoned,
+    bool& allowDesktopContentOverlap,
+    bool& floatingEdgeSwipeEnabled) noexcept
+{
+    if (!showOnlyWhenSummoned)
+        return;
+    allowDesktopContentOverlap = true;
+    floatingEdgeSwipeEnabled = true;
+}
+
+inline void DisableSummonOnlyWhenPrerequisiteDisabled(
+    bool prerequisiteEnabled,
+    bool& showOnlyWhenSummoned) noexcept
+{
+    if (!prerequisiteEnabled)
+        showOnlyWhenSummoned = false;
+}
+
 inline bool ShouldReserveDesktopWorkArea(
     bool allowDesktopContentOverlap) noexcept
 {
