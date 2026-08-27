@@ -176,6 +176,8 @@ void DesktopApp::DestroyPersistentDockHost(
 {
     if (collectionPopupDockHost_ == &host)
         collectionPopupDockHost_ = nullptr;
+    if (quickNavigationDockHost_ == &host)
+        quickNavigationDockHost_ = nullptr;
     host.active = false;
     host.promoted = false;
     host.revealPending = false;
@@ -386,6 +388,19 @@ bool DesktopApp::SyncPersistentDockHost(
     return selected != nullptr;
 }
 
+void DesktopApp::ApplyPersistentDockHostAppearance()
+{
+    floatingDockPersonalization_ =
+        CurrentPersonalization();
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active)
+            continue;
+        UpdateFloatingDockWindowBounds(
+            *ownedHost, false, true);
+    }
+}
+
 void DesktopApp::UpdatePersistentDockHostVisibility(
     PersistentDockHost& host)
 {
@@ -539,7 +554,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 
 void DesktopApp::UpdateFloatingDockWindowBounds(
     PersistentDockHost& host,
-    bool immediatePresent)
+    bool immediatePresent,
+    bool forceRegionRefresh)
 {
     if (!host.active || !host.hwnd ||
         !IsWindow(host.hwnd) ||
@@ -611,7 +627,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (!dockGeometryChanged &&
         !popupRegionChanged &&
         !titleRegionChanged &&
-        !sourceRectChanged)
+        !sourceRectChanged &&
+        !forceRegionRefresh)
     {
         InvalidateFloatingDockWindow(host);
         return;

@@ -980,6 +980,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         if (!traySettings && !immersiveColor)
             ScheduleDisplayTopologyRefresh();
+        if (immersiveColor)
+            ApplyPersistentDockHostAppearance();
         InvalidateRect(hwnd_, nullptr, FALSE);
         // Explorer also broadcasts this message for view options such as
         // "Hidden items". Theme and taskbar notifications do not change the
@@ -991,6 +993,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_FONTCHANGE:
     case WM_THEMECHANGED:
         InvalidateDragHintRaster();
+        if (msg == WM_THEMECHANGED)
+            ApplyPersistentDockHostAppearance();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case kShellChangeMessage:

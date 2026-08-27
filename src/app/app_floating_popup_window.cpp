@@ -671,6 +671,7 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
     }
     collectionPopupBackdropCompositor_.
         SetPopupTopmost(shouldBeTopmost);
+    ApplyDragPreviewLayerPolicy();
 }
 
 void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
@@ -960,6 +961,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     {
         InvalidateFloatingPopupWindow(false);
     }
+    ApplyDragPreviewLayerPolicy();
 }
 
 void DesktopApp::PaintFloatingPopupWindow(HWND hwnd)

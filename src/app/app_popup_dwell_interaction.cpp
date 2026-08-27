@@ -93,9 +93,12 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     }
 
     size_t hoveredCollection = static_cast<size_t>(-1);
-    if (DockContainer* dock = GetDockContainerAtPoint(point))
+    DockContainer* hoveredDock =
+        GetDockContainerAtPoint(point);
+    if (hoveredDock)
     {
-        if (DockEntryItem* entry = dock->EntryAtPoint(point);
+        if (DockEntryItem* entry =
+                hoveredDock->EntryAtPoint(point);
             entry && entry->GetEntryType() == DockEntryType::Collection)
         {
             hoveredCollection = FindWidgetIndexById(entry->GetReference());
@@ -127,8 +130,12 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
         break;
     }
 
+    const bool samePopupSource =
+        hoveredCollection == popupWidgetIndex_ &&
+        collectionPopupDockHost_ ==
+            FindPersistentDockHost(hoveredDock);
     if (hoveredCollection == static_cast<size_t>(-1) ||
-        hoveredCollection == popupWidgetIndex_)
+        samePopupSource)
     {
         CancelCollectionPopupDwell();
         return;
@@ -179,7 +186,13 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         CancelCollectionPopupDwell();
         return false;
     }
-    if (candidate == popupWidgetIndex_ ||
+    DockContainer* candidateDock =
+        GetDockContainerAtPoint(lastMousePoint_);
+    const bool samePopupSource =
+        candidate == popupWidgetIndex_ &&
+        collectionPopupDockHost_ ==
+            FindPersistentDockHost(candidateDock);
+    if (samePopupSource ||
         widgets_[candidate].type !=
             DesktopWidgetType::Collection)
     {

@@ -815,14 +815,93 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
 void DesktopApp::OpenQuickNavigation(
     QuickNavigationInvocationSource source)
 {
-    if (quickNavigationOpen_)
-        return;
-    quickNavigationPostCloseAction_ = {};
-    quickNavigationHasLastEditAnimationFrame_ = false;
     if (dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive())
         return;
+
+    POINT requestedOpenPoint = lastMousePoint_;
+    POINT requestedAnchorPoint = requestedOpenPoint;
+    float requestedDpiScale = quickNavDpiScale_;
+    PersistentDockHost* requestedDockHost = nullptr;
+    POINT cursor{};
+    if (GetCursorPos(&cursor))
+    {
+        requestedOpenPoint = {
+            cursor.x - virtualLeft_,
+            cursor.y - virtualTop_
+        };
+        requestedAnchorPoint = requestedOpenPoint;
+        HMONITOR monitor = MonitorFromPoint(
+            cursor, MONITOR_DEFAULTTONEAREST);
+        UINT dpiX = 96, dpiY = 96;
+        if (monitor)
+        {
+            GetDpiForMonitor(
+                monitor, MDT_EFFECTIVE_DPI,
+                &dpiX, &dpiY);
+        }
+        requestedDpiScale =
+            static_cast<float>(dpiX) / 96.0f;
+    }
+    if (source == QuickNavigationInvocationSource::DockSearch)
+    {
+        if (DockContainer* dock =
+                GetDockContainerAtPoint(requestedOpenPoint);
+            dock && dock->IsSearchPoint(requestedOpenPoint))
+        {
+            requestedDockHost =
+                FindPersistentDockHost(dock);
+            const RECT searchRect = dock->GetSearchRect();
+            if (!IsRectEmptyRect(searchRect))
+            {
+                requestedAnchorPoint = {
+                    (searchRect.left + searchRect.right) / 2,
+                    (searchRect.top + searchRect.bottom) / 2,
+                };
+            }
+        }
+    }
+
+    if (quickNavigationOpen_)
+    {
+        if (source != QuickNavigationInvocationSource::DockSearch ||
+            !requestedDockHost ||
+            requestedDockHost == quickNavigationDockHost_)
+            return;
+
+        quickNavigationInvocationSource_ = source;
+        quickNavigationDockHost_ = requestedDockHost;
+        quickNavigationOpenPoint_ = requestedOpenPoint;
+        quickNavigationLastMousePoint_ = requestedOpenPoint;
+        quickNavigationAnimationAnchorPoint_ =
+            requestedAnchorPoint;
+        quickNavDpiScale_ = requestedDpiScale;
+        EnsureQuickNavTextFormats();
+        UpdateQuickNavTabWidths();
+        PositionQuickNavigationWindow();
+        InvalidateQuickNavigationWindow(true);
+        if (quickNavigationAnimation_.IsAnimating())
+            StartQuickNavigationCompositionAnimation();
+        if (quickNavigationSearchEdit_ &&
+            IsWindow(quickNavigationSearchEdit_))
+        {
+            SetForegroundWindow(quickNavigationSearchEdit_);
+            SetFocus(quickNavigationSearchEdit_);
+        }
+        return;
+    }
+
+    quickNavigationPostCloseAction_ = {};
+    quickNavigationHasLastEditAnimationFrame_ = false;
     quickNavigationInvocationSource_ = source;
+    quickNavigationDockHost_ =
+        source == QuickNavigationInvocationSource::DockSearch
+            ? requestedDockHost : nullptr;
+    quickNavigationOpenPoint_ = requestedOpenPoint;
+    quickNavigationLastMousePoint_ = requestedOpenPoint;
+    quickNavigationAnimationAnchorPoint_ =
+        requestedAnchorPoint;
+    quickNavDpiScale_ = requestedDpiScale;
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
     {
@@ -832,6 +911,8 @@ void DesktopApp::OpenQuickNavigation(
         SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(searchHint));
     }
+    EnsureQuickNavTextFormats();
+    UpdateQuickNavTabWidths();
 
     const bool reversingClose =
         quickNavigationAnimation_.IsClosing() &&
@@ -839,31 +920,7 @@ void DesktopApp::OpenQuickNavigation(
         IsWindow(quickNavigationHwnd_);
     if (reversingClose)
     {
-        if (source == QuickNavigationInvocationSource::DockSearch)
-        {
-            POINT cursor{};
-            if (GetCursorPos(&cursor))
-            {
-                const POINT appPoint{
-                    cursor.x - virtualLeft_,
-                    cursor.y - virtualTop_,
-                };
-                if (DockContainer* dock =
-                        GetDockContainerAtPoint(appPoint);
-                    dock && dock->IsSearchPoint(appPoint))
-                {
-                    const RECT searchRect = dock->GetSearchRect();
-                    if (!IsRectEmptyRect(searchRect))
-                    {
-                        quickNavigationAnimationAnchorPoint_ = {
-                            (searchRect.left + searchRect.right) / 2,
-                            (searchRect.top + searchRect.bottom) / 2,
-                        };
-                        PositionQuickNavigationWindow();
-                    }
-                }
-            }
-        }
+        PositionQuickNavigationWindow();
         quickNavigationOpen_ = true;
         if (quickNavigationSearchEdit_ &&
             IsWindow(quickNavigationSearchEdit_))
@@ -912,47 +969,6 @@ void DesktopApp::OpenQuickNavigation(
         return;
     }
 
-    POINT cursor{};
-    if (GetCursorPos(&cursor))
-    {
-        quickNavigationOpenPoint_ = { cursor.x - virtualLeft_, cursor.y - virtualTop_ };
-        quickNavigationLastMousePoint_ =
-            quickNavigationOpenPoint_;
-        HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-        UINT dpiX = 96, dpiY = 96;
-        if (monitor)
-            GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
-        quickNavDpiScale_ = static_cast<float>(dpiX) / 96.0f;
-    }
-    else
-    {
-        quickNavigationOpenPoint_ = lastMousePoint_;
-        quickNavigationLastMousePoint_ =
-            quickNavigationOpenPoint_;
-    }
-    quickNavigationAnimationAnchorPoint_ =
-        quickNavigationOpenPoint_;
-    if (source == QuickNavigationInvocationSource::DockSearch)
-    {
-        if (DockContainer* dock =
-                GetDockContainerAtPoint(
-                    quickNavigationOpenPoint_);
-            dock && dock->IsSearchPoint(
-                quickNavigationOpenPoint_))
-        {
-            const RECT searchRect = dock->GetSearchRect();
-            if (!IsRectEmptyRect(searchRect))
-            {
-                quickNavigationAnimationAnchorPoint_ = {
-                    (searchRect.left + searchRect.right) / 2,
-                    (searchRect.top + searchRect.bottom) / 2,
-                };
-            }
-        }
-    }
-
-    EnsureQuickNavTextFormats();
-    UpdateQuickNavTabWidths();
     quickNavigationOpen_ = true;
     EnsureNavTabOrder();
     if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
@@ -978,6 +994,7 @@ void DesktopApp::OpenQuickNavigation(
     if (!CreateQuickNavigationWindow())
     {
         quickNavigationOpen_ = false;
+        quickNavigationDockHost_ = nullptr;
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -1254,6 +1271,7 @@ void DesktopApp::FinalizeCloseQuickNavigation()
     DestroyQuickNavigationWindow();
     quickNavigationInvocationSource_ =
         QuickNavigationInvocationSource::Pointer;
+    quickNavigationDockHost_ = nullptr;
     logicalSlotPickerRequest_ = {};
     if (postCloseAction)
         postCloseAction();

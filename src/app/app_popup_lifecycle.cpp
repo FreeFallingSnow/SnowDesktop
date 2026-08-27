@@ -55,6 +55,8 @@ TryActivateDockPopupFromMenuPointerPress(
     if (entryIndex >= dockEntries_.size())
         return false;
     const DockEntry& entry = dockEntries_[entryIndex];
+    PersistentDockHost* requestedDockHost =
+        FindPersistentDockHost(dock);
     const bool collectionEntry =
         entry.type == DockEntryType::Collection;
     const bool folderEntry = IsFolderDockEntry(entry);
@@ -82,7 +84,9 @@ TryActivateDockPopupFromMenuPointerPress(
             snowdesktop::floating_dock_rules::
                 ShouldCloseCollectionPopup(
                     popupWidgetIndex_,
-                    collectionWidgetIndex))
+                    collectionWidgetIndex,
+                    collectionPopupDockHost_ ==
+                        requestedDockHost))
         {
             CloseCollectionPopup();
         }
@@ -101,7 +105,8 @@ TryActivateDockPopupFromMenuPointerPress(
         L":" + ToUpperInvariant(entry.reference);
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId)
+        dockFolderPopupSourceId_ == sourceId &&
+        collectionPopupDockHost_ == requestedDockHost)
     {
         CloseCollectionPopup();
     }
@@ -151,10 +156,24 @@ void DesktopApp::OpenDockFolderPopupAt(
     const std::wstring sourceId =
         std::to_wstring(static_cast<int>(entry.type)) +
         L":" + ToUpperInvariant(entry.reference);
+    PersistentDockHost* requestedDockHost = nullptr;
+    if (DockContainer* requestedDock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* requestedItem =
+                requestedDock->EntryAtPoint(anchorPoint);
+            requestedItem &&
+            requestedItem->GetEntryIndex() == entryIndex)
+        {
+            requestedDockHost =
+                FindPersistentDockHost(requestedDock);
+        }
+    }
     const bool reverseClosingAnimation =
         popupAnimation_.IsClosing() &&
         dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId;
+        dockFolderPopupSourceId_ == sourceId &&
+        collectionPopupDockHost_ == requestedDockHost;
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
     dockFolderPopupAvailable_ = target.available;

@@ -150,9 +150,26 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
 
     DismissActiveContextMenuForPopupTransition();
 
+    PersistentDockHost* requestedDockHost = nullptr;
+    if (DockContainer* requestedDock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* requestedItem =
+                requestedDock->EntryAtPoint(anchorPoint);
+            requestedItem &&
+            requestedItem->GetEntryType() ==
+                DockEntryType::Collection &&
+            requestedItem->GetReference() ==
+                widgets_[widgetIndex].id)
+        {
+            requestedDockHost =
+                FindPersistentDockHost(requestedDock);
+        }
+    }
     const bool samePopupSource =
         !dockFolderPopupOpen_ &&
-        popupWidgetIndex_ == widgetIndex;
+        popupWidgetIndex_ == widgetIndex &&
+        collectionPopupDockHost_ == requestedDockHost;
     switch (snowdesktop::popup_animation_rules::
         ResolveExistingSourceAction(
             samePopupSource,

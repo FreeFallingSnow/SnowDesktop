@@ -95,6 +95,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
     }
     DockContainer* pointDock = GetDockContainerAtPoint(pt);
+    PersistentDockHost* pointDockHost =
+        FindPersistentDockHost(pointDock);
+    const bool popupOwnedByPointDock =
+        collectionPopupDockHost_ == pointDockHost;
     const bool pointInDock = pointDock != nullptr;
     size_t pressedDockCollectionWidgetIndex =
         static_cast<size_t>(-1);
@@ -126,7 +130,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pressedOpenPopupFolderToggle =
                     IsCollectionPopupInteractive() &&
                     dockFolderPopupOpen_ &&
-                    dockFolderPopupSourceId_ == sourceId;
+                    dockFolderPopupSourceId_ == sourceId &&
+                    popupOwnedByPointDock;
             }
         }
     }
@@ -135,7 +140,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         snowdesktop::floating_dock_rules::
             ShouldCloseCollectionPopup(
                 popupWidgetIndex_,
-                pressedDockCollectionWidgetIndex);
+                pressedDockCollectionWidgetIndex,
+                popupOwnedByPointDock);
     bool collectionPopupClosedByPointerDown = false;
     HWND interactionCaptureHwnd = hwnd_;
     if (handlingFloatingDockInput_ &&
@@ -200,7 +206,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 ShouldCloseCollectionPopupOnPointerDown(
                     popupWidgetIndex_,
                     pressedDockCollectionWidgetIndex,
-                    PtInRect(&popup, pt) != FALSE))
+                    PtInRect(&popup, pt) != FALSE,
+                    popupOwnedByPointDock))
         {
             CloseCollectionPopup();
             collectionPopupClosedByPointerDown = true;

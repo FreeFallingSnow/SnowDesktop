@@ -52,6 +52,19 @@ void DesktopApp::HideDragPreviewWindow()
     }
 }
 
+void DesktopApp::ApplyDragPreviewLayerPolicy()
+{
+    if (!dragPreviewHwnd_ ||
+        !IsWindow(dragPreviewHwnd_) ||
+        !IsWindowVisible(dragPreviewHwnd_))
+        return;
+    SetWindowPos(
+        dragPreviewHwnd_, HWND_TOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE |
+            SWP_NOACTIVATE);
+}
+
 void DesktopApp::DestroyDragPreviewWindow()
 {
     HideDragPreviewWindow();
@@ -408,6 +421,13 @@ void DesktopApp::SyncDragPreviewWindow()
         }
         dragPreviewWindowBounds_ = requestedWindowBounds;
         dragPreviewWindowBoundsValid_ = true;
+    }
+    else
+    {
+        // A Dock popup can enter the topmost band while the pointer is held
+        // still for dwell activation. Reassert the ghost even without a
+        // geometry update so it remains the foremost presentation surface.
+        ApplyDragPreviewLayerPolicy();
     }
 
     // Native input stays captured and external-window classification already

@@ -747,6 +747,7 @@ public:
             app_.personalizationSettings_ = snapshot.values.personalization;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
+            app_.ApplyPersistentDockHostAppearance();
             if (app_.dockSettings_.systemTaskbarFollowPersonalization)
                 app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
@@ -877,6 +878,7 @@ public:
             app_.personalizationSettings_ = snapshot.values.personalization;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
+            app_.ApplyPersistentDockHostAppearance();
             app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
         }

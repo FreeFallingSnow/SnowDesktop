@@ -485,6 +485,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
         if (traySettings || immersiveColor)
             SyncSystemTaskbarSettingsFromWindows();
+        if (immersiveColor)
+            ApplyPersistentDockHostAppearance();
         if (traySettings)
         {
             ScheduleDisplayTopologyRefresh();
@@ -496,6 +498,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     case WM_THEMECHANGED:
         RefreshSystemTaskbarAppearance(false);
+        ApplyPersistentDockHostAppearance();
         if (hwnd_ && IsWindow(hwnd_))
             InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;

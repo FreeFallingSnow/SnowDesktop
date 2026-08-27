@@ -94,11 +94,9 @@ struct PreviewWindowZOrderPolicy
 constexpr PreviewWindowZOrderPolicy
 ResolvePreviewWindowZOrderPolicy(bool visible) noexcept
 {
-    return visible
-        ? PreviewWindowZOrderPolicy{
-            nullptr, SWP_NOACTIVATE | SWP_NOZORDER }
-        : PreviewWindowZOrderPolicy{
-            HWND_TOPMOST, SWP_NOACTIVATE };
+    (void)visible;
+    return PreviewWindowZOrderPolicy{
+        HWND_TOPMOST, SWP_NOACTIVATE };
 }
 
 constexpr bool DropPreviewBelongsToRenderSurface(

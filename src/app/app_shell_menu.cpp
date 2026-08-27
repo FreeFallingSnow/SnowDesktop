@@ -227,6 +227,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         shouldBeTopmost
             ? HWND_TOPMOST : HWND_NOTOPMOST,
         shouldBeTopmost);
+    ApplyDragPreviewLayerPolicy();
 }
 
 void DesktopApp::BeginShellPopupMenuLayer()

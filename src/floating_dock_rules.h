@@ -332,17 +332,20 @@ inline UINT RemainingPointerFrameDelay(
 
 inline bool ShouldCloseCollectionPopup(
     std::size_t openWidgetIndex,
-    std::size_t clickedWidgetIndex)
+    std::size_t clickedWidgetIndex,
+    bool sameDockHost = true)
 {
     return openWidgetIndex !=
             static_cast<std::size_t>(-1) &&
-        openWidgetIndex == clickedWidgetIndex;
+        openWidgetIndex == clickedWidgetIndex &&
+        sameDockHost;
 }
 
 inline bool ShouldCloseCollectionPopupOnPointerDown(
     std::size_t openWidgetIndex,
     std::size_t pressedDockWidgetIndex,
-    bool pointInsidePopup)
+    bool pointInsidePopup,
+    bool sameDockHost = true)
 {
     if (openWidgetIndex ==
             static_cast<std::size_t>(-1) ||
@@ -353,7 +356,8 @@ inline bool ShouldCloseCollectionPopupOnPointerDown(
     // close-on-down followed by open-on-up.
     return !ShouldCloseCollectionPopup(
         openWidgetIndex,
-        pressedDockWidgetIndex);
+        pressedDockWidgetIndex,
+        sameDockHost);
 }
 
 inline POINT WindowPointToDesktopPoint(

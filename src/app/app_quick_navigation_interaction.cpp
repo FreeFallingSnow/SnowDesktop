@@ -198,6 +198,20 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     RECT overlay = quickNavigationRect_;
     if (!PtInRect(&overlay, point))
     {
+        if (DockContainer* dock =
+                GetDockContainerAtPoint(point);
+            dock && dock->IsSearchPoint(point))
+        {
+            PersistentDockHost* requestedDockHost =
+                FindPersistentDockHost(dock);
+            if (requestedDockHost &&
+                requestedDockHost != quickNavigationDockHost_)
+            {
+                OpenQuickNavigation(
+                    QuickNavigationInvocationSource::DockSearch);
+                return true;
+            }
+        }
         CloseQuickNavigation();
         // Outside dismissal is a notification, not ownership of the press.
         // The same click must still be routed to the Dock/desktop target.

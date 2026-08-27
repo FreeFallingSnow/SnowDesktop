@@ -1033,6 +1033,7 @@ private:
     bool RenderDragPreviewCompositionFrame(
         const RECT& desktopBounds);
     void SyncDragPreviewWindow();
+    void ApplyDragPreviewLayerPolicy();
     bool IsDragPresentationOnlyWindow(HWND window) const;
     HWND ResolveWindowBelowDragPreviewAt(
         POINT screenPoint) const;
@@ -1112,7 +1113,8 @@ private:
         bool immediatePresent = true);
     void UpdateFloatingDockWindowBounds(
         PersistentDockHost& host,
-        bool immediatePresent = true);
+        bool immediatePresent = true,
+        bool forceRegionRefresh = false);
     void InvalidateFloatingDockWindow(bool immediate = false);
     void InvalidateFloatingDockWindow(
         PersistentDockHost& host,
@@ -1343,6 +1345,8 @@ private:
     void ApplyQuickNavigationAppearance();
     /** @brief 根据全局继承或独立覆盖项解析集合组件与 Dock 弹窗主题。 */
     void ApplyCollectionPopupAppearance();
+    /** @brief 将最新个性化设置同步到全部常驻 DockHost 并重建圆角区域。 */
+    void ApplyPersistentDockHostAppearance();
     /** @brief 加载 Dock 设置。 */
     void LoadDockSettingsAndApply();
     /** @brief 从 Windows 读取任务栏系统设置并同步到软件配置。 */
@@ -3796,6 +3800,9 @@ private:
     bool quickNavigationAnimationCompositorDriven_ = false;
     QuickNavigationInvocationSource quickNavigationInvocationSource_ =
         QuickNavigationInvocationSource::Pointer;
+    // Dock-search sessions retain their source Host so a press on another
+    // monitor can retarget the shared panel instead of merely dismissing it.
+    PersistentDockHost* quickNavigationDockHost_ = nullptr;
     std::function<void()> quickNavigationPostCloseAction_;
     RECT quickNavigationRenameItemRect_{};
     size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);

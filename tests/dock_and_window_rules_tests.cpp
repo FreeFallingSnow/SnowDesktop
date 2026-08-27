@@ -1883,9 +1883,9 @@ int main(int argc, char** argv)
         dragVisual::ResolvePreviewWindowZOrderPolicy(true);
     Check(hiddenPreviewZOrder.insertAfter == HWND_TOPMOST &&
             (hiddenPreviewZOrder.flags & SWP_NOZORDER) == 0 &&
-            visiblePreviewZOrder.insertAfter == nullptr &&
-            (visiblePreviewZOrder.flags & SWP_NOZORDER) != 0,
-        "a newly shown drag preview must enter topmost while visible movement preserves Z order");
+            visiblePreviewZOrder.insertAfter == HWND_TOPMOST &&
+            (visiblePreviewZOrder.flags & SWP_NOZORDER) == 0,
+        "every drag preview placement must reassert topmost above Dock popups opened later");
     Check(dragVisual::DropPreviewBelongsToRenderSurface(
               true, true, true) &&
             !dragVisual::DropPreviewBelongsToRenderSurface(
@@ -2226,12 +2226,19 @@ int main(int argc, char** argv)
             3, 3),
         "clicking the collection that owns the open popup must close it");
     Check(!floatingDock::ShouldCloseCollectionPopup(
+            3, 3, false),
+        "the same collection on another DockHost must switch the popup instead of toggling the old owner");
+    Check(!floatingDock::ShouldCloseCollectionPopup(
             3, 4),
         "clicking a different collection must replace the open popup");
     Check(!floatingDock::
             ShouldCloseCollectionPopupOnPointerDown(
                 3, 3, false),
         "the owning collection button must defer closing until release");
+    Check(floatingDock::
+            ShouldCloseCollectionPopupOnPointerDown(
+                3, 3, false, false),
+        "the same collection on another DockHost must begin replacing the old popup on press");
     Check(floatingDock::
             ShouldCloseCollectionPopupOnPointerDown(
                 3, 4, false),
@@ -3746,6 +3753,12 @@ int main(int argc, char** argv)
         const std::string quickNavigationWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_window.cpp");
+        const std::string quickNavigationInteractionSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_quick_navigation_interaction.cpp");
+        const std::string settingsApplySource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_settings_apply.cpp");
         const std::string quickNavigationRenderSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_render.cpp");
@@ -4645,6 +4658,44 @@ int main(int argc, char** argv)
                   "collectionPopupDockHost_") !=
                     std::string::npos,
             "selecting another DockHost must not restack siblings, and a shared popup must retain its originating DockHost");
+        Check(pointerDownSource.find(
+                  "popupOwnedByPointDock") != std::string::npos &&
+                pointerReleaseSource.find(
+                  "collectionPopupDockHost_ ==") !=
+                    std::string::npos &&
+                popupTransitionSource.find(
+                  "collectionPopupDockHost_ == requestedDockHost") !=
+                    std::string::npos,
+            "popup toggle identity must include the originating DockHost when switching between monitors");
+        Check(appHeaderSource.find(
+                  "PersistentDockHost* quickNavigationDockHost_") !=
+                    std::string::npos &&
+                quickNavigationInteractionSource.find(
+                  "requestedDockHost != quickNavigationDockHost_") !=
+                    std::string::npos &&
+                quickNavigationWindowSource.find(
+                  "quickNavigationDockHost_ = requestedDockHost;") !=
+                    std::string::npos &&
+                quickNavigationWindowSource.find(
+                  "PositionQuickNavigationWindow();") !=
+                    std::string::npos,
+            "an open Dock-search panel must retarget its owner, anchor and monitor instead of consuming another Dock's search press");
+        Check(floatingDockSource.find(
+                  "void DesktopApp::ApplyPersistentDockHostAppearance()") !=
+                    std::string::npos &&
+                floatingDockSource.find(
+                  "*ownedHost, false, true") !=
+                    std::string::npos &&
+                CountOccurrences(
+                  settingsApplySource,
+                  "ApplyPersistentDockHostAppearance();") >= 2 &&
+                messageDispatchSource.find(
+                  "ApplyPersistentDockHostAppearance();") !=
+                    std::string::npos &&
+                desktopReloadSource.find(
+                  "ApplyPersistentDockHostAppearance();") !=
+                    std::string::npos,
+            "personalization and system theme changes must repaint every persistent DockHost and force its rounded region to refresh");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");
@@ -4956,8 +5007,17 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 dragPreviewSource.find(
                   "dragPreviewWindowBounds_") !=
+                    std::string::npos &&
+                dragPreviewSource.find(
+                  "void DesktopApp::ApplyDragPreviewLayerPolicy()") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "ApplyDragPreviewLayerPolicy();") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                  "ApplyDragPreviewLayerPolicy();") !=
                     std::string::npos,
-            "the drag ghost must use one cached compact DComp surface and cached placement without rebuilding a window region per pointer pixel");
+            "the drag ghost must use one cached compact DComp surface, cached placement, and reassert its layer above Dock popups");
         const std::size_t fallbackResolver =
             dragPreviewSource.find(
                 "ResolveWindowBelowDragPreviewAt(");

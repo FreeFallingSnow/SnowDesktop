@@ -471,6 +471,8 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     DockContainer* dock = dockPressedContainer_;
     if (!dock) dock = GetDockContainerAtPoint(point);
     if (!dock) return false;
+    PersistentDockHost* requestedDockHost =
+        FindPersistentDockHost(dock);
 
     DockEntryType entryType = DockEntryType::DesktopItem;
     std::wstring reference;
@@ -730,7 +732,9 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                 snowdesktop::floating_dock_rules::
                     ShouldCloseCollectionPopup(
                         popupWidgetIndex_,
-                        widgetIndex))
+                        widgetIndex,
+                        collectionPopupDockHost_ ==
+                            requestedDockHost))
                 CloseCollectionPopup();
             else
                 OpenCollectionPopupAt(
@@ -745,7 +749,8 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             L":" + ToUpperInvariant(reference);
         if (IsCollectionPopupInteractive() &&
             dockFolderPopupOpen_ &&
-            dockFolderPopupSourceId_ == sourceId)
+            dockFolderPopupSourceId_ == sourceId &&
+            collectionPopupDockHost_ == requestedDockHost)
             CloseCollectionPopup();
         else
             OpenDockFolderPopupAt(
