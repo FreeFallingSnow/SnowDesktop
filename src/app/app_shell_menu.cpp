@@ -187,12 +187,6 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         // it immediately above Explorer's desktop host and therefore below
         // every ordinary application, while preserving the same HWND and
         // compositor resources used by floating mode.
-        SetWindowPos(
-            host.hwnd, HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        host.backdrop.SetPopupTopmost(false);
-
         HWND insertAfter = nullptr;
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
@@ -217,12 +211,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
                     insertAfter, GW_HWNDPREV);
             }
         }
-        SetWindowPos(
+        host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd,
             insertAfter ? insertAfter : HWND_TOP,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        host.backdrop.Reattach(host.hwnd);
+            false);
         return;
     }
 
@@ -231,24 +223,11 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             ShouldFloatingDockBeTopmost(
                 true,
                 shellPopupMenuLayerDepth_);
-    const bool isTopmost =
-        (GetWindowLongPtrW(
-            host.hwnd, GWL_EXSTYLE) &
-            WS_EX_TOPMOST) != 0;
-    if (snowdesktop::floating_dock_rules::
-            ShouldChangeFloatingDockTopmost(
-                isTopmost, shouldBeTopmost))
-    {
-        SetWindowPos(
-            host.hwnd,
-            shouldBeTopmost
-                ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE |
-                SWP_NOACTIVATE);
-    }
-    host.backdrop.
-        SetPopupTopmost(shouldBeTopmost);
+    host.backdrop.SetPopupWindowPairZOrder(
+        host.hwnd,
+        shouldBeTopmost
+            ? HWND_TOPMOST : HWND_NOTOPMOST,
+        shouldBeTopmost);
 }
 
 void DesktopApp::BeginShellPopupMenuLayer()

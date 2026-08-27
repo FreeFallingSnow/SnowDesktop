@@ -38,6 +38,14 @@ public:
     bool InitializePopup(
         HWND contentWindow, bool topmost = true,
         bool initiallyVisible = true);
+    /**
+     * @brief 在一个延迟窗口事务中同步 popup 内容与 backdrop 的 Z 序。
+     * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。
+     * @param topmost 事务完成后窗口对是否位于 TOPMOST 带。
+     */
+    void SetPopupWindowPairZOrder(
+        HWND contentWindow, HWND contentInsertAfter,
+        bool topmost);
     /** @brief 临时切换顶层 popup backdrop 所在的 Z 序带。 */
     void SetPopupTopmost(bool topmost);
     /** @brief 内容窗口更换桌面宿主后，同步 backdrop 窗口的 parent 和层级。 */

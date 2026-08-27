@@ -4122,6 +4122,40 @@ int main(int argc, char** argv)
                 showPopupPairSource.find(
                   "SWP_SHOWWINDOW") != std::string::npos,
             "a persistent popup host must reveal its content and backdrop in one window transaction");
+        const std::size_t pairZOrderBegin =
+            backdropCompositorSource.find(
+                "void DesktopBackdropCompositor::SetPopupWindowPairZOrder(");
+        const std::size_t pairZOrderEnd =
+            backdropCompositorSource.find(
+                "void DesktopBackdropCompositor::SetPopupTopmost(",
+                pairZOrderBegin);
+        const std::string pairZOrderSource =
+            pairZOrderBegin != std::string::npos &&
+                    pairZOrderEnd != std::string::npos
+                ? backdropCompositorSource.substr(
+                    pairZOrderBegin,
+                    pairZOrderEnd - pairZOrderBegin)
+                : std::string{};
+        const std::size_t zOrderBatchBegin =
+            pairZOrderSource.find("BeginDeferWindowPos(2)");
+        const std::size_t zOrderContent =
+            pairZOrderSource.find(
+                "deferred, contentWindow,", zOrderBatchBegin);
+        const std::size_t zOrderBackdrop =
+            pairZOrderSource.find(
+                "deferred, backdropWindow,", zOrderContent);
+        const std::size_t zOrderBatchEnd =
+            pairZOrderSource.find(
+                "EndDeferWindowPos(deferred)", zOrderBackdrop);
+        Check(!pairZOrderSource.empty() &&
+                zOrderBatchBegin != std::string::npos &&
+                zOrderContent != std::string::npos &&
+                zOrderBackdrop != std::string::npos &&
+                zOrderBatchEnd != std::string::npos &&
+                zOrderBatchBegin < zOrderContent &&
+                zOrderContent < zOrderBackdrop &&
+                zOrderBackdrop < zOrderBatchEnd,
+            "a popup content/backdrop pair must change Z-order in one window transaction");
         Check(luaPanelSource.find("ReleaseCapture();") ==
                     std::string::npos &&
                 CountOccurrences(
@@ -4500,15 +4534,20 @@ int main(int argc, char** argv)
                 : std::string{};
         Check(!desktopBandPolicySource.empty() &&
                 desktopBandPolicySource.find(
-                  "HWND_NOTOPMOST") != std::string::npos &&
-                desktopBandPolicySource.find(
                   "desktopWindows_.host") != std::string::npos &&
                 desktopBandPolicySource.find(
                   "GW_HWNDPREV") != std::string::npos &&
                 desktopBandPolicySource.find(
-                  "host.backdrop.Reattach(host.hwnd)") !=
+                  "host.backdrop.SetPopupWindowPairZOrder(") !=
                     std::string::npos,
-            "desktop mode must place the persistent DockHost above WorkerW and keep its backdrop directly behind it");
+            "desktop mode must transactionally place the persistent DockHost pair above WorkerW");
+        Check(shellMenuSource.find(
+                  "host.backdrop.SetPopupTopmost(") ==
+                    std::string::npos &&
+                shellMenuSource.find(
+                  "host.backdrop.Reattach(host.hwnd)") ==
+                    std::string::npos,
+            "Dock promotion and demotion must not restack its content and backdrop in separate operations");
         Check(appHeaderSource.find(
                   "struct PersistentDockHost") !=
                     std::string::npos &&

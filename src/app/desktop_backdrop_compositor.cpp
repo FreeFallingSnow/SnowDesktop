@@ -580,6 +580,72 @@ bool DesktopBackdropCompositor::InitializePopup(
         initiallyVisible);
 }
 
+void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
+    HWND contentWindow, HWND contentInsertAfter,
+    bool topmost)
+{
+    const bool contentValid =
+        contentWindow && IsWindow(contentWindow);
+    if (!contentValid)
+        return;
+
+    HWND backdropWindow = nullptr;
+    if (impl_ && impl_->popupMode &&
+        impl_->available &&
+        impl_->contentWindow == contentWindow &&
+        impl_->backdropWindow &&
+        IsWindow(impl_->backdropWindow))
+    {
+        backdropWindow = impl_->backdropWindow;
+        impl_->popupTopmost = topmost;
+    }
+
+    constexpr UINT contentFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER;
+    bool positionedTogether = false;
+    if (backdropWindow)
+    {
+        POINT origin{};
+        SIZE size{};
+        if (impl_->QueryContentPlacement(
+                nullptr, origin, size))
+        {
+            HDWP deferred = BeginDeferWindowPos(2);
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, contentWindow,
+                    contentInsertAfter,
+                    0, 0, 0, 0, contentFlags);
+            }
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, backdropWindow,
+                    contentWindow,
+                    origin.x, origin.y,
+                    size.cx, size.cy,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            }
+            if (deferred)
+            {
+                positionedTogether =
+                    EndDeferWindowPos(deferred) != FALSE;
+            }
+        }
+    }
+
+    if (!positionedTogether)
+    {
+        SetWindowPos(
+            contentWindow, contentInsertAfter,
+            0, 0, 0, 0, contentFlags);
+        if (backdropWindow)
+            impl_->SyncWindowPlacement();
+    }
+}
+
 void DesktopBackdropCompositor::SetPopupTopmost(
     bool topmost)
 {
