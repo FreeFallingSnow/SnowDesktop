@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+struct IDWriteTextLayout;
+
 namespace snowdesktop::widget_runtime
 {
 class DeferredHostInputFocus
@@ -32,6 +34,18 @@ public:
 private:
     bool pending_ = false;
 };
+
+enum class HostInputVerticalDirection
+{
+    Up,
+    Down,
+};
+
+std::optional<std::size_t> ResolveHostInputVerticalCaretPosition(
+    IDWriteTextLayout* layout,
+    std::wstring_view text,
+    std::size_t cursor,
+    HostInputVerticalDirection direction);
 
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept;
 std::size_t Utf8ByteOffsetForHostTextOffset(

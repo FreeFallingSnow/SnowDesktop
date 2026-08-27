@@ -1518,6 +1518,7 @@ if (BUILD_TESTING)
             tests/widget_text_input_rules_tests.cpp
             src/widget_text_input_rules.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES dwrite
         LABELS contract interaction lua widget)
 
     snowdesktop_add_test(

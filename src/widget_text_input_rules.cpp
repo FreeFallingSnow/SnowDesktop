@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <dwrite.h>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace snowdesktop::widget_runtime
 {
@@ -97,6 +99,117 @@ bool HostInputCaretVisibilityRequest::Consume() noexcept
     const bool pending = pending_;
     pending_ = false;
     return pending;
+}
+
+std::optional<std::size_t> ResolveHostInputVerticalCaretPosition(
+    IDWriteTextLayout* layout,
+    std::wstring_view text,
+    std::size_t cursor,
+    HostInputVerticalDirection direction)
+{
+    if (!layout || text.size() >
+            static_cast<std::size_t>(
+                (std::numeric_limits<UINT32>::max)()))
+        return std::nullopt;
+
+    cursor = std::min(cursor, text.size());
+    UINT32 hitPosition = 0;
+    BOOL trailing = FALSE;
+    if (!text.empty())
+    {
+        if (cursor >= text.size() &&
+            (text.back() == L'\n' || text.back() == L'\r'))
+        {
+            hitPosition = static_cast<UINT32>(text.size());
+        }
+        else if (cursor >= text.size())
+        {
+            hitPosition = static_cast<UINT32>(text.size() - 1);
+            trailing = TRUE;
+        }
+        else
+        {
+            hitPosition = static_cast<UINT32>(cursor);
+        }
+    }
+
+    float caretX = 0.0f;
+    float caretY = 0.0f;
+    DWRITE_HIT_TEST_METRICS caretMetrics{};
+    if (FAILED(layout->HitTestTextPosition(
+            hitPosition, trailing, &caretX, &caretY,
+            &caretMetrics)))
+        return std::nullopt;
+
+    UINT32 lineCount = 0;
+    (void)layout->GetLineMetrics(nullptr, 0, &lineCount);
+    if (lineCount == 0)
+        return std::nullopt;
+    std::vector<DWRITE_LINE_METRICS> lines(lineCount);
+    UINT32 actualLineCount = 0;
+    if (FAILED(layout->GetLineMetrics(
+            lines.data(), lineCount, &actualLineCount)) ||
+        actualLineCount == 0)
+        return std::nullopt;
+    lines.resize(actualLineCount);
+
+    std::size_t currentLine = lines.size() - 1;
+    float lineTop = 0.0f;
+    for (std::size_t index = 0; index < lines.size(); ++index)
+    {
+        const float lineBottom = lineTop + lines[index].height;
+        if (caretY < lineBottom || index + 1 == lines.size())
+        {
+            currentLine = index;
+            break;
+        }
+        lineTop = lineBottom;
+    }
+
+    if (direction == HostInputVerticalDirection::Up)
+    {
+        if (currentLine == 0)
+            return cursor;
+        --currentLine;
+    }
+    else
+    {
+        if (currentLine + 1 >= lines.size())
+            return cursor;
+        ++currentLine;
+    }
+
+    std::size_t targetStart = 0;
+    float targetTop = 0.0f;
+    for (std::size_t index = 0; index < currentLine; ++index)
+    {
+        targetStart += lines[index].length;
+        targetTop += lines[index].height;
+    }
+    const auto& targetLine = lines[currentLine];
+    const float targetY = targetTop +
+        std::max(1.0f, targetLine.height) * 0.5f;
+    BOOL targetTrailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS targetMetrics{};
+    if (FAILED(layout->HitTestPoint(
+            caretX, targetY, &targetTrailing, &inside,
+            &targetMetrics)))
+        return std::nullopt;
+
+    std::size_t next =
+        static_cast<std::size_t>(targetMetrics.textPosition) +
+        (targetTrailing
+            ? static_cast<std::size_t>(targetMetrics.length) : 0);
+    const std::size_t targetLength =
+        static_cast<std::size_t>(targetLine.length);
+    const std::size_t newlineLength = std::min(
+        static_cast<std::size_t>(targetLine.newlineLength),
+        targetLength);
+    const std::size_t targetEnd = targetStart +
+        targetLength - newlineLength;
+    next = std::clamp(next, targetStart, targetEnd);
+    return std::min(next, text.size());
 }
 
 std::size_t Utf8BytesForHostText(std::wstring_view text) noexcept

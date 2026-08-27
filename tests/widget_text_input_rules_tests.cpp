@@ -1,8 +1,10 @@
 #include "widget_text_input_rules.h"
 
+#include <dwrite.h>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <wrl/client.h>
 
 namespace
 {
@@ -158,6 +160,73 @@ void TestCaretVisibilityRequest()
     Check(request.Consume(),
         "later caret movement restores caret-follow scrolling");
 }
+
+void TestWrappedLineVerticalCaretMovement()
+{
+    using Microsoft::WRL::ComPtr;
+    using snowdesktop::widget_runtime::
+        HostInputVerticalDirection;
+    using snowdesktop::widget_runtime::
+        ResolveHostInputVerticalCaretPosition;
+
+    ComPtr<IDWriteFactory> factory;
+    const HRESULT factoryResult = DWriteCreateFactory(
+        DWRITE_FACTORY_TYPE_ISOLATED,
+        __uuidof(IDWriteFactory), &factory);
+    Check(SUCCEEDED(factoryResult) && factory,
+        "DirectWrite must be available for wrapped caret navigation");
+    if (!factory)
+        return;
+
+    ComPtr<IDWriteTextFormat> format;
+    factory->CreateTextFormat(L"Segoe UI", nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, 15.0f, L"zh-CN", &format);
+    Check(format != nullptr,
+        "wrapped caret navigation needs a text format");
+    if (!format)
+        return;
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+
+    const std::wstring text =
+        L"自动换行文本需要使用视觉行移动插入点";
+    ComPtr<IDWriteTextLayout> layout;
+    factory->CreateTextLayout(text.c_str(),
+        static_cast<UINT32>(text.size()), format.Get(),
+        48.0f, 10000.0f, &layout);
+    DWRITE_TEXT_METRICS textMetrics{};
+    if (layout)
+        layout->GetMetrics(&textMetrics);
+    Check(layout && textMetrics.lineCount > 1,
+        "regression text must wrap without explicit newlines");
+    if (!layout || textMetrics.lineCount <= 1)
+        return;
+
+    const std::size_t initialCursor = 1;
+    const auto down = ResolveHostInputVerticalCaretPosition(
+        layout.Get(), text, initialCursor,
+        HostInputVerticalDirection::Down);
+    Check(down && *down > initialCursor,
+        "Down must move the caret to a later auto-wrapped visual line");
+    if (!down)
+        return;
+
+    const auto up = ResolveHostInputVerticalCaretPosition(
+        layout.Get(), text, *down,
+        HostInputVerticalDirection::Up);
+    Check(up && *up < *down,
+        "Up must move the caret to an earlier auto-wrapped visual line");
+
+    const auto firstLineUp = ResolveHostInputVerticalCaretPosition(
+        layout.Get(), text, 0,
+        HostInputVerticalDirection::Up);
+    const auto lastLineDown = ResolveHostInputVerticalCaretPosition(
+        layout.Get(), text, text.size(),
+        HostInputVerticalDirection::Down);
+    Check(firstLineUp && *firstLineUp == 0 &&
+            lastLineDown && *lastLineDown == text.size(),
+        "vertical movement stays at the first and last visual line boundaries");
+}
 }
 
 int main()
@@ -168,6 +237,7 @@ int main()
     TestContextMenuState();
     TestDeferredFocusRequest();
     TestCaretVisibilityRequest();
+    TestWrappedLineVerticalCaretMovement();
     if (failures != 0)
     {
         std::cerr << failures << " widget text-input rule checks failed\n";

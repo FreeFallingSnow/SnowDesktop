@@ -28027,6 +28027,49 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     else if (focusedHostInput_.multiline &&
         (key == VK_UP || key == VK_DOWN))
     {
+        const int widgetIndex = FindWidget(
+            focusedHostInput_.widgetId);
+        if (widgetIndex >= 0 && d2dState_)
+        {
+            const auto& controls =
+                widgets_[widgetIndex].hostControls;
+            const auto control = std::find_if(
+                controls.rbegin(), controls.rend(),
+                [&](const auto& item) {
+                    return item.type ==
+                            LuaWidget::HostControl::Type::Input &&
+                        item.multiline &&
+                        item.id == focusedHostInput_.id &&
+                        HostControlBelongsToSurface(
+                            item, focusedHostInput_.surface);
+                });
+            if (control != controls.rend())
+            {
+                constexpr float scrollbarReserve = 8.0f;
+                const float width = static_cast<float>(
+                    control->rect.right - control->rect.left);
+                const float innerWidth = std::max(1.0f,
+                    width - control->padding.left -
+                        control->padding.right - scrollbarReserve);
+                const auto layout = CreateHostMultilineTextLayout(
+                    d2dState_, focusedHostInput_.text,
+                    control->fontSize, innerWidth);
+                const auto visualCursor = snowdesktop::widget_runtime::
+                    ResolveHostInputVerticalCaretPosition(
+                        layout.Get(), focusedHostInput_.text,
+                        focusedHostInput_.cursor,
+                        key == VK_UP
+                            ? snowdesktop::widget_runtime::
+                                HostInputVerticalDirection::Up
+                            : snowdesktop::widget_runtime::
+                                HostInputVerticalDirection::Down);
+                if (visualCursor)
+                    return finishMovement(*visualCursor);
+            }
+        }
+
+        // Keep explicit-newline navigation available if DirectWrite cannot
+        // provide a layout, for example while the graphics device is reset.
         const size_t textSize = focusedHostInput_.text.size();
         const size_t cursor = std::min(
             focusedHostInput_.cursor, textSize);
