@@ -118,9 +118,24 @@ if (Test-Path -LiteralPath $OutputDirectory) {
     Remove-Item -LiteralPath $OutputDirectory -Recurse -Force
 }
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
+$runtimeFiles = @(
+    "SnowDesktopTaskbarHook.dll",
+    "SnowDesktopWallpaperHook.dll",
+    "SnowDesktopWallpaperHook32.dll",
+    "SnowDesktopWallpaperInjector32.exe",
+    "steam_api64.dll"
+)
+$runtimeRoot = Join-Path $payload $runtimeDirectory
+New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 foreach ($name in $required) {
+    $destination = if ($runtimeFiles -contains $name) {
+        Join-Path $runtimeRoot $name
+    }
+    else {
+        Join-Path $payload $name
+    }
     Copy-Item -LiteralPath (Join-Path $buildOutput $name) `
-        -Destination (Join-Path $payload $name) -Force
+        -Destination $destination -Force
 }
 foreach ($name in @("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md", "README.en.md")) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) `
@@ -138,7 +153,22 @@ Enable-SnowDesktopPrivateRuntimeAssembly `
     -BuildOutput $buildOutput `
     -PackageRoot $payload `
     -Version $version `
-    -RuntimeDirectory $runtimeDirectory
+    -RuntimeDirectory $runtimeDirectory `
+    -AdditionalRuntimeDlls @("steam_api64.dll") `
+    -AdditionalExecutables @(
+        "SnowDesktopSteamBridge.exe",
+        "SnowDesktopWorkshopManager.exe")
+$packagedConfigurationText = & (Join-Path $payload `
+    "SnowDesktopSteamBridge.exe") configuration
+if ($LASTEXITCODE -ne 0) {
+    throw "Packaged Steam bridge could not load its private runtime (exit $LASTEXITCODE)."
+}
+$packagedConfiguration = $packagedConfigurationText | ConvertFrom-Json
+if (-not $packagedConfiguration.ok -or
+    -not $packagedConfiguration.steamworksCompiled -or
+    [uint32]$packagedConfiguration.expectedAppId -ne $steamAppId) {
+    throw "Packaged Steam bridge private runtime validation failed."
+}
 $licensesDestination = Join-Path $payload "licenses"
 New-Item -ItemType Directory -Path $licensesDestination -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot `
@@ -194,7 +224,7 @@ $manifest = [ordered]@{
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     steamAppId = $steamAppId
     windowsDepotId = $windowsDepotId
-    steamworksRedistributable = "steam_api64.dll"
+    steamworksRedistributable = "$runtimeDirectory/steam_api64.dll"
     sdkMaterialsIncluded = $false
     files = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
         ForEach-Object {
@@ -215,4 +245,4 @@ $hash = Get-Sha256 -Path $zip
 "$hash  $([System.IO.Path]::GetFileName($zip))" |
     Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 Write-Host "Steam payload generated: $zip" -ForegroundColor Green
-Write-Host "Only steam_api64.dll from the Steamworks SDK is included."
+Write-Host "Only $runtimeDirectory\steam_api64.dll from the Steamworks SDK is included."

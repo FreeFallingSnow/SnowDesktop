@@ -21,9 +21,17 @@ bool IsPackaged() noexcept;
 std::wstring GetPackageLocalStatePath();
 
 /**
+ * @brief 获取随软件分发的运行文件路径。
+ * @details 优先使用 exe 同目录的 SnowDesktop.Runtime 子目录；开发构建仍兼容
+ * 旧的 exe 同目录布局。
+ * @param filename 不包含目录的文件名。
+ */
+std::wstring GetRuntimeFilePath(const wchar_t* filename);
+
+/**
  * @brief 获取可供 Explorer 加载的任务栏 Hook DLL 路径。
- * @details 便携版直接返回 exe 同目录 DLL；MSIX 版先将 DLL 部署到
- * LocalState\TempState\<version>，避免 Explorer 直接读取 WindowsApps。
+ * @details 始终把随软件分发的 DLL 复制到用户临时目录的进程专属目录后再返回，
+ * 避免 XAML Diagnostics TAP 在软件退出后继续锁住构建、便携或安装目录。
  */
 std::wstring GetTaskbarHookPath();
 

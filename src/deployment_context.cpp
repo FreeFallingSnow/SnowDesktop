@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <future>
+#include <iterator>
 #include <system_error>
 #include <utility>
 
@@ -25,6 +26,7 @@ namespace
 #define SNOWDESKTOP_WIDEN(value) SNOWDESKTOP_WIDEN_INNER(value)
 
 constexpr wchar_t kStartupTaskId[] = L"SnowDesktopStartup";
+constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
 constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
@@ -43,6 +45,83 @@ std::wstring GetCurrentPackageFamilyNameString()
         return {};
     familyName.resize(length - 1);
     return familyName;
+}
+
+bool IsBareFilename(const wchar_t* filename) noexcept
+{
+    if (!filename || !*filename)
+        return false;
+    for (const wchar_t* character = filename; *character; ++character)
+    {
+        if (*character == L'\\' || *character == L'/' ||
+            *character == L':')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::filesystem::path GetTemporaryDirectory()
+{
+    const DWORD required = GetTempPathW(0, nullptr);
+    if (required == 0)
+        return {};
+    std::wstring buffer(required, L'\0');
+    const DWORD length = GetTempPathW(required, buffer.data());
+    if (length == 0 || length >= required)
+        return {};
+    buffer.resize(length);
+    return std::filesystem::path(buffer);
+}
+
+std::wstring DeployTaskbarHookCopy()
+{
+    const std::filesystem::path source =
+        snowdesktop::deployment::GetRuntimeFilePath(kTaskbarHookFilename);
+    if (!std::filesystem::is_regular_file(source))
+        return source.wstring();
+
+    const std::filesystem::path temporary = GetTemporaryDirectory();
+    if (temporary.empty())
+        return source.wstring();
+    const std::filesystem::path copiesRoot = temporary /
+        L"SnowDesktop" / L"TaskbarHook";
+
+    std::error_code error;
+    std::filesystem::create_directories(copiesRoot, error);
+    if (error)
+        return source.wstring();
+
+    // A XAML Diagnostics TAP has no supported process-level shutdown API and
+    // can remain mapped in Explorer after the owner exits. Remove only stale
+    // copies that Windows no longer considers busy; locked copies are kept
+    // until Explorer next restarts.
+    for (std::filesystem::directory_iterator iterator(copiesRoot, error), end;
+         !error && iterator != end; iterator.increment(error))
+    {
+        std::error_code cleanupError;
+        if (iterator->is_directory(cleanupError))
+            std::filesystem::remove_all(iterator->path(), cleanupError);
+    }
+
+    const std::filesystem::path targetDirectory = copiesRoot /
+        (std::wstring(kVersion) + L"-" +
+            std::to_wstring(GetCurrentProcessId()) + L"-" +
+            std::to_wstring(GetTickCount64()));
+    error.clear();
+    std::filesystem::create_directories(targetDirectory, error);
+    if (error)
+        return source.wstring();
+
+    const std::filesystem::path target =
+        targetDirectory / kTaskbarHookFilename;
+    error.clear();
+    std::filesystem::copy_file(source, target,
+        std::filesystem::copy_options::none, error);
+    if (!error && std::filesystem::is_regular_file(target))
+        return target.wstring();
+    return source.wstring();
 }
 
 snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
@@ -167,34 +246,24 @@ std::wstring GetPackageLocalStatePath()
     return path.wstring();
 }
 
+std::wstring GetRuntimeFilePath(const wchar_t* filename)
+{
+    if (!IsBareFilename(filename))
+        return filename ? std::wstring(filename) : std::wstring();
+
+    const std::filesystem::path executableDirectory =
+        GetExecutableDirectoryPath();
+    const std::filesystem::path runtimePath =
+        executableDirectory / kRuntimeDirectory / filename;
+    if (std::filesystem::is_regular_file(runtimePath))
+        return runtimePath.wstring();
+    return (executableDirectory / filename).wstring();
+}
+
 std::wstring GetTaskbarHookPath()
 {
-    const std::filesystem::path source =
-        std::filesystem::path(GetExecutableDirectoryPath()) /
-        kTaskbarHookFilename;
-    if (!IsPackaged())
-        return source.wstring();
-
-    const std::wstring localState = GetPackageLocalStatePath();
-    if (localState.empty())
-        return source.wstring();
-
-    const std::filesystem::path targetDirectory =
-        std::filesystem::path(localState) / L"TempState" / kVersion;
-    const std::filesystem::path target =
-        targetDirectory / kTaskbarHookFilename;
-
-    std::error_code error;
-    std::filesystem::create_directories(targetDirectory, error);
-    if (error)
-        return source.wstring();
-
-    error.clear();
-    std::filesystem::copy_file(
-        source, target, std::filesystem::copy_options::overwrite_existing, error);
-    if (!error || std::filesystem::is_regular_file(target))
-        return target.wstring();
-    return source.wstring();
+    static const std::wstring deployedPath = DeployTaskbarHookCopy();
+    return deployedPath;
 }
 
 std::wstring GetStoreProductPageUri()

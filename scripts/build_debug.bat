@@ -30,9 +30,9 @@ if not errorlevel 1 (
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
-tasklist /m SnowDesktopTaskbarHook.dll /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "SnowDesktopTaskbarHook.dll" >nul
+powershell -NoProfile -Command "$expected=[IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktopTaskbarHook.dll'); try { $loaded=@(Get-Process -Name explorer -Module -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { [string]::Equals($_.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
 if not errorlevel 1 (
-    echo Build preflight stopped: Explorer still has SnowDesktopTaskbarHook.dll loaded.
+    echo Build preflight stopped: Explorer still has the Debug build's SnowDesktopTaskbarHook.dll loaded.
     echo Run scripts\build_debug.bat --reload-shell only when an Explorer restart is acceptable.
     exit /b 3
 )

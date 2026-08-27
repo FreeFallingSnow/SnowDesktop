@@ -434,11 +434,22 @@ std::filesystem::path ApplicationDirectory()
         : std::filesystem::path{};
 }
 
-std::filesystem::path HookPath(ProcessArchitecture architecture)
+std::filesystem::path RuntimeFilePath(const wchar_t* filename)
 {
     const std::filesystem::path directory = ApplicationDirectory();
-    return directory.empty() ? std::filesystem::path{} : directory /
-        (architecture == ProcessArchitecture::x86
+    if (directory.empty())
+        return {};
+    const std::filesystem::path runtime =
+        directory / L"SnowDesktop.Runtime" / filename;
+    return std::filesystem::is_regular_file(runtime)
+        ? runtime
+        : directory / filename;
+}
+
+std::filesystem::path HookPath(ProcessArchitecture architecture)
+{
+    return RuntimeFilePath(
+        architecture == ProcessArchitecture::x86
             ? L"SnowDesktopWallpaperHook32.dll"
             : L"SnowDesktopWallpaperHook.dll");
 }
@@ -546,10 +557,9 @@ bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
     DWORD waitMs, const std::atomic_bool* cancelled,
     std::wstring& error)
 {
-    const std::filesystem::path directory = ApplicationDirectory();
-    const std::filesystem::path injector = directory /
-        L"SnowDesktopWallpaperInjector32.exe";
-    if (directory.empty() || !std::filesystem::is_regular_file(injector))
+    const std::filesystem::path injector =
+        RuntimeFilePath(L"SnowDesktopWallpaperInjector32.exe");
+    if (!std::filesystem::is_regular_file(injector))
     {
         error = L"SnowDesktopWallpaperInjector32.exe is missing";
         return false;
@@ -564,7 +574,7 @@ bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(injector.c_str(), mutableCommand.data(), nullptr,
             nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-            directory.c_str(), &startup, &process))
+            injector.parent_path().c_str(), &startup, &process))
     {
         error = FormatSystemError(
             L"Cannot start 32-bit Wallpaper Engine injector",

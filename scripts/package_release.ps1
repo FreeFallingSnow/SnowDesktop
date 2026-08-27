@@ -108,11 +108,6 @@ function Copy-Payload {
 
     $requiredFiles = @(
         (Join-Path $buildOutput "SnowDesktop.exe"),
-        (Join-Path $buildOutput "SnowDesktopTaskbarHook.dll"),
-        (Join-Path $buildOutput "SnowDesktopWallpaperHook.dll"),
-        (Join-Path $buildOutput "SnowDesktopWallpaperHook32.dll"),
-        (Join-Path $buildOutput "SnowDesktopWallpaperInjector32.exe"),
-        (Join-Path $buildOutput "SnowDesktopWorkshopManager.exe"),
         (Join-Path $buildOutput "snowwidget.exe"),
         (Join-Path $repositoryRoot "LICENSE"),
         (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"),
@@ -124,6 +119,22 @@ function Copy-Payload {
             throw "Required package file was not found: $file"
         }
         Copy-Item -LiteralPath $file -Destination $Destination -Force
+    }
+
+    $runtimeDestination = Join-Path $Destination $runtimeDirectory
+    New-Item -ItemType Directory -Path $runtimeDestination -Force |
+        Out-Null
+    foreach ($name in @(
+            "SnowDesktopTaskbarHook.dll",
+            "SnowDesktopWallpaperHook.dll",
+            "SnowDesktopWallpaperHook32.dll",
+            "SnowDesktopWallpaperInjector32.exe")) {
+        $file = Join-Path $buildOutput $name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "Required runtime file was not found: $file"
+        }
+        Copy-Item -LiteralPath $file `
+            -Destination (Join-Path $runtimeDestination $name) -Force
     }
 
     $licensesDestination = Join-Path $Destination "licenses"

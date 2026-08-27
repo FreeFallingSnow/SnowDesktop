@@ -201,12 +201,59 @@ function Save-SnowDesktopXmlDocument {
     }
 }
 
+function Add-SnowDesktopPrivateAssemblyDependency {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Xml.XmlDocument]$Document,
+        [Parameter(Mandatory = $true)]
+        [System.Xml.XmlNamespaceManager]$Namespaces,
+        [Parameter(Mandatory = $true)][string]$RuntimeDirectory,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $applicationRoot = $Document.SelectSingleNode(
+        "/asmv1:assembly", $Namespaces)
+    if ($null -eq $applicationRoot) {
+        throw "Executable manifest has an unexpected root element."
+    }
+    $existing = $applicationRoot.SelectSingleNode(
+        "asmv1:dependency/asmv1:dependentAssembly/asmv1:assemblyIdentity[@name='$RuntimeDirectory']",
+        $Namespaces)
+    if ($null -ne $existing) {
+        return
+    }
+
+    $dependency = $Document.CreateElement(
+        "dependency", "urn:schemas-microsoft-com:asm.v1")
+    $dependentAssembly = $Document.CreateElement(
+        "dependentAssembly", "urn:schemas-microsoft-com:asm.v1")
+    $dependencyIdentity = $Document.CreateElement(
+        "assemblyIdentity", "urn:schemas-microsoft-com:asm.v1")
+    $dependencyIdentity.SetAttribute("type", "win32")
+    $dependencyIdentity.SetAttribute("name", $RuntimeDirectory)
+    $dependencyIdentity.SetAttribute("version", $Version)
+    $dependencyIdentity.SetAttribute("processorArchitecture", "amd64")
+    $dependencyIdentity.SetAttribute("language", "*")
+    [void]$dependentAssembly.AppendChild($dependencyIdentity)
+    [void]$dependency.AppendChild($dependentAssembly)
+    $trustInfo = $applicationRoot.SelectSingleNode(
+        "asmv3:trustInfo", $Namespaces)
+    if ($null -eq $trustInfo) {
+        [void]$applicationRoot.AppendChild($dependency)
+    }
+    else {
+        [void]$applicationRoot.InsertBefore($dependency, $trustInfo)
+    }
+}
+
 function Enable-SnowDesktopPrivateRuntimeAssembly {
     param(
         [Parameter(Mandatory = $true)][string]$BuildOutput,
         [Parameter(Mandatory = $true)][string]$PackageRoot,
         [Parameter(Mandatory = $true)][string]$Version,
-        [string]$RuntimeDirectory = "SnowDesktop.Runtime"
+        [string]$RuntimeDirectory = "SnowDesktop.Runtime",
+        [string[]]$AdditionalRuntimeDlls = @(),
+        [string[]]$AdditionalExecutables = @()
     )
 
     if ($Version -notmatch "^[1-9][0-9]*\.[0-9]+\.[0-9]+\.0$") {
@@ -249,6 +296,18 @@ function Enable-SnowDesktopPrivateRuntimeAssembly {
             }
             [void]$runtimeDlls.Add($relativePath)
         }
+    }
+    foreach ($dll in $AdditionalRuntimeDlls) {
+        if ([System.IO.Path]::GetFileName($dll) -cne $dll -or
+            -not $dll.EndsWith(
+                ".dll", [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Additional runtime DLL must be a safe DLL filename: $dll"
+        }
+        $runtimePath = Join-Path $runtimeRoot $dll
+        if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+            throw "Additional private runtime DLL was not found: $runtimePath"
+        }
+        [void]$runtimeDlls.Add($dll)
     }
     if ($runtimeDlls.Count -eq 0) {
         throw "The deployment manifest does not contain private runtime DLLs."
@@ -315,29 +374,11 @@ function Enable-SnowDesktopPrivateRuntimeAssembly {
             }
         }
 
-        $applicationRoot = $applicationDocument.SelectSingleNode(
-            "/asmv1:assembly", $applicationNamespaces)
-        $dependency = $applicationDocument.CreateElement(
-            "dependency", "urn:schemas-microsoft-com:asm.v1")
-        $dependentAssembly = $applicationDocument.CreateElement(
-            "dependentAssembly", "urn:schemas-microsoft-com:asm.v1")
-        $dependencyIdentity = $applicationDocument.CreateElement(
-            "assemblyIdentity", "urn:schemas-microsoft-com:asm.v1")
-        $dependencyIdentity.SetAttribute("type", "win32")
-        $dependencyIdentity.SetAttribute("name", $RuntimeDirectory)
-        $dependencyIdentity.SetAttribute("version", $Version)
-        $dependencyIdentity.SetAttribute("processorArchitecture", "amd64")
-        $dependencyIdentity.SetAttribute("language", "*")
-        [void]$dependentAssembly.AppendChild($dependencyIdentity)
-        [void]$dependency.AppendChild($dependentAssembly)
-        $trustInfo = $applicationRoot.SelectSingleNode(
-            "asmv3:trustInfo", $applicationNamespaces)
-        if ($null -eq $trustInfo) {
-            [void]$applicationRoot.AppendChild($dependency)
-        }
-        else {
-            [void]$applicationRoot.InsertBefore($dependency, $trustInfo)
-        }
+        Add-SnowDesktopPrivateAssemblyDependency `
+            -Document $applicationDocument `
+            -Namespaces $applicationNamespaces `
+            -RuntimeDirectory $RuntimeDirectory `
+            -Version $Version
 
         $privateManifestPath = Join-Path $runtimeRoot `
             "$RuntimeDirectory.manifest"
@@ -353,6 +394,52 @@ function Enable-SnowDesktopPrivateRuntimeAssembly {
             "-outputresource:$executable;#1"
         if ($LASTEXITCODE -ne 0) {
             throw "mt.exe could not embed the private runtime dependency (exit $LASTEXITCODE)."
+        }
+
+        foreach ($name in $AdditionalExecutables) {
+            if ([System.IO.Path]::GetFileName($name) -cne $name -or
+                -not $name.EndsWith(
+                    ".exe", [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Additional executable must be a safe EXE filename: $name"
+            }
+            $dependentExecutable = Join-Path $PackageRoot $name
+            if (-not (Test-Path -LiteralPath $dependentExecutable -PathType Leaf)) {
+                throw "Additional private runtime executable was not found: $dependentExecutable"
+            }
+            $dependentManifestPath = [System.IO.Path]::GetTempFileName()
+            try {
+                & $mt "-inputresource:$dependentExecutable;#1" `
+                    "-out:$dependentManifestPath"
+                if ($LASTEXITCODE -ne 0) {
+                    throw "mt.exe could not extract the $name manifest (exit $LASTEXITCODE)."
+                }
+                $dependentDocument = [System.Xml.XmlDocument]::new()
+                $dependentDocument.PreserveWhitespace = $false
+                $dependentDocument.Load($dependentManifestPath)
+                $dependentNamespaces = [System.Xml.XmlNamespaceManager]::new(
+                    $dependentDocument.NameTable)
+                $dependentNamespaces.AddNamespace(
+                    "asmv1", "urn:schemas-microsoft-com:asm.v1")
+                $dependentNamespaces.AddNamespace(
+                    "asmv3", "urn:schemas-microsoft-com:asm.v3")
+                Add-SnowDesktopPrivateAssemblyDependency `
+                    -Document $dependentDocument `
+                    -Namespaces $dependentNamespaces `
+                    -RuntimeDirectory $RuntimeDirectory `
+                    -Version $Version
+                Save-SnowDesktopXmlDocument `
+                    -Document $dependentDocument -Path $dependentManifestPath
+                & $mt "-manifest" $dependentManifestPath `
+                    "-outputresource:$dependentExecutable;#1"
+                if ($LASTEXITCODE -ne 0) {
+                    throw "mt.exe could not embed the private runtime dependency in $name (exit $LASTEXITCODE)."
+                }
+            }
+            finally {
+                if (Test-Path -LiteralPath $dependentManifestPath -PathType Leaf) {
+                    Remove-Item -LiteralPath $dependentManifestPath -Force
+                }
+            }
         }
     }
     finally {
