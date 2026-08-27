@@ -99,6 +99,32 @@ try {
         -BuildOutput $target -Destination $payload `
         -RuntimeDirectory $runtimeDirectory
 
+    # The build arranger moves non-SnowDesktop files into the private runtime
+    # and records their physical build path without changing their logical
+    # package path. Verify that the same manifest still packages correctly.
+    foreach ($entry in @($deployment.files)) {
+        if ([string]$entry.source -ceq "SnowDesktop") {
+            continue
+        }
+        $source = Join-Path $target ([string]$entry.path)
+        $buildPath = "$runtimeDirectory/$([string]$entry.path)"
+        $destination = Join-Path $target $buildPath.Replace("/", "\")
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) `
+            -Force | Out-Null
+        Move-Item -LiteralPath $source -Destination $destination -Force
+        $entry | Add-Member -NotePropertyName "buildPath" `
+            -NotePropertyValue $buildPath -Force
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $target "SnowDesktop.deployment.json"),
+        ($deployment | ConvertTo-Json -Depth 20),
+        [System.Text.UTF8Encoding]::new($false))
+    $relocatedPayload = Join-Path $probe "relocated-payload"
+    New-Item -ItemType Directory -Path $relocatedPayload -Force | Out-Null
+    $null = Copy-SnowDesktopDeploymentPayload `
+        -BuildOutput $target -Destination $relocatedPayload `
+        -RuntimeDirectory $runtimeDirectory
+
     $appxManifest = Join-Path $payload "AppxManifest.xml"
     [System.IO.File]::WriteAllText(
         $appxManifest,
@@ -122,6 +148,8 @@ try {
             "//m:InProcessServer/m:Path", $namespace).InnerText -cne
                 "SnowDesktop.Runtime\Microsoft.ui.xaml.dll" -or
         -not (Test-Path -LiteralPath (Join-Path $payload `
+            "SnowDesktop.Runtime\Microsoft.ui.xaml.dll") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $relocatedPayload `
             "SnowDesktop.Runtime\Microsoft.ui.xaml.dll") -PathType Leaf) -or
         (Test-Path -LiteralPath (Join-Path $payload `
             "Microsoft.ui.xaml.dll") -PathType Leaf) -or

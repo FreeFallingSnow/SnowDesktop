@@ -356,7 +356,8 @@ function Get-BuildOccupancy {
             -ne 0
     $explorerHookLoaded = $false
     $buildHook = [System.IO.Path]::GetFullPath((Join-Path `
-        $repositoryRoot ".build\Release\SnowDesktopTaskbarHook.dll"))
+        $repositoryRoot `
+        ".build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll"))
     try {
         $explorerHookLoaded = @(Get-Process `
             -Name "explorer" -ErrorAction Stop |

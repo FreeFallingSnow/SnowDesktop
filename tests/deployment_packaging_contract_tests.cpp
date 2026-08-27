@@ -25,7 +25,8 @@ std::string ReadText(const std::filesystem::path& path)
     return output.str();
 }
 
-void TestPinnedToolchain(const std::string& cmake)
+void TestPinnedToolchain(const std::string& cmake,
+    const std::string& shellViewProps)
 {
     Check(cmake.find(
               "SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION \"2.4.0\"") !=
@@ -40,6 +41,13 @@ void TestPinnedToolchain(const std::string& cmake)
             cmake.find("VS_GLOBAL_WindowsAppSDKSelfContained \"true\"") !=
                 std::string::npos,
         "WinUI target requires MSBuild and self-contained deployment");
+    Check(cmake.find("VS_GLOBAL_SnowDesktopCppWinRtPackageVersion") !=
+                std::string::npos &&
+            shellViewProps.find("$(NuGetPackageRoot)") !=
+                std::string::npos &&
+            shellViewProps.find("SnowDesktopCppWinRTExecutable") !=
+                std::string::npos,
+        "clean builds resolve the pinned ShellView C++/WinRT generator from NuGet");
 }
 
 void TestBuildManifest(const std::string& props,
@@ -108,6 +116,7 @@ void TestPackagers(const std::string& module,
     Check(module.find("Resolve-SnowDesktopDeploymentPath") !=
             std::string::npos &&
             module.find("IsPathRooted") != std::string::npos &&
+            module.find("buildPath") != std::string::npos &&
             module.find("hash mismatch") != std::string::npos &&
             module.find("WindowsML-LICENSE.txt") != std::string::npos &&
             module.find("WindowsML-NOTICE.txt") != std::string::npos &&
@@ -144,6 +153,7 @@ void TestPackagers(const std::string& module,
         "first-party runtime helpers and the Steam redistributable are routed into the runtime directory");
     Check(module.find("AdditionalRuntimeDlls") != std::string::npos &&
             module.find("AdditionalExecutables") != std::string::npos &&
+            module.find("existingPrivateManifest") != std::string::npos &&
             steam.find("-AdditionalRuntimeDlls @(") !=
                 std::string::npos &&
             steam.find("$packagedConfigurationText") !=
@@ -165,6 +175,32 @@ void TestPackagers(const std::string& module,
             release.find("$buildOutput + \"*\"") == std::string::npos &&
             steam.find("$buildOutput + \"*\"") == std::string::npos,
         "shared deployment copying never globs the build directory");
+}
+
+void TestBuildOutputLayout(const std::string& cmake,
+    const std::string& arranger,
+    const std::string& testScript)
+{
+    Check(cmake.find(
+              "${CMAKE_BINARY_DIR}/$<CONFIG>/tests") !=
+                std::string::npos &&
+            cmake.find("COMPILE_PDB_OUTPUT_DIRECTORY") !=
+                std::string::npos,
+        "CTest executables and symbols use the dedicated configuration tests directory");
+    Check(arranger.find("SnowDesktop.Runtime") != std::string::npos &&
+            arranger.find("Enable-SnowDesktopPrivateRuntimeAssembly") !=
+                std::string::npos &&
+            arranger.find("Microsoft.WindowsAppRuntime.Bootstrap.dll") !=
+                std::string::npos &&
+            arranger.find("buildPath") != std::string::npos &&
+            arranger.find("Build output still contains root-level DLLs") !=
+                std::string::npos,
+        "standard builds become directly runnable private-runtime layouts without root DLLs");
+    Check(testScript.find(".build\\Release\\tests") !=
+                std::string::npos &&
+            testScript.find("rootTests.Count -ne 0") !=
+                std::string::npos,
+        "the standard test entry point rejects flat test executables");
 }
 
 void TestReleaseManagerShellReload(const std::string& manager,
@@ -224,10 +260,12 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
                 std::string::npos,
         "wallpaper hooks and the 32-bit injector resolve from the runtime directory");
     Check(releaseBuild.find(
-              ".build\\Release\\SnowDesktopTaskbarHook.dll") !=
+              ".build\\Release\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
             std::string::npos &&
             debugBuild.find(
-              ".build_debug\\Debug\\SnowDesktopTaskbarHook.dll") !=
+              ".build_debug\\Debug\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
+                std::string::npos &&
+            releaseBuild.find("arrange_build_output.ps1") !=
                 std::string::npos &&
             releaseBuild.find("Get-Process -Name explorer -ErrorAction Stop") !=
                 std::string::npos,
@@ -241,7 +279,9 @@ int main(int argc, char** argv)
     if (argc == 2)
     {
         const std::filesystem::path root(argv[1]);
-        TestPinnedToolchain(ReadText(root / "CMakeLists.txt"));
+        TestPinnedToolchain(
+            ReadText(root / "CMakeLists.txt"),
+            ReadText(root / "cmake/SnowDesktop.ShellView.props"));
         TestBuildManifest(
             ReadText(root / "cmake/SnowDesktop.WinUI.props"),
             ReadText(root / "scripts/write_deployment_manifest.ps1"));
@@ -249,6 +289,10 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/deployment_payload.psm1"),
             ReadText(root / "scripts/package_release.ps1"),
             ReadText(root / "scripts/package_steam.ps1"));
+        TestBuildOutputLayout(
+            ReadText(root / "CMakeLists.txt"),
+            ReadText(root / "scripts/arrange_build_output.ps1"),
+            ReadText(root / "scripts/test.bat"));
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
             ReadText(root / "packaging/README.md"));

@@ -65,6 +65,25 @@ function Read-SnowDesktopDeploymentManifest {
             -not $seen.Add([string]$entry.path)) {
             throw "Deployment manifest contains an invalid or duplicate entry."
         }
+    }
+    foreach ($entry in @($manifest.files)) {
+        $buildPath = if ($null -ne $entry.PSObject.Properties["buildPath"] -and
+            -not [string]::IsNullOrWhiteSpace([string]$entry.buildPath)) {
+            [string]$entry.buildPath
+        }
+        else {
+            [string]$entry.path
+        }
+        $path = Resolve-SnowDesktopDeploymentPath `
+            -Root $BuildOutput -RelativePath $buildPath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Deployment manifest file is missing: $path"
+        }
+        if ((Get-SnowDesktopFileHash -Path $path) -cne $entry.sha256) {
+            throw "Deployment manifest hash mismatch: $path"
+        }
+    }
+    foreach ($entry in @($manifest.appxFragments) + @($manifest.notices)) {
         $path = Resolve-SnowDesktopDeploymentPath `
             -Root $BuildOutput -RelativePath ([string]$entry.path)
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -132,8 +151,15 @@ function Copy-SnowDesktopDeploymentPayload {
 
     $manifest = Read-SnowDesktopDeploymentManifest -BuildOutput $BuildOutput
     foreach ($entry in @($manifest.files)) {
+        $buildPath = if ($null -ne $entry.PSObject.Properties["buildPath"] -and
+            -not [string]::IsNullOrWhiteSpace([string]$entry.buildPath)) {
+            [string]$entry.buildPath
+        }
+        else {
+            [string]$entry.path
+        }
         $source = Resolve-SnowDesktopDeploymentPath `
-            -Root $BuildOutput -RelativePath ([string]$entry.path)
+            -Root $BuildOutput -RelativePath $buildPath
         $relativeTarget = Get-SnowDesktopRuntimeRelativePath `
             -Entry $entry -RuntimeDirectory $RuntimeDirectory
         $target = Resolve-SnowDesktopDeploymentPath `
@@ -333,8 +359,35 @@ function Enable-SnowDesktopPrivateRuntimeAssembly {
             "asmv3", "urn:schemas-microsoft-com:asm.v3")
         $activationFiles = @($applicationDocument.SelectNodes(
             "/asmv1:assembly/asmv3:file", $applicationNamespaces))
+        $activationFilesComeFromApplication = $true
         if ($activationFiles.Count -eq 0) {
-            throw "The SnowDesktop application manifest contains no WinRT activation files."
+            # Build output is already runnable through the private assembly.
+            # Reuse its activation declarations when producing a portable,
+            # MSIX, or Steam copy with a potentially different DLL set.
+            $existingPrivateManifest = Join-Path `
+                (Join-Path $BuildOutput $RuntimeDirectory) `
+                "$RuntimeDirectory.manifest"
+            if (-not (Test-Path -LiteralPath $existingPrivateManifest `
+                    -PathType Leaf)) {
+                throw "The SnowDesktop application manifest contains no WinRT activation files, and its build private assembly manifest is missing: $existingPrivateManifest"
+            }
+            $existingPrivateDocument = [System.Xml.XmlDocument]::new()
+            $existingPrivateDocument.PreserveWhitespace = $false
+            $existingPrivateDocument.Load($existingPrivateManifest)
+            $existingPrivateNamespaces = `
+                [System.Xml.XmlNamespaceManager]::new(
+                    $existingPrivateDocument.NameTable)
+            $existingPrivateNamespaces.AddNamespace(
+                "asmv1", "urn:schemas-microsoft-com:asm.v1")
+            $existingPrivateNamespaces.AddNamespace(
+                "asmv3", "urn:schemas-microsoft-com:asm.v3")
+            $activationFiles = @($existingPrivateDocument.SelectNodes(
+                "/asmv1:assembly/asmv3:file[*]", `
+                $existingPrivateNamespaces))
+            $activationFilesComeFromApplication = $false
+            if ($activationFiles.Count -eq 0) {
+                throw "The existing SnowDesktop private assembly manifest contains no WinRT activation files: $existingPrivateManifest"
+            }
         }
 
         $privateDocument = [System.Xml.XmlDocument]::new()
@@ -363,7 +416,9 @@ function Enable-SnowDesktopPrivateRuntimeAssembly {
             [void]$listedDlls.Add($dll)
             [void]$privateAssembly.AppendChild(
                 $privateDocument.ImportNode($activationFile, $true))
-            [void]$activationFile.ParentNode.RemoveChild($activationFile)
+            if ($activationFilesComeFromApplication) {
+                [void]$activationFile.ParentNode.RemoveChild($activationFile)
+            }
         }
         foreach ($dll in $runtimeDlls) {
             if ($listedDlls.Add($dll)) {

@@ -8,6 +8,7 @@
     <SnowDesktopShellProjectionDir>$(ProjectDir)generated\shellview-cppwinrt</SnowDesktopShellProjectionDir>
     <SnowDesktopWindowsWinMD>$(WindowsSdkDir)UnionMetadata\$(WindowsTargetPlatformVersion)\Windows.winmd</SnowDesktopWindowsWinMD>
     <SnowDesktopShellWinMD>$(ProjectDir)generated\winmd\WindowsUdk.winmd</SnowDesktopShellWinMD>
+    <SnowDesktopCppWinRTExecutable>$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\bin\cppwinrt.exe</SnowDesktopCppWinRTExecutable>
   </PropertyGroup>
 
   <Target Name="SnowDesktopGenerateShellViewProjection"
@@ -15,6 +16,8 @@
           Inputs="$(SnowDesktopWindowsWinMD);$(SnowDesktopShellWinMD)"
           Outputs="$(SnowDesktopShellProjectionDir)\winrt\WindowsUdk.UI.Shell.h">
     <MakeDir Directories="$(SnowDesktopShellProjectionDir)" />
-    <Exec Command="&quot;$(CppWinRTPackageDir)bin\cppwinrt.exe&quot; -in &quot;$(SnowDesktopWindowsWinMD)&quot; -in &quot;$(SnowDesktopShellWinMD)&quot; -out &quot;$(SnowDesktopShellProjectionDir)&quot;" />
+    <Error Condition="!Exists('$(SnowDesktopCppWinRTExecutable)')"
+           Text="Pinned C++/WinRT generator was not restored: $(SnowDesktopCppWinRTExecutable)" />
+    <Exec Command="&quot;$(SnowDesktopCppWinRTExecutable)&quot; -in &quot;$(SnowDesktopWindowsWinMD)&quot; -in &quot;$(SnowDesktopShellWinMD)&quot; -out &quot;$(SnowDesktopShellProjectionDir)&quot;" />
   </Target>
 </Project>

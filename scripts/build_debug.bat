@@ -30,7 +30,7 @@ if not errorlevel 1 (
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
-powershell -NoProfile -Command "$expected=[IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktopTaskbarHook.dll'); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { [string]::Equals($_.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
+powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
 if not errorlevel 1 (
     echo Build preflight stopped: Explorer still has the Debug build's SnowDesktopTaskbarHook.dll loaded.
     echo Run scripts\build_debug.bat --reload-shell only when an Explorer restart is acceptable.
@@ -70,10 +70,19 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
+echo === Arranging private runtime directory (Debug) ===
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build_debug\Debug"
+if %ERRORLEVEL% NEQ 0 (
+    echo Debug build output arrangement FAILED
+    exit /b 1
+)
+
+echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build_debug\Debug\SnowDesktop.exe
 echo Steam bridge: .build_debug\Debug\SnowDesktopSteamBridge.exe
-echo Wallpaper Engine 64-bit Hook: .build_debug\Debug\SnowDesktopWallpaperHook.dll
-echo Wallpaper Engine 32-bit Hook: .build_debug\Debug\SnowDesktopWallpaperHook32.dll
-echo Wallpaper Engine 32-bit injector: .build_debug\Debug\SnowDesktopWallpaperInjector32.exe
+echo Runtime directory: .build_debug\Debug\SnowDesktop.Runtime
+echo Wallpaper Engine 64-bit Hook: .build_debug\Debug\SnowDesktop.Runtime\SnowDesktopWallpaperHook.dll
+echo Wallpaper Engine 32-bit Hook: .build_debug\Debug\SnowDesktop.Runtime\SnowDesktopWallpaperHook32.dll
+echo Wallpaper Engine 32-bit injector: .build_debug\Debug\SnowDesktop.Runtime\SnowDesktopWallpaperInjector32.exe
 exit /b 0

@@ -60,6 +60,13 @@ if (-not $SkipBuild) {
     }
 }
 
+$runtimeFiles = @(
+    "SnowDesktopTaskbarHook.dll",
+    "SnowDesktopWallpaperHook.dll",
+    "SnowDesktopWallpaperHook32.dll",
+    "SnowDesktopWallpaperInjector32.exe",
+    "steam_api64.dll"
+)
 $required = @(
     "SnowDesktop.exe",
     "SnowDesktopTaskbarHook.dll",
@@ -74,7 +81,12 @@ $required = @(
     "SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md"
 )
 foreach ($name in $required) {
-    $path = Join-Path $buildOutput $name
+    $path = if ($runtimeFiles -contains $name) {
+        Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
+    }
+    else {
+        Join-Path $buildOutput $name
+    }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required Steam payload file is missing: $path"
     }
@@ -118,13 +130,6 @@ if (Test-Path -LiteralPath $OutputDirectory) {
     Remove-Item -LiteralPath $OutputDirectory -Recurse -Force
 }
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
-$runtimeFiles = @(
-    "SnowDesktopTaskbarHook.dll",
-    "SnowDesktopWallpaperHook.dll",
-    "SnowDesktopWallpaperHook32.dll",
-    "SnowDesktopWallpaperInjector32.exe",
-    "steam_api64.dll"
-)
 $runtimeRoot = Join-Path $payload $runtimeDirectory
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 foreach ($name in $required) {
@@ -134,7 +139,13 @@ foreach ($name in $required) {
     else {
         Join-Path $payload $name
     }
-    Copy-Item -LiteralPath (Join-Path $buildOutput $name) `
+    $source = if ($runtimeFiles -contains $name) {
+        Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
+    }
+    else {
+        Join-Path $buildOutput $name
+    }
+    Copy-Item -LiteralPath $source `
         -Destination $destination -Force
 }
 foreach ($name in @("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md", "README.en.md")) {

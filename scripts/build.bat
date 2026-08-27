@@ -33,7 +33,7 @@ if not errorlevel 1 (
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
-powershell -NoProfile -Command "$expected=[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll'); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { [string]::Equals($_.FileName,$expected,[StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
+powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
 if not errorlevel 1 (
     echo Build preflight stopped: Explorer still has the Release build's SnowDesktopTaskbarHook.dll loaded.
     echo Run scripts\build.bat --reload-shell only when an Explorer restart is acceptable.
@@ -73,15 +73,24 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
+echo === Arranging private runtime directory ===
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
+if %ERRORLEVEL% NEQ 0 (
+    echo Build output arrangement FAILED
+    exit /b 1
+)
+
+echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
 echo Steam bridge: .build\Release\SnowDesktopSteamBridge.exe
 echo Workshop manager: .build\Release\SnowDesktopWorkshopManager.exe
 echo Widget package tool: .build\Release\snowwidget.exe
-echo Taskbar appearance Hook: .build\Release\SnowDesktopTaskbarHook.dll
-echo Wallpaper Engine 64-bit Hook: .build\Release\SnowDesktopWallpaperHook.dll
-echo Wallpaper Engine 32-bit Hook: .build\Release\SnowDesktopWallpaperHook32.dll
-echo Wallpaper Engine 32-bit injector: .build\Release\SnowDesktopWallpaperInjector32.exe
+echo Runtime directory: .build\Release\SnowDesktop.Runtime
+echo Taskbar appearance Hook: .build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll
+echo Wallpaper Engine 64-bit Hook: .build\Release\SnowDesktop.Runtime\SnowDesktopWallpaperHook.dll
+echo Wallpaper Engine 32-bit Hook: .build\Release\SnowDesktop.Runtime\SnowDesktopWallpaperHook32.dll
+echo Wallpaper Engine 32-bit injector: .build\Release\SnowDesktop.Runtime\SnowDesktopWallpaperInjector32.exe
 echo.
 echo For a version release, run scripts\release.bat to open the unified release center.
 echo Agent and automation usage is available through scripts\release.bat COMMAND.

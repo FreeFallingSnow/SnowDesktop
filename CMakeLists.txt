@@ -112,6 +112,11 @@ message(STATUS "SnowDesktop version: ${SNOWDESKTOP_VERSION}")
 message(STATUS
     "SnowDesktop Steam App/Windows Depot: ${SNOWDESKTOP_STEAM_APP_ID}/${SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID}")
 
+# Keep native WinUI and C++/WinRT PackageReferences on one repository-wide
+# version so helper targets can use the same restored tools on a clean build.
+set(SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION "2.4.0")
+set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
+
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/application_crash_watchdog.cpp
@@ -566,9 +571,13 @@ if (MSVC)
         src/taskbar_dynamic/search_visibility_detector.h)
     add_dependencies(SnowDesktopSearchVisibility SnowDesktopCppWinRT)
     set_property(TARGET SnowDesktopSearchVisibility PROPERTY
-        VS_PACKAGE_REFERENCES "Microsoft.Windows.CppWinRT_3.0.260818.1")
+        VS_PACKAGE_REFERENCES
+            "Microsoft.Windows.CppWinRT_${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}")
     set_property(TARGET SnowDesktopSearchVisibility PROPERTY VS_USER_PROPS
         "${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ShellView.props")
+    set_property(TARGET SnowDesktopSearchVisibility PROPERTY
+        VS_GLOBAL_SnowDesktopCppWinRtPackageVersion
+            "${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}")
     target_compile_features(SnowDesktopSearchVisibility PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopSearchVisibility PRIVATE
         src/taskbar_dynamic
@@ -634,8 +643,6 @@ add_executable(SnowDesktop WIN32
 # Pin the complete WinUI toolchain on the executable so NuGet restore,
 # C++/WinRT projection generation, XAML compilation, and self-contained
 # deployment all happen in the CMake-generated MSBuild project.
-set(SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION "2.4.0")
-set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 set_property(TARGET SnowDesktop PROPERTY VS_PACKAGE_REFERENCES
     "Microsoft.WindowsAppSDK_${SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION};Microsoft.Windows.CppWinRT_${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}")
 set_property(TARGET SnowDesktop PROPERTY VS_USER_PROPS
@@ -819,6 +826,20 @@ if (BUILD_TESTING)
         endif()
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
+        # Keep every CTest binary, symbol file, and import library outside the
+        # runnable product root. Generator expressions prevent Visual Studio
+        # from appending a second configuration directory.
+        set_target_properties(${TEST_TARGET} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY
+                "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            ARCHIVE_OUTPUT_DIRECTORY
+                "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            LIBRARY_OUTPUT_DIRECTORY
+                "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            PDB_OUTPUT_DIRECTORY
+                "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            COMPILE_PDB_OUTPUT_DIRECTORY
+                "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
         target_compile_features(${TEST_TARGET} PRIVATE cxx_std_20)
         if (SNOW_TEST_INCLUDE_DIRECTORIES)
             target_include_directories(
@@ -1848,6 +1869,12 @@ if (BUILD_TESTING)
         src/menu_icon_render.cpp
         src/modern_menu.cpp
         src/resource.rc)
+    set_target_properties(SnowDesktopModernMenuPreview PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
     target_link_libraries(SnowDesktopModernMenuPreview PRIVATE

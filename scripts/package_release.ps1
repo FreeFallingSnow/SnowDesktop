@@ -129,7 +129,7 @@ function Copy-Payload {
             "SnowDesktopWallpaperHook.dll",
             "SnowDesktopWallpaperHook32.dll",
             "SnowDesktopWallpaperInjector32.exe")) {
-        $file = Join-Path $buildOutput $name
+        $file = Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
             throw "Required runtime file was not found: $file"
         }
