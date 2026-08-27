@@ -199,6 +199,8 @@ void TestBuildOutputLayout(const std::string& cmake,
             arranger.find("AllowMissingFirstPartyRuntime") !=
                 std::string::npos &&
             arranger.find("buildPath") != std::string::npos &&
+            arranger.find("empty runtime payload directories") !=
+                std::string::npos &&
             arranger.find("Build output still contains root-level DLLs") !=
                 std::string::npos,
         "standard builds become directly runnable private-runtime layouts without root DLLs");
@@ -207,6 +209,8 @@ void TestBuildOutputLayout(const std::string& cmake,
             testScript.find("rootTests.Count -ne 0") !=
                 std::string::npos &&
             testScript.find("rootDlls.Count -ne 0") !=
+                std::string::npos &&
+            testScript.find("emptyRuntimeDirs.Count -ne 0") !=
                 std::string::npos,
         "the standard test entry point rejects flat test executables");
 }

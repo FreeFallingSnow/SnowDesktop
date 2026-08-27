@@ -82,7 +82,11 @@ function Remove-EmptyBuildParents {
 
     $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd("\")
     $prefix = $fullRoot + "\"
-    foreach ($start in @($Paths | Sort-Object Length -Descending -Unique)) {
+    $orderedPaths = @(
+        $Paths |
+            Sort-Object -Unique |
+            Sort-Object Length -Descending)
+    foreach ($start in $orderedPaths) {
         $current = [System.IO.Path]::GetFullPath($start)
         while ($current.StartsWith(
                 $prefix, [System.StringComparison]::OrdinalIgnoreCase) -and
@@ -242,8 +246,15 @@ try {
     foreach ($source in $rootRuntimeSources) {
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Remove-Item -LiteralPath $source -Force
-            $emptyDirectoryCandidates.Add((Split-Path -Parent $source))
         }
+    }
+    foreach ($entry in @($deployment.files)) {
+        if ([string]$entry.source -ceq "SnowDesktop") {
+            continue
+        }
+        $logicalRootSource = Resolve-ContainedPath `
+            -Root $BuildOutput -RelativePath ([string]$entry.path)
+        $emptyDirectoryCandidates.Add((Split-Path -Parent $logicalRootSource))
     }
     foreach ($name in $firstPartyRuntimeFiles +
             $additionalRuntimeDlls.ToArray()) {
@@ -254,6 +265,17 @@ try {
     }
     Remove-EmptyBuildParents `
         -Root $BuildOutput -Paths $emptyDirectoryCandidates.ToArray()
+
+    $remainingEmptyPayloadDirectories = @(
+        $emptyDirectoryCandidates.ToArray() |
+            Sort-Object -Unique |
+            Where-Object {
+                (Test-Path -LiteralPath $_ -PathType Container) -and
+                [System.IO.Directory]::GetFileSystemEntries($_).Count -eq 0
+            })
+    if ($remainingEmptyPayloadDirectories.Count -ne 0) {
+        throw "Build output still contains empty runtime payload directories: $($remainingEmptyPayloadDirectories -join ', ')"
+    }
 
     $rootDlls = @(Get-ChildItem -LiteralPath $BuildOutput -File -Filter "*.dll")
     if ($rootDlls.Count -ne 0) {
