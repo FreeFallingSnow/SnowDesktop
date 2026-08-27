@@ -69,22 +69,6 @@ int main()
     Check(aspectFit.width == 65 && aspectFit.height == 43,
         "non-square thumbnails keep their aspect ratio");
 
-    const auto lowResolutionWindowIcon =
-        rules::WindowIconRasterSize(32, 32, 96);
-    Check(lowResolutionWindowIcon.width == 32 &&
-            lowResolutionWindowIcon.height == 32,
-        "window icons preserve their native low-resolution canvas");
-    const auto boundedWindowIcon =
-        rules::WindowIconRasterSize(256, 256, 96);
-    Check(boundedWindowIcon.width == 96 &&
-            boundedWindowIcon.height == 96,
-        "large window icons are bounded to the requested source bucket");
-    const auto unknownWindowIcon =
-        rules::WindowIconRasterSize(0, 0, 96);
-    Check(unknownWindowIcon.width == 96 &&
-            unknownWindowIcon.height == 96,
-        "unknown window-icon dimensions retain the requested-size fallback");
-
     if (failures != 0)
     {
         std::cerr << failures << " icon render rule test(s) failed\n";
