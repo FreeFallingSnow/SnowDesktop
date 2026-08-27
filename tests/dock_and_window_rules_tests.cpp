@@ -3945,42 +3945,18 @@ int main(int argc, char** argv)
                   "ApplyCollectionPopupBackdropAnimationFrame();") !=
                     std::string::npos &&
                 compositionAnimationSource.find(
-                  "if (collectionPopupGlassTheme_ &&\n"
-                  "        collectionPopupBackdropCompositor_.IsAvailable())\n"
-                  "        return false;") !=
+                  "StartVisualScaleAnimation(") !=
                     std::string::npos &&
-                floatingPopupSource.find(
-                  "collectionPopupBackdropCompositor_.CommitVisualChanges();") !=
+                compositionAnimationSource.find(
+                  "if (collectionPopupGlassTheme_)\n        return false;") ==
                     std::string::npos &&
-                animationSchedulerSource.find(
-                  "!popupAnimationCompositorDriven_") !=
+                backdropCompositorSource.find(
+                  "CreateVector3KeyFrameAnimation()") !=
+                    std::string::npos &&
+                backdropCompositorSource.find(
+                  "root.StartAnimation(L\"Scale\", animation)") !=
                     std::string::npos,
-            "acrylic popup content and backdrop must use one scheduler sample and explicitly submit both composition trees");
-        const std::size_t presentationFenceBegin =
-            compositionAnimationSource.find(
-                "bool DesktopApp::WaitForCompositionPresentation(");
-        const std::size_t presentationFenceEnd =
-            compositionAnimationSource.find(
-                "bool DesktopApp::CommitQuickNavigationCompositionFrame()",
-                presentationFenceBegin);
-        const std::string presentationFenceSource =
-            presentationFenceBegin != std::string::npos &&
-                    presentationFenceEnd != std::string::npos
-                ? compositionAnimationSource.substr(
-                    presentationFenceBegin,
-                    presentationFenceEnd - presentationFenceBegin)
-                : std::string{};
-        const std::size_t commitCompletionFence =
-            presentationFenceSource.find(
-                "WaitForCommitCompletion()");
-        const std::size_t screenPresentationFence =
-            presentationFenceSource.find(
-                "DwmFlush()", commitCompletionFence);
-        Check(!presentationFenceSource.empty() &&
-                commitCompletionFence != std::string::npos &&
-                screenPresentationFence != std::string::npos &&
-                commitCompletionFence < screenPresentationFence,
-            "a composition hand-off must cross a DWM screen-presentation fence after commit processing");
+            "acrylic popup scale must run on the compositor and use scheduler frames only as fallback");
         Check(compositionAnimationSource.find(
                   "bool DesktopApp::StartQuickNavigationCompositionAnimation()") !=
                     std::string::npos &&
@@ -4477,14 +4453,20 @@ int main(int argc, char** argv)
         const std::size_t closeContentFence =
             completeFloatingDockSource.find(
                 "WaitForCompositionPresentation(");
+        const std::size_t closeScreenFence =
+            completeFloatingDockSource.find(
+                "DwmFlush()", closeContentFence);
         const std::size_t closePopupPair =
             completeFloatingDockSource.find(
                 "floatingDockBackdropCompositor_.HidePopupWindowPair(",
-                closeContentFence);
+                closeScreenFence);
         Check(!completeFloatingDockSource.empty() &&
                 closeContentFence != std::string::npos &&
+                closeScreenFence != std::string::npos &&
                 closePopupPair != std::string::npos &&
                 closeContentFence < closePopupPair &&
+                closeContentFence < closeScreenFence &&
+                closeScreenFence < closePopupPair &&
                 completeFloatingDockSource.find(
                     "floatingDockDesktopCacheEffect_->SetOpacity(1.0f)") ==
                         std::string::npos &&
@@ -4494,7 +4476,7 @@ int main(int argc, char** argv)
                 completeFloatingDockSource.find(
                     "ShowWindow(floatingDockHwnd_, SW_HIDE)") ==
                         std::string::npos,
-            "floating Dock completion must fence the paired state and hide its content/backdrop windows together");
+            "floating Dock completion must cross the screen-presentation boundary before hiding its content/backdrop windows together");
         const std::size_t finalizePopupBegin =
             popupLifecycleSource.find(
                 "void DesktopApp::FinalizeCloseCollectionPopup()");

@@ -330,19 +330,11 @@ bool DesktopApp::WaitForCompositionPresentation(
 
     const double waitStart =
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    const HRESULT commitCompletionHr = dcompDevice_
+    HRESULT completionHr = dcompDevice_
         ? dcompDevice_->WaitForCommitCompletion()
         : E_UNEXPECTED;
-    // WaitForCommitCompletion only guarantees that DirectComposition has
-    // processed the commit. A floating-Dock ownership hand-off must not hide
-    // its source HWND until DWM has actually presented the replacement. Run
-    // the screen fence on every path; it also covers a paired Windows
-    // Composition commit that completed immediately before this call.
-    const HRESULT presentationHr = DwmFlush();
-    const HRESULT completionHr = SUCCEEDED(commitCompletionHr)
-        ? presentationHr
-        : (SUCCEEDED(presentationHr)
-            ? S_OK : commitCompletionHr);
+    if (FAILED(completionHr))
+        completionHr = DwmFlush();
     uiAnimationScheduler_.RecordCommitDuration(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
         waitStart);
@@ -664,15 +656,6 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     if (!popupAnimationOverlay_.active ||
         !popupAnimation_.IsAnimating())
         return false;
-    // The popup snapshot is a DirectComposition visual while its native
-    // glass lives in a Windows Composition target. Independent compositor
-    // animations can begin on different presented frames even when they use
-    // the same duration and easing. Keep glass popups on the display-cadence
-    // scheduler so both trees receive the same sampled scale before their
-    // commits are submitted.
-    if (collectionPopupGlassTheme_ &&
-        collectionPopupBackdropCompositor_.IsAvailable())
-        return false;
     if (popupAnimationCompletionToken_)
         uiAnimationScheduler_.Cancel(
             popupAnimationCompletionToken_);
@@ -706,6 +689,27 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         anchor.y = std::clamp(
             popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
     }
+    bool backdropAnimationStarted = false;
+    if (collectionPopupGlassTheme_ &&
+        collectionPopupBackdropCompositor_.IsAvailable())
+    {
+        backdropAnimationStarted =
+            collectionPopupBackdropCompositor_.
+                StartVisualScaleAnimation(
+                    visual.scale,
+                    opening ? 1.0f :
+                        snowdesktop::popup_animation_rules::
+                            kMinimumScale,
+                    1.0f,
+                    static_cast<float>(
+                        anchor.x - floatingPopupWindowBounds_.left),
+                    static_cast<float>(
+                        anchor.y - floatingPopupWindowBounds_.top),
+                    duration,
+                    normalizedScaleStartSlope);
+        if (!backdropAnimationStarted)
+            return false;
+    }
     if (!AnimateCompositionAnimationOverlay(
             popupAnimationOverlay_,
             visual.scale,
@@ -713,7 +717,11 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 snowdesktop::popup_animation_rules::kMinimumScale,
             anchor, 1.0f, 1.0f, duration,
             normalizedScaleStartSlope))
+    {
+        if (backdropAnimationStarted)
+            ApplyCollectionPopupBackdropAnimationFrame();
         return false;
+    }
 
     popupAnimationCompositorDriven_ = true;
     popupAnimationCompletionToken_ =

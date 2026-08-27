@@ -538,6 +538,27 @@ void DesktopApp::CompleteFloatingDockCloseHandoff()
             L"Floating Dock paired conceal did not complete");
     }
 
+    // WaitForCommitCompletion means DComp has consumed the ownership swap,
+    // but it does not guarantee that DWM has presented the desktop cache yet.
+    // Cross the screen boundary only at the destructive retirement point;
+    // applying this fence to every composition wait stalls unrelated popup
+    // animations on the UI thread.
+    const double presentationWaitStart =
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    const HRESULT presentationHr = DwmFlush();
+    uiAnimationScheduler_.RecordCommitDuration(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+        presentationWaitStart);
+    if (FAILED(presentationHr))
+    {
+        wchar_t message[176]{};
+        wsprintfW(
+            message,
+            L"Floating Dock paired conceal DWM fence FAILED hr=0x%08X",
+            static_cast<unsigned>(presentationHr));
+        WriteDiagnosticLogEntry(message);
+    }
+
     floatingDockVisible_ = false;
     floatingDockPointerPresentPending_ = false;
     // The content HWND and its backdrop helper belong to this Dock lifecycle.
