@@ -104,7 +104,11 @@ PRI、XBF、WinMD、资源文件、哈希及官方 `package.appxfragment`；携�
 和 Steam 包都只按这份清单逐项复制，不会通配复制构建目录。打包会拒绝绝对路径、
 路径穿越、大小写冲突、缺失文件及哈希不一致。MSIX 还会把清单列出的官方
 activatable-class 扩展合并进 `AppxManifest.xml`，因此目标机器无需预装 Windows
-App SDK Runtime。Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
+App SDK Runtime。清单中来源为 Windows App SDK、Windows ML 和 WebView2 的运行时
+DLL、PRI、WinMD、XAML 资源及语言卫星文件统一放在 `SnowDesktop.Runtime` 私有程序集
+目录；主程序的 XBF、PRI、WinMD 与应用资源仍保留在包根目录。打包脚本会将主程序内嵌
+WinRT 激活清单迁移到私有程序集清单，并同步重写 MSIX activatable-class 路径。
+Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
 复制到载荷的 `licenses` 目录。Windows App SDK ML 以独立的 MSBuild 项提供
 Machine Learning、ONNX Runtime 和 DirectML DLL；清单会显式收集这三个文件及其许可和
 NOTICE，避免仅复制主 Windows App SDK 项时遗漏。WebView2 WinRT Core DLL 与 WinMD 也

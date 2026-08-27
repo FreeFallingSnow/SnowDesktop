@@ -18,23 +18,23 @@ try {
         -Force | Out-Null
 
     $required = @(
-        "App.xbf",
-        "SettingsShell.xbf",
-        "SnowDesktop.pri",
-        "SnowDesktop.winmd",
-        "Microsoft.WindowsAppRuntime.dll",
-        "Microsoft.ui.xaml.dll",
-        "Microsoft.UI.Xaml.winmd"
+        [pscustomobject]@{ name = "App.xbf"; source = "SnowDesktop" },
+        [pscustomobject]@{ name = "SettingsShell.xbf"; source = "SnowDesktop" },
+        [pscustomobject]@{ name = "SnowDesktop.pri"; source = "SnowDesktop" },
+        [pscustomobject]@{ name = "SnowDesktop.winmd"; source = "SnowDesktop" },
+        [pscustomobject]@{ name = "Microsoft.WindowsAppRuntime.dll"; source = "Microsoft.WindowsAppSDK" },
+        [pscustomobject]@{ name = "Microsoft.ui.xaml.dll"; source = "Microsoft.WindowsAppSDK" },
+        [pscustomobject]@{ name = "Microsoft.UI.Xaml.winmd"; source = "Microsoft.WindowsAppSDK" }
     )
-    foreach ($name in $required) {
+    foreach ($entry in $required) {
         [System.IO.File]::WriteAllText(
-            (Join-Path $target $name), "fixture:$name")
+            (Join-Path $target $entry.name), "fixture:$($entry.name)")
     }
     $fileList = Join-Path $intermediate "files.txt"
     [System.IO.File]::WriteAllLines(
         $fileList,
         @($required | ForEach-Object {
-            "$_`tSnowDesktop`tGenerated"
+            "$($_.name)`t$($_.source)`tGenerated"
         }),
         [System.Text.UTF8Encoding]::new($false))
 
@@ -94,8 +94,10 @@ try {
     }
     [System.IO.File]::WriteAllText(
         (Join-Path $target "App.xbf"), "fixture:App.xbf")
+    $runtimeDirectory = "SnowDesktop.Runtime"
     $null = Copy-SnowDesktopDeploymentPayload `
-        -BuildOutput $target -Destination $payload
+        -BuildOutput $target -Destination $payload `
+        -RuntimeDirectory $runtimeDirectory
 
     $appxManifest = Join-Path $payload "AppxManifest.xml"
     [System.IO.File]::WriteAllText(
@@ -105,7 +107,8 @@ try {
     Merge-SnowDesktopAppxFragments `
         -BuildOutput $target `
         -PackageRoot $payload `
-        -ManifestPath $appxManifest
+        -ManifestPath $appxManifest `
+        -RuntimeDirectory $runtimeDirectory
 
     [xml]$xml = Get-Content -LiteralPath $appxManifest -Encoding UTF8 -Raw
     $namespace = [System.Xml.XmlNamespaceManager]::new($xml.NameTable)
@@ -115,6 +118,15 @@ try {
         @($deployment.notices).Count -ne 7 -or
         $xml.SelectNodes(
             "/m:Package/m:Extensions/m:Extension", $namespace).Count -ne 1 -or
+        $xml.SelectSingleNode(
+            "//m:InProcessServer/m:Path", $namespace).InnerText -cne
+                "SnowDesktop.Runtime\Microsoft.ui.xaml.dll" -or
+        -not (Test-Path -LiteralPath (Join-Path $payload `
+            "SnowDesktop.Runtime\Microsoft.ui.xaml.dll") -PathType Leaf) -or
+        (Test-Path -LiteralPath (Join-Path $payload `
+            "Microsoft.ui.xaml.dll") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $payload `
+            "SnowDesktop.pri") -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $payload `
             "licenses\WindowsAppSDK-LICENSE.txt") -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $payload `

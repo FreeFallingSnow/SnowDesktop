@@ -119,6 +119,14 @@ void TestPackagers(const std::string& module,
             steam.find("Copy-SnowDesktopDeploymentPayload") !=
                 std::string::npos,
         "portable, MSIX, and Steam payloads use the same deployment manifest");
+    Check(module.find("Enable-SnowDesktopPrivateRuntimeAssembly") !=
+            std::string::npos &&
+            module.find("SnowDesktop.Runtime") != std::string::npos &&
+            release.find("-RuntimeDirectory $runtimeDirectory") !=
+                std::string::npos &&
+            steam.find("-RuntimeDirectory $runtimeDirectory") !=
+                std::string::npos,
+        "release payloads isolate third-party runtime files in one private assembly directory");
     Check(release.find("SnowDesktopWorkshopManager.exe") !=
             std::string::npos &&
             release.find("widgets\\snowdesktop-lua-widget\\bin\\snowwidget.exe") !=
@@ -126,8 +134,10 @@ void TestPackagers(const std::string& module,
         "portable and MSIX payloads include component management and Agent Skill tools");
     Check(release.find("Merge-SnowDesktopAppxFragments") !=
             std::string::npos &&
-            module.find("windows.activatableClass.") != std::string::npos,
-        "MSIX merges official activatable-class package fragments");
+            module.find("windows.activatableClass.") != std::string::npos &&
+            module.find("$pathNode.InnerText = $relativePath") !=
+                std::string::npos,
+        "MSIX merges official activatable-class package fragments with private runtime paths");
     Check(release.find("Disable-InputPriMerging") != std::string::npos &&
             release.find("Where-Object { $_.type -eq \"PRI\" }") !=
                 std::string::npos &&

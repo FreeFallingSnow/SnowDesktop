@@ -104,18 +104,40 @@ function Read-SnowDesktopDeploymentManifest {
     return $manifest
 }
 
+function Get-SnowDesktopRuntimeRelativePath {
+    param(
+        [Parameter(Mandatory = $true)]$Entry,
+        [string]$RuntimeDirectory = ""
+    )
+
+    $relativePath = [string]$Entry.path
+    if ([string]::IsNullOrWhiteSpace($RuntimeDirectory) -or
+        [string]$Entry.source -ceq "SnowDesktop") {
+        return $relativePath
+    }
+    if ([System.IO.Path]::GetFileName($RuntimeDirectory) -cne
+            $RuntimeDirectory -or
+        $RuntimeDirectory -in @(".", "..")) {
+        throw "RuntimeDirectory must be a single safe directory name: $RuntimeDirectory"
+    }
+    return "$RuntimeDirectory/$relativePath"
+}
+
 function Copy-SnowDesktopDeploymentPayload {
     param(
         [Parameter(Mandatory = $true)][string]$BuildOutput,
-        [Parameter(Mandatory = $true)][string]$Destination
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [string]$RuntimeDirectory = ""
     )
 
     $manifest = Read-SnowDesktopDeploymentManifest -BuildOutput $BuildOutput
     foreach ($entry in @($manifest.files)) {
         $source = Resolve-SnowDesktopDeploymentPath `
             -Root $BuildOutput -RelativePath ([string]$entry.path)
+        $relativeTarget = Get-SnowDesktopRuntimeRelativePath `
+            -Entry $entry -RuntimeDirectory $RuntimeDirectory
         $target = Resolve-SnowDesktopDeploymentPath `
-            -Root $Destination -RelativePath ([string]$entry.path)
+            -Root $Destination -RelativePath $relativeTarget
         $parent = Split-Path -Parent $target
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $target -Force
@@ -132,11 +154,220 @@ function Copy-SnowDesktopDeploymentPayload {
     return $manifest
 }
 
+function Find-SnowDesktopWindowsSdkTool {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $kitsRoot = (Get-ItemProperty `
+        -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" `
+        -Name KitsRoot10).KitsRoot10
+    $binRoot = Join-Path $kitsRoot "bin"
+    $versionDirectories = @(
+        [System.IO.Directory]::EnumerateDirectories($binRoot) |
+            Where-Object {
+                [System.IO.Path]::GetFileName($_) -match
+                    "^\d+\.\d+\.\d+\.\d+$"
+            } |
+            Sort-Object {
+                [version][System.IO.Path]::GetFileName($_)
+            } -Descending
+    )
+    foreach ($versionDirectory in $versionDirectories) {
+        $candidate = Join-Path $versionDirectory "x64\$Name"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    throw "$Name was not found in the Windows SDK."
+}
+
+function Save-SnowDesktopXmlDocument {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Xml.XmlDocument]$Document,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $settings = [System.Xml.XmlWriterSettings]::new()
+    $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+    $settings.Indent = $true
+    $settings.NewLineChars = [Environment]::NewLine
+    $settings.NewLineHandling = [System.Xml.NewLineHandling]::Replace
+    $writer = [System.Xml.XmlWriter]::Create($Path, $settings)
+    try {
+        $Document.Save($writer)
+    }
+    finally {
+        $writer.Dispose()
+    }
+}
+
+function Enable-SnowDesktopPrivateRuntimeAssembly {
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildOutput,
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [string]$RuntimeDirectory = "SnowDesktop.Runtime"
+    )
+
+    if ($Version -notmatch "^[1-9][0-9]*\.[0-9]+\.[0-9]+\.0$") {
+        throw "Private runtime assembly version must use A.B.C.0 format: $Version"
+    }
+    if ([System.IO.Path]::GetFileName($RuntimeDirectory) -cne
+            $RuntimeDirectory -or
+        $RuntimeDirectory -in @(".", "..")) {
+        throw "RuntimeDirectory must be a single safe directory name: $RuntimeDirectory"
+    }
+
+    $deployment = Read-SnowDesktopDeploymentManifest -BuildOutput $BuildOutput
+    $runtimeRoot = Resolve-SnowDesktopDeploymentPath `
+        -Root $PackageRoot -RelativePath $RuntimeDirectory
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) {
+        throw "Private runtime directory was not found: $runtimeRoot"
+    }
+    $executable = Join-Path $PackageRoot "SnowDesktop.exe"
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        throw "SnowDesktop.exe was not found in the package root: $PackageRoot"
+    }
+
+    $runtimeDlls = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in @($deployment.files)) {
+        if ([string]$entry.source -ceq "SnowDesktop") {
+            continue
+        }
+        $relativePath = ([string]$entry.path).Replace("/", "\")
+        $runtimePath = Resolve-SnowDesktopDeploymentPath `
+            -Root $runtimeRoot -RelativePath $relativePath
+        if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+            throw "Private runtime payload file was not found: $runtimePath"
+        }
+        if ($relativePath.EndsWith(
+                ".dll", [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ([System.IO.Path]::GetFileName($relativePath) -cne
+                    $relativePath) {
+                throw "Private runtime DLLs must be stored directly in $RuntimeDirectory`: $relativePath"
+            }
+            [void]$runtimeDlls.Add($relativePath)
+        }
+    }
+    if ($runtimeDlls.Count -eq 0) {
+        throw "The deployment manifest does not contain private runtime DLLs."
+    }
+
+    $mt = Find-SnowDesktopWindowsSdkTool -Name "mt.exe"
+    $applicationManifestPath = [System.IO.Path]::GetTempFileName()
+    try {
+        & $mt "-inputresource:$executable;#1" `
+            "-out:$applicationManifestPath"
+        if ($LASTEXITCODE -ne 0) {
+            throw "mt.exe could not extract the SnowDesktop application manifest (exit $LASTEXITCODE)."
+        }
+
+        $applicationDocument = [System.Xml.XmlDocument]::new()
+        $applicationDocument.PreserveWhitespace = $false
+        $applicationDocument.Load($applicationManifestPath)
+        $applicationNamespaces = [System.Xml.XmlNamespaceManager]::new(
+            $applicationDocument.NameTable)
+        $applicationNamespaces.AddNamespace(
+            "asmv1", "urn:schemas-microsoft-com:asm.v1")
+        $applicationNamespaces.AddNamespace(
+            "asmv3", "urn:schemas-microsoft-com:asm.v3")
+        $activationFiles = @($applicationDocument.SelectNodes(
+            "/asmv1:assembly/asmv3:file", $applicationNamespaces))
+        if ($activationFiles.Count -eq 0) {
+            throw "The SnowDesktop application manifest contains no WinRT activation files."
+        }
+
+        $privateDocument = [System.Xml.XmlDocument]::new()
+        $privateDocument.PreserveWhitespace = $false
+        [void]$privateDocument.AppendChild(
+            $privateDocument.CreateXmlDeclaration("1.0", "UTF-8", $null))
+        $privateAssembly = $privateDocument.CreateElement(
+            "assembly", "urn:schemas-microsoft-com:asm.v1")
+        $privateAssembly.SetAttribute("manifestVersion", "1.0")
+        [void]$privateDocument.AppendChild($privateAssembly)
+        $privateIdentity = $privateDocument.CreateElement(
+            "assemblyIdentity", "urn:schemas-microsoft-com:asm.v1")
+        $privateIdentity.SetAttribute("type", "win32")
+        $privateIdentity.SetAttribute("name", $RuntimeDirectory)
+        $privateIdentity.SetAttribute("version", $Version)
+        $privateIdentity.SetAttribute("processorArchitecture", "amd64")
+        [void]$privateAssembly.AppendChild($privateIdentity)
+
+        $listedDlls = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($activationFile in $activationFiles) {
+            $dll = $activationFile.GetAttribute("name")
+            if (-not $runtimeDlls.Contains($dll)) {
+                throw "The application manifest references a DLL outside the private runtime payload: $dll"
+            }
+            [void]$listedDlls.Add($dll)
+            [void]$privateAssembly.AppendChild(
+                $privateDocument.ImportNode($activationFile, $true))
+            [void]$activationFile.ParentNode.RemoveChild($activationFile)
+        }
+        foreach ($dll in $runtimeDlls) {
+            if ($listedDlls.Add($dll)) {
+                $file = $privateDocument.CreateElement(
+                    "file", "urn:schemas-microsoft-com:asm.v3")
+                $file.SetAttribute("name", $dll)
+                [void]$privateAssembly.AppendChild($file)
+            }
+        }
+
+        $applicationRoot = $applicationDocument.SelectSingleNode(
+            "/asmv1:assembly", $applicationNamespaces)
+        $dependency = $applicationDocument.CreateElement(
+            "dependency", "urn:schemas-microsoft-com:asm.v1")
+        $dependentAssembly = $applicationDocument.CreateElement(
+            "dependentAssembly", "urn:schemas-microsoft-com:asm.v1")
+        $dependencyIdentity = $applicationDocument.CreateElement(
+            "assemblyIdentity", "urn:schemas-microsoft-com:asm.v1")
+        $dependencyIdentity.SetAttribute("type", "win32")
+        $dependencyIdentity.SetAttribute("name", $RuntimeDirectory)
+        $dependencyIdentity.SetAttribute("version", $Version)
+        $dependencyIdentity.SetAttribute("processorArchitecture", "amd64")
+        $dependencyIdentity.SetAttribute("language", "*")
+        [void]$dependentAssembly.AppendChild($dependencyIdentity)
+        [void]$dependency.AppendChild($dependentAssembly)
+        $trustInfo = $applicationRoot.SelectSingleNode(
+            "asmv3:trustInfo", $applicationNamespaces)
+        if ($null -eq $trustInfo) {
+            [void]$applicationRoot.AppendChild($dependency)
+        }
+        else {
+            [void]$applicationRoot.InsertBefore($dependency, $trustInfo)
+        }
+
+        $privateManifestPath = Join-Path $runtimeRoot `
+            "$RuntimeDirectory.manifest"
+        Save-SnowDesktopXmlDocument `
+            -Document $privateDocument -Path $privateManifestPath
+        Save-SnowDesktopXmlDocument `
+            -Document $applicationDocument -Path $applicationManifestPath
+        & $mt "-manifest" $privateManifestPath "-validate_manifest"
+        if ($LASTEXITCODE -ne 0) {
+            throw "The private runtime assembly manifest is invalid (exit $LASTEXITCODE)."
+        }
+        & $mt "-manifest" $applicationManifestPath `
+            "-outputresource:$executable;#1"
+        if ($LASTEXITCODE -ne 0) {
+            throw "mt.exe could not embed the private runtime dependency (exit $LASTEXITCODE)."
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $applicationManifestPath -PathType Leaf) {
+            Remove-Item -LiteralPath $applicationManifestPath -Force
+        }
+    }
+}
+
 function Merge-SnowDesktopAppxFragments {
     param(
         [Parameter(Mandatory = $true)][string]$BuildOutput,
         [Parameter(Mandatory = $true)][string]$PackageRoot,
-        [Parameter(Mandatory = $true)][string]$ManifestPath
+        [Parameter(Mandatory = $true)][string]$ManifestPath,
+        [string]$RuntimeDirectory = ""
     )
 
     $deployment = Read-SnowDesktopDeploymentManifest -BuildOutput $BuildOutput
@@ -183,10 +414,21 @@ function Merge-SnowDesktopAppxFragments {
             }
             foreach ($pathNode in @($node.SelectNodes(".//m:Path", $fragmentManager))) {
                 $dll = [string]$pathNode.InnerText
-                if ([System.IO.Path]::GetFileName($dll) -cne $dll -or
-                    -not (Test-Path -LiteralPath (Join-Path $PackageRoot $dll) -PathType Leaf)) {
+                if ([System.IO.Path]::GetFileName($dll) -cne $dll) {
                     throw "Package fragment references a missing or unsafe runtime file: $dll"
                 }
+                $relativePath = if ([string]::IsNullOrWhiteSpace(
+                        $RuntimeDirectory)) {
+                    $dll
+                }
+                else {
+                    "$RuntimeDirectory\$dll"
+                }
+                if (-not (Test-Path -LiteralPath `
+                        (Join-Path $PackageRoot $relativePath) -PathType Leaf)) {
+                    throw "Package fragment references a missing or unsafe runtime file: $relativePath"
+                }
+                $pathNode.InnerText = $relativePath
             }
             [void]$extensions.AppendChild($document.ImportNode($node, $true))
             ++$merged
@@ -213,4 +455,5 @@ function Merge-SnowDesktopAppxFragments {
 Export-ModuleMember -Function `
     Read-SnowDesktopDeploymentManifest, `
     Copy-SnowDesktopDeploymentPayload, `
+    Enable-SnowDesktopPrivateRuntimeAssembly, `
     Merge-SnowDesktopAppxFragments

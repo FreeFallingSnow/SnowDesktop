@@ -26,6 +26,7 @@ $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
 $buildOutput = Join-Path $repositoryRoot ".build\Release"
+$runtimeDirectory = "SnowDesktop.Runtime"
 Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
 $steamIdentity = Get-Content -LiteralPath `
     (Join-Path $repositoryRoot "packaging\steam-identity.json") `
@@ -131,7 +132,13 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "lang") `
     -Destination (Join-Path $payload "lang") -Recurse -Force
 $null = Copy-SnowDesktopDeploymentPayload `
     -BuildOutput $buildOutput `
-    -Destination $payload
+    -Destination $payload `
+    -RuntimeDirectory $runtimeDirectory
+Enable-SnowDesktopPrivateRuntimeAssembly `
+    -BuildOutput $buildOutput `
+    -PackageRoot $payload `
+    -Version $version `
+    -RuntimeDirectory $runtimeDirectory
 $licensesDestination = Join-Path $payload "licenses"
 New-Item -ItemType Directory -Path $licensesDestination -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot `

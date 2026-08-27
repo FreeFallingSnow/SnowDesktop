@@ -24,6 +24,7 @@ $repositoryRoot = [System.IO.Path]::GetFullPath(
 $packagingDirectory = Join-Path $repositoryRoot "packaging"
 $buildOutput = Join-Path $repositoryRoot ".build\Release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
+$runtimeDirectory = "SnowDesktop.Runtime"
 Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
 
 function Assert-ChildPath {
@@ -167,7 +168,13 @@ function Copy-Payload {
 
     $null = Copy-SnowDesktopDeploymentPayload `
         -BuildOutput $buildOutput `
-        -Destination $Destination
+        -Destination $Destination `
+        -RuntimeDirectory $runtimeDirectory
+    Enable-SnowDesktopPrivateRuntimeAssembly `
+        -BuildOutput $buildOutput `
+        -PackageRoot $Destination `
+        -Version $version `
+        -RuntimeDirectory $runtimeDirectory
 
     Assert-NoDeveloperAssets -Destination $Destination
 }
@@ -504,7 +511,8 @@ if ($manifest -match "@[A-Z_]+@") {
 Merge-SnowDesktopAppxFragments `
     -BuildOutput $buildOutput `
     -PackageRoot $msixStage `
-    -ManifestPath (Join-Path $msixStage "AppxManifest.xml")
+    -ManifestPath (Join-Path $msixStage "AppxManifest.xml") `
+    -RuntimeDirectory $runtimeDirectory
 
 $makeAppx = Get-MakeAppxPath
 $makePri = Join-Path (Split-Path -Parent $makeAppx) "makepri.exe"
