@@ -295,8 +295,6 @@ int main(int argc, char** argv)
             "desktopWidgetCompositionLayer_.Get()");
         const std::size_t foregroundLayer = inRootOrder(
             "desktopForegroundCompositionVisual_.Get()");
-        const std::size_t dockHandoffLayer = inRootOrder(
-            "floatingDockDesktopCacheVisual_.Get()");
         const std::size_t pageOverlay = inRootOrder(
             "desktopOverlayVisual(pageNotifyAnimationOverlay_)");
         const std::size_t popupOverlay = inRootOrder(
@@ -305,14 +303,13 @@ int main(int argc, char** argv)
             "desktopOverlayVisual(luaWidgetPanelAnimationOverlay_)");
         Check(!rootZOrder.empty() &&
                 widgetLayer < foregroundLayer &&
-                foregroundLayer < dockHandoffLayer &&
-                dockHandoffLayer < pageOverlay &&
+                foregroundLayer < pageOverlay &&
                 pageOverlay < popupOverlay &&
                 popupOverlay < luaPanelOverlay &&
                 rootZOrder.find(
                     "visual, TRUE, predecessor") !=
                     std::string::npos,
-            "the desktop root tree must explicitly stack widgets below foreground, handoff, and animation overlays");
+            "the desktop root tree must explicitly stack widgets below foreground and animation overlays");
         Check(rootZOrder.find(
                 "BelongsToCompositionRoot(") !=
                     std::string::npos &&
@@ -368,9 +365,11 @@ int main(int argc, char** argv)
                     "hr = SyncDesktopCompositionRootZOrder();") !=
                     std::string::npos &&
                 floatingDock.find(
-                    "hr = SyncDesktopCompositionRootZOrder();") !=
+                    "SyncDesktopCompositionRootZOrder(") ==
+                    std::string::npos &&
+                floatingDock.find("ShowPopupWindowPair(") !=
                     std::string::npos,
-            "every managed desktop root visual must resynchronize the global z-order when attached");
+            "desktop-owned visuals must resynchronize the desktop root while the persistent Dock stays on its independent popup root");
     }
 
     std::cout << "widget composition layer rules tests passed\n";

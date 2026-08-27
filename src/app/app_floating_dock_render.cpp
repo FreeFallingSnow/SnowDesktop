@@ -115,8 +115,7 @@ void DesktopApp::PaintFloatingDockWindow(
     const bool mayRender =
         snowdesktop::floating_dock_rules::
             ShouldRenderFloatingDockFrame(
-                floatingDockHostActive_,
-                floatingDockClosePending_);
+                floatingDockHostActive_);
     const bool rendered = mayRender &&
         RenderFloatingDockCompositionFrame();
     EndPaint(hwnd, &paint);
@@ -162,8 +161,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
     {
-        if (!floatingDockHostActive_ ||
-            floatingDockClosePending_)
+        if (!floatingDockHostActive_)
             return HTTRANSPARENT;
         POINT hitDesktopPoint{
             GET_X_LPARAM(lp),

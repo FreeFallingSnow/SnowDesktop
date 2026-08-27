@@ -1058,10 +1058,6 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kForegroundInteractionChangedMessage:
         ReconcileDesktopHoverState();
         return 0;
-    case kFloatingDockBackdropCommitMessage:
-        FinalizeFloatingDockBackdropCleanup(
-            static_cast<UINT_PTR>(wp));
-        return 0;
     case kSteamWorkshopSubscriptionReadyMessage:
         PollSteamWorkshopSubscriptions();
         return 0;

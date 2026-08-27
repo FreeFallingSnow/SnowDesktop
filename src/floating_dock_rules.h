@@ -267,37 +267,11 @@ inline bool ShouldRenderDesktopDock(
         !selectedForFloatingHost;
 }
 
-/**
- * @brief The source copy can be retired only after a valid replacement frame
- * has crossed the compositor presentation barrier.
- */
-inline bool ShouldRetireDesktopDockCopy(
-    bool floatingFrameReady,
-    bool presentationBarrierSucceeded)
-{
-    return floatingFrameReady &&
-        presentationBarrierSucceeded;
-}
-
 /** @brief 常驻 DockHost 只要处于活动状态且未关闭事务挂起就可以继续绘制。 */
 inline bool ShouldRenderFloatingDockFrame(
-    bool dockHostActive,
-    bool closePending)
+    bool dockHostActive)
 {
-    return dockHostActive && !closePending;
-}
-
-/**
- * @brief 仅当 Dock 已降回桌面层且不存在待完成事务时执行后续动作。
- *
- * 常驻 Host 在桌面态继续可见，不能再把 HWND 可见性当成关闭完成条件。
- */
-inline bool CanRunPostCloseActionImmediately(
-    bool floatingDockVisible,
-    bool closePending)
-{
-    return !floatingDockVisible &&
-        !closePending;
+    return dockHostActive;
 }
 
 /**
@@ -354,16 +328,6 @@ inline UINT RemainingPointerFrameDelay(
         return 0;
     return static_cast<UINT>(
         kPointerFrameIntervalMs - elapsed);
-}
-
-/**
- * @brief Dock 在桌面层和顶层窗口之间切换会改变拖动静态帧内容。
- */
-inline bool FloatingVisibilityChangesStaticScene(
-    bool wasVisible,
-    bool isVisible)
-{
-    return wasVisible != isVisible;
 }
 
 inline bool ShouldCloseCollectionPopup(

@@ -403,7 +403,7 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
         }
         else if (!IsCollectionPopupHostedByFloatingWindow() &&
                  !(popupAnchoredToDock_ &&
-                   floatingDockDesktopCopySuppressed_) &&
+                   persistentDockHostOwnsVisual_) &&
                  !IsRectEmptyRect(popupRect_))
         {
             RECT dirty = popupRect_;

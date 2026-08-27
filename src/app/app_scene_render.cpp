@@ -202,7 +202,7 @@ void DesktopApp::DrawDesktopForeground(
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             !snowdesktop::floating_dock_rules::
                 ShouldRenderDesktopDock(
-                    floatingDockDesktopCopySuppressed_,
+                    persistentDockHostOwnsVisual_,
                     dock == floatingDockContainer_))
         {
             continue;
@@ -381,7 +381,7 @@ void DesktopApp::DrawDynamicOverlays(
             if (!snowdesktop::drag_visual_rules::
                     DropPreviewBelongsToRenderSurface(
                         renderingFloatingDock_,
-                        floatingDockDesktopCopySuppressed_,
+                        persistentDockHostOwnsVisual_,
                         targetIsFloatingDock))
             {
                 return;
@@ -502,7 +502,7 @@ void DesktopApp::DrawDynamicOverlays(
                 floatingDockVisible_
             : !collectionHostedByFloatingPopup &&
                 !(popupAnchoredToDock_ &&
-                    floatingDockDesktopCopySuppressed_);
+                    persistentDockHostOwnsVisual_);
     if (popupBelongsToCurrentSurface &&
         (!hiddenMode || IsOpenPopupRetained()) &&
         GetOpenPopupWidget())

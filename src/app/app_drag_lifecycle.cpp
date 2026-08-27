@@ -329,7 +329,6 @@ void DesktopApp::PresentPointerInteractionFrame(
                             return;
                         floatingDockHoverTailToken_ = 0;
                         if (!floatingDockHostActive_ ||
-                            floatingDockClosePending_ ||
                             !floatingDockHwnd_ ||
                             !IsWindow(floatingDockHwnd_))
                             return;

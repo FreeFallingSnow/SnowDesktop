@@ -598,11 +598,10 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         }
     }
 
-    // A click can begin on the desktop Dock copy and finish its pair on the
-    // floating Dock HWND. In that case Windows emits two ordinary click
+    // A click pair can cross Dock HWNDs when the persistent Host changes its
+    // selected monitor or Z-order band. Windows then emits two ordinary click
     // sequences instead of WM_LBUTTONDBLCLK. Complete the same action on the
-    // second release so folders and closed items still require exactly two
-    // clicks across either surface.
+    // second release so folders and closed items still require two clicks.
     if (matchingPendingDoubleClick &&
         (folderEntry || waitForDoubleClick))
     {
@@ -664,8 +663,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                     RequiresFloatingDockMinimizeCaptureIsolation(
                         floatingDockVisible_,
                         pressedWindowAction);
-            if (!requiresFloatingDockClose &&
-                !floatingDockClosePending_)
+            if (!requiresFloatingDockClose)
             {
                 command(DockWindowTransitionCapturePolicy::
                     SnapshotPreferred);
@@ -676,7 +674,6 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             // minimize without hiding the floating Dock. If registration is
             // unavailable, retain the proven close-and-snapshot path.
             if (requiresFloatingDockClose &&
-                !floatingDockClosePending_ &&
                 command(DockWindowTransitionCapturePolicy::
                     LiveThumbnailOnly))
             {

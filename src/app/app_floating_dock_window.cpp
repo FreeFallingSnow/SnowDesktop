@@ -36,7 +36,7 @@ bool DesktopApp::SyncPersistentDockHost(
     {
         floatingDockVisible_ = false;
         floatingDockHostActive_ = false;
-        floatingDockDesktopCopySuppressed_ = false;
+        persistentDockHostOwnsVisual_ = false;
         floatingDockContainer_ = nullptr;
         UpdatePersistentDockHostVisibility();
         return false;
@@ -51,7 +51,7 @@ bool DesktopApp::SyncPersistentDockHost(
     {
         floatingDockVisible_ = false;
         floatingDockHostActive_ = false;
-        floatingDockDesktopCopySuppressed_ = false;
+        persistentDockHostOwnsVisual_ = false;
         floatingDockContainer_ = nullptr;
         UpdatePersistentDockHostVisibility();
         return false;
@@ -83,13 +83,12 @@ bool DesktopApp::SyncPersistentDockHost(
     if (!CreateFloatingDockWindow())
     {
         floatingDockHostActive_ = false;
-        floatingDockDesktopCopySuppressed_ = false;
+        persistentDockHostOwnsVisual_ = false;
         return false;
     }
 
     floatingDockHostActive_ = true;
-    floatingDockDesktopCopySuppressed_ = true;
-    floatingDockClosePending_ = false;
+    persistentDockHostOwnsVisual_ = true;
     floatingDockPersonalization_ = CurrentPersonalization();
     floatingDockRevealPending_ =
         !IsWindowVisible(floatingDockHwnd_);
@@ -101,15 +100,13 @@ bool DesktopApp::SyncPersistentDockHost(
             L"Persistent DockHost initial frame unavailable; desktop rendering restored");
         floatingDockVisible_ = false;
         floatingDockHostActive_ = false;
-        floatingDockDesktopCopySuppressed_ = false;
+        persistentDockHostOwnsVisual_ = false;
         floatingDockRevealPending_ = false;
         floatingDockBackdropCompositor_.HidePopupWindowPair(
             floatingDockHwnd_);
         return false;
     }
     ValidateRect(floatingDockHwnd_, nullptr);
-    if (floatingDockDcompEffect_)
-        floatingDockDcompEffect_->SetOpacity(1.0f);
     CommitCompositionAnimationFrame();
     FlushPendingCompositionCommit();
     floatingDockRevealPending_ = false;
@@ -163,97 +160,9 @@ void DesktopApp::ResetFloatingDockCompositionResources()
     brushCacheContext_ = nullptr;
     if (floatingDockDcompVisual_)
         floatingDockDcompVisual_->SetContent(nullptr);
-    if (floatingDockDesktopCacheVisual_)
-        floatingDockDesktopCacheVisual_->SetContent(nullptr);
-    if (floatingDockDesktopCacheEffect_)
-        floatingDockDesktopCacheEffect_->SetOpacity(0.0f);
     floatingDockDcompSurface_.Reset();
     floatingDockCompWidth_ = 0;
     floatingDockCompHeight_ = 0;
-}
-
-HRESULT DesktopApp::EnsureFloatingDockDesktopCacheVisual()
-{
-    if (!dcompDevice_ || !dcompVisual_)
-        return E_UNEXPECTED;
-    if (!floatingDockDesktopCacheVisual_)
-    {
-        ComPtr<IDCompositionVisual2> visual;
-        HRESULT hr = dcompDevice_->CreateVisual(&visual);
-        if (FAILED(hr) || !visual)
-            return FAILED(hr) ? hr : E_FAIL;
-
-        ComPtr<IDCompositionEffectGroup> effect;
-        hr = dcompDevice_->CreateEffectGroup(&effect);
-        if (FAILED(hr) || !effect)
-            return FAILED(hr) ? hr : E_FAIL;
-        hr = effect->SetOpacity(0.0f);
-        if (SUCCEEDED(hr))
-            hr = visual->SetEffect(effect.Get());
-        if (SUCCEEDED(hr))
-        {
-            floatingDockDesktopCacheVisual_ = visual;
-            floatingDockDesktopCacheEffect_ = effect;
-            hr = dcompVisual_->AddVisual(
-                visual.Get(), TRUE, nullptr);
-        }
-        if (SUCCEEDED(hr))
-            hr = SyncDesktopCompositionRootZOrder();
-        if (FAILED(hr))
-        {
-            (void)dcompVisual_->RemoveVisual(visual.Get());
-            floatingDockDesktopCacheEffect_.Reset();
-            floatingDockDesktopCacheVisual_.Reset();
-            return hr;
-        }
-    }
-
-    HRESULT hr = floatingDockDesktopCacheVisual_->SetOffsetX(
-        static_cast<float>(floatingDockSourceRect_.left));
-    if (SUCCEEDED(hr))
-    {
-        hr = floatingDockDesktopCacheVisual_->SetOffsetY(
-            static_cast<float>(floatingDockSourceRect_.top));
-    }
-    return hr;
-}
-
-void DesktopApp::FinalizeFloatingDockBackdropCleanup(
-    UINT_PTR commitToken)
-{
-    if (commitToken != 0 &&
-        floatingDockDesktopCommitPending_ &&
-        commitToken == floatingDockBackdropCommitToken_)
-    {
-        floatingDockDesktopCommitPending_ = false;
-        FinishFloatingDockCloseHandoff();
-        return;
-    }
-    if (commitToken != 0 &&
-        floatingDockRevealCommitPending_ &&
-        commitToken == floatingDockBackdropCommitToken_)
-    {
-        floatingDockRevealCommitPending_ = false;
-        return;
-    }
-    if (commitToken != 0)
-    {
-        if (!floatingDockBackdropCleanupPending_ ||
-            commitToken != floatingDockBackdropCommitToken_)
-            return;
-    }
-    if (commitToken != 0 && floatingDockClosePending_)
-    {
-        floatingDockBackdropCleanupPending_ = false;
-        CompleteFloatingDockCloseHandoff();
-        return;
-    }
-    // The persistent DockHost keeps its HWND, DComp surface and backdrop in
-    // desktop mode. A stale completion may clear bookkeeping, but must never
-    // retire the visual tree that now owns the ordinary desktop Dock.
-    floatingDockBackdropCleanupPending_ = false;
-    floatingDockRevealCommitPending_ = false;
-    floatingDockDesktopCommitPending_ = false;
 }
 
 void DesktopApp::DestroyFloatingDockWindow()
@@ -269,20 +178,14 @@ void DesktopApp::DestroyFloatingDockWindow()
     floatingDockHoverTargetKind_ = 0;
     EndFloatingDockKeyboardSession(
         FloatingDockCloseFocusPolicy::PreserveCurrent);
-    ++floatingDockBackdropCommitToken_;
-    floatingDockBackdropCleanupPending_ = false;
-    floatingDockRevealCommitPending_ = false;
-    floatingDockDesktopCommitPending_ = false;
-    floatingDockClosePending_ = false;
     floatingDockPostCloseAction_ = {};
     floatingDockPointerPresentPending_ = false;
     shellPopupMenuLayerDepth_ = 0;
     floatingDockHoverHandoffPending_ = false;
     floatingDockHoverHandoffRect_ = {};
-    floatingDockCloseDesktopRect_ = {};
     floatingDockVisible_ = false;
     floatingDockHostActive_ = false;
-    floatingDockDesktopCopySuppressed_ = false;
+    persistentDockHostOwnsVisual_ = false;
     floatingDockRevealPending_ = false;
     floatingDockContainer_ = nullptr;
     floatingDockMonitor_ = nullptr;
@@ -290,7 +193,6 @@ void DesktopApp::DestroyFloatingDockWindow()
     floatingDockRect_ = {};
     floatingDockPopupRect_ = {};
     floatingDockTooltipRect_ = {};
-    floatingDockDesktopBackdropHandoffRect_ = {};
     floatingDockBackdropCompositor_.Reset();
     if (floatingDockDropTargetRegistered_ &&
         floatingDockHwnd_ &&
@@ -298,14 +200,6 @@ void DesktopApp::DestroyFloatingDockWindow()
         RevokeDragDrop(floatingDockHwnd_);
     floatingDockDropTargetRegistered_ = false;
     ResetFloatingDockCompositionResources();
-    if (dcompVisual_ && floatingDockDesktopCacheVisual_)
-    {
-        dcompVisual_->RemoveVisual(
-            floatingDockDesktopCacheVisual_.Get());
-    }
-    floatingDockDesktopCacheEffect_.Reset();
-    floatingDockDesktopCacheVisual_.Reset();
-    floatingDockDcompEffect_.Reset();
     floatingDockDcompVisual_.Reset();
     floatingDockDcompTarget_.Reset();
     if (floatingDockHwnd_ && IsWindow(floatingDockHwnd_))

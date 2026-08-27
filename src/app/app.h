@@ -1023,13 +1023,11 @@ private:
     void CloseFloatingDock(
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
-    /** @brief 完成悬浮 Dock 到桌面 Dock 的无闪烁交接后执行动作。 */
+    /** @brief 将常驻 DockHost 降回桌面层后执行动作。 */
     void CloseFloatingDockThen(
         std::function<void()> action,
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
-    void CompleteFloatingDockCloseHandoff();
-    void FinishFloatingDockCloseHandoff();
     bool EnsureFloatingDockInputWindow();
     void BeginFloatingDockKeyboardSession();
     void RefocusFloatingDockKeyboardSession();
@@ -1049,10 +1047,7 @@ private:
         bool immediatePresent = true);
     void InvalidateFloatingDockWindow(bool immediate = false);
     HRESULT CreateOrResizeFloatingDockCompositionSurface();
-    HRESULT EnsureFloatingDockDesktopCacheVisual();
     void ResetFloatingDockCompositionResources();
-    void FinalizeFloatingDockBackdropCleanup(
-        UINT_PTR commitToken = 0);
     void RecoverFloatingDockCompositionFailure(
         const wchar_t* stage, HRESULT hr);
     bool RenderFloatingDockCompositionFrame();
@@ -3259,9 +3254,7 @@ private:
     RECT floatingDockRect_{};
     RECT floatingDockPopupRect_{};
     RECT floatingDockTooltipRect_{};
-    RECT floatingDockDesktopBackdropHandoffRect_{};
     RECT floatingDockHoverHandoffRect_{};
-    RECT floatingDockCloseDesktopRect_{};
     bool floatingDockVisible_ = false;
     // DockHost 在桌面态也持续拥有选中 Dock 的唯一视觉；visible 仅表示
     // Host 是否已提升到悬浮层，不再等同于 HWND/合成资源的生命周期。
@@ -3288,18 +3281,12 @@ private:
     bool shellReloadPending_ = false;
     bool shellReloadLayoutFromDiskPending_ = false;
     bool shellDockFolderPopupRefreshPending_ = false;
-    // The top-level host may be visible for one hand-off frame while the
-    // desktop copy is deliberately retained underneath it. Keep rendering
-    // ownership separate from interaction visibility so either direction can
-    // cross a DWM presentation barrier before retiring the source copy.
-    bool floatingDockDesktopCopySuppressed_ = false;
+    // The persistent top-level Host owns the selected Dock visual in both
+    // desktop and floating Z-order bands.
+    bool persistentDockHostOwnsVisual_ = false;
     bool floatingDockRevealPending_ = false;
     bool floatingDockFrameReady_ = false;
-    bool floatingDockBackdropCleanupPending_ = false;
-    bool floatingDockRevealCommitPending_ = false;
-    bool floatingDockDesktopCommitPending_ = false;
     bool floatingDockHoverHandoffPending_ = false;
-    bool floatingDockClosePending_ = false;
     std::function<void()> floatingDockPostCloseAction_;
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
@@ -3311,18 +3298,11 @@ private:
     const void* floatingDockHoverTargetOwner_ = nullptr;
     size_t floatingDockHoverTargetIndex_ = 0;
     int floatingDockHoverTargetKind_ = 0;
-    UINT_PTR floatingDockBackdropCommitToken_ = 0;
     PersonalizationSettings floatingDockPersonalization_ =
         PersonalizationSettings::DarkPreset();
     DesktopBackdropCompositor floatingDockBackdropCompositor_;
     ComPtr<IDCompositionTarget> floatingDockDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingDockDcompVisual_;
-    ComPtr<IDCompositionEffectGroup> floatingDockDcompEffect_;
-    // The floating surface is also attached to this child of the desktop
-    // target. During close it is the pixel-identical hand-off cache that
-    // masks rebuilding the Dock inside the full desktop surface.
-    ComPtr<IDCompositionVisual2> floatingDockDesktopCacheVisual_;
-    ComPtr<IDCompositionEffectGroup> floatingDockDesktopCacheEffect_;
     ComPtr<IDCompositionSurface> floatingDockDcompSurface_;
     UINT floatingDockCompWidth_ = 0;
     UINT floatingDockCompHeight_ = 0;

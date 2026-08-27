@@ -1095,14 +1095,12 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
             RequiresFloatingDockMinimizeCaptureIsolation(
                 floatingDockVisible_, action);
     if (requiresFloatingDockClose &&
-        !floatingDockClosePending_ &&
         command(DockWindowTransitionCapturePolicy::
             LiveThumbnailOnly))
     {
         return;
     }
-    if (requiresFloatingDockClose ||
-        floatingDockClosePending_)
+    if (requiresFloatingDockClose)
     {
         CloseFloatingDockThen(
             [command = std::move(command)]() mutable {
@@ -1124,15 +1122,6 @@ void DesktopApp::ActivateDockWindowFromPreview(HWND window)
     if (!target)
         target = window;
     const bool restoring = IsIconic(target) != FALSE;
-    if (floatingDockClosePending_)
-    {
-        CloseFloatingDockThen(
-            [this, window]() {
-                ActivateDockWindowFromPreview(window);
-            },
-            FloatingDockCloseFocusPolicy::PreserveCurrent);
-        return;
-    }
     DismissDockWindowPreviewUntilLeave();
     if (snowdesktop::dock_window_rules::
             ShouldSuppressDockWindowCommand(

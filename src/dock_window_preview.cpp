@@ -630,7 +630,7 @@ void DockWindowPreview::Show(
     // Z-order transition.
     // A popup owned by a topmost window is promoted with its owner. Never
     // pass HWND_NOTOPMOST here: Windows would demote the owner and every
-    // window in the owned chain, exposing the desktop Dock copy again.
+    // window in the owned chain, burying the promoted DockHost as well.
     const DockWindowPreviewZOrderPolicy zOrder =
         ResolveDockWindowPreviewZOrderPolicy(
             useDockLayer, visibleForUpdate);

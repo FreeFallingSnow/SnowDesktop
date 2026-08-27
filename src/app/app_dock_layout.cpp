@@ -66,7 +66,7 @@ void DesktopApp::InvalidateDockRects(BOOL erase)
         if (!dock ||
             !snowdesktop::floating_dock_rules::
                 ShouldRenderDesktopDock(
-                    floatingDockDesktopCopySuppressed_,
+                    persistentDockHostOwnsVisual_,
                     dock ==
                         floatingDockContainer_))
             continue;

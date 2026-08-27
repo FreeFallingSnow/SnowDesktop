@@ -221,7 +221,6 @@ constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;
 constexpr UINT kShellFileOperationCompletedMessage = WM_APP + 7;
 constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
-constexpr UINT kFloatingDockBackdropCommitMessage = WM_APP + 9;
 constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
 constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;

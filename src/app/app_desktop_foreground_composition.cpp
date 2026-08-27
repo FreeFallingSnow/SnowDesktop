@@ -21,16 +21,15 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                     UiCompositionAnimationHost::Desktop)
             ? overlay.visual.Get() : nullptr;
     };
-    const std::array<IDCompositionVisual2*, 6> bottomToTop{
+    const std::array<IDCompositionVisual2*, 5> bottomToTop{
         desktopWidgetCompositionLayer_.Get(),
         desktopForegroundCompositionVisual_.Get(),
-        floatingDockDesktopCacheVisual_.Get(),
         desktopOverlayVisual(pageNotifyAnimationOverlay_),
         desktopOverlayVisual(popupAnimationOverlay_),
         desktopOverlayVisual(luaWidgetPanelAnimationOverlay_),
     };
 
-    std::array<bool, 6> removedFromRoot{};
+    std::array<bool, 5> removedFromRoot{};
     const auto restoreRemovedPrefix = [&](std::size_t end) {
         IDCompositionVisual2* predecessor = nullptr;
         HRESULT restoreHr = S_OK;
@@ -78,7 +77,7 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
     }
 
     IDCompositionVisual2* predecessor = nullptr;
-    std::array<bool, 6> attachedToRoot{};
+    std::array<bool, 5> attachedToRoot{};
     HRESULT addFailure = S_OK;
     for (std::size_t index = 0;
          index < bottomToTop.size(); ++index)
@@ -300,11 +299,6 @@ bool DesktopApp::PresentDesktopForegroundComposition(
         return false;
     }
 
-    if (!IsRectEmpty(&floatingDockDesktopBackdropHandoffRect_))
-    {
-        (void)desktopBackdropCompositor_.KeepPanel(
-            floatingDockDesktopBackdropHandoffRect_);
-    }
     KeepDesktopWidgetBackdropPanels();
     desktopBackdropCompositor_.EndFrame();
 

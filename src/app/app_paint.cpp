@@ -133,11 +133,6 @@ void DesktopApp::OnPaint(const RECT* updateRect)
         return;
     }
 
-    if (!IsRectEmpty(&floatingDockDesktopBackdropHandoffRect_))
-    {
-        desktopBackdropCompositor_.KeepPanel(
-            floatingDockDesktopBackdropHandoffRect_);
-    }
     KeepDesktopWidgetBackdropPanels();
     desktopBackdropCompositor_.EndFrame();
     if (forceCompleteGlassCollection)
