@@ -706,6 +706,10 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
             anchor.x - floatingPopupWindowBounds_.left),
         static_cast<float>(
             anchor.y - floatingPopupWindowBounds_.top));
+    // The matching popup snapshot is queued through DirectComposition by the
+    // same scheduler callback. Explicitly request this WinComp update here so
+    // neither side waits for an unrelated implicit compositor cycle.
+    collectionPopupBackdropCompositor_.CommitVisualChanges();
     collectionPopupBackdropCompositor_.SetVisible(
         visual.visible && ShouldShowFloatingPopupWindow() &&
         floatingPopupHwnd_ &&

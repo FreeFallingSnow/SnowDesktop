@@ -3945,18 +3945,42 @@ int main(int argc, char** argv)
                   "ApplyCollectionPopupBackdropAnimationFrame();") !=
                     std::string::npos &&
                 compositionAnimationSource.find(
-                  "StartVisualScaleAnimation(") !=
+                  "if (collectionPopupGlassTheme_ &&\n"
+                  "        collectionPopupBackdropCompositor_.IsAvailable())\n"
+                  "        return false;") !=
                     std::string::npos &&
-                compositionAnimationSource.find(
-                  "if (collectionPopupGlassTheme_)\n        return false;") ==
+                floatingPopupSource.find(
+                  "collectionPopupBackdropCompositor_.CommitVisualChanges();") !=
                     std::string::npos &&
-                backdropCompositorSource.find(
-                  "CreateVector3KeyFrameAnimation()") !=
-                    std::string::npos &&
-                backdropCompositorSource.find(
-                  "root.StartAnimation(L\"Scale\", animation)") !=
+                animationSchedulerSource.find(
+                  "!popupAnimationCompositorDriven_") !=
                     std::string::npos,
-            "acrylic popup scale must run on the compositor and use scheduler frames only as fallback");
+            "acrylic popup content and backdrop must use one scheduler sample and explicitly submit both composition trees");
+        const std::size_t presentationFenceBegin =
+            compositionAnimationSource.find(
+                "bool DesktopApp::WaitForCompositionPresentation(");
+        const std::size_t presentationFenceEnd =
+            compositionAnimationSource.find(
+                "bool DesktopApp::CommitQuickNavigationCompositionFrame()",
+                presentationFenceBegin);
+        const std::string presentationFenceSource =
+            presentationFenceBegin != std::string::npos &&
+                    presentationFenceEnd != std::string::npos
+                ? compositionAnimationSource.substr(
+                    presentationFenceBegin,
+                    presentationFenceEnd - presentationFenceBegin)
+                : std::string{};
+        const std::size_t commitCompletionFence =
+            presentationFenceSource.find(
+                "WaitForCommitCompletion()");
+        const std::size_t screenPresentationFence =
+            presentationFenceSource.find(
+                "DwmFlush()", commitCompletionFence);
+        Check(!presentationFenceSource.empty() &&
+                commitCompletionFence != std::string::npos &&
+                screenPresentationFence != std::string::npos &&
+                commitCompletionFence < screenPresentationFence,
+            "a composition hand-off must cross a DWM screen-presentation fence after commit processing");
         Check(compositionAnimationSource.find(
                   "bool DesktopApp::StartQuickNavigationCompositionAnimation()") !=
                     std::string::npos &&
