@@ -8,7 +8,11 @@
     <SnowDesktopShellProjectionDir>$(ProjectDir)generated\shellview-cppwinrt</SnowDesktopShellProjectionDir>
     <SnowDesktopWindowsWinMD>$(WindowsSdkDir)UnionMetadata\$(WindowsTargetPlatformVersion)\Windows.winmd</SnowDesktopWindowsWinMD>
     <SnowDesktopShellWinMD>$(ProjectDir)generated\winmd\WindowsUdk.winmd</SnowDesktopShellWinMD>
-    <SnowDesktopCppWinRTExecutable>$(NuGetPackageRoot)microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\bin\cppwinrt.exe</SnowDesktopCppWinRTExecutable>
+    <SnowDesktopNuGetPackageRoot Condition="'$(NuGetPackageRoot)' != ''">$(NuGetPackageRoot)</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(RestorePackagesPath)' != ''">$(RestorePackagesPath)</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == ''">$(UserProfile)\.nuget\packages</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopCppWinRTExecutable>$(SnowDesktopNuGetPackageRoot)\microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\bin\cppwinrt.exe</SnowDesktopCppWinRTExecutable>
   </PropertyGroup>
 
   <Target Name="SnowDesktopGenerateShellViewProjection"

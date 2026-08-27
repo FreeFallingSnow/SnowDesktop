@@ -45,14 +45,32 @@ void TestPinnedToolchain(const std::string& cmake,
                 std::string::npos &&
             shellViewProps.find("$(NuGetPackageRoot)") !=
                 std::string::npos &&
+            shellViewProps.find("$(RestorePackagesPath)") !=
+                std::string::npos &&
+            shellViewProps.find("$(NUGET_PACKAGES)") !=
+                std::string::npos &&
+            shellViewProps.find("$(UserProfile)\\.nuget\\packages") !=
+                std::string::npos &&
             shellViewProps.find("SnowDesktopCppWinRTExecutable") !=
+                std::string::npos &&
+            shellViewProps.find("$(CppWinRTPackageDir)") ==
                 std::string::npos,
-        "clean builds resolve the pinned ShellView C++/WinRT generator from NuGet");
+        "clean builds resolve the pinned ShellView C++/WinRT generator from explicit and default NuGet roots");
 }
 
 void TestBuildManifest(const std::string& props,
     const std::string& writer)
 {
+    Check(props.find("$(NuGetPackageRoot)") != std::string::npos &&
+            props.find("$(RestorePackagesPath)") != std::string::npos &&
+            props.find("$(NUGET_PACKAGES)") != std::string::npos &&
+            props.find("$(UserProfile)\\.nuget\\packages") !=
+                std::string::npos &&
+            props.find("$(SnowDesktopNuGetPackageRoot)\\microsoft.windowsappsdk") !=
+                std::string::npos &&
+            props.find("$(SnowDesktopNuGetPackageRoot)\\microsoft.windows.cppwinrt") !=
+                std::string::npos,
+        "deployment licenses resolve from explicit and default NuGet roots");
     for (const char* item : {
              "@(MicrosoftWindowsAppSDKFiles)",
              "@(MicrosoftWindowsAppSDKFilesRes)",
