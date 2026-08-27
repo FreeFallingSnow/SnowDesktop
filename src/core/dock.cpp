@@ -1208,6 +1208,11 @@ bool DockContainer::IsFocusedElementRect(
 
 bool DockContainer::ContainsInteractivePoint(POINT pt) const
 {
+    if (!app_ ||
+        !app_->IsDockContainerInteractionVisible(this))
+    {
+        return false;
+    }
     const RECT bounds = GetInteractiveBounds();
     return PtInRect(&bounds, pt) != FALSE;
 }
@@ -2280,6 +2285,12 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         app_->ResetDockHandoffDwell();
     };
     outSlot = nullptr;
+    if (!app_ ||
+        !app_->IsDockContainerInteractionVisible(this))
+    {
+        resetDwell();
+        return HitRegion::None;
+    }
     RECT dockBounds = GetBounds();
     if (!PtInRect(&dockBounds, pt))
     {

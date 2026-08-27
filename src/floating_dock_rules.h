@@ -17,6 +17,8 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
+inline constexpr int kAutoHideEdgeBandDip = 6;
+inline constexpr ULONGLONG kAutoHideLeaveDelayMs = 360;
 
 // 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
 // WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
@@ -26,6 +28,77 @@ inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
 {
     return hotkeyEnabled || edgeSwipeEnabled;
+}
+
+inline bool IsDockEffectivelyPromoted(
+    bool manuallyPromoted,
+    bool passivelyRevealed,
+    bool autoHideEnabled)
+{
+    return manuallyPromoted ||
+        (autoHideEnabled && passivelyRevealed);
+}
+
+inline bool ShouldShowPersistentDockHost(
+    bool active,
+    bool effectivelyPromoted,
+    bool autoHideEnabled,
+    bool customDesktopVisible,
+    bool desktopIconsHidden,
+    bool keepWhenDesktopHidden)
+{
+    return active &&
+        (effectivelyPromoted ||
+            (!autoHideEnabled && customDesktopVisible &&
+                (!desktopIconsHidden ||
+                    keepWhenDesktopHidden)));
+}
+
+enum class AutoHideUpdateAction
+{
+    None,
+    Reveal,
+    BeginLeave,
+    CancelLeave,
+    Hide,
+};
+
+inline AutoHideUpdateAction ResolveAutoHideUpdate(
+    bool autoHideEnabled,
+    bool manuallyPromoted,
+    bool passivelyRevealed,
+    bool pointerInEdgeProjection,
+    bool keepRevealed,
+    bool leavePending,
+    bool leaveDelayElapsed)
+{
+    if (!autoHideEnabled || manuallyPromoted)
+        return leavePending
+            ? AutoHideUpdateAction::CancelLeave
+            : AutoHideUpdateAction::None;
+    if (!passivelyRevealed)
+        return pointerInEdgeProjection
+            ? AutoHideUpdateAction::Reveal
+            : AutoHideUpdateAction::None;
+    if (keepRevealed)
+        return leavePending
+            ? AutoHideUpdateAction::CancelLeave
+            : AutoHideUpdateAction::None;
+    if (!leavePending)
+        return AutoHideUpdateAction::BeginLeave;
+    return leaveDelayElapsed
+        ? AutoHideUpdateAction::Hide
+        : AutoHideUpdateAction::None;
+}
+
+inline bool HasAutoHideLeaveDelayElapsed(
+    ULONGLONG leaveStartTick,
+    ULONGLONG currentTick,
+    ULONGLONG delay = kAutoHideLeaveDelayMs)
+{
+    return leaveStartTick != 0 &&
+        currentTick >= leaveStartTick &&
+        currentTick - leaveStartTick >= delay;
 }
 
 inline bool ShouldSummonForDockSurface(
@@ -105,6 +178,106 @@ inline bool IsPointOnDockScreenEdge(
     default:
         return monitorRect.bottom - 1 - point.y <= edgeBand;
     }
+}
+
+inline bool IsPointInDockEdgeProjection(
+    POINT point,
+    const RECT& monitorRect,
+    const RECT& dockScreenRect,
+    DockPosition position,
+    int edgeBand)
+{
+    if (IsRectEmpty(&dockScreenRect) ||
+        !IsPointOnDockScreenEdge(
+            point, monitorRect, position, edgeBand))
+    {
+        return false;
+    }
+
+    if (position == DockPosition::Top ||
+        position == DockPosition::Bottom)
+    {
+        const LONG projectionLeft = std::max(
+            monitorRect.left, dockScreenRect.left);
+        const LONG projectionRight = std::min(
+            monitorRect.right, dockScreenRect.right);
+        return projectionLeft < projectionRight &&
+            point.x >= projectionLeft &&
+            point.x < projectionRight;
+    }
+
+    const LONG projectionTop = std::max(
+        monitorRect.top, dockScreenRect.top);
+    const LONG projectionBottom = std::min(
+        monitorRect.bottom, dockScreenRect.bottom);
+    return projectionTop < projectionBottom &&
+        point.y >= projectionTop &&
+        point.y < projectionBottom;
+}
+
+inline bool IsPointInDockEdgeCorridor(
+    POINT point,
+    const RECT& monitorRect,
+    const RECT& dockScreenRect,
+    DockPosition position)
+{
+    if (IsRectEmpty(&monitorRect) ||
+        IsRectEmpty(&dockScreenRect) ||
+        point.x < monitorRect.left ||
+        point.x >= monitorRect.right ||
+        point.y < monitorRect.top ||
+        point.y >= monitorRect.bottom)
+    {
+        return false;
+    }
+
+    if (position == DockPosition::Top ||
+        position == DockPosition::Bottom)
+    {
+        const LONG projectionLeft = std::max(
+            monitorRect.left, dockScreenRect.left);
+        const LONG projectionRight = std::min(
+            monitorRect.right, dockScreenRect.right);
+        if (projectionLeft >= projectionRight ||
+            point.x < projectionLeft ||
+            point.x >= projectionRight)
+        {
+            return false;
+        }
+        if (position == DockPosition::Top)
+        {
+            const LONG innerEdge = std::clamp<LONG>(
+                dockScreenRect.bottom,
+                monitorRect.top, monitorRect.bottom);
+            return point.y < innerEdge;
+        }
+        const LONG innerEdge = std::clamp<LONG>(
+            dockScreenRect.top,
+            monitorRect.top, monitorRect.bottom);
+        return point.y >= innerEdge;
+    }
+
+    const LONG projectionTop = std::max(
+        monitorRect.top, dockScreenRect.top);
+    const LONG projectionBottom = std::min(
+        monitorRect.bottom, dockScreenRect.bottom);
+    if (projectionTop >= projectionBottom ||
+        point.y < projectionTop ||
+        point.y >= projectionBottom)
+    {
+        return false;
+    }
+    if (position == DockPosition::Left)
+    {
+        const LONG innerEdge = std::clamp<LONG>(
+            dockScreenRect.right,
+            monitorRect.left, monitorRect.right);
+        return point.x < innerEdge;
+    }
+    const LONG innerEdge = std::clamp<LONG>(
+        dockScreenRect.left,
+        monitorRect.left, monitorRect.right);
+    return point.x >= innerEdge;
 }
 
 inline bool HasNewPointerButtonPress(

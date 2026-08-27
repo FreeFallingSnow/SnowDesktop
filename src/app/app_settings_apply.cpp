@@ -1922,7 +1922,7 @@ bool DesktopApp::IsOpenPopupRetained() const
     if (dockFolderPopupOpen_ || popupAnchoredToDock_)
         return dockSettings_.keepWhenDesktopHidden ||
             (collectionPopupDockHost_ &&
-                IsPersistentDockHostPromoted(
+                IsPersistentDockHostEffectivelyFloating(
                     *collectionPopupDockHost_));
     return popupWidgetIndex_ < widgets_.size() &&
         widgets_[popupWidgetIndex_].keepWhenDesktopHidden;
@@ -1937,7 +1937,7 @@ bool DesktopApp::IsRetainedContainer(
         return true;
     if (dynamic_cast<const DockContainer*>(container))
         return dockSettings_.keepWhenDesktopHidden ||
-            IsDockContainerPromoted(
+            IsDockContainerEffectivelyFloating(
                 static_cast<const DockContainer*>(container));
     if (container == dockFolderPopupContainer_.get())
         return dockSettings_.keepWhenDesktopHidden;
@@ -1962,7 +1962,7 @@ bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
             GetDockContainerAtPoint(pt);
         dock &&
         (dockSettings_.keepWhenDesktopHidden ||
-            IsDockContainerPromoted(dock)))
+            IsDockContainerEffectivelyFloating(dock)))
         return true;
     for (const auto& widgetData : widgets_)
     {

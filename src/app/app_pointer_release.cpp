@@ -587,10 +587,10 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     const bool popupEntryOnFloatingDock =
         (entryType == DockEntryType::Collection ||
          folderEntry) &&
-        IsDockContainerPromoted(dock);
+        IsDockContainerEffectivelyFloating(dock);
     if (hwnd_ && !popupEntryOnFloatingDock)
     {
-        if (IsDockContainerPromoted(dock))
+        if (IsDockContainerEffectivelyFloating(dock))
             InvalidateFloatingDockWindow(true);
         else
         {

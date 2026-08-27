@@ -985,6 +985,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     ReadBoolField(text, "keepWhenDesktopHidden",
         settings.keepWhenDesktopHidden);
+    ReadBoolField(text, "allowDesktopContentOverlap",
+        settings.allowDesktopContentOverlap);
+    ReadBoolField(text, "autoHide", settings.autoHide);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
@@ -1062,6 +1065,11 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"keepWhenDesktopHidden\": "
          << (settings.keepWhenDesktopHidden ? "true" : "false") << ",\n";
+    file << "  \"allowDesktopContentOverlap\": "
+         << (settings.allowDesktopContentOverlap ? "true" : "false")
+         << ",\n";
+    file << "  \"autoHide\": "
+         << (settings.autoHide ? "true" : "false") << ",\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "

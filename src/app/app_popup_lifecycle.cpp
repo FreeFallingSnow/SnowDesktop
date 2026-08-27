@@ -355,7 +355,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         PersistentDockHost* host =
             collectionPopupDockHost_;
         if (host &&
-            IsPersistentDockHostPromoted(*host))
+            IsPersistentDockHostEffectivelyFloating(*host))
         {
             SelectPersistentDockHost(host);
             UpdateFloatingDockWindowBounds(*host);

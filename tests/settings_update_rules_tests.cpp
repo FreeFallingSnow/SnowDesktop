@@ -3,6 +3,14 @@
 #include <cstdlib>
 #include <iostream>
 
+// This rule-only target intentionally does not link the native
+// personalization implementation. Supply the value factory used by
+// DockSettings aggregate default construction, matching the controller tests.
+PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
+{
+    return {};
+}
+
 namespace
 {
 int failures = 0;
@@ -18,6 +26,7 @@ void Check(bool condition, const char* message)
 int main()
 {
     using snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit;
+    using snowdesktop::settings_update_rules::IsFloatingDockShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::ParseGitHubRelease;
 
@@ -38,6 +47,18 @@ int main()
     navigationHotkey.desktopViewMode = QuickNavigationDesktopViewMode::Source;
     Check(!IsNavigationShortcutOnlyCommit(navigation, navigationHotkey),
         "a navigation content change still uses the full commit pipeline");
+
+    DockSettings dock;
+    Check(!dock.allowDesktopContentOverlap && !dock.autoHide,
+        "desktop overlap and Dock auto-hide are opt-in by default");
+    DockSettings dockBehavior = dock;
+    dockBehavior.allowDesktopContentOverlap = true;
+    Check(!IsFloatingDockShortcutOnlyCommit(dock, dockBehavior),
+        "desktop overlap uses the full Dock commit pipeline");
+    dockBehavior = dock;
+    dockBehavior.autoHide = true;
+    Check(!IsFloatingDockShortcutOnlyCommit(dock, dockBehavior),
+        "Dock auto-hide uses the full Dock commit pipeline");
 
     const auto newer = ParseGitHubRelease(
         R"({"tag_name":"v1.0.5.0","html_url":"https://github.com/FreeFallingSnow/SnowDesktop_Release/releases/tag/v1.0.5.0"})",

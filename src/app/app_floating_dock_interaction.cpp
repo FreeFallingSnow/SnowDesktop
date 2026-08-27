@@ -37,6 +37,9 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     floatingDockHost_->promoted = true;
+    floatingDockHost_->passivelyRevealed = false;
+    floatingDockHost_->passiveRevealTick = 0;
+    floatingDockHost_->passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
     floatingDockLastPointerPresentTick_ = 0;
     UpdatePersistentDockHostVisibility(
@@ -60,7 +63,7 @@ EnsureFloatingDockVisibleForAssociatedSurface(
     if (!snowdesktop::floating_dock_rules::
             ShouldSummonForDockSurface(
                 true,
-                IsPersistentDockHostPromoted(
+                IsPersistentDockHostEffectivelyFloating(
                     *floatingDockHost_)))
     {
         return true;
@@ -68,7 +71,7 @@ EnsureFloatingDockVisibleForAssociatedSurface(
 
     ShowFloatingDock(monitor);
     return floatingDockHost_ &&
-        IsPersistentDockHostPromoted(
+        IsPersistentDockHostEffectivelyFloating(
             *floatingDockHost_);
 }
 
@@ -120,6 +123,9 @@ void DesktopApp::CloseFloatingDock(
     }
 
     host.promoted = false;
+    host.passivelyRevealed = false;
+    host.passiveRevealTick = 0;
+    host.passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
     UpdatePersistentDockHostVisibility(host);
     InvalidateFloatingDockWindow(host, true);
@@ -163,7 +169,12 @@ void DesktopApp::CloseAllFloatingDocks(
     for (const auto& host : persistentDockHosts_)
     {
         if (host)
+        {
             host->promoted = false;
+            host->passivelyRevealed = false;
+            host->passiveRevealTick = 0;
+            host->passiveLeaveStartTick = 0;
+        }
     }
     RefreshFloatingDockVisibilityState();
     for (const auto& host : persistentDockHosts_)

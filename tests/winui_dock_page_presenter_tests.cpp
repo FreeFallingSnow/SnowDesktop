@@ -36,9 +36,14 @@ void TestPresenterContract(const std::filesystem::path& repository)
         repository / "src/winui/dock_page_presenter.cpp");
     const std::string controls = ReadText(
         repository / "src/winui/settings_presenter_controls.h");
+    const std::string settingsHeader = ReadText(
+        repository / "src/dock_settings.h");
+    const std::string settingsSource = ReadText(
+        repository / "src/dock_settings.cpp");
 
-    Check(!header.empty() && !source.empty() && !controls.empty(),
-        "Dock presenter and shared control sources are readable");
+    Check(!header.empty() && !source.empty() && !controls.empty() &&
+            !settingsHeader.empty() && !settingsSource.empty(),
+        "Dock presenter, shared controls, and settings sources are readable");
     Check(header.find("std::uint64_t generation") != std::string::npos &&
             header.find("SettingsUpdateMode mode") != std::string::npos &&
             header.find("GeneralEdit edit") != std::string::npos &&
@@ -62,6 +67,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
              "floatingShortcutMode", "floatingEdgeSwipeEnabled",
              "monitorScope", "showWindowsButton", "showFrequentItems",
              "frequentItemCount", "keepWhenDesktopHidden",
+             "allowDesktopContentOverlap", "autoHide",
              "thicknessScale", "systemTaskbarAutoHide",
              "systemTaskbarAlignment", "systemTaskbarBackdropEnabled",
              "systemTaskbarFollowPersonalization",
@@ -72,6 +78,24 @@ void TestPresenterContract(const std::filesystem::path& repository)
         Check(source.find(field) != std::string::npos,
             "the requested Dock/taskbar field has a real binding");
     }
+    Check(settingsHeader.find(
+              "bool allowDesktopContentOverlap = false;") !=
+                std::string::npos &&
+            settingsHeader.find("bool autoHide = false;") !=
+                std::string::npos &&
+            settingsSource.find(
+              "ReadBoolField(text, \"allowDesktopContentOverlap\"") !=
+                std::string::npos &&
+            settingsSource.find(
+              "ReadBoolField(text, \"autoHide\", settings.autoHide)") !=
+                std::string::npos &&
+            settingsSource.find(
+              "file << \"  \\\"allowDesktopContentOverlap\\\": \"") !=
+                std::string::npos &&
+            settingsSource.find(
+              "file << \"  \\\"autoHide\\\": \"") !=
+                std::string::npos,
+        "desktop-overlap and Dock auto-hide default off and map to Dock JSON read/write fields");
     for (const char* control : {
              "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
              "muxc::NumberBox", "muxc::Button", "muxc::Expander",
@@ -345,6 +369,33 @@ void TestPresenterContract(const std::filesystem::path& repository)
               "\"settings.dock.itemsAndBehavior\", L\"Items and behavior\"") !=
                 std::string::npos,
         "Dock cards use task-level group names instead of repeating the first row label");
+    const auto overlapRow = source.find(
+        "behaviorCard.content.Children().Append(\n"
+        "            allowDesktopContentOverlapRow.root)");
+    const auto autoHideRow = source.find(
+        "behaviorCard.content.Children().Append(autoHideRow.root)");
+    const auto windowsButtonRow = source.find(
+        "behaviorCard.content.Children().Append(showWindowsButtonRow.root)");
+    Check(overlapRow != std::string::npos &&
+            autoHideRow != std::string::npos &&
+            windowsButtonRow != std::string::npos &&
+            overlapRow < autoHideRow && autoHideRow < windowsButtonRow &&
+            source.find(
+              "allowDesktopContentOverlapRow.SetEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find("autoHideRow.SetEnabled(dockEnabled)") !=
+                std::string::npos &&
+            source.find(
+              "settings.allowDesktopContentOverlap = value") !=
+                std::string::npos &&
+            source.find("settings.autoHide = value") !=
+                std::string::npos &&
+            source.find(
+              "id == \"dock.allowDesktopContentOverlap\"") !=
+                std::string::npos &&
+            source.find("id == \"dock.autoHide\"") !=
+                std::string::npos,
+        "desktop overlap and auto-hide are adjacent independent Dock rows with bindings and focus targets");
     Check(source.find("taskbarHookRequired = settings.systemTaskbarBackdropEnabled") !=
                 std::string::npos &&
             source.find("if (taskbarHookRequired)") !=

@@ -819,7 +819,9 @@ bool DesktopApp::ActivateOrToggleDockItem(
             : DockClickAction::Minimize;
     }
     const HWND transitionKeepBelowWindow =
-        IsSelectedPersistentDockHostPromoted() &&
+        floatingDockHost_ &&
+            IsPersistentDockHostEffectivelyFloating(
+                *floatingDockHost_) &&
             floatingDockHwnd_ &&
             IsWindowVisible(floatingDockHwnd_)
         ? floatingDockHwnd_ : nullptr;
@@ -952,7 +954,9 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             : DockClickAction::Minimize;
     }
     const HWND transitionKeepBelowWindow =
-        IsSelectedPersistentDockHostPromoted() &&
+        floatingDockHost_ &&
+            IsPersistentDockHostEffectivelyFloating(
+                *floatingDockHost_) &&
             floatingDockHwnd_ &&
             IsWindowVisible(floatingDockHwnd_)
         ? floatingDockHwnd_ : nullptr;

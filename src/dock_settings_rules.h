@@ -11,4 +11,10 @@ inline void NormalizeAlwaysEnabledFeatures(
     showWindowPreviews = true;
 }
 
+inline bool ShouldReserveDesktopWorkArea(
+    bool allowDesktopContentOverlap) noexcept
+{
+    return !allowDesktopContentOverlap;
+}
+
 } // namespace snowdesktop::dock_settings_rules

@@ -360,6 +360,8 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch showFrequentItemsToggle{nullptr};
     muxc::ToggleSwitch keepWhenDesktopHiddenToggle{nullptr};
+    muxc::ToggleSwitch allowDesktopContentOverlapToggle{nullptr};
+    muxc::ToggleSwitch autoHideToggle{nullptr};
     ContinuousControl thicknessScale;
     ContinuousControl frequentItemCount;
 
@@ -388,6 +390,8 @@ struct DockPagePresenter::Impl
     SettingRow floatingEdgeSwipeRow;
     SettingRow showWindowsButtonRow;
     SettingRow showFrequentItemsRow;
+    SettingRow allowDesktopContentOverlapRow;
+    SettingRow autoHideRow;
     SettingRow taskbarAutoHideRow;
     SettingRow taskbarAlignmentRow;
     SettingRow windowsSystemThemeRow;
@@ -440,6 +444,8 @@ struct DockPagePresenter::Impl
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token showFrequentItemsToken{};
     winrt::event_token keepWhenDesktopHiddenToken{};
+    winrt::event_token allowDesktopContentOverlapToken{};
+    winrt::event_token autoHideToken{};
     winrt::event_token taskbarAutoHideToken{};
     winrt::event_token taskbarAlignmentToken{};
     winrt::event_token restartExplorerToken{};
@@ -532,12 +538,16 @@ struct DockPagePresenter::Impl
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         showFrequentItemsToggle = muxc::ToggleSwitch{};
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
+        allowDesktopContentOverlapToggle = muxc::ToggleSwitch{};
+        autoHideToggle = muxc::ToggleSwitch{};
         for (const auto& toggle : {
                  floatingShortcutToggle,
                  floatingEdgeSwipeToggle,
                  showWindowsButtonToggle,
                  showFrequentItemsToggle,
-                 keepWhenDesktopHiddenToggle})
+                 keepWhenDesktopHiddenToggle,
+                 allowDesktopContentOverlapToggle,
+                 autoHideToggle})
         {
             toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         }
@@ -546,16 +556,26 @@ struct DockPagePresenter::Impl
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         showFrequentItemsRow.Initialize(showFrequentItemsToggle);
+        allowDesktopContentOverlapRow.Initialize(
+            allowDesktopContentOverlapToggle);
+        autoHideRow.Initialize(autoHideToggle);
         floatingEdgeSwipeRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         showWindowsButtonRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         showFrequentItemsRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
+        allowDesktopContentOverlapRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        autoHideRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         InitializeContinuousControl(frequentItemCount,
             ContinuousField::FrequentItemCount, 1.0, 8.0, 1.0);
         // Floating shortcut mode/hotkey is rendered once by General.
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
+        behaviorCard.content.Children().Append(
+            allowDesktopContentOverlapRow.root);
+        behaviorCard.content.Children().Append(autoHideRow.root);
         behaviorCard.content.Children().Append(showWindowsButtonRow.root);
         behaviorCard.content.Children().Append(showFrequentItemsRow.root);
         behaviorCard.content.Children().Append(frequentItemCount.root);
@@ -988,6 +1008,24 @@ struct DockPagePresenter::Impl
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.keepWhenDesktopHidden = value;
+                    });
+            });
+        allowDesktopContentOverlapToken =
+            allowDesktopContentOverlapToggle.Toggled(
+                [this](const auto&, const auto&) {
+                    const bool value =
+                        allowDesktopContentOverlapToggle.IsOn();
+                    EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                        [value](DockSettings& settings) {
+                            settings.allowDesktopContentOverlap = value;
+                        });
+                });
+        autoHideToken = autoHideToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = autoHideToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) {
+                        settings.autoHide = value;
                     });
             });
         taskbarAutoHideToken = taskbarAutoHideToggle.Toggled(
@@ -1506,6 +1544,9 @@ struct DockPagePresenter::Impl
         showWindowsButtonToggle.IsOn(settings.showWindowsButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
+        allowDesktopContentOverlapToggle.IsOn(
+            settings.allowDesktopContentOverlap);
+        autoHideToggle.IsOn(settings.autoHide);
         PatchSystemTaskbarControls(settings);
         windowsSystemThemeValue =
             IsWindowsSystemLightThemeEnabled() ? 0 : 1;
@@ -1562,6 +1603,8 @@ struct DockPagePresenter::Impl
         thicknessScale.row.SetEnabled(dockEnabled);
         showWindowsButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
+        allowDesktopContentOverlapRow.SetEnabled(dockEnabled);
+        autoHideRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
         behaviorCard.root.IsHitTestVisible(dockEnabled);
@@ -2084,12 +2127,28 @@ struct DockPagePresenter::Impl
             L("app.dock.floating_edge_swipe", L"Edge Swipe"),
             L("app.dock.floating_edge_swipe_hint",
                 L"Reveal the floating Dock from a screen edge."));
+        allowDesktopContentOverlapRow.SetText(
+            L("settings.dock.allowDesktopContentOverlap",
+                L"Allow Dock to overlap desktop content"),
+            L("settings.dock.allowDesktopContentOverlap.description",
+                L"Stop reserving desktop layout space for the Dock, so it "
+                  "may cover content near the screen edge."));
+        autoHideRow.SetText(
+            L("settings.dock.autoHide", L"Automatically hide Dock"),
+            L("settings.dock.autoHide.description",
+                L"Hide the Dock when not in use. Move the pointer or a "
+                  "dragged item to the Dock edge to reveal it."));
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showFrequentItemsRow.SetText(L(
             "app.dock.show_frequent_items", L"Show Frequent Items"));
         muxa::AutomationProperties::SetName(
             floatingEdgeSwipeToggle, floatingEdgeSwipeRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            allowDesktopContentOverlapToggle,
+            allowDesktopContentOverlapRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            autoHideToggle, autoHideRow.label.Text());
         muxa::AutomationProperties::SetName(
             showWindowsButtonToggle, showWindowsButtonRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -2295,6 +2354,10 @@ struct DockPagePresenter::Impl
             return frequentItemCount.slider;
         if (id == "dock.keepWhenDesktopHidden")
             return keepWhenDesktopHiddenToggle;
+        if (id == "dock.allowDesktopContentOverlap")
+            return allowDesktopContentOverlapToggle;
+        if (id == "dock.autoHide")
+            return autoHideToggle;
         if (id == "taskbar.autoHide") return taskbarAutoHideToggle;
         if (id == "taskbar.alignment") return taskbarAlignmentChoices;
         if (id == "taskbar.systemTheme" || id == "taskbar.systemPanel")
@@ -2424,6 +2487,9 @@ struct DockPagePresenter::Impl
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
             showFrequentItemsToggle.Toggled(showFrequentItemsToken);
             keepWhenDesktopHiddenToggle.Toggled(keepWhenDesktopHiddenToken);
+            allowDesktopContentOverlapToggle.Toggled(
+                allowDesktopContentOverlapToken);
+            autoHideToggle.Toggled(autoHideToken);
             taskbarAutoHideToggle.Toggled(taskbarAutoHideToken);
             taskbarAlignmentChoices.SelectionChanged(taskbarAlignmentToken);
             windowsSystemThemeChoices.SelectionChanged(

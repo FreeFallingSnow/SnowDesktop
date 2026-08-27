@@ -328,7 +328,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         PersistentDockHost* host =
             collectionPopupDockHost_;
         if (host &&
-            IsPersistentDockHostPromoted(*host))
+            IsPersistentDockHostEffectivelyFloating(*host))
         {
             SelectPersistentDockHost(host);
             UpdateFloatingDockWindowBounds(*host);

@@ -17,9 +17,7 @@ DockContainer* DesktopApp::GetDockContainerAtPoint(POINT point) const
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
-        if (desktopIconsHidden_ &&
-            !dockSettings_.keepWhenDesktopHidden &&
-            !IsDockContainerPromoted(dock))
+        if (!IsDockContainerInteractionVisible(dock))
             continue;
         if (dock->ContainsInteractivePoint(point)) return dock;
     }
@@ -139,6 +137,11 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     dockWorkAreaReservationApplied_ = false;
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
 
+    const bool reserveDesktopWorkArea =
+        snowdesktop::dock_settings_rules::
+            ShouldReserveDesktopWorkArea(
+                dockSettings_.allowDesktopContentOverlap);
+
     std::vector<size_t> targetPages = BuildMonitorRenderOrder();
     if (targetPages.empty())
     {
@@ -242,9 +245,18 @@ void DesktopApp::ApplyDockWorkAreaReservation()
         reserveEdge(targetPage, bestReserved, &dockArea);
         ApplyIconSpacingToPage(targetPage);
         if (!IsRectEmptyRect(dockArea)) dockAreas_.push_back(dockArea);
+
+        // DockContainer geometry still comes from dockArea when overlap is
+        // allowed. Only restore the icon/widget work area so desktop content
+        // may occupy the same edge strip without removing the Dock itself.
+        if (!reserveDesktopWorkArea)
+        {
+            targetPage.workArea = originalWorkArea;
+            ApplyIconSpacingToPage(targetPage);
+        }
     }
     dockWorkAreaReservationApplied_ =
-        !dockAreas_.empty();
+        reserveDesktopWorkArea && !dockAreas_.empty();
     if (dockWorkAreaReservationApplied_)
         dockWorkAreaReservationPosition_ =
             dockSettings_.position;

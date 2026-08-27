@@ -718,6 +718,13 @@ private:
         // Promotion is per monitor. Selection only identifies the Host that
         // currently owns pointer/keyboard-associated actions.
         bool promoted = false;
+        // Auto-hide edge reveal is intentionally separate from manual
+        // promotion. It may borrow the floating Z band without starting a
+        // keyboard session, and its leave timer must never collapse a Host
+        // that the user promoted explicitly.
+        bool passivelyRevealed = false;
+        ULONGLONG passiveRevealTick = 0;
+        ULONGLONG passiveLeaveStartTick = 0;
         bool revealPending = false;
         bool frameReady = false;
         bool compositionRenderRecoveryPending = false;
@@ -1053,7 +1060,15 @@ private:
         const DockContainer* container) const;
     bool IsPersistentDockHostPromoted(
         const PersistentDockHost& host) const;
+    bool IsPersistentDockHostEffectivelyFloating(
+        const PersistentDockHost& host) const;
+    bool ShouldShowPersistentDockHost(
+        const PersistentDockHost& host) const;
+    bool IsDockContainerInteractionVisible(
+        const DockContainer* container) const;
     bool IsDockContainerPromoted(
+        const DockContainer* container) const;
+    bool IsDockContainerEffectivelyFloating(
         const DockContainer* container) const;
     bool IsSelectedPersistentDockHostPromoted() const;
     bool HasPromotedDockHosts() const;
@@ -1103,6 +1118,8 @@ private:
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
+    bool UpdateAutoHiddenDockHosts(
+        POINT cursorScreen, UINT buttonsDown);
     void UpdateFloatingDockEdgeSwipe();
     DockContainer* SelectFloatingDockContainerAtCursor() const;
     DockContainer* SelectFloatingDockContainerForMonitor(

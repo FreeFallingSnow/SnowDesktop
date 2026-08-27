@@ -96,12 +96,57 @@ bool DesktopApp::IsPersistentDockHostPromoted(
     return host.active && host.promoted;
 }
 
+bool DesktopApp::IsPersistentDockHostEffectivelyFloating(
+    const PersistentDockHost& host) const
+{
+    return host.active &&
+        snowdesktop::floating_dock_rules::
+            IsDockEffectivelyPromoted(
+                host.promoted,
+                host.passivelyRevealed,
+                dockSettings_.autoHide);
+}
+
+bool DesktopApp::ShouldShowPersistentDockHost(
+    const PersistentDockHost& host) const
+{
+    return snowdesktop::floating_dock_rules::
+        ShouldShowPersistentDockHost(
+            host.active,
+            IsPersistentDockHostEffectivelyFloating(host),
+            dockSettings_.autoHide,
+            customDesktopVisible_,
+            desktopIconsHidden_,
+            dockSettings_.keepWhenDesktopHidden);
+}
+
+bool DesktopApp::IsDockContainerInteractionVisible(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    // Before graphics initialization, or after a Host creation failure, the
+    // Dock falls back to the desktop foreground surface. Only an active
+    // persistent Host can make that same logical container non-interactive.
+    return !host || !host->active ||
+        ShouldShowPersistentDockHost(*host);
+}
+
 bool DesktopApp::IsDockContainerPromoted(
     const DockContainer* container) const
 {
     const PersistentDockHost* host =
         FindPersistentDockHost(container);
     return host && IsPersistentDockHostPromoted(*host);
+}
+
+bool DesktopApp::IsDockContainerEffectivelyFloating(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    return host &&
+        IsPersistentDockHostEffectivelyFloating(*host);
 }
 
 bool DesktopApp::
@@ -180,6 +225,9 @@ void DesktopApp::DestroyPersistentDockHost(
         quickNavigationDockHost_ = nullptr;
     host.active = false;
     host.promoted = false;
+    host.passivelyRevealed = false;
+    host.passiveRevealTick = 0;
+    host.passiveLeaveStartTick = 0;
     host.revealPending = false;
     host.backdrop.Reset();
     if (host.dropTargetRegistered &&
@@ -406,16 +454,15 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
 {
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
-    const bool promoted =
-        IsPersistentDockHostPromoted(host);
-    const bool shouldShow = host.active &&
-        (promoted ||
-            (customDesktopVisible_ &&
-                (!desktopIconsHidden_ ||
-                    dockSettings_.keepWhenDesktopHidden)));
+    const bool shouldShow =
+        ShouldShowPersistentDockHost(host);
     if (!shouldShow)
     {
+        // Hide the content/backdrop pair before leaving the floating band.
+        // A visible TOPMOST-to-desktop restack can otherwise expose one native
+        // backdrop frame between the two states.
         host.backdrop.HidePopupWindowPair(host.hwnd);
+        ApplyFloatingDockLayerPolicy(host);
         return;
     }
 
@@ -562,7 +609,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !host.container)
         return;
     const bool promoted =
-        IsPersistentDockHostPromoted(host);
+        IsPersistentDockHostEffectivelyFloating(host);
     const HWND dockHostHwnd = host.hwnd;
     RECT& floatingDockSourceRect_ = host.sourceRect;
     RECT& floatingDockRect_ = host.dockRect;
@@ -733,9 +780,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             floatingDockSourceRect_.top +
                 virtualTop_,
             width, height,
-            SWP_NOACTIVATE |
-                (floatingDockRevealPending_
-                    ? 0 : SWP_SHOWWINDOW));
+            SWP_NOACTIVATE);
     }
     else
     {
@@ -748,8 +793,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             floatingDockSourceRect_.top +
                 virtualTop_,
             width, height,
-            SWP_NOZORDER | SWP_NOACTIVATE |
-                SWP_SHOWWINDOW);
+            SWP_NOZORDER | SWP_NOACTIVATE);
     }
     bool renderedResizeFrame = false;
     if (!firstReveal && sourceRectChanged)
@@ -781,7 +825,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 InitializePopup(
                     dockHostHwnd,
                     floatingLayerTopmost,
-                    !floatingDockRevealPending_))
+                    false))
         {
             std::wstring message =
                 L"Floating Dock native backdrop unavailable: ";
@@ -798,9 +842,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
-                SWP_NOACTIVATE |
-                (floatingDockRevealPending_
-                    ? 0 : SWP_SHOWWINDOW));
+                SWP_NOACTIVATE);
     }
     RECT loggedRect{};
     GetWindowRect(dockHostHwnd, &loggedRect);
@@ -818,4 +860,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (!renderedResizeFrame)
         InvalidateFloatingDockWindow(
             host, immediatePresent);
+    // Bounds and backdrop refreshes only prepare hidden geometry. One gated
+    // visibility path owns showing the pair, so an idle auto-hidden Host can
+    // never be revived by a later layout update.
+    if (!floatingDockRevealPending_)
+        UpdatePersistentDockHostVisibility(host);
 }
