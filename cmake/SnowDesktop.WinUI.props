@@ -87,7 +87,7 @@
           DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
           Condition="'$(WindowsAppSDKSelfContained)' == 'true'">
     <ItemGroup>
-      <_SnowDesktopSettingsIcon Include="$(SnowDesktopSourceDirectory)\assets\settings\icons\*.svg" />
+      <_SnowDesktopSettingsIcon Include="$(SnowDesktopSourceDirectory)\assets\settings\icons\*.png" />
     </ItemGroup>
     <MakeDir Directories="$(TargetDir)Assets\App;$(TargetDir)Assets\Fonts;$(TargetDir)Assets\Settings\Icons" />
     <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\icon\icon_small.png"

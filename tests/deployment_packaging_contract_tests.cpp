@@ -93,7 +93,7 @@ void TestBuildManifest(const std::string& props,
         "MSBuild generates the deployment manifest after the application build");
     Check(props.find("$(TargetDir)Assets\\App") != std::string::npos &&
             props.find("$(TargetDir)Assets\\Fonts") != std::string::npos &&
-            props.find("assets\\settings\\icons\\*.svg") !=
+            props.find("assets\\settings\\icons\\*.png") !=
                 std::string::npos &&
             props.find(
               "@(_SnowDesktopSettingsIcon-&gt;'Assets\\Settings\\Icons\\%(Filename)%(Extension)") !=

@@ -17,7 +17,6 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
-namespace muxmi = winrt::Microsoft::UI::Xaml::Media::Imaging;
 namespace wfc = winrt::Windows::Foundation::Collections;
 
 namespace
@@ -88,13 +87,12 @@ using snowdesktop::SettingsSearchEntryKind;
     return false;
 }
 
-[[nodiscard]] muxc::ImageIcon CreateColorNavigationIcon(
+[[nodiscard]] muxc::BitmapIcon CreateColorNavigationIcon(
     std::wstring_view uri)
 {
-    muxmi::SvgImageSource source{};
-    source.UriSource(winrt::Windows::Foundation::Uri{winrt::hstring{uri}});
-    muxc::ImageIcon icon{};
-    icon.Source(source);
+    muxc::BitmapIcon icon{};
+    icon.UriSource(winrt::Windows::Foundation::Uri{winrt::hstring{uri}});
+    icon.ShowAsMonochrome(false);
     icon.Width(22.0);
     icon.Height(22.0);
     return icon;
@@ -1719,39 +1717,39 @@ void SettingsShell::ApplyNavigationIcons()
 
     const std::array descriptors{
         IconDescriptor{GeneralItem(),
-            L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
+            L"ms-appx:///Assets/Settings/Icons/general.png", L"\xE713"},
         IconDescriptor{PersonalizationItem(),
-            L"ms-appx:///Assets/Settings/Icons/appearance.svg", L"\xE771"},
+            L"ms-appx:///Assets/Settings/Icons/appearance.png", L"\xE771"},
         IconDescriptor{AppearanceThemeItem(),
-            L"ms-appx:///Assets/Settings/Icons/appearance-theme.svg",
+            L"ms-appx:///Assets/Settings/Icons/appearance-theme.png",
             L"\xE790"},
         IconDescriptor{AppearanceWidgetsItem(),
-            L"ms-appx:///Assets/Settings/Icons/appearance-widgets.svg",
+            L"ms-appx:///Assets/Settings/Icons/appearance-widgets.png",
             L"\xECA5"},
         IconDescriptor{AppearanceDesktopIconsItem(),
-            L"ms-appx:///Assets/Settings/Icons/appearance-desktop-icons.svg",
+            L"ms-appx:///Assets/Settings/Icons/appearance-desktop-icons.png",
             L"\xE7F4"},
         IconDescriptor{AppearanceIconBeautificationItem(),
-            L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg",
+            L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.png",
             L"\xE793"},
         IconDescriptor{DesktopItem(),
-            L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
+            L"ms-appx:///Assets/Settings/Icons/desktop.png", L"\xE7F4"},
         IconDescriptor{CategoriesItem(),
-            L"ms-appx:///Assets/Settings/Icons/categories.svg", L"\xE8B7"},
+            L"ms-appx:///Assets/Settings/Icons/categories.png", L"\xE8B7"},
         IconDescriptor{DockItem(),
-            L"ms-appx:///Assets/Settings/Icons/dock.svg", L"\xEBC8"},
+            L"ms-appx:///Assets/Settings/Icons/dock.png", L"\xEBC8"},
         IconDescriptor{TaskbarItem(),
-            L"ms-appx:///Assets/Settings/Icons/taskbar.svg", L"\xEBC8"},
+            L"ms-appx:///Assets/Settings/Icons/taskbar.png", L"\xEBC8"},
         IconDescriptor{WidgetsItem(),
-            L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
+            L"ms-appx:///Assets/Settings/Icons/widgets.png", L"\xECA5"},
         IconDescriptor{BackupItem(),
-            L"ms-appx:///Assets/Settings/Icons/backup.svg", L"\xE74E"},
+            L"ms-appx:///Assets/Settings/Icons/backup.png", L"\xE74E"},
         IconDescriptor{AboutItem(),
-            L"ms-appx:///Assets/Settings/Icons/about.svg", L"\xE946"},
+            L"ms-appx:///Assets/Settings/Icons/about.png", L"\xE946"},
         IconDescriptor{DeveloperItem(),
-            L"ms-appx:///Assets/Settings/Icons/developer.svg", L"\xEC7A"},
+            L"ms-appx:///Assets/Settings/Icons/developer.png", L"\xEC7A"},
         IconDescriptor{DebugItem(),
-            L"ms-appx:///Assets/Settings/Icons/debug.svg", L"\xE7BA"},
+            L"ms-appx:///Assets/Settings/Icons/debug.png", L"\xE7BA"},
     };
 
     const bool highContrast = IsHighContrastEnabled();
@@ -1778,6 +1776,17 @@ void SettingsShell::RenderPageHeaderIcon()
     if (!item)
         return;
 
+    if (const auto sourceIcon = item.Icon().try_as<muxc::BitmapIcon>())
+    {
+        muxc::BitmapIcon headerIcon{};
+        headerIcon.UriSource(sourceIcon.UriSource());
+        headerIcon.ShowAsMonochrome(false);
+        headerIcon.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        headerIcon.VerticalAlignment(mux::VerticalAlignment::Stretch);
+        PageHeaderIconHost().Content(headerIcon);
+        PageHeaderIconHost().Visibility(mux::Visibility::Visible);
+        return;
+    }
     if (const auto sourceIcon = item.Icon().try_as<muxc::ImageIcon>())
     {
         muxc::ImageIcon headerIcon{};
