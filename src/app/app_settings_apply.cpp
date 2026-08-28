@@ -138,16 +138,29 @@ QueryPortableAutoStartApproval() noexcept
     return snowdesktop::DecodePortableAutoStartApprovalState(query.data[0]);
 }
 
-bool ClearPortableAutoStartApproval() noexcept
+bool WritePortableAutoStartApproval(bool enabled) noexcept
 {
+    std::uint64_t disabledAtFileTime = 0;
+    if (!enabled)
+    {
+        FILETIME fileTime{};
+        GetSystemTimeAsFileTime(&fileTime);
+        ULARGE_INTEGER timestamp{};
+        timestamp.LowPart = fileTime.dwLowDateTime;
+        timestamp.HighPart = fileTime.dwHighDateTime;
+        disabledAtFileTime = timestamp.QuadPart;
+    }
+    const auto payload = snowdesktop::BuildPortableAutoStartApprovalPayload(
+        enabled, disabledAtFileTime);
+
     HKEY key = nullptr;
-    const LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER,
-        kAutoStartApprovalSubKey, 0, KEY_SET_VALUE, &key);
-    if (RegistryValueMissing(openResult)) return true;
+    const LONG openResult = RegCreateKeyExW(HKEY_CURRENT_USER,
+        kAutoStartApprovalSubKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr,
+        &key, nullptr);
     if (openResult != ERROR_SUCCESS) return false;
-    LONG result = RegDeleteValueW(key, kAutoStartRunValue);
+    const LONG result = RegSetValueExW(key, kAutoStartRunValue, 0,
+        REG_BINARY, payload.data(), static_cast<DWORD>(payload.size()));
     RegCloseKey(key);
-    if (RegistryValueMissing(result)) result = ERROR_SUCCESS;
     return result == ERROR_SUCCESS;
 }
 
@@ -164,6 +177,16 @@ bool WritePortableAutoStart(bool enabled) noexcept
     {
         return !enabled;
     }
+    if (!enabled)
+    {
+        // Keep the Run registration so Windows Settings and Task Manager
+        // continue to represent the same portable startup item. Only its
+        // StartupApproved state changes during normal settings operations.
+        return existing.owner ==
+                PortableAutoStartRegistrationOwner::Missing ||
+            WritePortableAutoStartApproval(false);
+    }
+
     HKEY key = nullptr;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, kAutoStartRunSubKey, 0,
             nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) !=
@@ -172,34 +195,20 @@ bool WritePortableAutoStart(bool enabled) noexcept
         return false;
     }
 
-    LONG result = ERROR_SUCCESS;
-    if (enabled)
+    const std::wstring executable = CurrentExecutablePath();
+    const std::wstring command = L"\"" + executable + L"\"";
+    // Windows limits Run/RunOnce command lines to MAX_PATH characters.
+    if (executable.empty() || command.size() >= MAX_PATH)
     {
-        const std::wstring executable = CurrentExecutablePath();
-        const std::wstring command = L"\"" + executable + L"\"";
-        // Windows limits Run/RunOnce command lines to MAX_PATH characters.
-        if (executable.empty() || command.size() >= MAX_PATH)
-        {
-            RegCloseKey(key);
-            return false;
-        }
-        result = RegSetValueExW(key, kAutoStartRunValue, 0, REG_SZ,
-            reinterpret_cast<const BYTE*>(command.c_str()),
-            static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key);
+        return false;
     }
-    else
-    {
-        result = RegDeleteValueW(key, kAutoStartRunValue);
-        if (result == ERROR_FILE_NOT_FOUND) result = ERROR_SUCCESS;
-    }
+    const LONG result = RegSetValueExW(key, kAutoStartRunValue, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(command.c_str()),
+        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
     if (result != ERROR_SUCCESS) return false;
-    if (!enabled)
-    {
-        (void)ClearPortableAutoStartApproval();
-        return true;
-    }
-    return ClearPortableAutoStartApproval();
+    return WritePortableAutoStartApproval(true);
 }
 } // namespace
 

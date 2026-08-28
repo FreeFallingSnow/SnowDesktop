@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace snowdesktop
@@ -26,6 +28,10 @@ DecodePortableAutoStartApprovalState(std::uint8_t marker) noexcept
 {
     switch (marker)
     {
+    case 0x00:
+        // Task Manager can leave a zeroed 12-byte approval value after a
+        // classic desktop startup app is disabled. The Run registration is
+        // retained, but Windows does not launch it.
     case 0x01:
         // Current Windows builds may write 0x01 plus a FILETIME after a
         // classic desktop startup app is disabled in Windows Settings.
@@ -36,6 +42,27 @@ DecodePortableAutoStartApprovalState(std::uint8_t marker) noexcept
     default:
         return PortableAutoStartApprovalState::Error;
     }
+}
+
+inline constexpr std::size_t kPortableAutoStartApprovalPayloadSize = 12;
+
+[[nodiscard]] constexpr std::array<std::uint8_t,
+    kPortableAutoStartApprovalPayloadSize>
+BuildPortableAutoStartApprovalPayload(
+    bool enabled, std::uint64_t disabledAtFileTime = 0) noexcept
+{
+    std::array<std::uint8_t, kPortableAutoStartApprovalPayloadSize> payload{};
+    payload[0] = enabled ? 0x02 : 0x03;
+    if (!enabled)
+    {
+        for (std::size_t index = 0; index < sizeof(disabledAtFileTime);
+             ++index)
+        {
+            payload[4 + index] = static_cast<std::uint8_t>(
+                disabledAtFileTime >> (index * 8));
+        }
+    }
+    return payload;
 }
 
 [[nodiscard]] constexpr bool IsPortableAutoStartApprovalActive(

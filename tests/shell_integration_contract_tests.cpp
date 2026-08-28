@@ -201,7 +201,13 @@ int main(int argc, char** argv)
         "snowdesktop::PortableAutoStartApprovalState");
     const std::string_view portableApproval = FunctionBody(settingsApply,
         "QueryPortableAutoStartApproval() noexcept",
-        "bool ClearPortableAutoStartApproval() noexcept");
+        "bool WritePortableAutoStartApproval(bool enabled) noexcept");
+    const std::string_view portableApprovalWrite = FunctionBody(settingsApply,
+        "bool WritePortableAutoStartApproval(bool enabled) noexcept",
+        "bool WritePortableAutoStart(bool enabled) noexcept");
+    const std::string_view portableAutoStartWrite = FunctionBody(settingsApply,
+        "bool WritePortableAutoStart(bool enabled) noexcept",
+        "} // namespace");
     Check(portableRegistration.find(
               "QueryUnvirtualizedCurrentUserValue(") !=
                 std::string_view::npos &&
@@ -213,6 +219,14 @@ int main(int argc, char** argv)
             portableApproval.find("RegOpenKeyExW") ==
                 std::string_view::npos,
         "portable Run registration and approval state use the same real registry view");
+    Check(portableApprovalWrite.find("RegSetValueExW") !=
+                std::string_view::npos &&
+            portableAutoStartWrite.find(
+              "WritePortableAutoStartApproval(false)") !=
+                std::string_view::npos &&
+            portableAutoStartWrite.find("RegDeleteValueW") ==
+                std::string_view::npos,
+        "portable auto-start toggles StartupApproved without deleting its Run registration");
 
     Check(settingsWindow.find("ImGui") == std::string::npos &&
             settingsWindow.find("ID3D11") == std::string::npos &&

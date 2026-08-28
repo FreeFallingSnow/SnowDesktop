@@ -18,6 +18,7 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::DecodePortableAutoStartApprovalState;
     using snowdesktop::HasActivePortableAutoStart;
     using snowdesktop::IsPortableAutoStartApprovalActive;
@@ -41,6 +42,9 @@ int main()
                PackagedAutoStartState::DisabledByUser),
         "initial, app-disabled, and still-user-disabled tasks are not auto-enabled");
 
+    Check(DecodePortableAutoStartApprovalState(0x00) ==
+            PortableAutoStartApprovalState::Disabled,
+        "Task Manager's zeroed marker is treated as disabled");
     Check(DecodePortableAutoStartApprovalState(0x01) ==
             PortableAutoStartApprovalState::Disabled,
         "Windows Settings marker 0x01 is treated as disabled");
@@ -53,6 +57,20 @@ int main()
     Check(DecodePortableAutoStartApprovalState(0x7f) ==
             PortableAutoStartApprovalState::Error,
         "unknown markers remain unavailable instead of being guessed");
+
+    constexpr auto enabledPayload =
+        BuildPortableAutoStartApprovalPayload(true);
+    Check(enabledPayload[0] == 0x02 && enabledPayload[4] == 0x00 &&
+            enabledPayload[11] == 0x00,
+        "app-side enablement writes the classic enabled approval payload");
+    constexpr auto disabledPayload =
+        BuildPortableAutoStartApprovalPayload(
+            false, 0x0807060504030201ULL);
+    Check(disabledPayload[0] == 0x03 &&
+            disabledPayload[4] == 0x01 &&
+            disabledPayload[5] == 0x02 &&
+            disabledPayload[11] == 0x08,
+        "app-side disablement writes the classic marker and FILETIME payload");
 
     Check(IsPortableAutoStartApprovalActive(
               PortableAutoStartApprovalState::Missing),
