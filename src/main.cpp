@@ -322,6 +322,9 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (snowdesktop::deployment::TryHandlePackagedAutoStartQueryCommand())
+        return 0;
+
     bool previewCommandHandled = false;
     const int previewCommandResult = snowdesktop::widget_authoring::
         TryRunWidgetAuthorPreviewHostCommand(previewCommandHandled);

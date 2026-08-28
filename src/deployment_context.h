@@ -70,7 +70,7 @@ std::wstring GetStoreProductPageUri();
 /**
  * @brief MSIX StartupTask 的完整状态。
  */
-enum class PackagedAutoStartState
+enum class PackagedAutoStartState : std::uint8_t
 {
     Unavailable,
     Disabled,
@@ -81,6 +81,20 @@ enum class PackagedAutoStartState
 };
 
 /**
+ * @brief 判断 Windows 设置是否刚刚撤销了“用户禁用”状态。
+ * @details Windows 启动应用页重新允许一个 DisabledByUser 任务时，公开 API
+ * 会先回到可由应用完成启用的 Disabled 状态。只有观察到这一明确状态迁移时，
+ * 应用才应调用 RequestEnableAsync，不应把初始 Disabled 自动改成启用。
+ */
+[[nodiscard]] constexpr bool ShouldFinalizePackagedAutoStartUserEnable(
+    PackagedAutoStartState previous,
+    PackagedAutoStartState current) noexcept
+{
+    return previous == PackagedAutoStartState::DisabledByUser &&
+        current == PackagedAutoStartState::Disabled;
+}
+
+/**
  * @brief 查询 MSIX StartupTask 状态。
  * @return 当前任务状态；便携版或查询失败返回 Unavailable。
  */
@@ -89,9 +103,17 @@ PackagedAutoStartState GetPackagedAutoStartState() noexcept;
 /**
  * @brief 查询本机当前用户安装的 Microsoft Store 版 StartupTask 状态。
  * @details 供无包身份的携带版检测同一产品安装版是否已负责开机自启。
- * @return 安装版未注册、状态不存在或读取失败时返回 Unavailable。
+ * 通过安装版主程序的短生命周期无界面查询模式，在目标包身份下调用公开
+ * StartupTask API；不读取 Windows 的私有 SystemAppData 注册表实现细节。
+ * @return 安装版未注册、无法激活或查询失败时返回 Unavailable。
  */
 PackagedAutoStartState GetInstalledPackagedAutoStartState() noexcept;
+
+/**
+ * @brief 在应用正常初始化前处理短生命周期 StartupTask 查询命令。
+ * @return 命令行包含并已消费合法查询请求时返回 true，否则返回 false。
+ */
+bool TryHandlePackagedAutoStartQueryCommand() noexcept;
 
 /**
  * @brief 启用或禁用 MSIX StartupTask。

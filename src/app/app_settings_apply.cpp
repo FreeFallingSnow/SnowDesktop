@@ -222,8 +222,20 @@ snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
 
     if (result.packaged)
     {
-        const PackagedAutoStartState state =
+        PackagedAutoStartState state =
             snowdesktop::deployment::GetPackagedAutoStartState();
+        if (lastObservedPackagedAutoStartState_ &&
+            snowdesktop::deployment::
+                ShouldFinalizePackagedAutoStartUserEnable(
+                    *lastObservedPackagedAutoStartState_, state))
+        {
+            // Windows Startup Apps changed an explicit user block back into
+            // an app-configurable state. Complete that user-authored enable
+            // request through the public API so both settings surfaces agree.
+            state = snowdesktop::deployment::
+                SetPackagedAutoStartEnabled(true);
+        }
+        lastObservedPackagedAutoStartState_ = state;
         result.stateKnown = state != PackagedAutoStartState::Unavailable;
         result.enabled = result.stateKnown &&
             snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state);

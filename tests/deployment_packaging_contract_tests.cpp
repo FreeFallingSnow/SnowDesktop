@@ -278,6 +278,7 @@ void TestReleaseManagerShellReload(const std::string& manager,
 
 void TestRuntimeResolution(const std::string& deploymentHeader,
     const std::string& deploymentSource,
+    const std::string& mainSource,
     const std::string& wallpaperCapture,
     const std::string& releaseBuild,
     const std::string& debugBuild)
@@ -309,6 +310,26 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             deploymentSource.find("StartupTask::GetAsync(") ==
                 std::string::npos,
         "packaged StartupTask calls avoid caching a proxy beyond the short-lived MTA apartment");
+    const std::size_t startupQueryHandler = mainSource.find(
+        "TryHandlePackagedAutoStartQueryCommand()");
+    const std::size_t previewHost = mainSource.find(
+        "TryRunWidgetAuthorPreviewHostCommand(");
+    const std::size_t singleInstance = mainSource.find(
+        "snowdesktop::single_instance::Guard singleInstance;");
+    Check(deploymentSource.find(
+              "QueryInstalledPackagedAutoStartStateThroughActivation()") !=
+                std::string::npos &&
+            deploymentSource.find("ActivateApplication(") !=
+                std::string::npos &&
+            deploymentSource.find("SystemAppData") == std::string::npos &&
+            deploymentSource.find("UserEnabledStartupOnce") ==
+                std::string::npos &&
+            startupQueryHandler != std::string::npos &&
+            previewHost != std::string::npos &&
+            singleInstance != std::string::npos &&
+            startupQueryHandler < previewHost &&
+            previewHost < singleInstance,
+        "portable builds query the installed StartupTask through the packaged public API before normal app startup");
     Check(releaseBuild.find(
               ".build\\Release\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
             std::string::npos &&
@@ -349,6 +370,7 @@ int main(int argc, char** argv)
         TestRuntimeResolution(
             ReadText(root / "src/deployment_context.h"),
             ReadText(root / "src/deployment_context.cpp"),
+            ReadText(root / "src/main.cpp"),
             ReadText(root / "src/app/wallpaper_engine_capture.cpp"),
             ReadText(root / "scripts/build.bat"),
             ReadText(root / "scripts/build_debug.bat"));

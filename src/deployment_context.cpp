@@ -9,14 +9,18 @@
 
 #include <windows.h>
 #include <appmodel.h>
+#include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl_core.h>
 
 #include <algorithm>
+#include <cwctype>
 #include <filesystem>
 #include <future>
 #include <iterator>
 #include <cwchar>
 #include <mutex>
+#include <optional>
 #include <system_error>
 #include <utility>
 
@@ -36,6 +40,96 @@ constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
 constexpr wchar_t kPackageFamilyName[] =
     SNOWDESKTOP_WIDEN(SNOWDESKTOP_PACKAGE_FAMILY_NAME);
+constexpr wchar_t kPackageApplicationId[] = L"SnowDesktop";
+constexpr wchar_t kPackagedStartupQueryArgumentPrefix[] =
+    L"--snowdesktop-query-packaged-startup=";
+constexpr wchar_t kPackagedStartupQueryMappingPrefix[] =
+    L"Local\\SnowDesktop.PackagedStartupQuery.Mapping.";
+constexpr wchar_t kPackagedStartupQueryEventPrefix[] =
+    L"Local\\SnowDesktop.PackagedStartupQuery.Event.";
+constexpr std::uint32_t kPackagedStartupQueryMagic = 0x53445051; // "SDPQ"
+constexpr std::uint32_t kPackagedStartupQueryVersion = 1;
+constexpr LONG kPackagedStartupQueryPending = 0;
+constexpr LONG kPackagedStartupQueryCompleted = 1;
+
+struct SharedPackagedStartupQueryState
+{
+    std::uint32_t magic = kPackagedStartupQueryMagic;
+    std::uint32_t version = kPackagedStartupQueryVersion;
+    std::uint32_t size = sizeof(SharedPackagedStartupQueryState);
+    DWORD ownerProcessId = 0;
+    LONG status = kPackagedStartupQueryPending;
+    snowdesktop::deployment::PackagedAutoStartState state =
+        snowdesktop::deployment::PackagedAutoStartState::Unavailable;
+};
+
+std::wstring PackagedStartupQueryObjectName(
+    const wchar_t* prefix, std::wstring_view token)
+{
+    std::wstring result(prefix);
+    result.append(token);
+    return result;
+}
+
+bool IsValidPackagedStartupQueryToken(std::wstring_view token) noexcept
+{
+    if (token.empty() || token.size() > 96)
+        return false;
+    for (const wchar_t character : token)
+    {
+        if (!iswalnum(character) && character != L'.' &&
+            character != L'-')
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::wstring CreatePackagedStartupQueryToken()
+{
+    GUID identifier{};
+    if (FAILED(CoCreateGuid(&identifier)))
+        return {};
+    wchar_t guid[40]{};
+    if (StringFromGUID2(identifier, guid, static_cast<int>(std::size(guid))) <=
+        2)
+    {
+        return {};
+    }
+    std::wstring token = std::to_wstring(GetCurrentProcessId());
+    token.push_back(L'.');
+    for (const wchar_t character : std::wstring_view(guid))
+    {
+        if (iswalnum(character) || character == L'-')
+            token.push_back(character);
+    }
+    return token;
+}
+
+std::optional<std::wstring> PackagedStartupQueryTokenFromCommandLine()
+{
+    int argumentCount = 0;
+    wchar_t** arguments = CommandLineToArgvW(
+        GetCommandLineW(), &argumentCount);
+    if (!arguments)
+        return std::nullopt;
+    std::optional<std::wstring> result;
+    const std::wstring_view prefix(kPackagedStartupQueryArgumentPrefix);
+    for (int index = 1; index < argumentCount; ++index)
+    {
+        const std::wstring_view argument(arguments[index]);
+        if (argument.starts_with(prefix))
+        {
+            const std::wstring_view token = argument.substr(prefix.size());
+            if (IsValidPackagedStartupQueryToken(token))
+                result = std::wstring(token);
+            break;
+        }
+    }
+    LocalFree(arguments);
+    return result;
+}
 
 std::wstring GetCurrentPackageFamilyNameString()
 {
@@ -305,27 +399,6 @@ snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
     }
 }
 
-snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
-    DWORD state)
-{
-    using snowdesktop::deployment::PackagedAutoStartState;
-    switch (state)
-    {
-    case 0:
-        return PackagedAutoStartState::Disabled;
-    case 1:
-        return PackagedAutoStartState::DisabledByUser;
-    case 2:
-        return PackagedAutoStartState::Enabled;
-    case 3:
-        return PackagedAutoStartState::DisabledByPolicy;
-    case 4:
-        return PackagedAutoStartState::EnabledByPolicy;
-    default:
-        return PackagedAutoStartState::Unavailable;
-    }
-}
-
 bool IsStorePackageRegisteredForCurrentUser() noexcept
 {
     UINT32 packageCount = 0;
@@ -333,6 +406,72 @@ bool IsStorePackageRegisteredForCurrentUser() noexcept
     const LONG result = GetPackagesByPackageFamily(
         kPackageFamilyName, &packageCount, nullptr, &bufferLength, nullptr);
     return result == ERROR_INSUFFICIENT_BUFFER && packageCount > 0;
+}
+
+snowdesktop::deployment::PackagedAutoStartState
+QueryInstalledPackagedAutoStartStateThroughActivation() noexcept
+{
+    using snowdesktop::deployment::PackagedAutoStartState;
+    const std::wstring token = CreatePackagedStartupQueryToken();
+    if (token.empty())
+        return PackagedAutoStartState::Unavailable;
+
+    const std::wstring mappingName = PackagedStartupQueryObjectName(
+        kPackagedStartupQueryMappingPrefix, token);
+    const std::wstring eventName = PackagedStartupQueryObjectName(
+        kPackagedStartupQueryEventPrefix, token);
+    winrt::handle mapping{CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
+        PAGE_READWRITE, 0, sizeof(SharedPackagedStartupQueryState),
+        mappingName.c_str())};
+    if (!mapping || GetLastError() == ERROR_ALREADY_EXISTS)
+        return PackagedAutoStartState::Unavailable;
+    auto* shared = static_cast<SharedPackagedStartupQueryState*>(
+        MapViewOfFile(mapping.get(), FILE_MAP_ALL_ACCESS, 0, 0,
+            sizeof(SharedPackagedStartupQueryState)));
+    if (!shared)
+        return PackagedAutoStartState::Unavailable;
+
+    *shared = SharedPackagedStartupQueryState{};
+    shared->ownerProcessId = GetCurrentProcessId();
+    winrt::handle completed{CreateEventW(
+        nullptr, TRUE, FALSE, eventName.c_str())};
+    if (!completed || GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        UnmapViewOfFile(shared);
+        return PackagedAutoStartState::Unavailable;
+    }
+
+    winrt::com_ptr<IApplicationActivationManager> activationManager;
+    const HRESULT created = CoCreateInstance(
+        CLSID_ApplicationActivationManager, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(activationManager.put()));
+    DWORD activatedProcessId = 0;
+    const std::wstring applicationUserModelId =
+        std::wstring(kPackageFamilyName) + L"!" + kPackageApplicationId;
+    const std::wstring arguments =
+        std::wstring(kPackagedStartupQueryArgumentPrefix) + token;
+    const HRESULT activated = SUCCEEDED(created)
+        ? activationManager->ActivateApplication(
+            applicationUserModelId.c_str(), arguments.c_str(), AO_NONE,
+            &activatedProcessId)
+        : created;
+
+    PackagedAutoStartState result = PackagedAutoStartState::Unavailable;
+    if (SUCCEEDED(activated) && activatedProcessId != 0 &&
+        WaitForSingleObject(completed.get(), 5000) == WAIT_OBJECT_0)
+    {
+        MemoryBarrier();
+        if (shared->magic == kPackagedStartupQueryMagic &&
+            shared->version == kPackagedStartupQueryVersion &&
+            shared->size == sizeof(SharedPackagedStartupQueryState) &&
+            shared->ownerProcessId == GetCurrentProcessId() &&
+            shared->status == kPackagedStartupQueryCompleted)
+        {
+            result = shared->state;
+        }
+    }
+    UnmapViewOfFile(shared);
+    return result;
 }
 
 winrt::Windows::ApplicationModel::StartupTask
@@ -493,32 +632,49 @@ PackagedAutoStartState GetInstalledPackagedAutoStartState() noexcept
         return GetPackagedAutoStartState();
     if (!IsStorePackageRegisteredForCurrentUser())
         return PackagedAutoStartState::Unavailable;
+    return QueryInstalledPackagedAutoStartStateThroughActivation();
+}
 
-    const std::wstring subKey =
-        std::wstring(
-            L"Software\\Classes\\Local Settings\\Software\\Microsoft\\"
-            L"Windows\\CurrentVersion\\AppModel\\SystemAppData\\") +
-        kPackageFamilyName + L"\\" + kStartupTaskId;
+bool TryHandlePackagedAutoStartQueryCommand() noexcept
+{
+    const auto token = PackagedStartupQueryTokenFromCommandLine();
+    if (!token)
+        return false;
+    if (!IsPackaged())
+        return true;
 
-    HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, subKey.c_str(), 0,
-            KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+    const std::wstring mappingName = PackagedStartupQueryObjectName(
+        kPackagedStartupQueryMappingPrefix, *token);
+    const std::wstring eventName = PackagedStartupQueryObjectName(
+        kPackagedStartupQueryEventPrefix, *token);
+    winrt::handle mapping{OpenFileMappingW(
+        FILE_MAP_ALL_ACCESS, FALSE, mappingName.c_str())};
+    winrt::handle completed{OpenEventW(
+        EVENT_MODIFY_STATE, FALSE, eventName.c_str())};
+    if (!mapping || !completed)
+        return true;
+    auto* shared = static_cast<SharedPackagedStartupQueryState*>(
+        MapViewOfFile(mapping.get(), FILE_MAP_ALL_ACCESS, 0, 0,
+            sizeof(SharedPackagedStartupQueryState)));
+    if (!shared)
+        return true;
+
+    const std::wstring ownerPrefix =
+        std::to_wstring(shared->ownerProcessId) + L".";
+    if (shared->magic == kPackagedStartupQueryMagic &&
+        shared->version == kPackagedStartupQueryVersion &&
+        shared->size == sizeof(SharedPackagedStartupQueryState) &&
+        shared->status == kPackagedStartupQueryPending &&
+        token->starts_with(ownerPrefix))
     {
-        return PackagedAutoStartState::Unavailable;
+        shared->state = GetPackagedAutoStartState();
+        MemoryBarrier();
+        InterlockedExchange(
+            &shared->status, kPackagedStartupQueryCompleted);
+        SetEvent(completed.get());
     }
-
-    DWORD state = 0;
-    DWORD type = 0;
-    DWORD size = sizeof(state);
-    const LONG result = RegQueryValueExW(key, L"State", nullptr, &type,
-        reinterpret_cast<BYTE*>(&state), &size);
-    RegCloseKey(key);
-    if (result != ERROR_SUCCESS || type != REG_DWORD ||
-        size != sizeof(state))
-    {
-        return PackagedAutoStartState::Unavailable;
-    }
-    return ConvertStartupTaskState(state);
+    UnmapViewOfFile(shared);
+    return true;
 }
 
 PackagedAutoStartState SetPackagedAutoStartEnabled(bool enable) noexcept

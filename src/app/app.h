@@ -91,6 +91,7 @@
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "../crashlog.h"
 #include "../auto_start_rules.h"
+#include "../deployment_context.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -3128,6 +3129,9 @@ private:
     std::atomic<bool> steamWorkshopWatcherActive_{ false };
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
+    mutable std::optional<
+        snowdesktop::deployment::PackagedAutoStartState>
+        lastObservedPackagedAutoStartState_;
     DockSettings dockSettings_;
     PersonalizationSettings personalizationSettings_ =
         PersonalizationSettings::DarkPreset();

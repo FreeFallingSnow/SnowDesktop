@@ -1,4 +1,5 @@
 #include "auto_start_rules.h"
+#include "deployment_context.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -22,6 +23,23 @@ int main()
     using snowdesktop::IsPortableAutoStartApprovalActive;
     using snowdesktop::PortableAutoStartApprovalState;
     using snowdesktop::PortableAutoStartRegistrationOwner;
+    using snowdesktop::deployment::PackagedAutoStartState;
+    using snowdesktop::deployment::ShouldFinalizePackagedAutoStartUserEnable;
+
+    Check(ShouldFinalizePackagedAutoStartUserEnable(
+              PackagedAutoStartState::DisabledByUser,
+              PackagedAutoStartState::Disabled),
+        "a user-unblocked packaged task is finalized through the public API");
+    Check(!ShouldFinalizePackagedAutoStartUserEnable(
+               PackagedAutoStartState::Unavailable,
+               PackagedAutoStartState::Disabled) &&
+            !ShouldFinalizePackagedAutoStartUserEnable(
+               PackagedAutoStartState::Enabled,
+               PackagedAutoStartState::Disabled) &&
+            !ShouldFinalizePackagedAutoStartUserEnable(
+               PackagedAutoStartState::DisabledByUser,
+               PackagedAutoStartState::DisabledByUser),
+        "initial, app-disabled, and still-user-disabled tasks are not auto-enabled");
 
     Check(DecodePortableAutoStartApprovalState(0x01) ==
             PortableAutoStartApprovalState::Disabled,
