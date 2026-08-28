@@ -342,6 +342,22 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
                 std::string::npos,
         "build preflight distinguishes build hooks from disposable temporary copies");
 }
+
+void TestAutoStartTransitionManifest(const std::string& manifest)
+{
+    Check(manifest.find(
+              "Category=\"windows.appExecutionAlias\"") !=
+                std::string::npos &&
+            manifest.find(
+              "Alias=\"SnowDesktopStore.exe\"") !=
+                std::string::npos,
+        "the installed deployment exposes a stable execution alias for the unified logon task");
+    Check(manifest.find("Category=\"windows.startupTask\"") !=
+                std::string::npos &&
+            manifest.find("1.0.4.0 transition") !=
+                std::string::npos,
+        "the transition package retains the legacy StartupTask long enough to migrate its user state");
+}
 }
 
 int main(int argc, char** argv)
@@ -374,6 +390,8 @@ int main(int argc, char** argv)
             ReadText(root / "src/app/wallpaper_engine_capture.cpp"),
             ReadText(root / "scripts/build.bat"),
             ReadText(root / "scripts/build_debug.bat"));
+        TestAutoStartTransitionManifest(
+            ReadText(root / "packaging/AppxManifest.xml.in"));
     }
 
     if (failures != 0)

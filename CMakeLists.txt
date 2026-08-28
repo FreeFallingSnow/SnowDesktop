@@ -119,6 +119,8 @@ set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
+    src/auto_start_manager.cpp
+    src/auto_start_manager.h
     src/auto_start_rules.h
     src/application_crash_watchdog.cpp
     src/icon_beautify.cpp
@@ -742,7 +744,7 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
     advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
-    version wbemuuid
+    version wbemuuid taskschd
 )
 
 add_custom_command(TARGET SnowDesktop POST_BUILD

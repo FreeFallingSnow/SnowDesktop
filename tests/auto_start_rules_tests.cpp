@@ -22,8 +22,11 @@ int main()
     using snowdesktop::DecodePortableAutoStartApprovalState;
     using snowdesktop::HasActivePortableAutoStart;
     using snowdesktop::IsPortableAutoStartApprovalActive;
+    using snowdesktop::LegacyAutoStartState;
     using snowdesktop::PortableAutoStartApprovalState;
     using snowdesktop::PortableAutoStartRegistrationOwner;
+    using snowdesktop::SelectAutoStartMigration;
+    using snowdesktop::UnifiedAutoStartOwner;
     using snowdesktop::deployment::PackagedAutoStartState;
     using snowdesktop::deployment::ShouldFinalizePackagedAutoStartUserEnable;
 
@@ -101,6 +104,44 @@ int main()
                PortableAutoStartRegistrationOwner::Error,
                PortableAutoStartApprovalState::Enabled),
         "an unreadable Run registration is not reported as active");
+
+    constexpr auto noLegacy = SelectAutoStartMigration(
+        UnifiedAutoStartOwner::Portable,
+        LegacyAutoStartState::Missing,
+        LegacyAutoStartState::Disabled);
+    Check(noLegacy.canMigrate && !noLegacy.enableUnifiedTask &&
+            noLegacy.owner == UnifiedAutoStartOwner::Portable,
+        "a clean machine creates a disabled task owned by the current deployment");
+    constexpr auto portableLegacy = SelectAutoStartMigration(
+        UnifiedAutoStartOwner::Packaged,
+        LegacyAutoStartState::Enabled,
+        LegacyAutoStartState::Disabled);
+    Check(portableLegacy.canMigrate &&
+            portableLegacy.enableUnifiedTask &&
+            portableLegacy.owner == UnifiedAutoStartOwner::Portable,
+        "a sole active portable entry keeps portable ownership during migration");
+    constexpr auto packagedLegacy = SelectAutoStartMigration(
+        UnifiedAutoStartOwner::Portable,
+        LegacyAutoStartState::Disabled,
+        LegacyAutoStartState::Enabled);
+    Check(packagedLegacy.canMigrate &&
+            packagedLegacy.enableUnifiedTask &&
+            packagedLegacy.owner == UnifiedAutoStartOwner::Packaged,
+        "a sole active packaged entry keeps packaged ownership during migration");
+    constexpr auto duplicateLegacy = SelectAutoStartMigration(
+        UnifiedAutoStartOwner::Portable,
+        LegacyAutoStartState::Enabled,
+        LegacyAutoStartState::Enabled);
+    Check(duplicateLegacy.canMigrate &&
+            duplicateLegacy.enableUnifiedTask &&
+            duplicateLegacy.owner == UnifiedAutoStartOwner::Portable,
+        "the explicitly running deployment wins when both legacy entries are active");
+    constexpr auto unknownLegacy = SelectAutoStartMigration(
+        UnifiedAutoStartOwner::Packaged,
+        LegacyAutoStartState::Unavailable,
+        LegacyAutoStartState::Enabled);
+    Check(!unknownLegacy.canMigrate,
+        "migration does not change startup when either legacy source is unreadable");
 
     if (failures != 0) return EXIT_FAILURE;
     std::cout << "Auto-start rule checks passed\n";

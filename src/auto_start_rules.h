@@ -7,6 +7,63 @@
 namespace snowdesktop
 {
 
+enum class UnifiedAutoStartOwner : std::uint8_t
+{
+    None,
+    Portable,
+    Packaged,
+    Unknown,
+};
+
+enum class UnifiedAutoStartTaskState : std::uint8_t
+{
+    Missing,
+    Disabled,
+    Enabled,
+    Foreign,
+    Unavailable,
+};
+
+enum class LegacyAutoStartState : std::uint8_t
+{
+    Missing,
+    Disabled,
+    Enabled,
+    Unavailable,
+};
+
+struct AutoStartMigrationDecision
+{
+    bool canMigrate = false;
+    bool enableUnifiedTask = false;
+    UnifiedAutoStartOwner owner = UnifiedAutoStartOwner::None;
+};
+
+[[nodiscard]] constexpr AutoStartMigrationDecision
+SelectAutoStartMigration(
+    UnifiedAutoStartOwner currentDeployment,
+    LegacyAutoStartState portable,
+    LegacyAutoStartState packaged) noexcept
+{
+    if (portable == LegacyAutoStartState::Unavailable ||
+        packaged == LegacyAutoStartState::Unavailable ||
+        (currentDeployment != UnifiedAutoStartOwner::Portable &&
+            currentDeployment != UnifiedAutoStartOwner::Packaged))
+    {
+        return {};
+    }
+
+    const bool portableEnabled = portable == LegacyAutoStartState::Enabled;
+    const bool packagedEnabled = packaged == LegacyAutoStartState::Enabled;
+    if (!portableEnabled && !packagedEnabled)
+        return {true, false, currentDeployment};
+    if (portableEnabled && packagedEnabled)
+        return {true, true, currentDeployment};
+    return {true, true, portableEnabled
+        ? UnifiedAutoStartOwner::Portable
+        : UnifiedAutoStartOwner::Packaged};
+}
+
 enum class PortableAutoStartApprovalState : std::uint8_t
 {
     Missing,
