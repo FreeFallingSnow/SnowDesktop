@@ -882,7 +882,7 @@ int main(int argc, char** argv)
             denseIconRect.bottom - denseIconRect.top ==
                 denseTwoByTwo.iconSize,
         "dense items, highlights, placeholders, and tooltip anchors must share one centered icon edge length");
-    const auto denseVisualGapSpread = [](
+    const auto denseVisualGaps = [](
         const titleless::DenseLayout& dense, bool horizontal) {
         const int count = horizontal
             ? dense.columns : dense.rows;
@@ -913,15 +913,66 @@ int main(int argc, char** argv)
         gaps.push_back(horizontal
             ? dense.geometry.viewport.right - icons.back().right
             : dense.geometry.viewport.bottom - icons.back().bottom);
+        return gaps;
+    };
+    const auto denseOuterGaps = [&](
+        const titleless::DenseLayout& dense) {
+        const auto horizontal = denseVisualGaps(dense, true);
+        const auto vertical = denseVisualGaps(dense, false);
+        return std::array<int, 4>{
+            horizontal.front(), horizontal.back(),
+            vertical.front(), vertical.back()
+        };
+    };
+    const auto hasUnifiedOuterPadding = [&](
+        const titleless::DenseLayout& dense) {
+        const auto gaps = denseOuterGaps(dense);
         const auto [minimum, maximum] =
             std::minmax_element(gaps.begin(), gaps.end());
-        return *maximum - *minimum;
+        return *maximum - *minimum <= 1 &&
+            std::all_of(gaps.begin(), gaps.end(),
+                [&](int gap) {
+                    return std::abs(gap - dense.outerPadding) <= 1;
+                });
     };
-    Check(denseVisualGapSpread(denseTwoByTwo, true) <= 2 &&
-            denseVisualGapSpread(denseTwoByTwo, false) <= 2 &&
-            denseVisualGapSpread(denseLandscape, true) <= 2 &&
-            denseVisualGapSpread(densePortrait, false) <= 2,
-        "dense compact grids must balance frame-edge clearance with the visual gaps between icons on both axes");
+    const auto hasEvenInternalDistribution = [&](
+        const titleless::DenseLayout& dense, bool horizontal) {
+        const auto gaps = denseVisualGaps(dense, horizontal);
+        if (gaps.size() <= 3)
+            return true;
+        const auto [minimum, maximum] = std::minmax_element(
+            gaps.begin() + 1, gaps.end() - 1);
+        return *maximum - *minimum <= 1;
+    };
+    Check(hasUnifiedOuterPadding(denseTwoByTwo) &&
+            hasUnifiedOuterPadding(denseLandscape) &&
+            hasUnifiedOuterPadding(densePortrait) &&
+            hasEvenInternalDistribution(denseTwoByTwo, true) &&
+            hasEvenInternalDistribution(denseTwoByTwo, false) &&
+            hasEvenInternalDistribution(denseLandscape, true) &&
+            hasEvenInternalDistribution(denseLandscape, false) &&
+            hasEvenInternalDistribution(densePortrait, true) &&
+            hasEvenInternalDistribution(densePortrait, false),
+        "dense compact grids must use one visual padding on all four edges and distribute each axis remainder evenly");
+    const auto denseSingleColumn = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 60, 150 }, 1, 2,
+        50, 2, 2, 1.0f);
+    const auto denseSingleRow = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 150, 60 }, 2, 1,
+        50, 2, 2, 1.0f);
+    Check(denseSingleColumn.columns == 1 &&
+            denseSingleRow.rows == 1 &&
+            hasUnifiedOuterPadding(denseSingleColumn) &&
+            hasUnifiedOuterPadding(denseSingleRow),
+        "single-column and single-row compact Collections must share the same horizontal and vertical edge padding");
+    const auto ordinaryGrid = localLayout::ResolveGrid(
+        RECT{ 0, 0, 184, 232 }, 2, 2,
+        61, 80, 1.0f);
+    Check(ordinaryGrid.horizontal.visualItemSize == 0 &&
+            ordinaryGrid.horizontal.visualOuterPadding < 0 &&
+            ordinaryGrid.vertical.visualItemSize == 0 &&
+            ordinaryGrid.vertical.visualOuterPadding < 0,
+        "ordinary Collection grids must keep the original bounded-track geometry");
     Check(!titleless::IsHandoffDwellReady(
               false, true, 600, 520) &&
             !titleless::IsHandoffDwellReady(

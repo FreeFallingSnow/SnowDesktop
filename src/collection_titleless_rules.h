@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <limits>
 #include <optional>
+#include <vector>
 #include <windows.h>
 
 namespace snowdesktop::collection_titleless_rules
@@ -19,6 +22,7 @@ struct DenseLayout
     int rows = 1;
     int iconSize = 1;
     int minimumIconSize = 1;
+    int outerPadding = 0;
 };
 
 inline bool IsLargeFolderMode(
@@ -54,8 +58,105 @@ inline int ResolveFittedIconSize(
     }), 1, std::max(1, baseIconSize));
 }
 
+inline bool SupportsCommonOuterPadding(
+    int extent, int count, int iconSize, int outerPadding)
+{
+    extent = std::max(1, extent);
+    count = std::max(1, count);
+    iconSize = std::max(1, iconSize);
+    outerPadding = std::max(0, outerPadding);
+    if (count == 1)
+        return std::abs(extent - iconSize - outerPadding * 2) <= 1;
+    return extent - outerPadding * 2 >= count * iconSize;
+}
+
+inline int DistributedVisualStart(
+    int extent, int count, int iconSize,
+    int outerPadding, int index)
+{
+    extent = std::max(1, extent);
+    count = std::max(1, count);
+    iconSize = std::clamp(iconSize, 1, extent);
+    outerPadding = std::max(0, outerPadding);
+    index = std::clamp(index, 0, count - 1);
+    if (count == 1)
+        return outerPadding;
+
+    const int intervals = count - 1;
+    const int span = std::max(
+        0, extent - outerPadding * 2 - iconSize);
+    const long long numerator =
+        static_cast<long long>(index) * span;
+    return outerPadding + static_cast<int>(
+        (numerator + intervals / 2) / intervals);
+}
+
+inline std::vector<int> ResolveVisualGaps(
+    int extent, int count, int iconSize, int outerPadding)
+{
+    count = std::max(1, count);
+    std::vector<int> gaps;
+    gaps.reserve(static_cast<std::size_t>(count + 1));
+    int previousEnd = 0;
+    for (int index = 0; index < count; ++index)
+    {
+        const int start = DistributedVisualStart(
+            extent, count, iconSize, outerPadding, index);
+        gaps.push_back(start - previousEnd);
+        previousEnd = start + iconSize;
+    }
+    gaps.push_back(std::max(1, extent) - previousEnd);
+    return gaps;
+}
+
+inline std::optional<int> ResolveCommonOuterPadding(
+    int width, int height, int columns, int rows, int iconSize)
+{
+    width = std::max(1, width);
+    height = std::max(1, height);
+    columns = std::max(1, columns);
+    rows = std::max(1, rows);
+    iconSize = std::max(1, iconSize);
+
+    const int maximumPadding = std::max(
+        0, std::min(width, height) - iconSize);
+    std::optional<int> bestPadding;
+    int bestSpread = std::numeric_limits<int>::max();
+    long long bestDeviation = std::numeric_limits<long long>::max();
+    for (int padding = 0; padding <= maximumPadding; ++padding)
+    {
+        if (!SupportsCommonOuterPadding(
+                width, columns, iconSize, padding) ||
+            !SupportsCommonOuterPadding(
+                height, rows, iconSize, padding))
+            continue;
+
+        auto gaps = ResolveVisualGaps(
+            width, columns, iconSize, padding);
+        auto verticalGaps = ResolveVisualGaps(
+            height, rows, iconSize, padding);
+        gaps.insert(gaps.end(),
+            verticalGaps.begin(), verticalGaps.end());
+        const auto [minimum, maximum] =
+            std::minmax_element(gaps.begin(), gaps.end());
+        const int spread = *maximum - *minimum;
+        long long deviation = 0;
+        for (const int gap : gaps)
+            deviation += std::abs(gap - padding);
+        if (spread < bestSpread ||
+            (spread == bestSpread && deviation < bestDeviation))
+        {
+            bestPadding = padding;
+            bestSpread = spread;
+            bestDeviation = deviation;
+        }
+    }
+    return bestPadding;
+}
+
 inline widget_item_layout::Axis ResolveBalancedIconAxis(
-    int start, int extent, int count, int iconSize, int cellPadding)
+    int start, int extent, int count, int iconSize,
+    int cellPadding, int outerPadding)
 {
     widget_item_layout::Axis result;
     result.start = start;
@@ -66,37 +167,43 @@ inline widget_item_layout::Axis ResolveBalancedIconAxis(
         std::max(1, result.extent / result.count));
     cellPadding = std::max(0, cellPadding);
 
-    // The visual gap is shared by both frame edges and every adjacent icon
-    // pair. BoundedAxisCellStart distributes track centers through the inner
-    // extent, so half of the ideal visual gap is the matching base margin.
-    const int remaining = std::max(
-        0, result.extent - result.count * iconSize);
-    const double visualGap = static_cast<double>(remaining) /
-        static_cast<double>(result.count + 1);
-    result.edge = std::max(0,
-        static_cast<int>(std::round(visualGap * 0.5)));
+    outerPadding = std::max(0, outerPadding);
+    result.visualItemSize = iconSize;
+    result.visualOuterPadding = outerPadding;
     result.gap = 0;
 
-    const int pitch = std::max(1,
-        (result.extent - result.edge * 2) / result.count);
-    result.cell = std::clamp(
-        iconSize + cellPadding * 2,
-        iconSize, std::max(iconSize, pitch));
+    int maximumCellInset = outerPadding;
+    if (result.count > 1)
+    {
+        const auto gaps = ResolveVisualGaps(
+            result.extent, result.count,
+            iconSize, outerPadding);
+        const auto firstInternal = gaps.begin() + 1;
+        const auto lastInternal = gaps.end() - 1;
+        const int minimumInternalGap = firstInternal == lastInternal
+            ? 0 : *std::min_element(firstInternal, lastInternal);
+        maximumCellInset = std::min(
+            maximumCellInset, minimumInternalGap / 2);
+    }
+    const int cellInset = std::min(
+        cellPadding, std::max(0, maximumCellInset));
+    result.cell = iconSize + cellInset * 2;
+    result.edge = std::max(0, outerPadding - cellInset);
     return result;
 }
 
 inline widget_item_layout::Layout ResolveBalancedIconGrid(
     RECT viewport, int columns, int rows, int iconSize,
-    int horizontalInset, int verticalInset)
+    int horizontalInset, int verticalInset, int outerPadding)
 {
     widget_item_layout::Layout result;
     result.viewport = viewport;
     result.horizontal = ResolveBalancedIconAxis(
         viewport.left, viewport.right - viewport.left,
-        columns, iconSize, horizontalInset);
+        columns, iconSize, horizontalInset, outerPadding);
     result.vertical = ResolveBalancedIconAxis(
         viewport.top, viewport.bottom - viewport.top,
-        rows, iconSize, verticalInset);
+        rows, iconSize, verticalInset, outerPadding);
     return result;
 }
 
@@ -141,6 +248,21 @@ inline DenseLayout ResolveDenseLayout(
         1, viewport.right - viewport.left);
     const int height = std::max<LONG>(
         1, viewport.bottom - viewport.top);
+    auto resolvePaddingForIcon = [&](
+        int columns, int rows, int& iconSize) {
+        for (; iconSize >= 1; --iconSize)
+        {
+            const auto padding = ResolveCommonOuterPadding(
+                width, height, columns, rows, iconSize);
+            if (padding.has_value())
+                return padding;
+        }
+        return std::optional<int>{};
+    };
+    if (const auto padding = resolvePaddingForIcon(
+            result.columns, result.rows, result.iconSize))
+        result.outerPadding = *padding;
+
     const int maximumColumns = std::max(
         baseColumns, width / std::max(1, minimumCellWidth));
     const int maximumRows = std::max(
@@ -156,9 +278,11 @@ inline DenseLayout ResolveDenseLayout(
             const auto geometry = widget_item_layout::ResolveGrid(
                 viewport, columns, rows,
                 minimumCellWidth, minimumCellHeight, spacingScale);
-            const int iconSize = ResolveFittedIconSize(
+            int iconSize = ResolveFittedIconSize(
                 geometry, baseIconSize,
                 horizontalInset, verticalInset);
+            const auto padding = resolvePaddingForIcon(
+                columns, rows, iconSize);
             if (iconSize < result.minimumIconSize)
                 continue;
 
@@ -175,12 +299,14 @@ inline DenseLayout ResolveDenseLayout(
             result.columns = columns;
             result.rows = rows;
             result.iconSize = iconSize;
+            result.outerPadding = padding.value_or(0);
         }
     }
 
     result.geometry = ResolveBalancedIconGrid(
         viewport, result.columns, result.rows,
-        result.iconSize, horizontalInset, verticalInset);
+        result.iconSize, horizontalInset, verticalInset,
+        result.outerPadding);
 
     return result;
 }

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 
 namespace snowdesktop::widget_item_layout
@@ -19,6 +20,8 @@ struct Axis
     int cell = 1;
     int gap = 0;
     int edge = 0;
+    int visualItemSize = 0;
+    int visualOuterPadding = -1;
 };
 
 struct Layout
@@ -128,6 +131,34 @@ inline int AxisCellStart(const Axis& axis, int index)
 
 inline int BoundedAxisCellStart(const Axis& axis, int index)
 {
+    if (axis.visualItemSize > 0 &&
+        axis.visualOuterPadding >= 0)
+    {
+        const int extent = std::max(1, axis.extent);
+        const int count = std::max(1, axis.count);
+        const int clampedIndex = std::clamp(
+            index, 0, count - 1);
+        const int itemSize = std::clamp(
+            axis.visualItemSize, 1, extent);
+        const int outerPadding = std::clamp(
+            axis.visualOuterPadding, 0,
+            std::max(0, extent - itemSize));
+        int visualStart = outerPadding;
+        if (count > 1)
+        {
+            const int intervals = count - 1;
+            const int span = std::max(
+                0, extent - outerPadding * 2 - itemSize);
+            const std::int64_t numerator =
+                static_cast<std::int64_t>(clampedIndex) * span;
+            visualStart += static_cast<int>(
+                (numerator + intervals / 2) / intervals);
+        }
+        const int cellInset = std::max(
+            0, (std::max(1, axis.cell) - itemSize) / 2);
+        return axis.start + visualStart - cellInset;
+    }
+
     grid_spacing_rules::AxisGeometry geometry;
     geometry.extent = std::max(1, axis.extent);
     geometry.count = std::max(1, axis.count);
