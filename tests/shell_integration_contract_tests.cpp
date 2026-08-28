@@ -185,7 +185,7 @@ int main(int argc, char** argv)
             hookDllMain.find("CreateThread") == std::string_view::npos,
         "registry queries reuse the hook DLL without starting the taskbar TAP");
     Check(deploymentContext.find(
-              "QueryCurrentUserBinaryValueThroughExplorer(") !=
+              "QueryCurrentUserValueThroughExplorer(") !=
                 std::string::npos &&
             deploymentContext.find(
               "\"SnowDesktopRegistryQueryHookProc\"") !=
@@ -193,9 +193,26 @@ int main(int argc, char** argv)
             deploymentContext.find("SetWindowsHookExW(WH_CALLWNDPROC") !=
                 std::string::npos &&
             settingsApply.find(
-              "QueryUnvirtualizedCurrentUserBinaryValue(") !=
+              "QueryUnvirtualizedCurrentUserValue(") !=
                 std::string::npos,
         "packaged startup approval is queried from Explorer's unvirtualized registry view");
+    const std::string_view portableRegistration = FunctionBody(settingsApply,
+        "PortableAutoStartRegistration QueryPortableAutoStartRegistration()",
+        "snowdesktop::PortableAutoStartApprovalState");
+    const std::string_view portableApproval = FunctionBody(settingsApply,
+        "QueryPortableAutoStartApproval() noexcept",
+        "bool ClearPortableAutoStartApproval() noexcept");
+    Check(portableRegistration.find(
+              "QueryUnvirtualizedCurrentUserValue(") !=
+                std::string_view::npos &&
+            portableApproval.find(
+              "QueryUnvirtualizedCurrentUserValue(") !=
+                std::string_view::npos &&
+            portableRegistration.find("RegOpenKeyExW") ==
+                std::string_view::npos &&
+            portableApproval.find("RegOpenKeyExW") ==
+                std::string_view::npos,
+        "portable Run registration and approval state use the same real registry view");
 
     Check(settingsWindow.find("ImGui") == std::string::npos &&
             settingsWindow.find("ID3D11") == std::string::npos &&

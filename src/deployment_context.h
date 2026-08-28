@@ -45,21 +45,21 @@ std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename);
  */
 std::wstring GetTaskbarHookPath();
 
-struct UnvirtualizedRegistryBinaryValue
+struct UnvirtualizedRegistryValue
 {
     std::uint32_t win32Result = 1;
     std::uint32_t type = 0;
     std::uint32_t size = 0;
-    std::array<std::uint8_t, 32> data{};
+    std::array<std::uint8_t, 1024> data{};
 };
 
 /**
- * @brief 从当前用户的真实注册表视图读取二进制值。
+ * @brief 从当前用户的真实注册表视图读取原始值。
  * @details MSIX 进程访问 HKCU 时可能看到包私有的写时复制视图。安装版通过
  * 已有 Explorer Hook DLL 的短生命周期查询入口读取 Explorer 所见的真实视图；
  * 便携版直接读取 HKCU。该函数不写入注册表，也不保留常驻桥接进程。
  */
-UnvirtualizedRegistryBinaryValue QueryUnvirtualizedCurrentUserBinaryValue(
+UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(
     const wchar_t* subKey, const wchar_t* valueName) noexcept;
 
 /**

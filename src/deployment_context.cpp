@@ -66,11 +66,11 @@ bool IsBareFilename(const wchar_t* filename) noexcept
     return true;
 }
 
-snowdesktop::deployment::UnvirtualizedRegistryBinaryValue
-QueryCurrentUserBinaryValueDirect(
+snowdesktop::deployment::UnvirtualizedRegistryValue
+QueryCurrentUserValueDirect(
     const wchar_t* subKey, const wchar_t* valueName) noexcept
 {
-    snowdesktop::deployment::UnvirtualizedRegistryBinaryValue result;
+    snowdesktop::deployment::UnvirtualizedRegistryValue result;
     HKEY key = nullptr;
     const LONG opened = RegOpenKeyExW(
         HKEY_CURRENT_USER, subKey, 0, KEY_QUERY_VALUE, &key);
@@ -97,12 +97,12 @@ std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
         std::to_wstring(ownerProcessId);
 }
 
-snowdesktop::deployment::UnvirtualizedRegistryBinaryValue
-QueryCurrentUserBinaryValueThroughExplorer(
+snowdesktop::deployment::UnvirtualizedRegistryValue
+QueryCurrentUserValueThroughExplorer(
     const wchar_t* subKey, const wchar_t* valueName) noexcept
 {
     using namespace snowdesktop::taskbar_hook;
-    snowdesktop::deployment::UnvirtualizedRegistryBinaryValue result;
+    snowdesktop::deployment::UnvirtualizedRegistryValue result;
     result.win32Result = ERROR_INVALID_PARAMETER;
     if (!subKey || !valueName || !*subKey || !*valueName ||
         wcslen(subKey) >= kMaximumRegistrySubKeyLength ||
@@ -454,18 +454,18 @@ std::wstring GetTaskbarHookPath()
     return deployedPath;
 }
 
-UnvirtualizedRegistryBinaryValue QueryUnvirtualizedCurrentUserBinaryValue(
+UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(
     const wchar_t* subKey, const wchar_t* valueName) noexcept
 {
     if (!subKey || !valueName)
     {
-        UnvirtualizedRegistryBinaryValue result;
+        UnvirtualizedRegistryValue result;
         result.win32Result = ERROR_INVALID_PARAMETER;
         return result;
     }
     if (!IsPackaged())
-        return QueryCurrentUserBinaryValueDirect(subKey, valueName);
-    return QueryCurrentUserBinaryValueThroughExplorer(subKey, valueName);
+        return QueryCurrentUserValueDirect(subKey, valueName);
+    return QueryCurrentUserValueThroughExplorer(subKey, valueName);
 }
 
 std::wstring GetStoreProductPageUri()

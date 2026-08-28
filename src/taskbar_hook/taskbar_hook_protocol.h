@@ -28,7 +28,7 @@ inline constexpr std::uint32_t kRegistryQueryMagic = 0x53445251; // "SDRQ"
 inline constexpr std::uint32_t kRegistryQueryVersion = 1;
 inline constexpr std::size_t kMaximumRegistrySubKeyLength = 512;
 inline constexpr std::size_t kMaximumRegistryValueNameLength = 128;
-inline constexpr std::size_t kMaximumRegistryValueBytes = 32;
+inline constexpr std::size_t kMaximumRegistryValueBytes = 1024;
 inline constexpr LONG kRegistryQueryPending = 0;
 inline constexpr LONG kRegistryQueryCompleted = 1;
 

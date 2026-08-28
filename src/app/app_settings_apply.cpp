@@ -6,6 +6,7 @@
 #include "../page_navigation_rules.h"
 #include "../settings_update_rules.h"
 
+#include <cstring>
 #include <cwctype>
 
 namespace
@@ -92,39 +93,22 @@ struct PortableAutoStartRegistration
 PortableAutoStartRegistration QueryPortableAutoStartRegistration() noexcept
 {
     using snowdesktop::PortableAutoStartRegistrationOwner;
-
-    HKEY key = nullptr;
-    const LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER,
-        kAutoStartRunSubKey, 0, KEY_QUERY_VALUE, &key);
-    if (RegistryValueMissing(openResult))
-        return {PortableAutoStartRegistrationOwner::Missing, {}};
-    if (openResult != ERROR_SUCCESS)
-        return {PortableAutoStartRegistrationOwner::Error, {}};
-
-    DWORD type = 0;
-    DWORD size = 0;
-    LONG result = RegQueryValueExW(key, kAutoStartRunValue, nullptr,
-        &type, nullptr, &size);
+    const auto query = snowdesktop::deployment::
+        QueryUnvirtualizedCurrentUserValue(
+            kAutoStartRunSubKey, kAutoStartRunValue);
+    const LONG result = static_cast<LONG>(query.win32Result);
     if (RegistryValueMissing(result))
-    {
-        RegCloseKey(key);
         return {PortableAutoStartRegistrationOwner::Missing, {}};
-    }
     if (result != ERROR_SUCCESS ||
-        (type != REG_SZ && type != REG_EXPAND_SZ) ||
-        size <= sizeof(wchar_t) || size % sizeof(wchar_t) != 0)
+        (query.type != REG_SZ && query.type != REG_EXPAND_SZ) ||
+        query.size <= sizeof(wchar_t) || query.size > query.data.size() ||
+        query.size % sizeof(wchar_t) != 0)
     {
-        RegCloseKey(key);
         return {PortableAutoStartRegistrationOwner::Error, {}};
     }
 
-    std::wstring command;
-    command.resize(size / sizeof(wchar_t));
-    result = RegQueryValueExW(key, kAutoStartRunValue, nullptr,
-        &type, reinterpret_cast<BYTE*>(command.data()), &size);
-    RegCloseKey(key);
-    if (result != ERROR_SUCCESS)
-        return {PortableAutoStartRegistrationOwner::Error, {}};
+    std::wstring command(query.size / sizeof(wchar_t), L'\0');
+    memcpy(command.data(), query.data.data(), query.size);
     while (!command.empty() && command.back() == L'\0')
         command.pop_back();
     if (command.empty())
@@ -143,7 +127,7 @@ QueryPortableAutoStartApproval() noexcept
 {
     using snowdesktop::PortableAutoStartApprovalState;
     const auto query = snowdesktop::deployment::
-        QueryUnvirtualizedCurrentUserBinaryValue(
+        QueryUnvirtualizedCurrentUserValue(
             kAutoStartApprovalSubKey, kAutoStartRunValue);
     const LONG result = static_cast<LONG>(query.win32Result);
     if (RegistryValueMissing(result))
