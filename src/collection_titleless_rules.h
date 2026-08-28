@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <vector>
 #include <windows.h>
 
@@ -213,6 +214,14 @@ inline bool IsHandoffDwellReady(
 {
     return targetMatches &&
         (alreadyReady || elapsed >= delay);
+}
+
+inline bool CollectionOwnsHandoffDwell(
+    std::wstring_view dwellWidgetId,
+    std::wstring_view collectionWidgetId)
+{
+    return !dwellWidgetId.empty() &&
+        dwellWidgetId == collectionWidgetId;
 }
 
 inline DenseLayout ResolveDenseLayout(

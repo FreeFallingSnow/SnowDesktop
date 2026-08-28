@@ -1140,8 +1140,14 @@ HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
     }
 
     HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
-    if (app_)
+    if (app_ && data_ &&
+        snowdesktop::collection_titleless_rules::
+            CollectionOwnsHandoffDwell(
+                app_->compactCollectionHandoffWidgetId_,
+                data_->id))
+    {
         app_->ResetCompactCollectionHandoffDwell();
+    }
     return CollectionTitlelessActive(this) &&
             result == HitRegion::Handoff
         ? insertionRegion(outSlot) : result;

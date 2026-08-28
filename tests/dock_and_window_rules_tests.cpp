@@ -982,6 +982,13 @@ int main(int argc, char** argv)
             titleless::IsHandoffDwellReady(
               true, true, 0, 520),
         "compact Collection handoff must require one stable target until the dwell delay expires");
+    Check(titleless::CollectionOwnsHandoffDwell(
+              L"collection-a", L"collection-a") &&
+            !titleless::CollectionOwnsHandoffDwell(
+              L"collection-a", L"collection-b") &&
+            !titleless::CollectionOwnsHandoffDwell(
+              L"", L"collection-a"),
+        "only the Collection that owns titleless handoff dwell may reset the shared timer state");
     const RECT tooltipFrame{ 0, 0, 240, 180 };
     const RECT titlelessBottomAnchor{ 180, 138, 228, 178 };
     const RECT bottomTooltip = titleless::ResolveTooltipBounds(
