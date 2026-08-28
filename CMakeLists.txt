@@ -246,6 +246,8 @@ set(SNOWDESKTOP_SOURCES
     src/portable_data_migration.cpp
     src/single_instance.cpp
     src/deployment_context.cpp
+    src/shortcut_icon_resource.cpp
+    src/shortcut_icon_resource.h
     src/utils.cpp
     src/desktop_display_settings.h
     src/settings_controller.cpp
@@ -1695,7 +1697,9 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopShortcutApplicationRulesTests
         shortcut_application_rules
-        SOURCES tests/shortcut_application_rules_tests.cpp
+        SOURCES
+            tests/shortcut_application_rules_tests.cpp
+            src/shortcut_icon_resource.cpp
         INCLUDE_DIRECTORIES src
         LABELS rules shell)
 

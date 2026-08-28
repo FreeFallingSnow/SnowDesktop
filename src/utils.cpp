@@ -13,6 +13,8 @@
 #include "data_paths.h"
 #include "desktop_window_discovery_rules.h"
 #include "icon_render_rules.h"
+#include "shortcut_application_rules.h"
+#include "shortcut_icon_resource.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
@@ -1162,6 +1164,17 @@ HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
 
     return nullptr;
 }
+
+HBITMAP ExtractInternetShortcutSourceIcon(std::wstring_view sourcePath,
+    int sourceSize, SIZE& bitmapSize)
+{
+    const auto resource = snowdesktop::shortcut_icon_resource::
+        ReadInternetShortcutIconResource(sourcePath);
+    if (!resource)
+        return nullptr;
+    return ExtractIconResourceBitmap(
+        resource->path, resource->index, sourceSize, bitmapSize);
+}
 } // namespace
 
 HBITMAP GetDirectIconResourceBitmap(std::wstring_view resourcePath,
@@ -1208,9 +1221,20 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
         snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
     if (forShortcut)
     {
-        if (HBITMAP bitmap = ExtractShellLinkSourceIcon(
-                sourcePath, sourceSize, bitmapSize))
-            return bitmap;
+        namespace shortcutRules =
+            snowdesktop::shortcut_application_rules;
+        if (shortcutRules::HasExtension(sourcePath, L".url"))
+        {
+            if (HBITMAP bitmap = ExtractInternetShortcutSourceIcon(
+                    sourcePath, sourceSize, bitmapSize))
+                return bitmap;
+        }
+        else if (shortcutRules::HasExtension(sourcePath, L".lnk"))
+        {
+            if (HBITMAP bitmap = ExtractShellLinkSourceIcon(
+                    sourcePath, sourceSize, bitmapSize))
+                return bitmap;
+        }
     }
     if (preferDirectIconExtraction)
     {
