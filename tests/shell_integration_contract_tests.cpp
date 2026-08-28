@@ -61,6 +61,8 @@ int main(int argc, char** argv)
         root / "src" / "taskbar_hook" / "taskbar_hook.cpp");
     const std::string deploymentContext = ReadFile(
         root / "src" / "deployment_context.cpp");
+    const std::string autoStartManager = ReadFile(
+        root / "src" / "auto_start_manager.cpp");
     const std::string settingsWindow = ReadFile(
         root / "src" / "settings_window.cpp");
     const std::string settingsHost = ReadFile(
@@ -75,7 +77,7 @@ int main(int argc, char** argv)
         root / "src" / "app" / "app_desktop_reload.cpp");
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
             !dockSettings.empty() && !taskbarHook.empty() &&
-            !deploymentContext.empty() &&
+            !deploymentContext.empty() && !autoStartManager.empty() &&
             !settingsWindow.empty() &&
             !settingsHost.empty() && !dockPresenter.empty() &&
             !presenterControls.empty() &&
@@ -219,7 +221,9 @@ int main(int argc, char** argv)
             settingsApply.find("RegSetValueExW") == std::string::npos &&
             settingsApply.find("RegDeleteValueW") == std::string::npos,
         "legacy portable startup state uses only the real registry-view bridge");
-    Check(reconciliation.find("auto_start::Configure(target, false)") !=
+    Check(reconciliation.find("auto_start::ConfigureMigration(") !=
+                std::string_view::npos &&
+            reconciliation.find("result.task.migrationPending") !=
                 std::string_view::npos &&
             reconciliation.find("SetLegacyPackagedAutoStart(false)") !=
                 std::string_view::npos &&
@@ -227,7 +231,16 @@ int main(int argc, char** argv)
                 std::string_view::npos &&
             reconciliation.find("auto_start::Delete()") !=
                 std::string_view::npos,
-        "migration stages the unified task disabled, removes legacy sources, and rolls back on failure");
+        "migration records its desired state while disabled, resumes interrupted work, and rolls back immediate failures");
+    Check(autoStartManager.find("kMigrationEnableDescription") !=
+                std::string::npos &&
+            autoStartManager.find("kMigrationDisableDescription") !=
+                std::string::npos &&
+            autoStartManager.find("get_Description(&rawDescription)") !=
+                std::string::npos &&
+            autoStartManager.find("bool ConfigureMigration(") !=
+                std::string::npos,
+        "the disabled staging task durably records the intended state for interrupted migration recovery");
 
     Check(settingsWindow.find("ImGui") == std::string::npos &&
             settingsWindow.find("ID3D11") == std::string::npos &&

@@ -21,6 +21,8 @@ struct State
     UnifiedAutoStartTaskState status =
         UnifiedAutoStartTaskState::Unavailable;
     Target target;
+    bool migrationPending = false;
+    bool enableAfterMigration = false;
 };
 
 /** Return the scheduled-task target for the running deployment. */
@@ -38,6 +40,10 @@ struct State
 
 /** Create or replace the SnowDesktop-owned task with the requested target. */
 [[nodiscard]] bool Configure(const Target& target, bool enabled) noexcept;
+
+/** Stage a disabled task that records the intended post-migration state. */
+[[nodiscard]] bool ConfigureMigration(
+    const Target& target, bool enableAfterMigration) noexcept;
 
 /** Change only the Enabled bit of an existing SnowDesktop-owned task. */
 [[nodiscard]] bool SetEnabled(bool enabled) noexcept;

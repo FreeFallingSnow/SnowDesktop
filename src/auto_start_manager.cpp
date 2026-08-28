@@ -27,6 +27,10 @@ constexpr wchar_t kTaskUri[] = L"\\SnowDesktop\\Startup";
 constexpr wchar_t kTaskAuthor[] = L"SnowDesktop";
 constexpr wchar_t kTaskDescription[] =
     L"Starts the selected SnowDesktop deployment when this user signs in.";
+constexpr wchar_t kMigrationEnableDescription[] =
+    L"SnowDesktop auto-start migration pending; desired state: enabled.";
+constexpr wchar_t kMigrationDisableDescription[] =
+    L"SnowDesktop auto-start migration pending; desired state: disabled.";
 constexpr wchar_t kTriggerId[] = L"SnowDesktopLogon";
 constexpr wchar_t kPortableArgument[] =
     L"--snowdesktop-autostart-owner=portable";
@@ -238,6 +242,19 @@ State QueryRegisteredTask(IRegisteredTask* task) noexcept
         return state;
     }
 
+    ComPtr<IRegistrationInfo> registration;
+    BSTR rawDescription = nullptr;
+    if (FAILED(definition->get_RegistrationInfo(&registration)) ||
+        FAILED(registration->get_Description(&rawDescription)))
+    {
+        return state;
+    }
+    const std::wstring description = TakeBstr(rawDescription);
+    state.migrationPending = description == kMigrationEnableDescription ||
+        description == kMigrationDisableDescription;
+    state.enableAfterMigration =
+        description == kMigrationEnableDescription;
+
     ComPtr<IActionCollection> actions;
     LONG count = 0;
     if (FAILED(definition->get_Actions(&actions)) ||
@@ -306,7 +323,8 @@ bool PutText(HRESULT (STDMETHODCALLTYPE IRegistrationInfo::*setter)(BSTR),
 }
 
 bool ConfigureDefinition(
-    ITaskDefinition* definition, const Target& target, bool enabled) noexcept
+    ITaskDefinition* definition, const Target& target, bool enabled,
+    std::wstring_view description) noexcept
 {
     const std::wstring userSid = CurrentUserSid();
     if (userSid.empty())
@@ -319,7 +337,7 @@ bool ConfigureDefinition(
         !PutText(&IRegistrationInfo::put_Source,
             registration.Get(), kTaskAuthor) ||
         !PutText(&IRegistrationInfo::put_Description,
-            registration.Get(), kTaskDescription) ||
+            registration.Get(), description) ||
         !PutText(&IRegistrationInfo::put_URI,
             registration.Get(), kTaskUri))
     {
@@ -392,6 +410,62 @@ bool SameTarget(const Target& left, const Target& right) noexcept
         left.arguments == right.arguments &&
         SameExecutablePath(left.executable, right.executable);
 }
+
+bool ConfigureTask(const Target& target, bool enabled,
+    std::wstring_view description) noexcept
+{
+    if ((target.owner != UnifiedAutoStartOwner::Portable &&
+            target.owner != UnifiedAutoStartOwner::Packaged) ||
+        target.executable.empty() || target.arguments.empty())
+    {
+        return false;
+    }
+
+    const State before = snowdesktop::auto_start::Query();
+    if (before.status == UnifiedAutoStartTaskState::Foreign ||
+        before.status == UnifiedAutoStartTaskState::Unavailable)
+    {
+        return false;
+    }
+
+    ComPtr<ITaskService> service;
+    if (FAILED(ConnectTaskService(service)))
+        return false;
+    ComPtr<ITaskFolder> folder;
+    if (FAILED(EnsureTaskFolder(service.Get(), folder)))
+        return false;
+    ComPtr<ITaskDefinition> definition;
+    if (FAILED(service->NewTask(0, &definition)) ||
+        !ConfigureDefinition(
+            definition.Get(), target, enabled, description))
+    {
+        return false;
+    }
+
+    const ScopedBstr name(kTaskName);
+    if (!name.valid())
+        return false;
+    VARIANT empty{};
+    VariantInit(&empty);
+    ComPtr<IRegisteredTask> registered;
+    if (FAILED(folder->RegisterTaskDefinition(name.get(), definition.Get(),
+            TASK_CREATE_OR_UPDATE, empty, empty,
+            TASK_LOGON_INTERACTIVE_TOKEN, empty, &registered)))
+    {
+        return false;
+    }
+
+    const State after = QueryRegisteredTask(registered.Get());
+    const UnifiedAutoStartTaskState expected = enabled
+        ? UnifiedAutoStartTaskState::Enabled
+        : UnifiedAutoStartTaskState::Disabled;
+    return after.status == expected && SameTarget(after.target, target) &&
+        after.migrationPending ==
+            (description == kMigrationEnableDescription ||
+                description == kMigrationDisableDescription) &&
+        (!after.migrationPending || after.enableAfterMigration ==
+            (description == kMigrationEnableDescription));
+}
 } // namespace
 
 namespace snowdesktop::auto_start
@@ -462,51 +536,15 @@ State Query() noexcept
 
 bool Configure(const Target& target, bool enabled) noexcept
 {
-    if ((target.owner != UnifiedAutoStartOwner::Portable &&
-            target.owner != UnifiedAutoStartOwner::Packaged) ||
-        target.executable.empty() || target.arguments.empty())
-    {
-        return false;
-    }
+    return ConfigureTask(target, enabled, kTaskDescription);
+}
 
-    const State before = Query();
-    if (before.status == UnifiedAutoStartTaskState::Foreign ||
-        before.status == UnifiedAutoStartTaskState::Unavailable)
-    {
-        return false;
-    }
-
-    ComPtr<ITaskService> service;
-    if (FAILED(ConnectTaskService(service)))
-        return false;
-    ComPtr<ITaskFolder> folder;
-    if (FAILED(EnsureTaskFolder(service.Get(), folder)))
-        return false;
-    ComPtr<ITaskDefinition> definition;
-    if (FAILED(service->NewTask(0, &definition)) ||
-        !ConfigureDefinition(definition.Get(), target, enabled))
-    {
-        return false;
-    }
-
-    const ScopedBstr name(kTaskName);
-    if (!name.valid())
-        return false;
-    VARIANT empty{};
-    VariantInit(&empty);
-    ComPtr<IRegisteredTask> registered;
-    if (FAILED(folder->RegisterTaskDefinition(name.get(), definition.Get(),
-            TASK_CREATE_OR_UPDATE, empty, empty,
-            TASK_LOGON_INTERACTIVE_TOKEN, empty, &registered)))
-    {
-        return false;
-    }
-
-    const State after = QueryRegisteredTask(registered.Get());
-    const UnifiedAutoStartTaskState expected = enabled
-        ? UnifiedAutoStartTaskState::Enabled
-        : UnifiedAutoStartTaskState::Disabled;
-    return after.status == expected && SameTarget(after.target, target);
+bool ConfigureMigration(
+    const Target& target, bool enableAfterMigration) noexcept
+{
+    return ConfigureTask(target, false, enableAfterMigration
+        ? kMigrationEnableDescription
+        : kMigrationDisableDescription);
 }
 
 bool SetEnabled(bool enabled) noexcept

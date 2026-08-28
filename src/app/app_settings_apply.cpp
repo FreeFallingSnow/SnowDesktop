@@ -294,6 +294,30 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
         return result;
     }
 
+    if (result.task.migrationPending)
+    {
+        if (result.task.status == UnifiedAutoStartTaskState::Enabled &&
+            !snowdesktop::auto_start::SetEnabled(false))
+        {
+            return result;
+        }
+        const bool packagedRemoved =
+            packaged != LegacyAutoStartState::Enabled ||
+            SetLegacyPackagedAutoStart(false);
+        const bool portableRemoved = packagedRemoved &&
+            RemoveLegacyPortableAutoStart(portable);
+        if (!portableRemoved || !snowdesktop::auto_start::Configure(
+                result.task.target, result.task.enableAfterMigration))
+        {
+            return result;
+        }
+        result.task = snowdesktop::auto_start::Query();
+        result.known = !result.task.migrationPending &&
+            (result.task.status == UnifiedAutoStartTaskState::Enabled ||
+                result.task.status == UnifiedAutoStartTaskState::Disabled);
+        return result;
+    }
+
     if (result.task.status == UnifiedAutoStartTaskState::Missing)
     {
         const UnifiedAutoStartOwner currentOwner =
@@ -314,7 +338,8 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
         else if (decision.owner == UnifiedAutoStartOwner::Packaged)
             target = snowdesktop::auto_start::PackagedDeploymentTarget();
         if (target.executable.empty() ||
-            !snowdesktop::auto_start::Configure(target, false))
+            !snowdesktop::auto_start::ConfigureMigration(
+                target, decision.enableUnifiedTask))
         {
             return result;
         }
@@ -326,8 +351,8 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
         const bool portableRemoved = packagedRemoved &&
             RemoveLegacyPortableAutoStart(portable);
         const bool unifiedEnabled = portableRemoved &&
-            (!decision.enableUnifiedTask ||
-                snowdesktop::auto_start::SetEnabled(true));
+            snowdesktop::auto_start::Configure(
+                target, decision.enableUnifiedTask);
         if (!unifiedEnabled)
         {
             RestoreLegacyPortableAutoStart(portable);
