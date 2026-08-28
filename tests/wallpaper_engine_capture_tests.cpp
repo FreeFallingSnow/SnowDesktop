@@ -1,4 +1,5 @@
 #include "app/wallpaper_engine_capture.h"
+#include "deployment_context.h"
 
 #include <atomic>
 #include <chrono>
@@ -6,6 +7,19 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+
+namespace snowdesktop::deployment
+{
+std::wstring GetRuntimeFilePath(const wchar_t* filename)
+{
+    return filename ? filename : L"";
+}
+
+std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename)
+{
+    return GetRuntimeFilePath(filename);
+}
+}
 
 namespace
 {

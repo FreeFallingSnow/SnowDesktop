@@ -4,6 +4,7 @@
  */
 #include "wallpaper_engine_capture.h"
 
+#include "../deployment_context.h"
 #include "../wallpaper_hook/wallpaper_hook_protocol.h"
 
 #include <d3d11.h>
@@ -424,31 +425,9 @@ bool QueryProcessArchitecture(DWORD processId,
     return true;
 }
 
-std::filesystem::path ApplicationDirectory()
-{
-    std::array<wchar_t, 32768> modulePath{};
-    const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(),
-        static_cast<DWORD>(modulePath.size()));
-    return length && length < modulePath.size()
-        ? std::filesystem::path(modulePath.data()).parent_path()
-        : std::filesystem::path{};
-}
-
-std::filesystem::path RuntimeFilePath(const wchar_t* filename)
-{
-    const std::filesystem::path directory = ApplicationDirectory();
-    if (directory.empty())
-        return {};
-    const std::filesystem::path runtime =
-        directory / L"SnowDesktop.Runtime" / filename;
-    return std::filesystem::is_regular_file(runtime)
-        ? runtime
-        : directory / filename;
-}
-
 std::filesystem::path HookPath(ProcessArchitecture architecture)
 {
-    return RuntimeFilePath(
+    return snowdesktop::deployment::GetInjectableRuntimeFilePath(
         architecture == ProcessArchitecture::x86
             ? L"SnowDesktopWallpaperHook32.dll"
             : L"SnowDesktopWallpaperHook.dll");
@@ -558,7 +537,8 @@ bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
     std::wstring& error)
 {
     const std::filesystem::path injector =
-        RuntimeFilePath(L"SnowDesktopWallpaperInjector32.exe");
+        snowdesktop::deployment::GetRuntimeFilePath(
+            L"SnowDesktopWallpaperInjector32.exe");
     if (!std::filesystem::is_regular_file(injector))
     {
         error = L"SnowDesktopWallpaperInjector32.exe is missing";

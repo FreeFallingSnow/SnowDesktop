@@ -281,21 +281,21 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             deploymentSource.find("SnowDesktop.Runtime") !=
                 std::string::npos,
         "application runtime lookup prefers the packaged runtime directory");
-    Check(deploymentSource.find("DeployTaskbarHookCopy") !=
+    Check(deploymentHeader.find("GetInjectableRuntimeFilePath") !=
+            std::string::npos &&
+            deploymentSource.find("DeployInjectableRuntimeCopy") !=
             std::string::npos &&
             deploymentSource.find("GetTemporaryDirectory") !=
                 std::string::npos &&
-            deploymentSource.find(
-                "static const std::wstring deployedPath") !=
-                std::string::npos,
-        "taskbar injection uses one process-specific temporary hook copy");
-    Check(wallpaperCapture.find("RuntimeFilePath") !=
+            deploymentSource.find("RuntimeHooks") != std::string::npos,
+        "cross-process hooks use one process-specific temporary runtime directory");
+    Check(wallpaperCapture.find("GetInjectableRuntimeFilePath") !=
             std::string::npos &&
-            wallpaperCapture.find("SnowDesktop.Runtime") !=
+            wallpaperCapture.find("GetRuntimeFilePath") !=
                 std::string::npos &&
             wallpaperCapture.find("injector.parent_path().c_str()") !=
                 std::string::npos,
-        "wallpaper hooks and the 32-bit injector resolve from the runtime directory");
+        "wallpaper hooks use injectable copies while the 32-bit injector resolves from the runtime directory");
     Check(releaseBuild.find(
               ".build\\Release\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
             std::string::npos &&

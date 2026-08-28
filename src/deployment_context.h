@@ -29,9 +29,17 @@ std::wstring GetPackageLocalStatePath();
 std::wstring GetRuntimeFilePath(const wchar_t* filename);
 
 /**
+ * @brief 获取可供其他进程加载的运行时 DLL 路径。
+ * @details 将随软件分发的 DLL 复制到用户临时目录的进程专属目录后再返回，
+ * 避免目标进程无法加载受保护的 MSIX 安装目录文件，也避免已注入模块继续锁住
+ * 构建、便携或安装目录。
+ * @param filename 不包含目录的 DLL 文件名。
+ */
+std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename);
+
+/**
  * @brief 获取可供 Explorer 加载的任务栏 Hook DLL 路径。
- * @details 始终把随软件分发的 DLL 复制到用户临时目录的进程专属目录后再返回，
- * 避免 XAML Diagnostics TAP 在软件退出后继续锁住构建、便携或安装目录。
+ * @details 兼容现有调用；内部复用通用的可注入运行时副本。
  */
 std::wstring GetTaskbarHookPath();
 

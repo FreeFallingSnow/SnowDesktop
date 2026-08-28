@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <future>
 #include <iterator>
+#include <mutex>
 #include <system_error>
 #include <utility>
 
@@ -75,28 +76,22 @@ std::filesystem::path GetTemporaryDirectory()
     return std::filesystem::path(buffer);
 }
 
-std::wstring DeployTaskbarHookCopy()
+std::filesystem::path CreateInjectableRuntimeDirectory()
 {
-    const std::filesystem::path source =
-        snowdesktop::deployment::GetRuntimeFilePath(kTaskbarHookFilename);
-    if (!std::filesystem::is_regular_file(source))
-        return source.wstring();
-
     const std::filesystem::path temporary = GetTemporaryDirectory();
     if (temporary.empty())
-        return source.wstring();
+        return {};
     const std::filesystem::path copiesRoot = temporary /
-        L"SnowDesktop" / L"TaskbarHook";
+        L"SnowDesktop" / L"RuntimeHooks";
 
     std::error_code error;
     std::filesystem::create_directories(copiesRoot, error);
     if (error)
-        return source.wstring();
+        return {};
 
-    // A XAML Diagnostics TAP has no supported process-level shutdown API and
-    // can remain mapped in Explorer after the owner exits. Remove only stale
-    // copies that Windows no longer considers busy; locked copies are kept
-    // until Explorer next restarts.
+    // Injected modules can remain mapped after the owner exits. Remove only
+    // stale copies that Windows no longer considers busy; locked copies are
+    // kept until their target process releases them.
     for (std::filesystem::directory_iterator iterator(copiesRoot, error), end;
          !error && iterator != end; iterator.increment(error))
     {
@@ -112,10 +107,27 @@ std::wstring DeployTaskbarHookCopy()
     error.clear();
     std::filesystem::create_directories(targetDirectory, error);
     if (error)
+        return {};
+    return targetDirectory;
+}
+
+std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
+{
+    const std::filesystem::path source =
+        snowdesktop::deployment::GetRuntimeFilePath(filename);
+    if (!std::filesystem::is_regular_file(source))
+        return source.wstring();
+
+    static const std::filesystem::path targetDirectory =
+        CreateInjectableRuntimeDirectory();
+    if (targetDirectory.empty())
         return source.wstring();
 
     const std::filesystem::path target =
-        targetDirectory / kTaskbarHookFilename;
+        targetDirectory / source.filename();
+    std::error_code error;
+    if (std::filesystem::is_regular_file(target, error))
+        return target.wstring();
     error.clear();
     std::filesystem::copy_file(source, target,
         std::filesystem::copy_options::none, error);
@@ -260,9 +272,19 @@ std::wstring GetRuntimeFilePath(const wchar_t* filename)
     return (executableDirectory / filename).wstring();
 }
 
+std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename)
+{
+    if (!IsBareFilename(filename))
+        return {};
+    static std::mutex deploymentMutex;
+    std::lock_guard lock(deploymentMutex);
+    return DeployInjectableRuntimeCopy(filename);
+}
+
 std::wstring GetTaskbarHookPath()
 {
-    static const std::wstring deployedPath = DeployTaskbarHookCopy();
+    static const std::wstring deployedPath =
+        GetInjectableRuntimeFilePath(kTaskbarHookFilename);
     return deployedPath;
 }
 
