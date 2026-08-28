@@ -161,18 +161,7 @@ QueryPortableAutoStartApproval() noexcept
         return PortableAutoStartApprovalState::Missing;
     if (result != ERROR_SUCCESS || type != REG_BINARY || size == 0)
         return PortableAutoStartApprovalState::Error;
-    if (data[0] == 0x02)
-        return PortableAutoStartApprovalState::Enabled;
-    if (data[0] == 0x03)
-        return PortableAutoStartApprovalState::Disabled;
-    return PortableAutoStartApprovalState::Error;
-}
-
-bool PortableAutoStartApprovalIsActive(
-    snowdesktop::PortableAutoStartApprovalState state) noexcept
-{
-    return state == snowdesktop::PortableAutoStartApprovalState::Missing ||
-        state == snowdesktop::PortableAutoStartApprovalState::Enabled;
+    return snowdesktop::DecodePortableAutoStartApprovalState(data[0]);
 }
 
 bool ClearPortableAutoStartApproval() noexcept
@@ -276,7 +265,8 @@ snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
         result.stateKnown = result.portableApproval !=
             PortableAutoStartApprovalState::Error;
         result.enabled = result.stateKnown &&
-            PortableAutoStartApprovalIsActive(result.portableApproval);
+            snowdesktop::IsPortableAutoStartApprovalActive(
+                result.portableApproval);
     }
     else
     {
@@ -326,14 +316,14 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
                 return finish(AutoStartApplyStatus::StateUnavailable,
                     _LW("app.settings.auto_start_enable_failed"));
             }
-            // Keep the legacy ownership rule: the packaged version must not
-            // enable its StartupTask while any portable Run entry still owns
-            // the shared SnowDesktop registration, even if Task Manager has
-            // currently marked that entry disabled.
-            return finish(
-                AutoStartApplyStatus::PortableRegistrationConflict,
-                _LFW("app.settings.auto_start_portable_conflict",
-                    before.portableCommand));
+            if (snowdesktop::HasActivePortableAutoStart(
+                    before.portableOwner, before.portableApproval))
+            {
+                return finish(
+                    AutoStartApplyStatus::PortableRegistrationConflict,
+                    _LFW("app.settings.auto_start_portable_conflict",
+                        before.portableCommand));
+            }
         }
 
         const PackagedAutoStartState state =

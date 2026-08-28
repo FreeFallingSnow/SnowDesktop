@@ -256,9 +256,11 @@ int main(int argc, char** argv)
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&
+            run.find("HasActivePortableAutoStart(") !=
+                std::string::npos &&
             run.find("PortableVersionOwnsStartup") != std::string::npos &&
             run.find("InstalledVersionOwnsStartup") != std::string::npos,
-        "DesktopApp projects portable and installed startup ownership into the WinUI warning state");
+        "DesktopApp only projects active portable or installed startup ownership into the WinUI warning state");
     Check(host.find("personalization.updateGeneral") !=
                 std::string::npos &&
             host.find("actions.setDeveloperToolsEnabled") !=

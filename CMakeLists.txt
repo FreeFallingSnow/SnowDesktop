@@ -119,6 +119,7 @@ set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 
 set(SNOWDESKTOP_SOURCES
     src/main.cpp
+    src/auto_start_rules.h
     src/application_crash_watchdog.cpp
     src/icon_beautify.cpp
     src/app/app_bitmap_cache.cpp
@@ -1332,6 +1333,13 @@ if (BUILD_TESTING)
         SOURCES tests/settings_update_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract settings update)
+
+    snowdesktop_add_test(
+        SnowDesktopAutoStartRulesTests
+        auto_start_rules
+        SOURCES tests/auto_start_rules_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract rules settings startup)
 
     snowdesktop_add_test(
         SnowDesktopWinUiWidgetSettingsPresenterTests

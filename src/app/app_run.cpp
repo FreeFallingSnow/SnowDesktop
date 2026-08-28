@@ -600,18 +600,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         return patch;
     };
     settingsHostOptions.startupConflict = [this]() {
-        using snowdesktop::PortableAutoStartRegistrationOwner;
         using snowdesktop::winui::GeneralStartupConflict;
         using snowdesktop::winui::GeneralStartupConflictKind;
 
         GeneralStartupConflict conflict;
         const snowdesktop::AutoStartQueryResult state =
             QueryAutoStartState();
-        if (state.packaged &&
-            state.portableOwner !=
-                PortableAutoStartRegistrationOwner::Missing &&
-            state.portableOwner !=
-                PortableAutoStartRegistrationOwner::Error)
+        if (state.packaged && snowdesktop::HasActivePortableAutoStart(
+                state.portableOwner, state.portableApproval))
         {
             conflict.kind =
                 GeneralStartupConflictKind::PortableVersionOwnsStartup;

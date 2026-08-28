@@ -90,6 +90,7 @@
 #include "ui_animation_scheduler.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "../crashlog.h"
+#include "../auto_start_rules.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -146,22 +147,6 @@ class AsyncHttpService;
 
 namespace snowdesktop
 {
-enum class PortableAutoStartApprovalState : std::uint8_t
-{
-    Missing,
-    Enabled,
-    Disabled,
-    Error,
-};
-
-enum class PortableAutoStartRegistrationOwner : std::uint8_t
-{
-    Missing,
-    CurrentExecutable,
-    OtherExecutable,
-    Error,
-};
-
 struct AutoStartQueryResult
 {
     bool packaged = false;
