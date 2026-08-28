@@ -63,6 +63,24 @@ UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(
     const wchar_t* subKey, const wchar_t* valueName) noexcept;
 
 /**
+ * @brief 从当前用户的真实注册表视图删除值。
+ * @details 安装版通过 Explorer 中的短生命周期 Hook 执行，避免 MSIX 注册表
+ * 虚拟化；便携版直接写入 HKCU。
+ * @return Win32 错误码。
+ */
+std::uint32_t DeleteUnvirtualizedCurrentUserValue(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept;
+
+/**
+ * @brief 向当前用户的真实注册表视图写入原始值。
+ * @details 主要用于迁移失败时恢复已经清理的旧启动项。
+ * @return Win32 错误码。
+ */
+std::uint32_t SetUnvirtualizedCurrentUserValue(
+    const wchar_t* subKey, const wchar_t* valueName,
+    std::uint32_t type, const void* data, std::uint32_t size) noexcept;
+
+/**
  * @brief 获取当前产品的 Microsoft Store 详情页 URI。
  */
 std::wstring GetStoreProductPageUri();
@@ -110,6 +128,11 @@ PackagedAutoStartState GetPackagedAutoStartState() noexcept;
 PackagedAutoStartState GetInstalledPackagedAutoStartState() noexcept;
 
 /**
+ * @brief 判断当前用户是否注册了本产品的安装包。
+ */
+bool IsInstalledPackageRegisteredForCurrentUser() noexcept;
+
+/**
  * @brief 在应用正常初始化前处理短生命周期 StartupTask 查询命令。
  * @return 命令行包含并已消费合法查询请求时返回 true，否则返回 false。
  */
@@ -121,6 +144,12 @@ bool TryHandlePackagedAutoStartQueryCommand() noexcept;
  * @return 操作后的实际状态；便携版或操作失败返回 Unavailable。
  */
 PackagedAutoStartState SetPackagedAutoStartEnabled(bool enable) noexcept;
+
+/**
+ * @brief 从便携版通过安装版的公开 API 启用或禁用旧 MSIX StartupTask。
+ */
+PackagedAutoStartState SetInstalledPackagedAutoStartEnabled(
+    bool enable) noexcept;
 
 /**
  * @brief 判断 StartupTask 状态是否表示已启用。

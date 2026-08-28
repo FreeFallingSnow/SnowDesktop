@@ -317,9 +317,12 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
     const std::size_t singleInstance = mainSource.find(
         "snowdesktop::single_instance::Guard singleInstance;");
     Check(deploymentSource.find(
-              "QueryInstalledPackagedAutoStartStateThroughActivation()") !=
+              "RunInstalledPackagedAutoStartOperationThroughActivation(") !=
                 std::string::npos &&
             deploymentSource.find("ActivateApplication(") !=
+                std::string::npos &&
+            deploymentSource.find(
+              "SetInstalledPackagedAutoStartEnabled(") !=
                 std::string::npos &&
             deploymentSource.find("SystemAppData") == std::string::npos &&
             deploymentSource.find("UserEnabledStartupOnce") ==

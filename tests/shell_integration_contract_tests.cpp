@@ -196,6 +196,17 @@ int main(int argc, char** argv)
               "QueryUnvirtualizedCurrentUserValue(") !=
                 std::string::npos,
         "packaged startup approval is queried from Explorer's unvirtualized registry view");
+    Check(deploymentContext.find(
+              "DeleteUnvirtualizedCurrentUserValue(") !=
+                std::string::npos &&
+            deploymentContext.find(
+              "SetUnvirtualizedCurrentUserValue(") !=
+                std::string::npos &&
+            taskbarHook.find("RegistryOperation::DeleteValue") !=
+                std::string::npos &&
+            taskbarHook.find("RegistryOperation::SetValue") !=
+                std::string::npos,
+        "legacy portable startup values can be migrated through the same unvirtualized registry bridge");
     const std::string_view portableRegistration = FunctionBody(settingsApply,
         "PortableAutoStartRegistration QueryPortableAutoStartRegistration()",
         "snowdesktop::PortableAutoStartApprovalState");

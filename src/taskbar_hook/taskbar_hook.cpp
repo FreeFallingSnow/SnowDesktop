@@ -100,25 +100,52 @@ void ProcessRegistryQuery(DWORD ownerProcessId)
         state->size != sizeof(SharedRegistryQueryState) ||
         state->ownerProcessId != ownerProcessId ||
         state->status != kRegistryQueryPending ||
-        !state->subKey[0] || !state->valueName[0])
+        !state->subKey[0] || !state->valueName[0] ||
+        state->valueSize > std::size(state->value))
     {
         UnmapViewOfFile(state);
         CloseHandle(mapping);
         return;
     }
 
-    HKEY key = nullptr;
-    LONG result = RegOpenKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
-        KEY_QUERY_VALUE, &key);
+    LONG result = ERROR_INVALID_PARAMETER;
     DWORD valueType = REG_NONE;
-    DWORD valueSize = static_cast<DWORD>(std::size(state->value));
-    if (result == ERROR_SUCCESS)
+    DWORD valueSize = 0;
+    HKEY key = nullptr;
+    switch (state->operation)
     {
-        result = RegQueryValueExW(key, state->valueName, nullptr,
-            &valueType, state->value, &valueSize);
-        RegCloseKey(key);
+    case RegistryOperation::Query:
+        result = RegOpenKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+            KEY_QUERY_VALUE, &key);
+        valueSize = static_cast<DWORD>(std::size(state->value));
+        if (result == ERROR_SUCCESS)
+        {
+            result = RegQueryValueExW(key, state->valueName, nullptr,
+                &valueType, state->value, &valueSize);
+            RegCloseKey(key);
+        }
+        break;
+    case RegistryOperation::DeleteValue:
+        result = RegOpenKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+            KEY_SET_VALUE, &key);
+        if (result == ERROR_SUCCESS)
+        {
+            result = RegDeleteValueW(key, state->valueName);
+            RegCloseKey(key);
+        }
+        break;
+    case RegistryOperation::SetValue:
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+            nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+        if (result == ERROR_SUCCESS)
+        {
+            result = RegSetValueExW(key, state->valueName, 0,
+                state->valueType, state->value, state->valueSize);
+            RegCloseKey(key);
+        }
+        break;
     }
-    state->queryResult = result;
+    state->operationResult = result;
     state->valueType = valueType;
     state->valueSize = valueSize;
     MemoryBarrier();

@@ -42,15 +42,22 @@ constexpr wchar_t kPackageFamilyName[] =
     SNOWDESKTOP_WIDEN(SNOWDESKTOP_PACKAGE_FAMILY_NAME);
 constexpr wchar_t kPackageApplicationId[] = L"SnowDesktop";
 constexpr wchar_t kPackagedStartupQueryArgumentPrefix[] =
-    L"--snowdesktop-query-packaged-startup=";
+    L"--snowdesktop-packaged-startup-operation=";
 constexpr wchar_t kPackagedStartupQueryMappingPrefix[] =
     L"Local\\SnowDesktop.PackagedStartupQuery.Mapping.";
 constexpr wchar_t kPackagedStartupQueryEventPrefix[] =
     L"Local\\SnowDesktop.PackagedStartupQuery.Event.";
 constexpr std::uint32_t kPackagedStartupQueryMagic = 0x53445051; // "SDPQ"
-constexpr std::uint32_t kPackagedStartupQueryVersion = 1;
+constexpr std::uint32_t kPackagedStartupQueryVersion = 2;
 constexpr LONG kPackagedStartupQueryPending = 0;
 constexpr LONG kPackagedStartupQueryCompleted = 1;
+
+enum class PackagedStartupOperation : std::uint32_t
+{
+    Query = 0,
+    Enable = 1,
+    Disable = 2,
+};
 
 struct SharedPackagedStartupQueryState
 {
@@ -58,6 +65,7 @@ struct SharedPackagedStartupQueryState
     std::uint32_t version = kPackagedStartupQueryVersion;
     std::uint32_t size = sizeof(SharedPackagedStartupQueryState);
     DWORD ownerProcessId = 0;
+    PackagedStartupOperation operation = PackagedStartupOperation::Query;
     LONG status = kPackagedStartupQueryPending;
     snowdesktop::deployment::PackagedAutoStartState state =
         snowdesktop::deployment::PackagedAutoStartState::Unavailable;
@@ -184,6 +192,34 @@ QueryCurrentUserValueDirect(
     return result;
 }
 
+std::uint32_t DeleteCurrentUserValueDirect(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    HKEY key = nullptr;
+    const LONG opened = RegOpenKeyExW(
+        HKEY_CURRENT_USER, subKey, 0, KEY_SET_VALUE, &key);
+    if (opened != ERROR_SUCCESS)
+        return static_cast<std::uint32_t>(opened);
+    const LONG deleted = RegDeleteValueW(key, valueName);
+    RegCloseKey(key);
+    return static_cast<std::uint32_t>(deleted);
+}
+
+std::uint32_t SetCurrentUserValueDirect(
+    const wchar_t* subKey, const wchar_t* valueName, std::uint32_t type,
+    const void* data, std::uint32_t size) noexcept
+{
+    HKEY key = nullptr;
+    const LONG created = RegCreateKeyExW(HKEY_CURRENT_USER, subKey, 0,
+        nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+    if (created != ERROR_SUCCESS)
+        return static_cast<std::uint32_t>(created);
+    const LONG written = RegSetValueExW(key, valueName, 0, type,
+        static_cast<const BYTE*>(data), size);
+    RegCloseKey(key);
+    return static_cast<std::uint32_t>(written);
+}
+
 std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
 {
     return std::wstring(
@@ -193,14 +229,20 @@ std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
 
 snowdesktop::deployment::UnvirtualizedRegistryValue
 QueryCurrentUserValueThroughExplorer(
-    const wchar_t* subKey, const wchar_t* valueName) noexcept
+    const wchar_t* subKey, const wchar_t* valueName,
+    snowdesktop::taskbar_hook::RegistryOperation operation =
+        snowdesktop::taskbar_hook::RegistryOperation::Query,
+    std::uint32_t valueType = REG_NONE, const void* valueData = nullptr,
+    std::uint32_t valueSize = 0) noexcept
 {
     using namespace snowdesktop::taskbar_hook;
     snowdesktop::deployment::UnvirtualizedRegistryValue result;
     result.win32Result = ERROR_INVALID_PARAMETER;
     if (!subKey || !valueName || !*subKey || !*valueName ||
         wcslen(subKey) >= kMaximumRegistrySubKeyLength ||
-        wcslen(valueName) >= kMaximumRegistryValueNameLength)
+        wcslen(valueName) >= kMaximumRegistryValueNameLength ||
+        valueSize > kMaximumRegistryValueBytes ||
+        (valueSize != 0 && !valueData))
     {
         return result;
     }
@@ -259,8 +301,16 @@ QueryCurrentUserValueThroughExplorer(
     }
     *state = SharedRegistryQueryState{};
     state->ownerProcessId = ownerProcessId;
+    state->operation = operation;
     wcscpy_s(state->subKey, subKey);
     wcscpy_s(state->valueName, valueName);
+    state->valueType = valueType;
+    state->valueSize = valueSize;
+    if (valueSize != 0)
+    {
+        std::copy_n(static_cast<const BYTE*>(valueData), valueSize,
+            state->value);
+    }
     MemoryBarrier();
 
     HHOOK hook = SetWindowsHookExW(WH_CALLWNDPROC, hookProcedure,
@@ -289,7 +339,7 @@ QueryCurrentUserValueThroughExplorer(
         else
         {
             result.win32Result =
-                static_cast<std::uint32_t>(state->queryResult);
+                static_cast<std::uint32_t>(state->operationResult);
             result.type = state->valueType;
             result.size = state->valueSize;
             const std::size_t copySize = std::min<std::size_t>(
@@ -409,7 +459,8 @@ bool IsStorePackageRegisteredForCurrentUser() noexcept
 }
 
 snowdesktop::deployment::PackagedAutoStartState
-QueryInstalledPackagedAutoStartStateThroughActivation() noexcept
+RunInstalledPackagedAutoStartOperationThroughActivation(
+    PackagedStartupOperation operation) noexcept
 {
     using snowdesktop::deployment::PackagedAutoStartState;
     const std::wstring token = CreatePackagedStartupQueryToken();
@@ -433,6 +484,7 @@ QueryInstalledPackagedAutoStartStateThroughActivation() noexcept
 
     *shared = SharedPackagedStartupQueryState{};
     shared->ownerProcessId = GetCurrentProcessId();
+    shared->operation = operation;
     winrt::handle completed{CreateEventW(
         nullptr, TRUE, FALSE, eventName.c_str())};
     if (!completed || GetLastError() == ERROR_ALREADY_EXISTS)
@@ -607,6 +659,33 @@ UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(
     return QueryCurrentUserValueThroughExplorer(subKey, valueName);
 }
 
+std::uint32_t DeleteUnvirtualizedCurrentUserValue(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    if (!subKey || !valueName)
+        return ERROR_INVALID_PARAMETER;
+    if (!IsPackaged())
+        return DeleteCurrentUserValueDirect(subKey, valueName);
+    return QueryCurrentUserValueThroughExplorer(subKey, valueName,
+        taskbar_hook::RegistryOperation::DeleteValue).win32Result;
+}
+
+std::uint32_t SetUnvirtualizedCurrentUserValue(
+    const wchar_t* subKey, const wchar_t* valueName, std::uint32_t type,
+    const void* data, std::uint32_t size) noexcept
+{
+    if (!subKey || !valueName || (size != 0 && !data))
+        return ERROR_INVALID_PARAMETER;
+    if (!IsPackaged())
+    {
+        return SetCurrentUserValueDirect(
+            subKey, valueName, type, data, size);
+    }
+    return QueryCurrentUserValueThroughExplorer(subKey, valueName,
+        taskbar_hook::RegistryOperation::SetValue,
+        type, data, size).win32Result;
+}
+
 std::wstring GetStoreProductPageUri()
 {
     if (kStoreId[0] == L'\0')
@@ -630,9 +709,15 @@ PackagedAutoStartState GetInstalledPackagedAutoStartState() noexcept
 {
     if (IsPackaged())
         return GetPackagedAutoStartState();
-    if (!IsStorePackageRegisteredForCurrentUser())
+    if (!IsInstalledPackageRegisteredForCurrentUser())
         return PackagedAutoStartState::Unavailable;
-    return QueryInstalledPackagedAutoStartStateThroughActivation();
+    return RunInstalledPackagedAutoStartOperationThroughActivation(
+        PackagedStartupOperation::Query);
+}
+
+bool IsInstalledPackageRegisteredForCurrentUser() noexcept
+{
+    return IsStorePackageRegisteredForCurrentUser();
 }
 
 bool TryHandlePackagedAutoStartQueryCommand() noexcept
@@ -667,7 +752,21 @@ bool TryHandlePackagedAutoStartQueryCommand() noexcept
         shared->status == kPackagedStartupQueryPending &&
         token->starts_with(ownerPrefix))
     {
-        shared->state = GetPackagedAutoStartState();
+        switch (shared->operation)
+        {
+        case PackagedStartupOperation::Query:
+            shared->state = GetPackagedAutoStartState();
+            break;
+        case PackagedStartupOperation::Enable:
+            shared->state = SetPackagedAutoStartEnabled(true);
+            break;
+        case PackagedStartupOperation::Disable:
+            shared->state = SetPackagedAutoStartEnabled(false);
+            break;
+        default:
+            shared->state = PackagedAutoStartState::Unavailable;
+            break;
+        }
         MemoryBarrier();
         InterlockedExchange(
             &shared->status, kPackagedStartupQueryCompleted);
@@ -699,6 +798,18 @@ PackagedAutoStartState SetPackagedAutoStartEnabled(bool enable) noexcept
         const auto refreshedTask = GetStartupTaskOnCurrentApartment();
         return refreshedTask.State();
     });
+}
+
+PackagedAutoStartState SetInstalledPackagedAutoStartEnabled(
+    bool enable) noexcept
+{
+    if (IsPackaged())
+        return SetPackagedAutoStartEnabled(enable);
+    if (!IsInstalledPackageRegisteredForCurrentUser())
+        return PackagedAutoStartState::Unavailable;
+    return RunInstalledPackagedAutoStartOperationThroughActivation(
+        enable ? PackagedStartupOperation::Enable
+               : PackagedStartupOperation::Disable);
 }
 
 bool IsPackagedAutoStartStateEnabled(
