@@ -27,7 +27,11 @@ int main()
 {
     using snowdesktop::dock_settings_rules::
         DisableSummonOnlyWhenPrerequisiteDisabled;
-    using snowdesktop::dock_settings_rules::NormalizeSummonOnlyDependencies;
+    using snowdesktop::dock_settings_rules::
+        IsDesktopContentOverlapEnabled;
+    using snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled;
+    using snowdesktop::dock_settings_rules::
+        MigrateSummonOnlyLinkedPreferencesToBase;
     using snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::IsFloatingDockShortcutOnlyCommit;
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
@@ -55,30 +59,63 @@ int main()
     Check(!dock.allowDesktopContentOverlap &&
             !dock.showOnlyWhenSummoned,
         "desktop overlap and summon-only Dock display are opt-in by default");
-    DockSettings normalizedSummonOnly = dock;
-    normalizedSummonOnly.floatingEdgeSwipeEnabled = false;
-    normalizedSummonOnly.showOnlyWhenSummoned = true;
-    NormalizeDockSettings(normalizedSummonOnly);
-    Check(normalizedSummonOnly.showOnlyWhenSummoned &&
-            normalizedSummonOnly.allowDesktopContentOverlap &&
-            normalizedSummonOnly.floatingEdgeSwipeEnabled,
-        "normalization makes both reveal prerequisites follow summon-only Dock display");
-
     bool showOnlyWhenSummoned = false;
     bool allowDesktopContentOverlap = false;
     bool floatingEdgeSwipeEnabled = false;
-    showOnlyWhenSummoned = true;
-    NormalizeSummonOnlyDependencies(showOnlyWhenSummoned,
+    bool restoresEveryLinkedPreferenceCombination = true;
+    for (int combination = 0; combination < 4; ++combination)
+    {
+        const bool originalOverlap = (combination & 1) != 0;
+        const bool originalEdgeSwipe = (combination & 2) != 0;
+        DockSettings summonOnly = dock;
+        summonOnly.allowDesktopContentOverlap = originalOverlap;
+        summonOnly.floatingEdgeSwipeEnabled = originalEdgeSwipe;
+        summonOnly.showOnlyWhenSummoned = true;
+        NormalizeDockSettings(summonOnly);
+        restoresEveryLinkedPreferenceCombination =
+            restoresEveryLinkedPreferenceCombination &&
+            summonOnly.allowDesktopContentOverlap == originalOverlap &&
+            summonOnly.floatingEdgeSwipeEnabled == originalEdgeSwipe &&
+            IsDesktopContentOverlapEnabled(
+                summonOnly.showOnlyWhenSummoned,
+                summonOnly.allowDesktopContentOverlap) &&
+            IsFloatingEdgeSwipeEnabled(
+                summonOnly.showOnlyWhenSummoned,
+                summonOnly.floatingEdgeSwipeEnabled);
+        summonOnly.showOnlyWhenSummoned = false;
+        restoresEveryLinkedPreferenceCombination =
+            restoresEveryLinkedPreferenceCombination &&
+            IsDesktopContentOverlapEnabled(
+                summonOnly.showOnlyWhenSummoned,
+                summonOnly.allowDesktopContentOverlap) == originalOverlap &&
+            IsFloatingEdgeSwipeEnabled(
+                summonOnly.showOnlyWhenSummoned,
+                summonOnly.floatingEdgeSwipeEnabled) == originalEdgeSwipe;
+    }
+    Check(restoresEveryLinkedPreferenceCombination,
+        "summon-only display temporarily enables both linked settings and restores every original combination");
+
+    allowDesktopContentOverlap = true;
+    floatingEdgeSwipeEnabled = true;
+    MigrateSummonOnlyLinkedPreferencesToBase(true, false,
         allowDesktopContentOverlap, floatingEdgeSwipeEnabled);
-    Check(showOnlyWhenSummoned && allowDesktopContentOverlap &&
-            floatingEdgeSwipeEnabled,
-        "summon-only Dock display enables overlap and edge-swipe reveal");
-    showOnlyWhenSummoned = false;
-    NormalizeSummonOnlyDependencies(showOnlyWhenSummoned,
+    Check(!allowDesktopContentOverlap && floatingEdgeSwipeEnabled,
+        "legacy active summon-only settings migrate to the default linked preferences");
+    allowDesktopContentOverlap = true;
+    floatingEdgeSwipeEnabled = false;
+    MigrateSummonOnlyLinkedPreferencesToBase(true, true,
         allowDesktopContentOverlap, floatingEdgeSwipeEnabled);
-    Check(!showOnlyWhenSummoned && allowDesktopContentOverlap &&
-            floatingEdgeSwipeEnabled,
-        "disabling summon-only display preserves its useful prerequisites");
+    Check(allowDesktopContentOverlap && !floatingEdgeSwipeEnabled,
+        "known base preferences survive loading while summon-only display is active");
+    MigrateSummonOnlyLinkedPreferencesToBase(true, false,
+        allowDesktopContentOverlap, floatingEdgeSwipeEnabled);
+    Check(allowDesktopContentOverlap && !floatingEdgeSwipeEnabled,
+        "an explicit unmarked linked preference combination is not mistaken for forced legacy values");
+    MigrateSummonOnlyLinkedPreferencesToBase(false, false,
+        allowDesktopContentOverlap, floatingEdgeSwipeEnabled);
+    Check(allowDesktopContentOverlap && !floatingEdgeSwipeEnabled,
+        "inactive legacy settings remain unchanged because their values are not forced");
+
     allowDesktopContentOverlap = true;
     DisableSummonOnlyWhenPrerequisiteDisabled(
         allowDesktopContentOverlap, showOnlyWhenSummoned);

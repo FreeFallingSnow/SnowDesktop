@@ -1198,7 +1198,7 @@
   "settings.dock.allowDesktopContentOverlap": "Dock darf Desktopinhalte überlagern",
   "settings.dock.allowDesktopContentOverlap.description": "Keinen Platz im Desktoplayout mehr für das Dock reservieren. Dadurch können Inhalte am Bildschirmrand verdeckt werden.",
   "settings.dock.showOnlyWhenSummoned": "Dock nur nach Aufruf anzeigen",
-  "settings.dock.showOnlyWhenSummoned.description": "Das Dock bleibt ausgeblendet, bis es aufgerufen wird. Wischen Sie entlang seines Bildschirmrands, um das schwebende Dock zu öffnen; ein Klick außerhalb schließt es und blendet es wieder aus. Beim Ziehen eines Elements an diesen Rand wird es vorübergehend angezeigt. Beim Aktivieren werden auch die Desktopüberlagerung und die Bildschirmrand-Wischgeste aktiviert.",
+  "settings.dock.showOnlyWhenSummoned.description": "Wischen Sie am zugehörigen Bildschirmrand entlang oder ziehen Sie ein Element dorthin, um das Dock anzuzeigen.",
   "settings.dock.frequentItems": "Häufig verwendete Elemente",
   "settings.dock.frequentItems.description": "Häufig verwendete Apps anzeigen und ihre maximale Anzahl festlegen.",
   "settings.taskbar.autoHide": "Taskleiste automatisch ausblenden",

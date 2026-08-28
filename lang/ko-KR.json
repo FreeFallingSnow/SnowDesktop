@@ -1198,7 +1198,7 @@
   "settings.dock.allowDesktopContentOverlap": "Dock이 바탕 화면 콘텐츠와 겹치도록 허용",
   "settings.dock.allowDesktopContentOverlap.description": "Dock을 위한 바탕 화면 레이아웃 공간을 예약하지 않아 화면 가장자리의 콘텐츠를 가릴 수 있습니다.",
   "settings.dock.showOnlyWhenSummoned": "호출할 때만 Dock 표시",
-  "settings.dock.showOnlyWhenSummoned.description": "Dock은 호출할 때까지 숨겨집니다. 화면 가장자리를 따라 스와이프하면 플로팅 Dock이 열리고, 바깥쪽을 클릭해 닫으면 다시 숨겨집니다. 항목을 해당 가장자리로 드래그하면 일시적으로 표시됩니다. 이 옵션을 켜면 바탕 화면 콘텐츠 가리기와 화면 가장자리 스와이프도 함께 켜집니다.",
+  "settings.dock.showOnlyWhenSummoned.description": "Dock이 있는 화면 가장자리를 스와이프하거나 항목을 그 가장자리로 드래그하면 Dock이 표시됩니다.",
   "settings.dock.frequentItems": "자주 사용하는 항목",
   "settings.dock.frequentItems.description": "자주 사용하는 앱을 표시하고 최대 개수를 설정합니다.",
   "settings.taskbar.autoHide": "작업 표시줄 자동 숨기기",

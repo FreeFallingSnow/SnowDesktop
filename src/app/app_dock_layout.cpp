@@ -140,6 +140,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     const bool reserveDesktopWorkArea =
         snowdesktop::dock_settings_rules::
             ShouldReserveDesktopWorkArea(
+                dockSettings_.showOnlyWhenSummoned,
                 dockSettings_.allowDesktopContentOverlap);
 
     std::vector<size_t> targetPages = BuildMonitorRenderOrder();

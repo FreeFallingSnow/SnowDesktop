@@ -1198,7 +1198,7 @@
   "settings.dock.allowDesktopContentOverlap": "Permitir que el Dock se superponga al contenido del escritorio",
   "settings.dock.allowDesktopContentOverlap.description": "Deja de reservar espacio del escritorio para el Dock, por lo que puede cubrir contenido cerca del borde de la pantalla.",
   "settings.dock.showOnlyWhenSummoned": "Mostrar el Dock solo cuando se invoque",
-  "settings.dock.showOnlyWhenSummoned.description": "El Dock permanece oculto hasta que se invoque. Desliza a lo largo del borde de la pantalla para abrir el Dock flotante; al hacer clic fuera, se cierra y vuelve a ocultarse. Arrastrar un elemento a ese borde lo muestra temporalmente. Al activar esta opción también se activan la superposición del escritorio y el gesto de deslizamiento en el borde.",
+  "settings.dock.showOnlyWhenSummoned.description": "Desliza por el borde de la pantalla donde está el Dock o arrastra un elemento hasta ese borde para mostrarlo.",
   "settings.dock.frequentItems": "Elementos frecuentes",
   "settings.dock.frequentItems.description": "Muestra las aplicaciones usadas con frecuencia y define su cantidad máxima.",
   "settings.taskbar.autoHide": "Ocultar automáticamente la barra de tareas",

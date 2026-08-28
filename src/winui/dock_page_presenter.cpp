@@ -1034,11 +1034,6 @@ struct DockPagePresenter::Impl
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.showOnlyWhenSummoned = value;
-                        snowdesktop::dock_settings_rules::
-                            NormalizeSummonOnlyDependencies(
-                                settings.showOnlyWhenSummoned,
-                                settings.allowDesktopContentOverlap,
-                                settings.floatingEdgeSwipeEnabled);
                     });
             });
         taskbarAutoHideToken = taskbarAutoHideToggle.Toggled(
@@ -1553,12 +1548,19 @@ struct DockPagePresenter::Impl
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
-        floatingEdgeSwipeToggle.IsOn(settings.floatingEdgeSwipeEnabled);
+        floatingEdgeSwipeToggle.IsOn(
+            snowdesktop::dock_settings_rules::
+                IsFloatingEdgeSwipeEnabled(
+                    settings.showOnlyWhenSummoned,
+                    settings.floatingEdgeSwipeEnabled));
         showWindowsButtonToggle.IsOn(settings.showWindowsButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
         allowDesktopContentOverlapToggle.IsOn(
-            settings.allowDesktopContentOverlap);
+            snowdesktop::dock_settings_rules::
+                IsDesktopContentOverlapEnabled(
+                    settings.showOnlyWhenSummoned,
+                    settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
         PatchSystemTaskbarControls(settings);
         windowsSystemThemeValue =
@@ -2150,12 +2152,8 @@ struct DockPagePresenter::Impl
             L("settings.dock.showOnlyWhenSummoned",
                 L"Show Dock only when summoned"),
             L("settings.dock.showOnlyWhenSummoned.description",
-                L"Keep the Dock hidden until summoned. Swipe along its "
-                  "screen edge to show it as a floating Dock. It hides "
-                  "again after you click outside to dismiss it, while "
-                  "moving a dragged item to that edge reveals it "
-                  "temporarily. Enabling this also allows desktop content "
-                  "overlap and edge-swipe reveal."));
+                L"Show the Dock by swiping along its screen edge or "
+                  "dragging an item to that edge."));
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showFrequentItemsRow.SetText(L(

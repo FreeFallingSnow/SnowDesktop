@@ -987,13 +987,27 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.keepWhenDesktopHidden);
     ReadBoolField(text, "allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
+    bool loadedLegacyAutoHide = false;
     if (!ReadBoolField(text, "showOnlyWhenSummoned",
             settings.showOnlyWhenSummoned))
     {
         // Compatibility with development builds that briefly described this
         // summon-only behavior as automatic hiding.
-        ReadBoolField(text, "autoHide", settings.showOnlyWhenSummoned);
+        loadedLegacyAutoHide = ReadBoolField(
+            text, "autoHide", settings.showOnlyWhenSummoned);
     }
+    bool summonOnlyLinkedPreferencesAreBase = false;
+    ReadBoolField(text, "summonOnlyLinkedPreferencesAreBase",
+        summonOnlyLinkedPreferencesAreBase);
+    // Earlier development builds persisted both linked settings as true after
+    // forcing them on. Migrate only that signature; preserve any explicit
+    // non-default combination from legacy or externally edited files.
+    snowdesktop::dock_settings_rules::
+        MigrateSummonOnlyLinkedPreferencesToBase(
+            settings.showOnlyWhenSummoned,
+            summonOnlyLinkedPreferencesAreBase || loadedLegacyAutoHide,
+            settings.allowDesktopContentOverlap,
+            settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
@@ -1045,12 +1059,6 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
-    bool floatingEdgeSwipeEnabled = settings.floatingEdgeSwipeEnabled;
-    bool allowDesktopContentOverlap = settings.allowDesktopContentOverlap;
-    snowdesktop::dock_settings_rules::NormalizeSummonOnlyDependencies(
-        settings.showOnlyWhenSummoned,
-        allowDesktopContentOverlap,
-        floatingEdgeSwipeEnabled);
     const PersonalizationSettings& taskbarStyle = settings.systemTaskbarAppearance;
     file << "{\n";
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
@@ -1063,7 +1071,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"floatingHotkeyVirtualKey\": "
          << settings.floatingHotkeyVirtualKey << ",\n";
     file << "  \"floatingEdgeSwipeEnabled\": "
-         << (floatingEdgeSwipeEnabled ? "true" : "false")
+         << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
@@ -1078,10 +1086,11 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"keepWhenDesktopHidden\": "
          << (settings.keepWhenDesktopHidden ? "true" : "false") << ",\n";
     file << "  \"allowDesktopContentOverlap\": "
-         << (allowDesktopContentOverlap ? "true" : "false")
+         << (settings.allowDesktopContentOverlap ? "true" : "false")
          << ",\n";
     file << "  \"showOnlyWhenSummoned\": "
          << (settings.showOnlyWhenSummoned ? "true" : "false") << ",\n";
+    file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "

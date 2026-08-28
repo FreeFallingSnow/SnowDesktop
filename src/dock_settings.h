@@ -115,10 +115,6 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);
-    snowdesktop::dock_settings_rules::NormalizeSummonOnlyDependencies(
-        settings.showOnlyWhenSummoned,
-        settings.allowDesktopContentOverlap,
-        settings.floatingEdgeSwipeEnabled);
 }
 
 std::wstring GetDockSettingsPath();

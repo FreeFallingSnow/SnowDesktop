@@ -38,11 +38,14 @@ void TestPresenterContract(const std::filesystem::path& repository)
         repository / "src/winui/settings_presenter_controls.h");
     const std::string settingsHeader = ReadText(
         repository / "src/dock_settings.h");
+    const std::string settingsRulesHeader = ReadText(
+        repository / "src/dock_settings_rules.h");
     const std::string settingsSource = ReadText(
         repository / "src/dock_settings.cpp");
 
     Check(!header.empty() && !source.empty() && !controls.empty() &&
-            !settingsHeader.empty() && !settingsSource.empty(),
+            !settingsHeader.empty() && !settingsRulesHeader.empty() &&
+            !settingsSource.empty(),
         "Dock presenter, shared controls, and settings sources are readable");
     Check(header.find("std::uint64_t generation") != std::string::npos &&
             header.find("SettingsUpdateMode mode") != std::string::npos &&
@@ -92,7 +95,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
               "if (!ReadBoolField(text, \"showOnlyWhenSummoned\"") !=
                 std::string::npos &&
             settingsSource.find(
-              "ReadBoolField(text, \"autoHide\", settings.showOnlyWhenSummoned)") !=
+              "text, \"autoHide\", settings.showOnlyWhenSummoned)") !=
                 std::string::npos &&
             settingsSource.find(
               "file << \"  \\\"allowDesktopContentOverlap\\\": \"") !=
@@ -105,16 +108,31 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos,
         "summon-only Dock display uses the new model and JSON key while accepting the legacy read key only");
     Check(settingsHeader.find(
-              "NormalizeSummonOnlyDependencies(") != std::string::npos &&
+              "NormalizeSummonOnlyDependencies(") == std::string::npos &&
             settingsSource.find(
-              "NormalizeSummonOnlyDependencies(") != std::string::npos &&
+              "NormalizeSummonOnlyDependencies(") == std::string::npos &&
             settingsSource.find(
-              "(floatingEdgeSwipeEnabled ? \"true\" : \"false\")") !=
+              "(settings.floatingEdgeSwipeEnabled ? \"true\" : \"false\")") !=
                 std::string::npos &&
             settingsSource.find(
-              "(allowDesktopContentOverlap ? \"true\" : \"false\")") !=
+              "(settings.allowDesktopContentOverlap ? \"true\" : \"false\")") !=
+                std::string::npos &&
+            settingsSource.find(
+              "ReadBoolField(text, \"summonOnlyLinkedPreferencesAreBase\"") !=
+                std::string::npos &&
+            settingsSource.find(
+              "MigrateSummonOnlyLinkedPreferencesToBase(") !=
+                std::string::npos &&
+            settingsSource.find(
+              "summonOnlyLinkedPreferencesAreBase || loadedLegacyAutoHide") !=
+                std::string::npos &&
+            settingsRulesHeader.find(
+              "MigrateSummonOnlyLinkedPreferencesToBase(") !=
+                std::string::npos &&
+            settingsSource.find(
+              "\\\"summonOnlyLinkedPreferencesAreBase\\\": true") !=
                 std::string::npos,
-        "summon-only Dock dependencies are normalized after loading and before persistence");
+        "summon-only Dock display persists linked base preferences and migrates configurations that stored forced values");
     for (const char* control : {
              "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
              "muxc::NumberBox", "muxc::Button", "muxc::Expander",
@@ -413,22 +431,27 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find(
               "DisableSummonOnlyWhenPrerequisiteDisabled(") !=
                 std::string::npos &&
-            source.find("NormalizeSummonOnlyDependencies(") !=
+            source.find("NormalizeSummonOnlyDependencies(") ==
+                std::string::npos &&
+            source.find(
+              "floatingEdgeSwipeToggle.IsOn(\n"
+              "            snowdesktop::dock_settings_rules::\n"
+              "                IsFloatingEdgeSwipeEnabled(\n"
+              "                    settings.showOnlyWhenSummoned,\n"
+              "                    settings.floatingEdgeSwipeEnabled))") !=
+                std::string::npos &&
+            source.find(
+              "allowDesktopContentOverlapToggle.IsOn(\n"
+              "            snowdesktop::dock_settings_rules::\n"
+              "                IsDesktopContentOverlapEnabled(\n"
+              "                    settings.showOnlyWhenSummoned,\n"
+              "                    settings.allowDesktopContentOverlap))") !=
                 std::string::npos &&
             source.find("Show Dock only when summoned") !=
                 std::string::npos &&
-            source.find("Keep the Dock hidden until summoned.") !=
+            source.find("Show the Dock by swiping along its screen edge") !=
                 std::string::npos &&
-            source.find("screen edge to show it as a floating Dock.") !=
-                std::string::npos &&
-            source.find(
-              "again after you click outside to dismiss it, while") !=
-                std::string::npos &&
-            source.find(
-              "moving a dragged item to that edge reveals it") !=
-                std::string::npos &&
-            source.find(
-              "temporarily. Enabling this also allows desktop content") !=
+            source.find("dragging an item to that edge.") !=
                 std::string::npos &&
             source.find(
               "id == \"dock.allowDesktopContentOverlap\"") !=
@@ -439,7 +462,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("settings.dock.autoHide") ==
                 std::string::npos,
-        "summon-only Dock display is adjacent to overlap, binds both prerequisites, describes summon and dismissal accurately, and keeps the legacy focus alias only");
+        "summon-only Dock display is adjacent to overlap, temporarily enables both linked settings, uses concise summon copy, and keeps the legacy focus alias only");
     Check(source.find("taskbarHookRequired = settings.systemTaskbarBackdropEnabled") !=
                 std::string::npos &&
             source.find("if (taskbarHookRequired)") !=

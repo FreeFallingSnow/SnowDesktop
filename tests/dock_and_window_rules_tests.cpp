@@ -670,10 +670,12 @@ int main(int argc, char** argv)
     Check(showWindowPreviews,
         "Dock window previews must remain enabled after settings normalization");
     Check(snowdesktop::dock_settings_rules::
-              ShouldReserveDesktopWorkArea(false) &&
+              ShouldReserveDesktopWorkArea(false, false) &&
             !snowdesktop::dock_settings_rules::
-              ShouldReserveDesktopWorkArea(true),
-        "desktop work-area reservation must depend only on whether Dock overlap is allowed");
+              ShouldReserveDesktopWorkArea(false, true) &&
+            !snowdesktop::dock_settings_rules::
+              ShouldReserveDesktopWorkArea(true, false),
+        "desktop work-area reservation must use effective overlap while summon-only display is active");
 
     namespace itemVisual = snowdesktop;
     namespace gridSpacing = snowdesktop::grid_spacing_rules;
@@ -3951,6 +3953,7 @@ int main(int argc, char** argv)
         Check(!dockReservationSource.empty() &&
                 dockReservationSource.find(
                   "ShouldReserveDesktopWorkArea(\n"
+                  "                dockSettings_.showOnlyWhenSummoned,\n"
                   "                dockSettings_.allowDesktopContentOverlap)") !=
                     std::string::npos &&
                 preserveDockArea != std::string::npos &&
@@ -3958,16 +3961,13 @@ int main(int argc, char** argv)
                 restorePageWorkArea != std::string::npos &&
                 preserveDockArea < overlapRestore &&
                 overlapRestore < restorePageWorkArea &&
-                dockReservationSource.find(
-                  "showOnlyWhenSummoned") ==
-                    std::string::npos &&
                 desktopLayoutSource.find(
                   "for (const RECT& dockArea : dockAreas_)") !=
                     std::string::npos &&
                 desktopLayoutSource.find(
                   "std::make_unique<DockContainer>(this, &dockEntries_, dockArea)") !=
                     std::string::npos,
-            "overlap must preserve Dock geometry and container creation while restoring only the desktop work area, independently of summon-only visibility");
+            "effective overlap must preserve Dock geometry and container creation while restoring only the desktop work area");
         Check(CountOccurrences(
                   dragHintWindowSource,
                   "SetWindowPos(hintHwnd_, HWND_TOPMOST") == 2 &&
@@ -4801,6 +4801,11 @@ int main(int argc, char** argv)
                 flushRevealFrame < revealPairVisibility,
             "passive drag reveal must be per-Host, focusless, pre-rendered and retained only by an active drag corridor or associated Dock surface");
         Check(passiveDragSamplerCall != std::string::npos &&
+                dockPointerSamplerSource.find(
+                  "IsFloatingEdgeSwipeEnabled(\n"
+                  "                dockSettings_.showOnlyWhenSummoned,\n"
+                  "                dockSettings_.floatingEdgeSwipeEnabled)") !=
+                    std::string::npos &&
                 legacyDragButtonGuard != std::string::npos &&
                 edgeSwipeDetectorUpdate != std::string::npos &&
                 edgeSwipeTriggerBranch != std::string::npos &&

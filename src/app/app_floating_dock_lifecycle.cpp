@@ -53,7 +53,10 @@ void DesktopApp::ApplyFloatingDockHotkey()
             !snowdesktop::floating_dock_rules::
                 HasAnySummonTrigger(
                     dockSettings_.floatingShortcutMode,
-                    dockSettings_.floatingEdgeSwipeEnabled)))
+                    snowdesktop::dock_settings_rules::
+                        IsFloatingEdgeSwipeEnabled(
+                            dockSettings_.showOnlyWhenSummoned,
+                            dockSettings_.floatingEdgeSwipeEnabled))))
     {
         CloseAllFloatingDocks();
         return;
@@ -441,7 +444,10 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
 
     if (!generalSettings_.dockEnabled ||
-        !dockSettings_.floatingEdgeSwipeEnabled ||
+        !snowdesktop::dock_settings_rules::
+            IsFloatingEdgeSwipeEnabled(
+                dockSettings_.showOnlyWhenSummoned,
+                dockSettings_.floatingEdgeSwipeEnabled) ||
         dragSession_.IsActive() ||
         dragDropController_.IsTransportActive() ||
         buttonsDown != 0)

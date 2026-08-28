@@ -59,6 +59,7 @@ public:
     int categorySaveCount = 0;
     int failingLoadCount = 0;
     GeneralSettings lastSavedGeneral;
+    DockSettings lastSavedDock;
 
     SettingsActionResult Load(SettingsValues& values) override
     {
@@ -79,9 +80,10 @@ public:
         return SaveResult(SettingsDomain::Personalization);
     }
 
-    SettingsActionResult SaveDock(const DockSettings&) override
+    SettingsActionResult SaveDock(const DockSettings& settings) override
     {
         ++dockSaveCount;
+        lastSavedDock = settings;
         return SaveResult(SettingsDomain::Dock);
     }
 
@@ -546,6 +548,60 @@ void TestReloadAndExternalSynchronization()
         "clean domains accept application-side synchronization without writes");
 }
 
+void TestSummonOnlyLinkedPreferencesRemainBaseValues()
+{
+    bool allCombinationsPreserved = true;
+    for (int combination = 0; combination < 4; ++combination)
+    {
+        const bool originalOverlap = (combination & 1) != 0;
+        const bool originalEdgeSwipe = (combination & 2) != 0;
+        auto store = std::make_shared<FakeStore>();
+        store->loaded.dock.allowDesktopContentOverlap = originalOverlap;
+        store->loaded.dock.floatingEdgeSwipeEnabled = originalEdgeSwipe;
+        SettingsController controller(store);
+        const bool initialized = controller.Initialize().Succeeded();
+        allCombinationsPreserved = allCombinationsPreserved && initialized;
+        if (!initialized)
+            continue;
+
+        DockSettings enabled = controller.Snapshot()->values.dock;
+        enabled.showOnlyWhenSummoned = true;
+        controller.UpdateDock(enabled, SettingsUpdateMode::Commit);
+        const bool enabledSaved = controller.FlushPending().Succeeded();
+        allCombinationsPreserved = allCombinationsPreserved &&
+            enabledSaved &&
+            store->dockSaveCount == 1 &&
+            store->lastSavedDock.showOnlyWhenSummoned &&
+            store->lastSavedDock.allowDesktopContentOverlap ==
+                originalOverlap &&
+            store->lastSavedDock.floatingEdgeSwipeEnabled ==
+                originalEdgeSwipe &&
+            snowdesktop::dock_settings_rules::
+                IsDesktopContentOverlapEnabled(
+                    store->lastSavedDock.showOnlyWhenSummoned,
+                    store->lastSavedDock.allowDesktopContentOverlap) &&
+            snowdesktop::dock_settings_rules::
+                IsFloatingEdgeSwipeEnabled(
+                    store->lastSavedDock.showOnlyWhenSummoned,
+                    store->lastSavedDock.floatingEdgeSwipeEnabled);
+
+        DockSettings disabled = controller.Snapshot()->values.dock;
+        disabled.showOnlyWhenSummoned = false;
+        controller.UpdateDock(disabled, SettingsUpdateMode::Commit);
+        const bool disabledSaved = controller.FlushPending().Succeeded();
+        allCombinationsPreserved = allCombinationsPreserved &&
+            disabledSaved &&
+            store->dockSaveCount == 2 &&
+            !store->lastSavedDock.showOnlyWhenSummoned &&
+            store->lastSavedDock.allowDesktopContentOverlap ==
+                originalOverlap &&
+            store->lastSavedDock.floatingEdgeSwipeEnabled ==
+                originalEdgeSwipe;
+    }
+    Check(allCombinationsPreserved,
+        "summon-only display preserves every linked preference combination through snapshots and saves");
+}
+
 void TestSystemTaskbarFieldSynchronization()
 {
     auto store = std::make_shared<FakeStore>();
@@ -926,6 +982,7 @@ int main()
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();
     TestReloadAndExternalSynchronization();
+    TestSummonOnlyLinkedPreferencesRemainBaseValues();
     TestSystemTaskbarFieldSynchronization();
     TestLoadFailureAndOpenRetry();
     TestHostFailureRetryAndCloseGuard();

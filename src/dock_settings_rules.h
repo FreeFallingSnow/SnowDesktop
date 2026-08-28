@@ -11,14 +11,32 @@ inline void NormalizeAlwaysEnabledFeatures(
     showWindowPreviews = true;
 }
 
-inline void NormalizeSummonOnlyDependencies(
+// Summon-only display temporarily requires both linked features. Resolve the
+// effective state at use sites so the persisted user preferences stay intact.
+inline bool IsDesktopContentOverlapEnabled(
     bool showOnlyWhenSummoned,
+    bool allowDesktopContentOverlap) noexcept
+{
+    return showOnlyWhenSummoned || allowDesktopContentOverlap;
+}
+
+inline bool IsFloatingEdgeSwipeEnabled(
+    bool showOnlyWhenSummoned,
+    bool floatingEdgeSwipeEnabled) noexcept
+{
+    return showOnlyWhenSummoned || floatingEdgeSwipeEnabled;
+}
+
+inline void MigrateSummonOnlyLinkedPreferencesToBase(
+    bool showOnlyWhenSummoned,
+    bool linkedPreferencesAreBase,
     bool& allowDesktopContentOverlap,
     bool& floatingEdgeSwipeEnabled) noexcept
 {
-    if (!showOnlyWhenSummoned)
+    if (!showOnlyWhenSummoned || linkedPreferencesAreBase ||
+        !allowDesktopContentOverlap || !floatingEdgeSwipeEnabled)
         return;
-    allowDesktopContentOverlap = true;
+    allowDesktopContentOverlap = false;
     floatingEdgeSwipeEnabled = true;
 }
 
@@ -31,9 +49,12 @@ inline void DisableSummonOnlyWhenPrerequisiteDisabled(
 }
 
 inline bool ShouldReserveDesktopWorkArea(
+    bool showOnlyWhenSummoned,
     bool allowDesktopContentOverlap) noexcept
 {
-    return !allowDesktopContentOverlap;
+    return !IsDesktopContentOverlapEnabled(
+        showOnlyWhenSummoned,
+        allowDesktopContentOverlap);
 }
 
 } // namespace snowdesktop::dock_settings_rules

@@ -1198,7 +1198,7 @@
   "settings.dock.allowDesktopContentOverlap": "Autoriser le Dock à recouvrir le contenu du bureau",
   "settings.dock.allowDesktopContentOverlap.description": "Ne plus réserver d’espace dans la disposition du bureau au Dock, qui pourra alors recouvrir le contenu près du bord de l’écran.",
   "settings.dock.showOnlyWhenSummoned": "Afficher le Dock uniquement à l’invocation",
-  "settings.dock.showOnlyWhenSummoned.description": "Le Dock reste masqué jusqu’à son invocation. Balayez le long du bord de l’écran pour ouvrir le Dock flottant ; un clic à l’extérieur le ferme et le masque de nouveau. Faire glisser un élément jusqu’à ce bord l’affiche temporairement. L’activation autorise aussi le Dock à recouvrir le bureau et active le balayage depuis le bord.",
+  "settings.dock.showOnlyWhenSummoned.description": "Affichez le Dock en balayant le long du bord d’écran où il se trouve ou en faisant glisser un élément vers ce bord.",
   "settings.dock.frequentItems": "Éléments fréquents",
   "settings.dock.frequentItems.description": "Affichez les applications fréquentes et définissez leur nombre maximal.",
   "settings.taskbar.autoHide": "Masquer automatiquement la barre des tâches",
