@@ -882,6 +882,55 @@ int main(int argc, char** argv)
             denseIconRect.bottom - denseIconRect.top ==
                 denseTwoByTwo.iconSize,
         "dense items, highlights, placeholders, and tooltip anchors must share one centered icon edge length");
+    const auto denseVisualGapSpread = [](
+        const titleless::DenseLayout& dense, bool horizontal) {
+        const int count = horizontal
+            ? dense.columns : dense.rows;
+        std::vector<RECT> icons;
+        icons.reserve(static_cast<size_t>(count));
+        for (int i = 0; i < count; ++i)
+        {
+            const size_t index = horizontal
+                ? static_cast<size_t>(i)
+                : static_cast<size_t>(i * dense.columns);
+            icons.push_back(itemVisual::ResolveCenteredIconRect(
+                localLayout::ItemRect(dense.geometry, index),
+                dense.iconSize));
+        }
+        std::vector<int> gaps;
+        gaps.reserve(static_cast<size_t>(count + 1));
+        gaps.push_back(horizontal
+            ? icons.front().left - dense.geometry.viewport.left
+            : icons.front().top - dense.geometry.viewport.top);
+        for (int i = 1; i < count; ++i)
+        {
+            gaps.push_back(horizontal
+                ? icons[static_cast<size_t>(i)].left -
+                    icons[static_cast<size_t>(i - 1)].right
+                : icons[static_cast<size_t>(i)].top -
+                    icons[static_cast<size_t>(i - 1)].bottom);
+        }
+        gaps.push_back(horizontal
+            ? dense.geometry.viewport.right - icons.back().right
+            : dense.geometry.viewport.bottom - icons.back().bottom);
+        const auto [minimum, maximum] =
+            std::minmax_element(gaps.begin(), gaps.end());
+        return *maximum - *minimum;
+    };
+    Check(denseVisualGapSpread(denseTwoByTwo, true) <= 2 &&
+            denseVisualGapSpread(denseTwoByTwo, false) <= 2 &&
+            denseVisualGapSpread(denseLandscape, true) <= 2 &&
+            denseVisualGapSpread(densePortrait, false) <= 2,
+        "dense compact grids must balance frame-edge clearance with the visual gaps between icons on both axes");
+    Check(!titleless::IsHandoffDwellReady(
+              false, true, 600, 520) &&
+            !titleless::IsHandoffDwellReady(
+              true, false, 519, 520) &&
+            titleless::IsHandoffDwellReady(
+              true, false, 520, 520) &&
+            titleless::IsHandoffDwellReady(
+              true, true, 0, 520),
+        "compact Collection handoff must require one stable target until the dwell delay expires");
     const RECT tooltipFrame{ 0, 0, 240, 180 };
     const RECT titlelessBottomAnchor{ 180, 138, 228, 178 };
     const RECT bottomTooltip = titleless::ResolveTooltipBounds(

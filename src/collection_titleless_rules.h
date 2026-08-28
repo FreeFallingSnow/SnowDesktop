@@ -54,6 +54,60 @@ inline int ResolveFittedIconSize(
     }), 1, std::max(1, baseIconSize));
 }
 
+inline widget_item_layout::Axis ResolveBalancedIconAxis(
+    int start, int extent, int count, int iconSize, int cellPadding)
+{
+    widget_item_layout::Axis result;
+    result.start = start;
+    result.extent = std::max(1, extent);
+    result.count = std::max(1, count);
+    iconSize = std::clamp(
+        iconSize, 1,
+        std::max(1, result.extent / result.count));
+    cellPadding = std::max(0, cellPadding);
+
+    // The visual gap is shared by both frame edges and every adjacent icon
+    // pair. BoundedAxisCellStart distributes track centers through the inner
+    // extent, so half of the ideal visual gap is the matching base margin.
+    const int remaining = std::max(
+        0, result.extent - result.count * iconSize);
+    const double visualGap = static_cast<double>(remaining) /
+        static_cast<double>(result.count + 1);
+    result.edge = std::max(0,
+        static_cast<int>(std::round(visualGap * 0.5)));
+    result.gap = 0;
+
+    const int pitch = std::max(1,
+        (result.extent - result.edge * 2) / result.count);
+    result.cell = std::clamp(
+        iconSize + cellPadding * 2,
+        iconSize, std::max(iconSize, pitch));
+    return result;
+}
+
+inline widget_item_layout::Layout ResolveBalancedIconGrid(
+    RECT viewport, int columns, int rows, int iconSize,
+    int horizontalInset, int verticalInset)
+{
+    widget_item_layout::Layout result;
+    result.viewport = viewport;
+    result.horizontal = ResolveBalancedIconAxis(
+        viewport.left, viewport.right - viewport.left,
+        columns, iconSize, horizontalInset);
+    result.vertical = ResolveBalancedIconAxis(
+        viewport.top, viewport.bottom - viewport.top,
+        rows, iconSize, verticalInset);
+    return result;
+}
+
+inline bool IsHandoffDwellReady(
+    bool targetMatches, bool alreadyReady,
+    DWORD elapsed, DWORD delay)
+{
+    return targetMatches &&
+        (alreadyReady || elapsed >= delay);
+}
+
 inline DenseLayout ResolveDenseLayout(
     RECT viewport, int baseColumns, int baseRows,
     int baseIconSize, int horizontalInset, int verticalInset,
@@ -123,6 +177,10 @@ inline DenseLayout ResolveDenseLayout(
             result.iconSize = iconSize;
         }
     }
+
+    result.geometry = ResolveBalancedIconGrid(
+        viewport, result.columns, result.rows,
+        result.iconSize, horizontalInset, verticalInset);
 
     return result;
 }

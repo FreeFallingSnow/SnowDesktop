@@ -486,6 +486,9 @@ public:
     int GetBottomBarButtonCount() const override;
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
+    std::wstring GetDragHint(Slot* slot, HitRegion region,
+        const std::vector<Item*>& sourceItems, Container* origin,
+        int mods) const override;
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     Item* GetMemberItem(size_t idx) const override;

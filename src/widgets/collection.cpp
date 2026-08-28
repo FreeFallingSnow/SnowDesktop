@@ -1054,15 +1054,113 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
-    if (!data_ || result != HitRegion::Handoff) return result;
-    bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
-    if (!compact) return result;
-    if (!outSlot) return HitRegion::SortAfter;
-    RECT bounds = outSlot->GetBounds();
-    int cellH = bounds.bottom - bounds.top;
-    return (pt.y < bounds.top + cellH / 2)
-        ? HitRegion::SortBefore
-        : HitRegion::SortAfter;
+    if (!data_ || !app_) return result;
+
+    const auto insertionRegion = [pt](Slot* slot) {
+        if (!slot) return HitRegion::SortAfter;
+        const RECT bounds = slot->GetBounds();
+        return pt.y < bounds.top +
+                (bounds.bottom - bounds.top) / 2
+            ? HitRegion::SortBefore
+            : HitRegion::SortAfter;
+    };
+    const bool compact =
+        data_->gridSpan.columns <= 1 &&
+        data_->gridSpan.rows <= 1;
+    if (compact)
+    {
+        app_->ResetCompactCollectionHandoffDwell();
+        return result == HitRegion::Handoff
+            ? insertionRegion(outSlot) : result;
+    }
+    if (!CollectionTitlelessActive(this))
+    {
+        app_->ResetCompactCollectionHandoffDwell();
+        return result;
+    }
+
+    Item* targetItem = outSlot ? outSlot->GetItem() : nullptr;
+    if (!targetItem || targetItem->IsSelected())
+    {
+        app_->ResetCompactCollectionHandoffDwell();
+        return result == HitRegion::Handoff
+            ? insertionRegion(outSlot) : result;
+    }
+
+    RECT handoffRect = snowdesktop::ResolveCenteredIconRect(
+        outSlot->GetBounds(), CollectionDenseLayout(this).iconSize);
+    InflateRect(&handoffRect, Cu(4.0f), Cu(4.0f));
+    if (!PtInRect(&handoffRect, pt))
+    {
+        app_->ResetCompactCollectionHandoffDwell();
+        return result == HitRegion::Handoff
+            ? insertionRegion(outSlot) : result;
+    }
+
+    const bool previousTargetMatches =
+        app_->dragSession_.TargetContainer() == this &&
+        app_->dragSession_.TargetSlot() &&
+        app_->dragSession_.TargetSlot()->GetIndex() ==
+            outSlot->GetIndex();
+    const bool dwellTargetMatches =
+        previousTargetMatches &&
+        app_->compactCollectionHandoffWidgetId_ == data_->id &&
+        app_->compactCollectionHandoffIndex_ ==
+            outSlot->GetIndex();
+    const DWORD now = GetTickCount();
+    if (!dwellTargetMatches)
+    {
+        app_->ResetCompactCollectionHandoffDwell();
+        app_->compactCollectionHandoffWidgetId_ = data_->id;
+        app_->compactCollectionHandoffIndex_ = outSlot->GetIndex();
+        app_->compactCollectionHandoffStartTick_ = now;
+        if (app_->hwnd_)
+        {
+            SetTimer(app_->hwnd_,
+                kCompactCollectionHandoffDwellTimerId,
+                kCompactCollectionHandoffDwellIntervalMs,
+                nullptr);
+        }
+    }
+
+    if (snowdesktop::collection_titleless_rules::
+            IsHandoffDwellReady(
+                true,
+                app_->compactCollectionHandoffReady_,
+                now - app_->compactCollectionHandoffStartTick_,
+                kCompactCollectionHandoffDwellDelayMs))
+    {
+        app_->compactCollectionHandoffReady_ = true;
+        if (app_->hwnd_)
+            KillTimer(app_->hwnd_,
+                kCompactCollectionHandoffDwellTimerId);
+        return HitRegion::Handoff;
+    }
+    return insertionRegion(outSlot);
+}
+
+std::wstring Collection::GetDragHint(Slot* slot, HitRegion region,
+    const std::vector<Item*>& sourceItems, Container* origin,
+    int mods) const
+{
+    if (CollectionTitlelessActive(this) &&
+        region == HitRegion::Handoff && slot && slot->GetItem())
+    {
+        Item* target = slot->GetItem();
+        const std::wstring path = target->GetPath();
+        const DWORD attributes = path.empty()
+            ? INVALID_FILE_ATTRIBUTES
+            : GetFileAttributesW(path.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES &&
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            return _LFW("core.drag.release_drop_into",
+                target->GetTitle());
+        }
+        return _LFW("core.drag.open_with", target->GetTitle());
+    }
+    return WidgetContainer::GetDragHint(
+        slot, region, sourceItems, origin, mods);
 }
 
 /**

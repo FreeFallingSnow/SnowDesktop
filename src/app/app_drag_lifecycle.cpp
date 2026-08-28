@@ -363,6 +363,21 @@ void DesktopApp::ResetDockHandoffDwell()
     dockHandoffDwellReady_ = false;
 }
 
+void DesktopApp::ResetCompactCollectionHandoffDwell()
+{
+    if (compactCollectionHandoffWidgetId_.empty() &&
+        compactCollectionHandoffIndex_ == static_cast<size_t>(-1) &&
+        compactCollectionHandoffStartTick_ == 0 &&
+        !compactCollectionHandoffReady_)
+        return;
+    if (hwnd_)
+        KillTimer(hwnd_, kCompactCollectionHandoffDwellTimerId);
+    compactCollectionHandoffWidgetId_.clear();
+    compactCollectionHandoffIndex_ = static_cast<size_t>(-1);
+    compactCollectionHandoffStartTick_ = 0;
+    compactCollectionHandoffReady_ = false;
+}
+
 /**
  * @brief 解除会话对弹窗临时目标的引用并释放其成员包装对象。
  *
@@ -386,6 +401,7 @@ void DesktopApp::ClearPopupDragTarget()
 void DesktopApp::EndDragSession()
 {
     ResetDockHandoffDwell();
+    ResetCompactCollectionHandoffDwell();
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
@@ -478,6 +494,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     ResetDockHandoffDwell();
+    ResetCompactCollectionHandoffDwell();
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     mouseDown_ = false;

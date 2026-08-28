@@ -928,6 +928,10 @@ private:
     void InvalidateDragStaticScene();
     /** @brief 停止 Dock 驻留计时并清空当前驻留目标。 */
     void ResetDockHandoffDwell();
+    /** @brief 停止无字紧凑集合的图标移交驻留计时。 */
+    void ResetCompactCollectionHandoffDwell();
+    /** @brief 驻留结束后按当前拖拽传输路径刷新目标。 */
+    void RefreshDwellDragTarget(POINT clientPoint);
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
     void EndDragSession();
     /** @brief 解除弹窗拖拽目标引用，再释放其有界成员缓存。 */
@@ -3582,6 +3586,10 @@ private:
     size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     DWORD dockHandoffDwellStartTick_ = 0;
     bool dockHandoffDwellReady_ = false;
+    std::wstring compactCollectionHandoffWidgetId_;
+    size_t compactCollectionHandoffIndex_ = static_cast<size_t>(-1);
+    DWORD compactCollectionHandoffStartTick_ = 0;
+    bool compactCollectionHandoffReady_ = false;
     /** @} */
 
     /** @name OLE 拖拽状态 */

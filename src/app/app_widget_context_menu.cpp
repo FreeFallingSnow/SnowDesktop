@@ -788,7 +788,7 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         setFluentIcon(menu,
             kContextWidgetToggleLargeFolderTitleless,
-            snowdesktop::menu_fluent_glyphs::kHideLabels);
+            snowdesktop::menu_fluent_glyphs::kCompactGrid);
     }
     if (sortMenu)
     {

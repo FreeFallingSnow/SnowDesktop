@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../drag_input_rules.h"
 #include "../ole_drag_rules.h"
+#include "../collection_titleless_rules.h"
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
@@ -257,6 +258,38 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     }).detach();
 }
 
+void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
+{
+    using snowdesktop::ole_drag_rules::DwellTargetRefreshRoute;
+    const DwellTargetRefreshRoute route =
+        snowdesktop::ole_drag_rules::SelectDwellTargetRefreshRoute(
+            dragDropController_.IsSelfDragActive(),
+            dragDropController_.IsExternalDragActive());
+    if (route == DwellTargetRefreshRoute::NativePointer)
+    {
+        OnMouseMoveAt(0, clientPoint);
+        return;
+    }
+    if (route != DwellTargetRefreshRoute::SelfOleDragOver)
+        return;
+
+    DWORD keyState = MK_LBUTTON;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        keyState |= MK_CONTROL;
+    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+        keyState |= MK_ALT;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+        keyState |= MK_SHIFT;
+    POINT screenPoint = clientPoint;
+    ClientToScreen(hwnd_, &screenPoint);
+    DWORD effect = DROPEFFECT_COPY |
+        DROPEFFECT_MOVE | DROPEFFECT_LINK;
+    HandleOleDragOver(
+        keyState,
+        POINTL{ screenPoint.x, screenPoint.y },
+        &effect);
+}
+
 void DesktopApp::OnTimer(WPARAM timerId)
 {
     if (timerId == kSettingsWindowRetryTimerId)
@@ -490,46 +523,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
         {
             const POINT dwellPoint =
                 dragSession_.CurrentPoint();
-            const auto refreshDwellTarget =
-                [this](POINT clientPoint) {
-                    using snowdesktop::ole_drag_rules::
-                        DwellTargetRefreshRoute;
-                    const DwellTargetRefreshRoute route =
-                        snowdesktop::ole_drag_rules::
-                            SelectDwellTargetRefreshRoute(
-                                dragDropController_.
-                                    IsSelfDragActive(),
-                                dragDropController_.
-                                    IsExternalDragActive());
-                    if (route ==
-                        DwellTargetRefreshRoute::NativePointer)
-                    {
-                        OnMouseMoveAt(0, clientPoint);
-                        return;
-                    }
-                    if (route !=
-                        DwellTargetRefreshRoute::SelfOleDragOver)
-                        return;
-
-                    DWORD keyState = MK_LBUTTON;
-                    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
-                        keyState |= MK_CONTROL;
-                    if (GetAsyncKeyState(VK_MENU) & 0x8000)
-                        keyState |= MK_ALT;
-                    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
-                        keyState |= MK_SHIFT;
-                    POINT screenPoint = clientPoint;
-                    ClientToScreen(hwnd_, &screenPoint);
-                    DWORD effect = DROPEFFECT_COPY |
-                        DROPEFFECT_MOVE |
-                        DROPEFFECT_LINK;
-                    HandleOleDragOver(
-                        keyState,
-                        POINTL{
-                            screenPoint.x,
-                            screenPoint.y },
-                        &effect);
-                };
             DockContainer* dock =
                 GetDockContainerAtPoint(
                     dwellPoint);
@@ -551,7 +544,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 ResetDockHandoffDwell();
                 OpenDockFolderPopupAt(
                     entryIndex, dwellPoint);
-                refreshDwellTarget(dwellPoint);
+                RefreshDwellDragTarget(dwellPoint);
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
                 PresentPointerInteractionFrame();
@@ -563,12 +556,51 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
             dockHandoffDwellReady_ = true;
             KillTimer(hwnd_, kDockHandoffDwellTimerId);
-            refreshDwellTarget(
+            RefreshDwellDragTarget(
                 dragSession_.CurrentPoint());
             InvalidateRect(hwnd_, nullptr, FALSE);
             PresentPointerInteractionFrame();
             PresentDesktopPointerUpdate();
             InvalidateFloatingDockWindow(true);
+        }
+    }
+    else if (timerId == kCompactCollectionHandoffDwellTimerId)
+    {
+        auto* collection = dynamic_cast<Collection*>(
+            dragSession_.TargetContainer());
+        DesktopWidget* widget = collection
+            ? collection->GetWidgetData() : nullptr;
+        Slot* targetSlot = dragSession_.TargetSlot();
+        const bool targetMatches =
+            dragSession_.IsActive() && widget && targetSlot &&
+            widget->id == compactCollectionHandoffWidgetId_ &&
+            targetSlot->GetIndex() ==
+                compactCollectionHandoffIndex_ &&
+            snowdesktop::collection_titleless_rules::IsActive(
+                widget->largeFolderTitleless,
+                widget->scrollContainerMode,
+                widget->gridSpan.columns,
+                widget->gridSpan.rows);
+        if (!targetMatches)
+        {
+            ResetCompactCollectionHandoffDwell();
+            return;
+        }
+        if (snowdesktop::collection_titleless_rules::
+                IsHandoffDwellReady(
+                    true, compactCollectionHandoffReady_,
+                    GetTickCount() -
+                        compactCollectionHandoffStartTick_,
+                    kCompactCollectionHandoffDwellDelayMs))
+        {
+            compactCollectionHandoffReady_ = true;
+            KillTimer(hwnd_,
+                kCompactCollectionHandoffDwellTimerId);
+            RefreshDwellDragTarget(
+                dragSession_.CurrentPoint());
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentPointerInteractionFrame();
+            PresentDesktopPointerUpdate();
         }
     }
     else if (timerId == kHiddenHintTimerId)
