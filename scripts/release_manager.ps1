@@ -628,11 +628,10 @@ function Sync-ReleaseRepository {
         }
         $thirdPartyLicenses = Join-Path $temporary "licenses"
         if (Test-Path -LiteralPath $thirdPartyLicenses -PathType Container) {
-            Copy-Item `
-                -LiteralPath $thirdPartyLicenses `
+            Copy-MirroredDirectory `
+                -Source $thirdPartyLicenses `
                 -Destination (Join-Path $releaseRepository "licenses") `
-                -Recurse `
-                -Force
+                -LogPath $syncLog
         }
 
         Copy-MirroredDirectory `

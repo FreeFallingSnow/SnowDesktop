@@ -284,6 +284,14 @@ void TestReleaseManagerShellReload(const std::string& manager,
             manager.find("Remove-Item -LiteralPath $legacyPath") !=
                 std::string::npos,
         "release repository synchronization mirrors the runtime directory and removes obsolete root helpers");
+    Check(manager.find("$thirdPartyLicenses = Join-Path $temporary \"licenses\"") !=
+                std::string::npos &&
+            manager.find("-Source $thirdPartyLicenses") !=
+                std::string::npos &&
+            manager.find("-Destination (Join-Path $releaseRepository \"licenses\")") !=
+                std::string::npos &&
+            manager.find("-LogPath $syncLog") != std::string::npos,
+        "release repository synchronization mirrors third-party licenses without nesting the licenses directory");
     Check(documentation.find(
               "scripts\\release.bat package -ReloadShell") !=
             std::string::npos &&
