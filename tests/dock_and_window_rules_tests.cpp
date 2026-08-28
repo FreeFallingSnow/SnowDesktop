@@ -4250,6 +4250,49 @@ int main(int argc, char** argv)
         const std::string timerDispatchSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_timer_dispatch.cpp");
+        const std::string collectionSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "widgets" /
+                "collection.cpp");
+        const std::size_t collectionDragHitBegin =
+            collectionSource.find(
+                "HitRegion Collection::HitTestDrag(");
+        const std::size_t collectionDragHintBegin =
+            collectionSource.find(
+                "std::wstring Collection::GetDragHint(",
+                collectionDragHitBegin);
+        const std::string collectionDragHit =
+            collectionDragHitBegin != std::string::npos &&
+                    collectionDragHintBegin != std::string::npos
+                ? collectionSource.substr(
+                    collectionDragHitBegin,
+                    collectionDragHintBegin - collectionDragHitBegin)
+                : std::string{};
+        const std::size_t denseIconHit =
+            collectionDragHit.find("ResolveCenteredIconRect(");
+        const std::size_t genericSlotHit =
+            collectionDragHit.find("WidgetContainer::HitTestDrag(");
+        const std::size_t directoryTarget =
+            collectionDragHit.find(
+                "CollectionItemIsDirectory(targetItem)");
+        const std::size_t immediateDirectoryHandoff =
+            collectionDragHit.find(
+                "return HitRegion::Handoff;", directoryTarget);
+        const std::size_t dwellIdentity =
+            collectionDragHit.find(
+                "compactCollectionHandoffWidgetId_ != data_->id");
+        Check(!collectionDragHit.empty() &&
+                denseIconHit != std::string::npos &&
+                genericSlotHit != std::string::npos &&
+                denseIconHit < genericSlotHit &&
+                directoryTarget != std::string::npos &&
+                immediateDirectoryHandoff != std::string::npos &&
+                dwellIdentity != std::string::npos &&
+                directoryTarget < immediateDirectoryHandoff &&
+                immediateDirectoryHandoff < dwellIdentity &&
+                collectionDragHit.find(
+                    "dragSession_.TargetContainer()") ==
+                    std::string::npos,
+            "titleless Collection dwell must lock the actual dense icon before generic insertion canonicalization and keep folders on immediate handoff");
         Check(floatingPopupSource.find("CreateTargetForHwnd") !=
                     std::string::npos &&
                 floatingPopupSource.find("RegisterDragDrop") !=

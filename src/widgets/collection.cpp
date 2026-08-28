@@ -34,6 +34,17 @@ static size_t CollectionItemCount(Collection* widget)
     return data ? data->itemKeys.size() : 0;
 }
 
+static bool CollectionItemIsDirectory(Item* item)
+{
+    if (!item) return false;
+    const std::wstring path = item->GetPath();
+    const DWORD attributes = path.empty()
+        ? INVALID_FILE_ATTRIBUTES
+        : GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
 // ── Scroll container helpers (shared with draw/slot code) ─────
 
 /**
@@ -1053,9 +1064,6 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
-    HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
-    if (!data_ || !app_) return result;
-
     const auto insertionRegion = [pt](Slot* slot) {
         if (!slot) return HitRegion::SortAfter;
         const RECT bounds = slot->GetBounds();
@@ -1064,79 +1072,79 @@ HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
             ? HitRegion::SortBefore
             : HitRegion::SortAfter;
     };
-    const bool compact =
-        data_->gridSpan.columns <= 1 &&
-        data_->gridSpan.rows <= 1;
-    if (compact)
-    {
-        app_->ResetCompactCollectionHandoffDwell();
-        return result == HitRegion::Handoff
-            ? insertionRegion(outSlot) : result;
-    }
-    if (!CollectionTitlelessActive(this))
-    {
-        app_->ResetCompactCollectionHandoffDwell();
-        return result;
-    }
 
-    Item* targetItem = outSlot ? outSlot->GetItem() : nullptr;
-    if (!targetItem || targetItem->IsSelected())
+    // Dense icon-only cells do not share Slot::GetIconRect's ordinary
+    // icon-and-title geometry. Resolve the physical cell and the actual icon
+    // first, like DockContainer, so generic insertion canonicalization cannot
+    // redirect the dwell to the following slot before the icon is tested.
+    if (data_ && app_ && CollectionTitlelessActive(this))
     {
-        app_->ResetCompactCollectionHandoffDwell();
-        return result == HitRegion::Handoff
-            ? insertionRegion(outSlot) : result;
-    }
-
-    RECT handoffRect = snowdesktop::ResolveCenteredIconRect(
-        outSlot->GetBounds(), CollectionDenseLayout(this).iconSize);
-    InflateRect(&handoffRect, Cu(4.0f), Cu(4.0f));
-    if (!PtInRect(&handoffRect, pt))
-    {
-        app_->ResetCompactCollectionHandoffDwell();
-        return result == HitRegion::Handoff
-            ? insertionRegion(outSlot) : result;
-    }
-
-    const bool previousTargetMatches =
-        app_->dragSession_.TargetContainer() == this &&
-        app_->dragSession_.TargetSlot() &&
-        app_->dragSession_.TargetSlot()->GetIndex() ==
-            outSlot->GetIndex();
-    const bool dwellTargetMatches =
-        previousTargetMatches &&
-        app_->compactCollectionHandoffWidgetId_ == data_->id &&
-        app_->compactCollectionHandoffIndex_ ==
-            outSlot->GetIndex();
-    const DWORD now = GetTickCount();
-    if (!dwellTargetMatches)
-    {
-        app_->ResetCompactCollectionHandoffDwell();
-        app_->compactCollectionHandoffWidgetId_ = data_->id;
-        app_->compactCollectionHandoffIndex_ = outSlot->GetIndex();
-        app_->compactCollectionHandoffStartTick_ = now;
-        if (app_->hwnd_)
+        const int iconSize = CollectionDenseLayout(this).iconSize;
+        for (const auto& candidate : GetSlots())
         {
-            SetTimer(app_->hwnd_,
-                kCompactCollectionHandoffDwellTimerId,
-                kCompactCollectionHandoffDwellIntervalMs,
-                nullptr);
+            if (!candidate) continue;
+            const RECT bounds = candidate->GetBounds();
+            if (!PtInRect(&bounds, pt)) continue;
+
+            Item* targetItem = candidate->GetItem();
+            if (!targetItem || targetItem->IsSelected())
+                break;
+
+            RECT handoffRect = snowdesktop::ResolveCenteredIconRect(
+                bounds, iconSize);
+            InflateRect(&handoffRect, Cu(4.0f), Cu(4.0f));
+            if (!PtInRect(&handoffRect, pt))
+                break;
+
+            outSlot = candidate.get();
+            if (CollectionItemIsDirectory(targetItem))
+            {
+                app_->ResetCompactCollectionHandoffDwell();
+                return HitRegion::Handoff;
+            }
+
+            const size_t index = outSlot->GetIndex();
+            const DWORD now = GetTickCount();
+            if (app_->compactCollectionHandoffWidgetId_ != data_->id ||
+                app_->compactCollectionHandoffIndex_ != index)
+            {
+                app_->ResetCompactCollectionHandoffDwell();
+                app_->compactCollectionHandoffWidgetId_ = data_->id;
+                app_->compactCollectionHandoffIndex_ = index;
+                app_->compactCollectionHandoffStartTick_ = now;
+                app_->compactCollectionHandoffReady_ = false;
+                if (app_->hwnd_)
+                {
+                    SetTimer(app_->hwnd_,
+                        kCompactCollectionHandoffDwellTimerId,
+                        kCompactCollectionHandoffDwellIntervalMs,
+                        nullptr);
+                }
+            }
+
+            if (snowdesktop::collection_titleless_rules::
+                    IsHandoffDwellReady(
+                        true,
+                        app_->compactCollectionHandoffReady_,
+                        now - app_->compactCollectionHandoffStartTick_,
+                        kCompactCollectionHandoffDwellDelayMs))
+            {
+                app_->compactCollectionHandoffReady_ = true;
+                if (app_->hwnd_)
+                    KillTimer(app_->hwnd_,
+                        kCompactCollectionHandoffDwellTimerId);
+                return HitRegion::Handoff;
+            }
+            return insertionRegion(outSlot);
         }
     }
 
-    if (snowdesktop::collection_titleless_rules::
-            IsHandoffDwellReady(
-                true,
-                app_->compactCollectionHandoffReady_,
-                now - app_->compactCollectionHandoffStartTick_,
-                kCompactCollectionHandoffDwellDelayMs))
-    {
-        app_->compactCollectionHandoffReady_ = true;
-        if (app_->hwnd_)
-            KillTimer(app_->hwnd_,
-                kCompactCollectionHandoffDwellTimerId);
-        return HitRegion::Handoff;
-    }
-    return insertionRegion(outSlot);
+    HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
+    if (app_)
+        app_->ResetCompactCollectionHandoffDwell();
+    return CollectionTitlelessActive(this) &&
+            result == HitRegion::Handoff
+        ? insertionRegion(outSlot) : result;
 }
 
 std::wstring Collection::GetDragHint(Slot* slot, HitRegion region,
@@ -1147,12 +1155,7 @@ std::wstring Collection::GetDragHint(Slot* slot, HitRegion region,
         region == HitRegion::Handoff && slot && slot->GetItem())
     {
         Item* target = slot->GetItem();
-        const std::wstring path = target->GetPath();
-        const DWORD attributes = path.empty()
-            ? INVALID_FILE_ATTRIBUTES
-            : GetFileAttributesW(path.c_str());
-        if (attributes != INVALID_FILE_ATTRIBUTES &&
-            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        if (CollectionItemIsDirectory(target))
         {
             return _LFW("core.drag.release_drop_into",
                 target->GetTitle());
