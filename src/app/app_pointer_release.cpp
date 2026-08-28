@@ -1021,7 +1021,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
     // ── Widget action completion ────────────────────────────
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
-        if (widgetAction_ == WidgetAction::Move)
+        const WidgetAction completedWidgetAction = widgetAction_;
+        if (completedWidgetAction == WidgetAction::Move)
         {
             const auto movingPayload = snowdesktop::slot_contract::
                 PayloadForWidgetType(
@@ -1063,6 +1064,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                         SlotSurfaceKind::Dock,
                     snowdesktop::slot_contract::
                         DragRelation::CrossSurface);
+            // Preserve the drag-time Dock hit geometry through the final
+            // release test, then end the gesture before any placement path
+            // rebuilds the persistent DockHost from normal interaction bounds.
+            widgetAction_ = WidgetAction::None;
             if (canGroup)
             {
                 if (canCollectionGroup)
@@ -1083,16 +1088,18 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                 CommitDockDrop({ &dockSource }, nullptr, dock,
                     widgetDockInsertIndex_, mods);
                 SaveLayoutSlots();
-                RebuildContainersAndItems();
                 LayoutItems();
             }
             else
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, true);
         }
-        else if (widgetAction_ == WidgetAction::Resize)
-            PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
+        else
+        {
+            widgetAction_ = WidgetAction::None;
+            if (completedWidgetAction == WidgetAction::Resize)
+                PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
+        }
         // PendingMove/PendingResize: just cancel without displacement
-        widgetAction_ = WidgetAction::None;
         widgetDockTarget_ = false;
         widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;
@@ -1524,9 +1531,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         else
         {
             // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
-            // 先 ApplyPageMapping（可能重排 pageId），再 RebuildContainersAndItems + LayoutItems
+            // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
             ApplyPageMapping();
-            RebuildContainersAndItems();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }

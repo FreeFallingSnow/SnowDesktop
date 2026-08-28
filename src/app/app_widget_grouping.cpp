@@ -653,7 +653,6 @@ bool DesktopApp::AddWidgetToFileGroup(
     group.scrollOffset = 0;
     EnsureNavTabOrder();
     LayoutItems();
-    RebuildContainersAndItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;

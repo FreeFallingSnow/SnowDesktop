@@ -804,7 +804,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         // paint. The frame renderer is reentrancy-guarded; on failure the
         // ordinary invalidation below remains the fallback.
         renderedResizeFrame =
-            RenderFloatingDockCompositionFrame(host);
+            RenderFloatingDockCompositionFrame(host) &&
+            FlushPendingCompositionCommit();
     }
 
     if (sourceRectChanged &&

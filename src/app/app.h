@@ -1127,12 +1127,14 @@ private:
         bool immediate = false);
     void InvalidatePersistentDockHosts(bool immediate = false);
     HRESULT CreateOrResizeFloatingDockCompositionSurface(
-        PersistentDockHost& host);
+        PersistentDockHost& host,
+        ComPtr<IDCompositionSurface>& frameSurface);
     void ResetFloatingDockCompositionResources(
         PersistentDockHost& host);
     void RecoverFloatingDockCompositionFailure(
         PersistentDockHost& host,
-        const wchar_t* stage, HRESULT hr);
+        const wchar_t* stage, HRESULT hr,
+        bool preserveExistingFrame = false);
     bool RenderFloatingDockCompositionFrame(
         PersistentDockHost& host);
     void PaintFloatingDockWindow(

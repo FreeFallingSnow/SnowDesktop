@@ -4030,6 +4030,12 @@ int main(int argc, char** argv)
         const std::string desktopLayoutSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_desktop_layout.cpp");
+        const std::string widgetPlacementSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_widget_placement.cpp");
+        const std::string widgetGroupingSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_widget_grouping.cpp");
         const std::string dockLayoutSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_dock_layout.cpp");
@@ -4087,6 +4093,194 @@ int main(int argc, char** argv)
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
+        const std::size_t dockSurfacePrepareBegin =
+            floatingDockInteractionSource.find(
+                "HRESULT DesktopApp::\n"
+                "CreateOrResizeFloatingDockCompositionSurface(");
+        const std::size_t dockSurfacePrepareEnd =
+            floatingDockInteractionSource.find(
+                "void DesktopApp::\n"
+                "RecoverFloatingDockCompositionFailure(",
+                dockSurfacePrepareBegin);
+        const std::string dockSurfacePrepareSource =
+            dockSurfacePrepareBegin != std::string::npos &&
+                    dockSurfacePrepareEnd != std::string::npos
+                ? floatingDockInteractionSource.substr(
+                    dockSurfacePrepareBegin,
+                    dockSurfacePrepareEnd - dockSurfacePrepareBegin)
+                : std::string{};
+        const std::size_t dockFrameRenderBegin =
+            floatingDockRenderSource.find(
+                "bool DesktopApp::RenderFloatingDockCompositionFrame(");
+        const std::size_t dockFrameRenderEnd =
+            floatingDockRenderSource.find(
+                "void DesktopApp::PaintFloatingDockWindow(",
+                dockFrameRenderBegin);
+        const std::string dockFrameRenderSource =
+            dockFrameRenderBegin != std::string::npos &&
+                    dockFrameRenderEnd != std::string::npos
+                ? floatingDockRenderSource.substr(
+                    dockFrameRenderBegin,
+                    dockFrameRenderEnd - dockFrameRenderBegin)
+                : std::string{};
+        const std::size_t dockFrameBeginDraw =
+            dockFrameRenderSource.find(
+                "frameSurface->BeginDraw(");
+        const std::size_t dockFrameEndDraw =
+            dockFrameRenderSource.find(
+                "frameSurface->EndDraw();",
+                dockFrameBeginDraw);
+        const std::size_t dockFrameAttach =
+            dockFrameRenderSource.find(
+                "host.dcompVisual->SetContent(",
+                dockFrameEndDraw);
+        const std::size_t dockFrameCommit =
+            dockFrameRenderSource.find(
+                "CommitCompositionAnimationFrame()",
+                dockFrameAttach);
+        Check(!dockSurfacePrepareSource.empty() &&
+                dockSurfacePrepareSource.find(
+                    "ComPtr<IDCompositionSurface>& frameSurface") !=
+                    std::string::npos &&
+                dockSurfacePrepareSource.find(
+                    "SetContent(") == std::string::npos &&
+                dockSurfacePrepareSource.find(
+                    "FlushPendingCompositionCommit()") ==
+                    std::string::npos &&
+                dockFrameBeginDraw != std::string::npos &&
+                dockFrameEndDraw != std::string::npos &&
+                dockFrameAttach != std::string::npos &&
+                dockFrameCommit != std::string::npos &&
+                dockFrameBeginDraw < dockFrameEndDraw &&
+                dockFrameEndDraw < dockFrameAttach &&
+                dockFrameAttach < dockFrameCommit &&
+                floatingDockSource.find(
+                    "RenderFloatingDockCompositionFrame(host) &&\n"
+                    "            FlushPendingCompositionCommit();") !=
+                    std::string::npos,
+            "a resized Dock surface must be fully drawn before one atomic content switch and resize-path commit");
+
+        const std::size_t widgetCompletionBegin =
+            pointerReleaseSource.find(
+                "// ── Widget action completion");
+        const std::size_t widgetCompletionEnd =
+            pointerReleaseSource.find(
+                "if (!dragSession_.IsActive())",
+                widgetCompletionBegin);
+        const std::string widgetCompletionSource =
+            widgetCompletionBegin != std::string::npos &&
+                    widgetCompletionEnd != std::string::npos
+                ? pointerReleaseSource.substr(
+                    widgetCompletionBegin,
+                    widgetCompletionEnd - widgetCompletionBegin)
+                : std::string{};
+        const std::size_t widgetFinalDockHit =
+            widgetCompletionSource.find(
+                "GetDockContainerAtPoint(upPoint)");
+        const std::size_t widgetMoveStateCleared =
+            widgetCompletionSource.find(
+                "widgetAction_ = WidgetAction::None;",
+                widgetFinalDockHit);
+        const std::size_t widgetGroupCommit =
+            widgetCompletionSource.find(
+                "AddCollectionToGroup(",
+                widgetMoveStateCleared);
+        const std::size_t widgetFileGroupCommit =
+            widgetCompletionSource.find(
+                "AddWidgetToFileGroup(",
+                widgetMoveStateCleared);
+        const std::size_t widgetDockCommit =
+            widgetCompletionSource.find(
+                "CommitDockDrop(",
+                widgetMoveStateCleared);
+        const std::size_t widgetMovePlacement =
+            widgetCompletionSource.find(
+                "PlaceWidgetWithDisplacement(",
+                widgetMoveStateCleared);
+        const std::size_t widgetResizeStateCleared =
+            widgetCompletionSource.find(
+                "widgetAction_ = WidgetAction::None;",
+                widgetMovePlacement);
+        const std::size_t widgetResizePlacement =
+            widgetCompletionSource.find(
+                "PlaceWidgetWithDisplacement(",
+                widgetResizeStateCleared);
+        Check(!widgetCompletionSource.empty() &&
+                widgetFinalDockHit != std::string::npos &&
+                widgetMoveStateCleared != std::string::npos &&
+                widgetGroupCommit != std::string::npos &&
+                widgetFileGroupCommit != std::string::npos &&
+                widgetDockCommit != std::string::npos &&
+                widgetMovePlacement != std::string::npos &&
+                widgetResizeStateCleared != std::string::npos &&
+                widgetResizePlacement != std::string::npos &&
+                widgetFinalDockHit < widgetMoveStateCleared &&
+                widgetMoveStateCleared < widgetGroupCommit &&
+                widgetMoveStateCleared < widgetFileGroupCommit &&
+                widgetMoveStateCleared < widgetDockCommit &&
+                widgetMoveStateCleared < widgetMovePlacement &&
+                widgetMovePlacement < widgetResizeStateCleared &&
+                widgetResizeStateCleared < widgetResizePlacement &&
+                CountOccurrences(
+                    widgetCompletionSource,
+                    "widgetAction_ = WidgetAction::None;") == 2 &&
+                widgetCompletionSource.find(
+                    "RebuildContainersAndItems();") ==
+                    std::string::npos,
+            "widget release must retain drag hit geometry through final targeting, then clear suppression before one runtime rebuild");
+
+        const std::size_t addWidgetToFileGroupBegin =
+            widgetGroupingSource.find(
+                "bool DesktopApp::AddWidgetToFileGroup(");
+        const std::size_t addWidgetToFileGroupEnd =
+            widgetGroupingSource.find(
+                "bool DesktopApp::MoveFolderMappingsToFileGroup(",
+                addWidgetToFileGroupBegin);
+        const std::string addWidgetToFileGroupSource =
+            addWidgetToFileGroupBegin != std::string::npos &&
+                    addWidgetToFileGroupEnd != std::string::npos
+                ? widgetGroupingSource.substr(
+                    addWidgetToFileGroupBegin,
+                    addWidgetToFileGroupEnd - addWidgetToFileGroupBegin)
+                : std::string{};
+        Check(widgetPlacementSource.find(
+                    "LayoutItems();") != std::string::npos &&
+                widgetPlacementSource.find(
+                    "RebuildContainersAndItems();") ==
+                    std::string::npos &&
+                !addWidgetToFileGroupSource.empty() &&
+                addWidgetToFileGroupSource.find(
+                    "LayoutItems();") != std::string::npos &&
+                addWidgetToFileGroupSource.find(
+                    "RebuildContainersAndItems();") ==
+                    std::string::npos,
+            "widget placement and file-group completion must rely on LayoutItems for exactly one runtime rebuild");
+
+        const std::size_t committedItemDropBegin =
+            pointerReleaseSource.find(
+                "targetContainer->OnItemsDropped(");
+        const std::size_t committedItemDropEnd =
+            pointerReleaseSource.find(
+                "cleanup:",
+                committedItemDropBegin);
+        const std::string committedItemDropSource =
+            committedItemDropBegin != std::string::npos &&
+                    committedItemDropEnd != std::string::npos
+                ? pointerReleaseSource.substr(
+                    committedItemDropBegin,
+                    committedItemDropEnd - committedItemDropBegin)
+                : std::string{};
+        Check(!committedItemDropSource.empty() &&
+                committedItemDropSource.find(
+                    "ApplyPageMapping();\n"
+                    "            LayoutItems();") !=
+                    std::string::npos &&
+                committedItemDropSource.find(
+                    "RebuildContainersAndItems();\n"
+                    "            LayoutItems();") ==
+                    std::string::npos,
+            "a committed item drop must not rebuild the DockHost immediately before LayoutItems rebuilds it again");
+
         const std::size_t dockReservationBegin =
             dockLayoutSource.find(
                 "void DesktopApp::ApplyDockWorkAreaReservation()");

@@ -236,6 +236,5 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
     }
 
     LayoutItems();
-    RebuildContainersAndItems();
     SaveLayoutSlots();
 }

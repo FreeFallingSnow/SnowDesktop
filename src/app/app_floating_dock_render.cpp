@@ -26,29 +26,38 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     };
     renderingPersistentDockHost_ = &host;
 
+    const bool preserveExistingFrame =
+        host.frameReady && host.dcompSurface &&
+        host.dcompVisual;
+    ComPtr<IDCompositionSurface> frameSurface;
     HRESULT hr =
-        CreateOrResizeFloatingDockCompositionSurface(host);
+        CreateOrResizeFloatingDockCompositionSurface(
+            host, frameSurface);
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
-            host, L"CreateOrResize", hr);
+            host, L"CreateOrResize", hr,
+            preserveExistingFrame);
         return false;
     }
+    const bool replacingSurface =
+        frameSurface.Get() != host.dcompSurface.Get();
 
     ID2D1DeviceContext* rawContext = nullptr;
     POINT updateOffset{};
     // IDCompositionSurface rejects partial BeginDraw rectangles on this
-    // HWND-backed path with E_INVALIDARG. The surface allocation is stable
-    // for the lifetime of the visible floating Dock, so redraw the existing
-    // compact surface without recreating it.
-    hr = host.dcompSurface->BeginDraw(
+    // HWND-backed path with E_INVALIDARG. Redraw the complete compact surface;
+    // a resized replacement remains detached until this frame is finished.
+    hr = frameSurface->BeginDraw(
         nullptr, __uuidof(ID2D1DeviceContext),
         reinterpret_cast<void**>(&rawContext),
         &updateOffset);
     if (FAILED(hr) || !rawContext)
     {
         RecoverFloatingDockCompositionFailure(
-            host, L"BeginDraw", hr);
+            host, L"BeginDraw",
+            FAILED(hr) ? hr : E_FAIL,
+            preserveExistingFrame && replacingSurface);
         return false;
     }
 
@@ -90,12 +99,35 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 
-    hr = host.dcompSurface->EndDraw();
+    hr = frameSurface->EndDraw();
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
-            host, L"EndDraw", hr);
+            host, L"EndDraw", hr,
+            preserveExistingFrame && replacingSurface);
         return false;
+    }
+    // SetContent only after the replacement surface contains a complete
+    // frame. The following composition commit then publishes the pixels and
+    // the content switch atomically instead of exposing an empty surface.
+    hr = host.dcompVisual->SetContent(
+        frameSurface.Get());
+    if (FAILED(hr))
+    {
+        RecoverFloatingDockCompositionFailure(
+            host, L"SetContent", hr,
+            preserveExistingFrame && replacingSurface);
+        return false;
+    }
+    if (replacingSurface)
+    {
+        RECT client{};
+        GetClientRect(host.hwnd, &client);
+        host.dcompSurface = frameSurface;
+        host.compWidth = static_cast<UINT>(
+            std::max<LONG>(1, client.right - client.left));
+        host.compHeight = static_cast<UINT>(
+            std::max<LONG>(1, client.bottom - client.top));
     }
     const bool deferredWidgetsFlushed =
         FlushPendingDesktopWidgetComposition() &&

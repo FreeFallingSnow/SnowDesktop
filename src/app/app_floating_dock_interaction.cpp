@@ -355,7 +355,8 @@ POINT DesktopApp::FloatingDockClientToDesktop(
 
 HRESULT DesktopApp::
 CreateOrResizeFloatingDockCompositionSurface(
-    PersistentDockHost& host)
+    PersistentDockHost& host,
+    ComPtr<IDCompositionSurface>& frameSurface)
 {
     if (!dcompDevice_ || !host.hwnd ||
         !IsWindow(host.hwnd))
@@ -389,41 +390,41 @@ CreateOrResizeFloatingDockCompositionSurface(
     if (host.dcompSurface &&
         host.compWidth == width &&
         host.compHeight == height)
+    {
+        frameSurface = host.dcompSurface;
         return S_OK;
+    }
 
-    ComPtr<IDCompositionSurface> surface;
     HRESULT hr = dcompDevice_->CreateSurface(
         width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM,
         DXGI_ALPHA_MODE_PREMULTIPLIED,
-        &surface);
-    if (FAILED(hr))
-        return hr;
-    hr = host.dcompVisual->SetContent(
-        surface.Get());
-    if (FAILED(hr))
-        return hr;
-    CommitCompositionAnimationFrame();
-    if (!FlushPendingCompositionCommit())
-        return E_FAIL;
-    host.dcompSurface = surface;
-    host.compWidth = width;
-    host.compHeight = height;
+        &frameSurface);
+    if (FAILED(hr) || !frameSurface)
+        return FAILED(hr) ? hr : E_FAIL;
+    // Keep a replacement detached until its first full frame has finished.
+    // The renderer binds it after EndDraw so DirectComposition receives the
+    // pixels and the visual-content switch in one final transaction.
     return S_OK;
 }
 
 void DesktopApp::
 RecoverFloatingDockCompositionFailure(
     PersistentDockHost& host,
-    const wchar_t* stage, HRESULT hr)
+    const wchar_t* stage, HRESULT hr,
+    bool preserveExistingFrame)
 {
-    wchar_t message[192]{};
+    wchar_t message[224]{};
     wsprintfW(message,
-        L"FloatingDock %s FAILED hr=0x%08X; resetting composition surface",
+        L"FloatingDock %s FAILED hr=0x%08X; %s composition frame",
         stage ? stage : L"Render",
-        static_cast<unsigned>(hr));
+        static_cast<unsigned>(hr),
+        preserveExistingFrame
+            ? L"retaining previous"
+            : L"resetting");
     WriteDiagnosticLogEntry(message);
-    ResetFloatingDockCompositionResources(host);
+    if (!preserveExistingFrame)
+        ResetFloatingDockCompositionResources(host);
     if (!host.compositionRenderRecoveryPending &&
         host.hwnd && IsWindow(host.hwnd))
     {
