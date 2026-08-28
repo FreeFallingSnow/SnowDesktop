@@ -8,6 +8,8 @@ A Windows desktop organization and personalization tool. SnowDesktop replaces na
 
 [![Get it from Microsoft](https://get.microsoft.com/images/en-us%20dark.svg)](https://apps.microsoft.com/detail/9PLLGJVL4LC3)
 
+[Steam Store (coming soon; add to your wishlist)](https://store.steampowered.com/app/5080330/SnowDesktop/)
+
 [Source repository](https://github.com/FreeFallingSnow/SnowDesktop)
 
 [Release repository](https://github.com/FreeFallingSnow/SnowDesktop_Release)
@@ -67,6 +69,8 @@ The SnowDesktop core is licensed under GNU General Public License v3.0; see
 [LICENSE](./LICENSE). Copyright and license information for third-party
 components included in this repository is collected in
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+Release packages include the complete license and notice files for distributed
+third-party components in the `licenses/` directory.
 
 The separate `steam_bridge/` Workshop bridge is MIT-licensed under
 [steam_bridge/LICENSE](./steam_bridge/LICENSE). The Steamworks SDK is not

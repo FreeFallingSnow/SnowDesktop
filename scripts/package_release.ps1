@@ -138,24 +138,9 @@ function Copy-Payload {
     }
 
     $licensesDestination = Join-Path $Destination "licenses"
-    New-Item -ItemType Directory -Path $licensesDestination -Force |
-        Out-Null
-    $fluentIconsLicense = Join-Path $repositoryRoot `
-        "third_party\fluentui-system-icons\LICENSE"
-    if (-not (Test-Path -LiteralPath $fluentIconsLicense -PathType Leaf)) {
-        throw "Required Fluent System Icons license was not found: $fluentIconsLicense"
-    }
-    Copy-Item -LiteralPath $fluentIconsLicense `
-        -Destination (Join-Path $licensesDestination `
-            "FluentSystemIcons-LICENSE.txt") -Force
-    $minHookLicense = Join-Path $repositoryRoot `
-        "third_party\minhook\LICENSE.txt"
-    if (-not (Test-Path -LiteralPath $minHookLicense -PathType Leaf)) {
-        throw "Required MinHook license was not found: $minHookLicense"
-    }
-    Copy-Item -LiteralPath $minHookLicense `
-        -Destination (Join-Path $licensesDestination `
-            "MinHook-LICENSE.txt") -Force
+    Copy-SnowDesktopRepositoryLicenses `
+        -RepositoryRoot $repositoryRoot `
+        -Destination $licensesDestination
 
     Copy-Directory `
         -Source (Join-Path $repositoryRoot "widgets") `

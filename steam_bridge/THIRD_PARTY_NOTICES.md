@@ -26,6 +26,6 @@ Steamworks documentation and terms:
 - <https://partner.steamgames.com/documentation/sdk_access_agreement/>
 
 `SnowDesktopWorkshopManager.exe` uses Dear ImGui and its official Win32 and
-DirectX 11 backends. Dear ImGui is Copyright (c) 2014-2026 Omar Cornut and
+DirectX 11 backends. Dear ImGui is Copyright (c) 2014-2025 Omar Cornut and
 contributors and is distributed under the MIT License. The corresponding
 source and license are in `third_party/imgui/`.

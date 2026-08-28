@@ -188,7 +188,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
              "HomeAboutLink::EverythingSdk",
              "HomeAboutLink::DearImGui",
              "HomeAboutLink::Lua",
-             "HomeAboutLink::Spdlog",
              "HomeAboutLink::PinyinData",
              "HomeAboutLink::TranslucentTb",
              "322e2b7"})
@@ -232,8 +231,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
             inBuild("HomeAboutLink::DearImGui") <
                 inBuild("HomeAboutLink::Lua") &&
             inBuild("HomeAboutLink::Lua") <
-                inBuild("HomeAboutLink::Spdlog") &&
-            inBuild("HomeAboutLink::Spdlog") <
                 inBuild("HomeAboutLink::PinyinData") &&
             inBuild("HomeAboutLink::PinyinData") <
                 inBuild("HomeAboutLink::TranslucentTb"),

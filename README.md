@@ -7,6 +7,8 @@
 
 [![从 Microsoft 获取](https://get.microsoft.com/images/zh-cn%20dark.svg)](https://apps.microsoft.com/detail/9PLLGJVL4LC3)
 
+[Steam 商店（即将推出，可加入愿望单）](https://store.steampowered.com/app/5080330/SnowDesktop/)
+
 [源码仓库](https://github.com/FreeFallingSnow/SnowDesktop)
 
 [发行版仓库](https://github.com/FreeFallingSnow/SnowDesktop_Release)
@@ -63,6 +65,7 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 SnowDesktop 核心代码采用 GNU General Public License v3.0，详见 [LICENSE](./LICENSE)。
 仓库中包含的第三方组件及其版权和许可信息，统一记录在
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+发行包会在 `licenses/` 目录中随附所分发第三方组件的完整许可证与声明文件。
 
 独立的 `steam_bridge/` 创意工坊桥接程序采用 MIT 许可证，详见
 [steam_bridge/LICENSE](./steam_bridge/LICENSE)。Steamworks SDK 本身不包含在本仓库内，

@@ -13,7 +13,7 @@ under `steam_bridge/` is licensed under the MIT License.
 | Microsoft.Windows.CppWinRT | 3.0.260818.1 NuGet package | MIT | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/cppwinrt> |
 | Dear ImGui | 1.92.5 WIP | MIT | Copyright (c) 2014-2025 Omar Cornut and contributors; <https://github.com/ocornut/imgui> |
 | Lua | 5.4.7 | MIT | Copyright (C) 1994-2024 Lua.org, PUC-Rio; <https://www.lua.org> |
-| Everything SDK client | bundled source | MIT | Copyright (C) 2022 David Carpenter; <https://www.voidtools.com/support/everything/sdk/> |
+| Everything SDK client | bundled source | MIT | Copyright (C) 2016, 2022 David Carpenter; <https://www.voidtools.com/support/everything/sdk/> |
 | pinyin-data | bundled data | MIT | Copyright (c) 2016 mozillazg; <https://github.com/mozillazg/pinyin-data> |
 | MinHook | bundled source | BSD 2-Clause | Copyright (c) 2009-2017 Tsuda Kageyu; <https://github.com/TsudaKageyu/minhook> |
 | Font Awesome 6 Free Solid | 6.5.2 font | SIL Open Font License 1.1 | Copyright (c) Font Awesome; <https://fontawesome.com/license/free> |
@@ -21,16 +21,12 @@ under `steam_bridge/` is licensed under the MIT License.
 | DeskMakeover shape catalog | upstream `main` as referenced in 2026 | MIT | Copyright (c) 2026 Jinming Yang; <https://github.com/nicepkg/deskmakeover> |
 | TranslucentTB-derived portions | upstream commit `322e2b7395a51975150126276308b415970e080b` | GPL-3.0-only | Copyright (c) TranslucentTB contributors; <https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b> |
 
-The complete MIT notices are retained in the corresponding bundled source
-headers and in `third_party/pinyin-data/LICENSE`. The Font Awesome font is
-distributed under the SIL Open Font License 1.1; the license text is available
-from <https://openfontlicense.org/open-font-license-official-text/> and the
-upstream Font Awesome license page linked above. The complete Microsoft Fluent
-System Icons MIT license is retained in
-`third_party/fluentui-system-icons/LICENSE` and is copied into release packages.
-The complete MinHook BSD 2-Clause license is retained in
-`third_party/minhook/LICENSE.txt` and is copied into release packages alongside
-the Wallpaper Engine capture helpers.
+The complete Everything SDK, Dear ImGui, Lua, pinyin-data, Font Awesome,
+Microsoft Fluent System Icons and MinHook license texts are retained under
+their corresponding `third_party/` directories. All are copied into the
+`licenses` directory of release packages. The Font Awesome font is distributed
+under the SIL Open Font License 1.1 with the reserved font name
+"Font Awesome".
 
 The Microsoft Windows App SDK runtime is redistributed self-contained under
 the license terms and third-party NOTICE installed by the pinned 2.4.0 NuGet

@@ -181,11 +181,9 @@ if (-not $packagedConfiguration.ok -or
     throw "Packaged Steam bridge private runtime validation failed."
 }
 $licensesDestination = Join-Path $payload "licenses"
-New-Item -ItemType Directory -Path $licensesDestination -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $repositoryRoot `
-        "third_party\minhook\LICENSE.txt") `
-    -Destination (Join-Path $licensesDestination `
-        "MinHook-LICENSE.txt") -Force
+Copy-SnowDesktopRepositoryLicenses `
+    -RepositoryRoot $repositoryRoot `
+    -Destination $licensesDestination
 $developerAssets = @(Get-ChildItem -LiteralPath $payload -Recurse -Force |
     Where-Object {
         $_.FullName.Substring($payload.Length).TrimStart('\') `

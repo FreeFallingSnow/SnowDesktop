@@ -424,8 +424,6 @@ struct HomeAboutPagePresenter::Impl
             L"Copyright (c) 2014-2025 Omar Cornut");
         AddAttribution(HomeAboutLink::Lua, L"Lua", L"(MIT)",
             L"Copyright (C) 1994-2024 Lua.org, PUC-Rio");
-        AddAttribution(HomeAboutLink::Spdlog, L"spdlog", L"(MIT)",
-            L"Copyright (c) 2016-present, Gabi Melman");
         AddAttribution(HomeAboutLink::PinyinData, L"pinyin-data", L"(MIT)",
             L"Copyright (c) 2016 mozillazg");
         AddAttribution(HomeAboutLink::TranslucentTb,

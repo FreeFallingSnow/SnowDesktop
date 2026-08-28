@@ -64,7 +64,6 @@ enum class HomeAboutLink : std::uint8_t
     EverythingSdk,
     DearImGui,
     Lua,
-    Spdlog,
     PinyinData,
     TranslucentTb,
 };
@@ -96,8 +95,6 @@ enum class HomeAboutLink : std::uint8_t
         return L"https://github.com/ocornut/imgui";
     case HomeAboutLink::Lua:
         return L"https://www.lua.org/";
-    case HomeAboutLink::Spdlog:
-        return L"https://github.com/gabime/spdlog";
     case HomeAboutLink::PinyinData:
         return L"https://github.com/mozillazg/pinyin-data";
     case HomeAboutLink::TranslucentTb:

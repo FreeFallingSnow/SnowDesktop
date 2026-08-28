@@ -146,6 +146,23 @@ void TestPackagers(const std::string& module,
             steam.find("Copy-SnowDesktopDeploymentPayload") !=
                 std::string::npos,
         "portable, MSIX, and Steam payloads use the same deployment manifest");
+    Check(module.find("Copy-SnowDesktopRepositoryLicenses") !=
+                std::string::npos &&
+            module.find("Everything-SDK-LICENSE.txt") !=
+                std::string::npos &&
+            module.find("FontAwesome-LICENSE.txt") !=
+                std::string::npos &&
+            module.find("DearImGui-LICENSE.txt") !=
+                std::string::npos &&
+            module.find("Lua-LICENSE.txt") !=
+                std::string::npos &&
+            module.find("PinyinData-LICENSE.txt") !=
+                std::string::npos &&
+            release.find("Copy-SnowDesktopRepositoryLicenses") !=
+                std::string::npos &&
+            steam.find("Copy-SnowDesktopRepositoryLicenses") !=
+                std::string::npos,
+        "portable, MSIX, and Steam payloads include bundled third-party license texts");
     Check(module.find("Enable-SnowDesktopPrivateRuntimeAssembly") !=
             std::string::npos &&
             module.find("Test-SnowDesktopExecutableRootResource") !=
