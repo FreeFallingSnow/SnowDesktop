@@ -5095,17 +5095,25 @@ int main(int argc, char** argv)
                     showFloatingDockBegin,
                     showFloatingDockEnd - showFloatingDockBegin)
                 : std::string{};
+        const std::size_t showPreviousMonitorCaptured =
+            persistentShowSource.find(
+                "const HMONITOR previouslySelectedMonitor =");
         const std::size_t showHostSynced =
             persistentShowSource.find(
-                "SyncPersistentDockHost(targetMonitor)");
+                "SyncPersistentDockHost(targetMonitor)",
+                showPreviousMonitorCaptured);
         const std::size_t showHostVisibilityCaptured =
             persistentShowSource.find(
                 "const bool hostWasVisible =",
                 showHostSynced);
+        const std::size_t showPhysicalVisibilityRead =
+            persistentShowSource.find(
+                "IsWindowVisible(floatingDockHost_->hwnd)",
+                showHostVisibilityCaptured);
         const std::size_t showPromoted =
             persistentShowSource.find(
                 "floatingDockHost_->promoted = true;",
-                showHostVisibilityCaptured);
+                showPhysicalVisibilityRead);
         const std::size_t showAggregateUpdated =
             persistentShowSource.find(
                 "RefreshFloatingDockVisibilityState();",
@@ -5130,10 +5138,26 @@ int main(int argc, char** argv)
             persistentShowSource.find(
                 "floatingDockHost_->promoted = false;",
                 showFrameFailureGuard);
+        const std::size_t showFailureAggregateUpdated =
+            persistentShowSource.find(
+                "RefreshFloatingDockVisibilityState();",
+                showFailureDemoted);
+        const std::size_t showFailureRepaintQueued =
+            persistentShowSource.find(
+                "InvalidateFloatingDockWindow(",
+                showFailureAggregateUpdated);
+        const std::size_t showPreviousMonitorRestored =
+            persistentShowSource.find(
+                "SyncPersistentDockHost(",
+                showFailureRepaintQueued);
+        const std::size_t showPreviousMonitorRestoreArgument =
+            persistentShowSource.find(
+                "previouslySelectedMonitor);",
+                showPreviousMonitorRestored);
         const std::size_t showFailureReturned =
             persistentShowSource.find(
                 "return;",
-                showFailureDemoted);
+                showPreviousMonitorRestoreArgument);
         const std::size_t showVisibilityUpdated =
             persistentShowSource.find(
                 "UpdatePersistentDockHostVisibility(",
@@ -5151,8 +5175,10 @@ int main(int argc, char** argv)
                 "BeginFloatingDockKeyboardSession();",
                 showVisibleHostRepaint);
         Check(!persistentShowSource.empty() &&
+                showPreviousMonitorCaptured != std::string::npos &&
                 showHostSynced != std::string::npos &&
                 showHostVisibilityCaptured != std::string::npos &&
+                showPhysicalVisibilityRead != std::string::npos &&
                 showPromoted != std::string::npos &&
                 showAggregateUpdated != std::string::npos &&
                 showHiddenHostBranch != std::string::npos &&
@@ -5160,21 +5186,31 @@ int main(int argc, char** argv)
                 showFrameFlushed != std::string::npos &&
                 showFrameFailureGuard != std::string::npos &&
                 showFailureDemoted != std::string::npos &&
+                showFailureAggregateUpdated != std::string::npos &&
+                showFailureRepaintQueued != std::string::npos &&
+                showPreviousMonitorRestored != std::string::npos &&
+                showPreviousMonitorRestoreArgument != std::string::npos &&
                 showFailureReturned != std::string::npos &&
                 showVisibilityUpdated != std::string::npos &&
                 showVisibleHostBranch != std::string::npos &&
                 showVisibleHostRepaint != std::string::npos &&
                 showKeyboardSessionStarted != std::string::npos &&
-                showHostSynced < showPromoted &&
+                showPreviousMonitorCaptured < showHostSynced &&
                 showHostSynced < showHostVisibilityCaptured &&
-                showHostVisibilityCaptured < showPromoted &&
+                showHostVisibilityCaptured < showPhysicalVisibilityRead &&
+                showPhysicalVisibilityRead < showPromoted &&
                 showPromoted < showAggregateUpdated &&
                 showAggregateUpdated < showHiddenHostBranch &&
                 showHiddenHostBranch < showFrameRendered &&
                 showFrameRendered < showFrameFlushed &&
                 showFrameFlushed < showFrameFailureGuard &&
                 showFrameFailureGuard < showFailureDemoted &&
-                showFailureDemoted < showFailureReturned &&
+                showFailureDemoted < showFailureAggregateUpdated &&
+                showFailureAggregateUpdated < showFailureRepaintQueued &&
+                showFailureRepaintQueued < showPreviousMonitorRestored &&
+                showPreviousMonitorRestored <
+                    showPreviousMonitorRestoreArgument &&
+                showPreviousMonitorRestoreArgument < showFailureReturned &&
                 showFailureReturned < showVisibilityUpdated &&
                 showVisibilityUpdated < showVisibleHostBranch &&
                 showVisibleHostBranch < showVisibleHostRepaint &&

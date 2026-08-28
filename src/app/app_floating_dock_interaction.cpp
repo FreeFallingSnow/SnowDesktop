@@ -17,6 +17,8 @@ void DesktopApp::ShowFloatingDock(
     }
 
     HideDockWindowPreview();
+    const HMONITOR previouslySelectedMonitor =
+        floatingDockMonitor_;
     HMONITOR targetMonitor = preferredMonitor;
     if (!targetMonitor)
     {
@@ -34,7 +36,7 @@ void DesktopApp::ShowFloatingDock(
     }
 
     const bool hostWasVisible =
-        ShouldShowPersistentDockHost(*floatingDockHost_);
+        IsWindowVisible(floatingDockHost_->hwnd) != FALSE;
     // Each monitor owns its persistent visual independently. Summoning this
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
@@ -77,6 +79,12 @@ void DesktopApp::ShowFloatingDock(
             RefreshFloatingDockVisibilityState();
             InvalidateFloatingDockWindow(
                 *floatingDockHost_, true);
+            if (previouslySelectedMonitor &&
+                previouslySelectedMonitor != floatingDockMonitor_)
+            {
+                SyncPersistentDockHost(
+                    previouslySelectedMonitor);
+            }
             WriteDiagnosticLogEntry(
                 L"Floating Dock summon deferred: frame not ready");
             return;
