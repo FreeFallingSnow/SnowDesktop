@@ -457,6 +457,16 @@ void TestHostContract(const std::filesystem::path& repository)
               "IntegratedTitleBarText().Text(Localize(\"app.settings.title\"))") !=
                 std::string::npos,
         "Windows owns caption activation visuals while the drag-only XAML caption presents the localized app identity without custom activation state");
+    Check(source.find("case WM_ACTIVATEAPP:") != std::string::npos &&
+            source.find("QueueExternalStateRefresh();") !=
+                std::string::npos &&
+            source.find("kRefreshExternalStateMessage") !=
+                std::string::npos &&
+            source.find("RefreshExternalStateNow();") !=
+                std::string::npos &&
+            shellHeader.find("RefreshRuntimeState() noexcept") !=
+                std::string::npos,
+        "reactivating Settings refreshes Windows-owned state without taking over non-client activation visuals");
     Check(source.find("ApplySettingsWindowChrome(window, darkTheme)") !=
                 std::string::npos &&
             source.find("DWMWA_USE_IMMERSIVE_DARK_MODE") !=

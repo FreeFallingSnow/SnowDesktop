@@ -316,6 +316,14 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             presenter.find("general.autoStart") != std::string::npos,
         "General projects host-owned startup state without committing it as JSON and preserves both ownership warnings");
+    Check(presenterHeader.find("RefreshRuntimeState() noexcept") !=
+                std::string::npos &&
+            presenter.find(
+              "void GeneralPagePresenter::RefreshRuntimeState() noexcept") !=
+                std::string::npos &&
+            presenter.find("impl_->RefreshStartupConflict();") !=
+                std::string::npos,
+        "cached General pages expose an explicit runtime-state refresh for startup conflicts");
     Check(presenter.find(
               "startupCard.content.Children().Append(portableStartupConflict)") !=
                 std::string::npos &&

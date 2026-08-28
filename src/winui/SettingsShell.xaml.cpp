@@ -644,6 +644,14 @@ void SettingsShell::RefreshLocalizedText()
     }
 }
 
+void SettingsShell::RefreshRuntimeState() noexcept
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId())
+        return;
+    if (generalPage_)
+        generalPage_->RefreshRuntimeState();
+}
+
 void SettingsShell::SetSystemBackdropActive(bool active) noexcept
 {
     if (closed_ || ownerThreadId_ != GetCurrentThreadId())

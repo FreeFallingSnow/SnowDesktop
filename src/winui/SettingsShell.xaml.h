@@ -89,6 +89,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
 
     void SetLocalizer(LocalizeCallback localizer);
     void RefreshLocalizedText();
+    /** Refresh Windows-owned state exposed by cached page presenters. */
+    void RefreshRuntimeState() noexcept;
 
     /** Keep the root transparent only while the Island backdrop is active. */
     void SetSystemBackdropActive(bool active) noexcept;

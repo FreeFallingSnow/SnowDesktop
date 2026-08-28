@@ -888,6 +888,18 @@ void GeneralPagePresenter::RefreshLocalizedText()
     if (impl_) impl_->RefreshLocalizedText();
 }
 
+void GeneralPagePresenter::RefreshRuntimeState() noexcept
+{
+    if (!impl_ || impl_->closed) return;
+    try
+    {
+        impl_->RefreshStartupConflict();
+    }
+    catch (...)
+    {
+    }
+}
+
 void GeneralPagePresenter::RegisterFocusTargets(
     const FocusRegistrar& registrar) const
 {

@@ -45,6 +45,7 @@ constexpr int kMinimumClientHeight = 520;
 constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
+constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
 
 bool QueryHighContrastEnabled(bool& enabled) noexcept
 {
@@ -656,6 +657,7 @@ struct SettingsWindowHost::Impl
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
     bool integratedTitleBarInsetsUpdateQueued = false;
+    bool externalStateRefreshQueued = false;
     std::wstring lastError;
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
@@ -735,6 +737,37 @@ struct SettingsWindowHost::Impl
         // Windows 10, high contrast, and platform failures retain a current
         // theme-resource solid brush instead.
         shell->SetSystemBackdropActive(active);
+    }
+
+    void RefreshExternalStateNow() noexcept
+    {
+        if (shuttingDown || !OnOwnerThread() || !controller || !shell)
+            return;
+        try
+        {
+            if (options.refreshExternalState)
+                options.refreshExternalState();
+            ApplySnapshotNow(controller->Snapshot());
+            shell->RefreshRuntimeState();
+        }
+        catch (...)
+        {
+        }
+    }
+
+    void QueueExternalStateRefresh() noexcept
+    {
+        if (externalStateRefreshQueued || shuttingDown || !Visible())
+            return;
+        if (PostMessageW(window, kRefreshExternalStateMessage, 0, 0))
+            externalStateRefreshQueued = true;
+    }
+
+    void ApplyDeferredExternalStateRefresh() noexcept
+    {
+        externalStateRefreshQueued = false;
+        if (Visible())
+            RefreshExternalStateNow();
     }
 
     void ApplyIntegratedTitleBarButtonColors() noexcept
@@ -2438,6 +2471,9 @@ struct SettingsWindowHost::Impl
         case kUpdateIntegratedTitleBarInsetsMessage:
             self->UpdateIntegratedTitleBarInsets();
             return 0;
+        case kRefreshExternalStateMessage:
+            self->ApplyDeferredExternalStateRefresh();
+            return 0;
         case kDispatchOwnerTaskMessage:
         {
             std::unique_ptr<std::function<void()>> task(
@@ -2471,6 +2507,10 @@ struct SettingsWindowHost::Impl
         case WM_CLOSE:
             (void)self->HideWindow();
             return 0;
+        case WM_ACTIVATEAPP:
+            if (wParam != FALSE)
+                self->QueueExternalStateRefresh();
+            break;
         case WM_GETMINMAXINFO:
         {
             auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -2526,6 +2566,7 @@ struct SettingsWindowHost::Impl
         case WM_NCDESTROY:
             self->systemBackdropUpdateQueued = false;
             self->integratedTitleBarInsetsUpdateQueued = false;
+            self->externalStateRefreshQueued = false;
             self->runtime.HandleWindowMessage(message, wParam, lParam);
             self->window = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
@@ -2789,6 +2830,7 @@ void SettingsWindowHost::Shutdown() noexcept
     }
 
     impl_->systemBackdropUpdateQueued = false;
+    impl_->externalStateRefreshQueued = false;
     if (impl_->shell)
         impl_->shell->SetSystemBackdropActive(false);
     if (impl_->shell)
@@ -2833,10 +2875,12 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         }
         reloadResult = impl_->controller->Reload(
             SettingsReloadPolicy::PreservePendingChanges);
-        if (impl_->options.refreshExternalState)
-            impl_->options.refreshExternalState();
         impl_->RefreshLocalizedPresentation();
     }
+
+    // Re-opening an already visible settings HWND must still observe changes
+    // made by another SnowDesktop build or by Windows Startup Apps settings.
+    impl_->RefreshExternalStateNow();
 
     SettingsActionResult openResult;
     if (!impl_->CommitRoute(route, &openResult))

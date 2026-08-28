@@ -104,6 +104,8 @@ public:
         DockShortcutContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
+    /** Re-query runtime-only state that is not persisted in SettingsSnapshot. */
+    void RefreshRuntimeState() noexcept;
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;
 
     void Activate() noexcept;
