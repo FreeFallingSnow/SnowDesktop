@@ -269,9 +269,10 @@ int main(int argc, char** argv)
             run.find("QueryAutoStartState()") != std::string::npos &&
             run.find("UnifiedAutoStartTaskState::Enabled") !=
                 std::string::npos &&
-            run.find("PortableVersionOwnsStartup") != std::string::npos &&
+            run.find("NonPackagedVersionOwnsStartup") !=
+                std::string::npos &&
             run.find("InstalledVersionOwnsStartup") != std::string::npos,
-        "DesktopApp only projects active portable or installed startup ownership into the WinUI warning state");
+        "DesktopApp projects active non-packaged or installed startup ownership without labeling Steam as portable");
     Check(host.find("personalization.updateGeneral") !=
                 std::string::npos &&
             host.find("actions.setDeveloperToolsEnabled") !=

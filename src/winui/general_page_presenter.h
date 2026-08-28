@@ -25,7 +25,7 @@ struct SettingsLanguageOption
 enum class GeneralStartupConflictKind : std::uint8_t
 {
     None,
-    PortableVersionOwnsStartup,
+    NonPackagedVersionOwnsStartup,
     InstalledVersionOwnsStartup,
 };
 

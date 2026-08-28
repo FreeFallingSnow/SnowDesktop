@@ -262,6 +262,26 @@ void RestoreLegacyPortableAutoStart(
         legacy.approval, kAutoStartApprovalSubKey, kAutoStartRunValue);
 }
 
+void SuppressLegacySourcesForEstablishedTask() noexcept
+{
+    const LegacyPortableAutoStart portable =
+        QueryLegacyPortableAutoStart();
+    if (portable.state != snowdesktop::LegacyAutoStartState::Unavailable)
+        (void)RemoveLegacyPortableAutoStart(portable);
+
+    // Once the unified task exists it is the only authoritative state. A
+    // portable build must not make settings availability depend on activating
+    // the installed package merely to inspect its transitional StartupTask.
+    // The packaged build can still retire its own legacy source directly.
+    if (!snowdesktop::deployment::IsPackaged())
+        return;
+    if (QueryLegacyPackagedAutoStart() ==
+        snowdesktop::LegacyAutoStartState::Enabled)
+    {
+        (void)SetLegacyPackagedAutoStart(false);
+    }
+}
+
 struct ReconciledAutoStart
 {
     bool known = false;
@@ -281,6 +301,15 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
     if (result.task.status == UnifiedAutoStartTaskState::Foreign ||
         result.task.status == UnifiedAutoStartTaskState::Unavailable)
     {
+        return result;
+    }
+
+    if (!result.task.migrationPending &&
+        (result.task.status == UnifiedAutoStartTaskState::Enabled ||
+            result.task.status == UnifiedAutoStartTaskState::Disabled))
+    {
+        result.known = true;
+        SuppressLegacySourcesForEstablishedTask();
         return result;
     }
 

@@ -361,6 +361,43 @@ void TestCatalogMatrix(
                 "settings.general.pageNavigation") == "桌面翻页",
         "the simplified-Chinese title must identify desktop page switching");
 
+    for (const std::string_view obsoleteKey : {
+             "app.settings.auto_start_manual_required",
+             "app.settings.auto_start_policy_disabled",
+             "app.settings.auto_start_switch_to_installed",
+             "app.settings.auto_start_disable_other_version",
+             "app.settings.auto_start_disable_other_confirm",
+             "app.settings.auto_start_switch_confirm",
+             "app.settings.auto_start_disable_all_confirm",
+             "app.settings.auto_start_other_remove_failed",
+             "app.settings.auto_start_policy_enabled",
+             "app.settings.auto_start_open_windows_settings",
+             "app.settings.auto_start_installed_conflict",
+             "app.settings.auto_start_portable_conflict"})
+    {
+        Check(!english->second.contains(std::string(obsoleteKey)),
+            std::string(obsoleteKey) +
+                ": obsolete Windows-managed startup guidance must be removed");
+    }
+    Check(english->second.at(
+              "app.settings.auto_start_other_version").find(
+                  "Turn on this switch") != std::string::npos &&
+            english->second.at(
+              "app.settings.auto_start_installed_version_active").find(
+                  "Turn on this switch") != std::string::npos,
+        "startup ownership notices must explain the direct in-app switch");
+    Check(english->second.at(
+              "app.settings.data_migration_description").find(
+                  "portable") == std::string::npos &&
+            simplifiedChinese != catalogs.end() &&
+            simplifiedChinese->second.at(
+              "app.settings.data_migration_description").find(
+                  "携带版") == std::string::npos &&
+            simplifiedChinese->second.at(
+              "app.settings.auto_start_installed_version_active").find(
+                  "携带版") == std::string::npos,
+        "user-visible deployment wording must not label Steam-compatible builds as portable");
+
     for (const auto& [language, catalog] : catalogs)
     {
         Check(catalog.size() ==

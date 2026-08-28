@@ -127,8 +127,7 @@ struct GeneralPagePresenter::Impl
     HotkeySettingRow desktopPassthroughHotkeyRow;
     SettingRow floatingDockToggleRow;
     HotkeySettingRow floatingDockHotkeyRow;
-    muxc::InfoBar portableStartupConflict{nullptr};
-    muxc::InfoBar installedStartupConflict{nullptr};
+    muxc::InfoBar startupOwnershipNotice{nullptr};
 
     std::vector<SettingsLanguageOption> languageOptions;
     std::string selectedLanguage = "system";
@@ -172,16 +171,12 @@ struct GeneralPagePresenter::Impl
         autoStartRow.Initialize(autoStartToggle);
         autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         startupCard.content.Children().Append(autoStartRow.root);
-        portableStartupConflict = muxc::InfoBar{};
-        portableStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
-        portableStartupConflict.IsClosable(false);
-        portableStartupConflict.IsOpen(false);
-        installedStartupConflict = muxc::InfoBar{};
-        installedStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
-        installedStartupConflict.IsClosable(false);
-        installedStartupConflict.IsOpen(false);
-        startupCard.content.Children().Append(portableStartupConflict);
-        startupCard.content.Children().Append(installedStartupConflict);
+        startupOwnershipNotice = muxc::InfoBar{};
+        startupOwnershipNotice.Severity(
+            muxc::InfoBarSeverity::Informational);
+        startupOwnershipNotice.IsClosable(false);
+        startupOwnershipNotice.IsOpen(false);
+        startupCard.content.Children().Append(startupOwnershipNotice);
 
         InitializeCard(desktopBehaviorCard, cardStyle, desktopRoot);
         softwareDesktopToggle = muxc::ToggleSwitch{};
@@ -703,29 +698,23 @@ struct GeneralPagePresenter::Impl
         if (actions.queryStartupConflict)
             conflict = actions.queryStartupConflict();
 
-        const bool showPortableConflict = conflict.kind ==
-            GeneralStartupConflictKind::PortableVersionOwnsStartup;
-        const bool showInstalledConflict = conflict.kind ==
-            GeneralStartupConflictKind::InstalledVersionOwnsStartup;
-        portableStartupConflict.Visibility(showPortableConflict
+        const bool showNotice = conflict.kind !=
+            GeneralStartupConflictKind::None;
+        startupOwnershipNotice.Visibility(showNotice
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        installedStartupConflict.Visibility(showInstalledConflict
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        portableStartupConflict.IsOpen(showPortableConflict);
-        installedStartupConflict.IsOpen(showInstalledConflict);
+        startupOwnershipNotice.IsOpen(showNotice);
 
-        std::wstring portableMessage =
-            L("app.settings.auto_start_other_version");
-        if (const auto marker = portableMessage.find(L"{0}");
+        std::wstring message = conflict.kind ==
+                GeneralStartupConflictKind::InstalledVersionOwnsStartup
+            ? L("app.settings.auto_start_installed_version_active")
+            : L("app.settings.auto_start_other_version");
+        if (const auto marker = message.find(L"{0}");
             marker != std::wstring::npos)
         {
-            portableMessage.replace(marker, 3, conflict.ownerCommand);
+            message.replace(marker, 3, conflict.ownerCommand);
         }
-        portableStartupConflict.Message(portableMessage);
-        installedStartupConflict.Message(
-            L("app.settings.auto_start_installed_version_active"));
+        startupOwnershipNotice.Message(message);
     }
 
     void ApplySnapshot(const SettingsSnapshot& snapshot)

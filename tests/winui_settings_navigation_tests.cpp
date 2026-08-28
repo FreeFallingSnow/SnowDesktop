@@ -302,15 +302,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             presenter.find("actions.setAutoStart(generation, enabled)") !=
                 std::string::npos &&
-            presenter.find("portableStartupConflict") !=
-                std::string::npos &&
-            presenter.find("installedStartupConflict") !=
+            presenter.find("startupOwnershipNotice") !=
                 std::string::npos &&
             presenter.find(
-              "portableStartupConflict.Visibility(showPortableConflict") !=
+              "startupOwnershipNotice.Visibility(showNotice") !=
                 std::string::npos &&
-            presenter.find(
-              "installedStartupConflict.Visibility(showInstalledConflict") !=
+            presenter.find("InfoBarSeverity::Informational") !=
                 std::string::npos &&
             presenterHeader.find("openStartupAppsSettings") ==
                 std::string::npos &&
@@ -327,10 +324,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos,
         "cached General pages expose an explicit runtime-state refresh for startup conflicts");
     Check(presenter.find(
-              "startupCard.content.Children().Append(portableStartupConflict)") !=
-                std::string::npos &&
-            presenter.find(
-              "startupCard.content.Children().Append(installedStartupConflict)") !=
+              "startupCard.content.Children().Append(startupOwnershipNotice)") !=
                 std::string::npos &&
             presenter.find(
               "InitializeCard(desktopBehaviorCard, cardStyle, desktopRoot)") !=
@@ -346,7 +340,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             presenterHeader.find("DesktopBehaviorContent()") !=
                 std::string::npos,
-        "startup ownership warnings stay with Auto-start while desktop behavior and passthrough have a dedicated Desktop surface");
+        "startup ownership notices stay with Auto-start while desktop behavior and passthrough have a dedicated Desktop surface");
 
     for (const char* target : {
              "HotkeyTarget::QuickNavigation",

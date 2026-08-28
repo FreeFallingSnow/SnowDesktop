@@ -215,6 +215,9 @@ int main(int argc, char** argv)
     const std::string_view reconciliation = FunctionBody(settingsApply,
         "ReconciledAutoStart ReconcileAutoStart() noexcept",
         "} // namespace");
+    const std::string_view establishedCleanup = FunctionBody(settingsApply,
+        "void SuppressLegacySourcesForEstablishedTask() noexcept",
+        "struct ReconciledAutoStart");
     Check(portableLegacy.find("QueryLegacyRegistryValue(") !=
                 std::string_view::npos &&
             settingsApply.find("RegOpenKeyExW") == std::string::npos &&
@@ -232,6 +235,20 @@ int main(int argc, char** argv)
             reconciliation.find("auto_start::Delete()") !=
                 std::string_view::npos,
         "migration records its desired state while disabled, resumes interrupted work, and rolls back immediate failures");
+    Check(reconciliation.find("!result.task.migrationPending") !=
+                std::string_view::npos &&
+            reconciliation.find("result.known = true;") !=
+                std::string_view::npos &&
+            reconciliation.find(
+                "SuppressLegacySourcesForEstablishedTask();") !=
+                std::string_view::npos &&
+            establishedCleanup.find(
+                "if (!snowdesktop::deployment::IsPackaged())") !=
+                std::string_view::npos &&
+            establishedCleanup.find(
+                "QueryLegacyPackagedAutoStart()") !=
+                std::string_view::npos,
+        "an established unified task is authoritative without portable builds waiting on the packaged bridge");
     Check(autoStartManager.find("kMigrationEnableDescription") !=
                 std::string::npos &&
             autoStartManager.find("kMigrationDisableDescription") !=

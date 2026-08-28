@@ -614,7 +614,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Portable)
         {
             conflict.kind =
-                GeneralStartupConflictKind::PortableVersionOwnsStartup;
+                GeneralStartupConflictKind::NonPackagedVersionOwnsStartup;
             conflict.ownerCommand = state.ownerCommand;
         }
         else if (!state.packaged && otherOwnerActive &&
