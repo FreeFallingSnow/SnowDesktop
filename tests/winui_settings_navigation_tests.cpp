@@ -615,22 +615,22 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               appearanceItem) < appearanceThemeItem &&
             shell.find("AppearanceThemeItem().Content(") !=
                 std::string::npos &&
-            shell.find("appearance-theme.png") != std::string::npos &&
-            shell.find("appearance-widgets.png") != std::string::npos &&
-            shell.find("appearance-desktop-icons.png") !=
+            shell.find("appearance-theme.svg") != std::string::npos &&
+            shell.find("appearance-widgets.svg") != std::string::npos &&
+            shell.find("appearance-desktop-icons.svg") !=
                 std::string::npos &&
-            shell.find("appearance-icon-beautification.png") !=
+            shell.find("appearance-icon-beautification.svg") !=
                 std::string::npos &&
-            shell.find("muxc::BitmapIcon CreateColorNavigationIcon") !=
+            shell.find("muxc::ImageIcon CreateColorNavigationIcon") !=
                 std::string::npos &&
-            shell.find("icon.ShowAsMonochrome(false)") !=
+            shell.find("muxmi::SvgImageSource source") !=
                 std::string::npos &&
             shell.find("CreateHighContrastNavigationIcon") !=
                 std::string::npos &&
             shell.find("DesktopShellHeader().Content(") !=
                 std::string::npos &&
             shell.find("DataHeader().Content(") != std::string::npos,
-        "the adaptive NavigationView combines its built-in toggle with one PaneHeader search box, preserves a compact search affordance, uses full-color bitmap icons with a High Contrast fallback, and exposes the navigation groups in task order");
+        "the adaptive NavigationView combines its built-in toggle with one PaneHeader search box, preserves a compact search affordance, uses full-color SVG icons with a High Contrast fallback, and exposes the navigation groups in task order");
     Check(shellHeader.find("titleBarBackToken_") == std::string::npos &&
             shellHeader.find("titleBarPaneToggleToken_") ==
                 std::string::npos &&
