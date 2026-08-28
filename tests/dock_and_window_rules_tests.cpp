@@ -834,6 +834,54 @@ int main(int argc, char** argv)
             !titleless::ResolveStoredMode(false, true) &&
             titleless::ResolveStoredMode(true, false),
         "the titleless option must affect only fixed non-compact Collection layouts");
+    const auto denseTwoByTwo = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 184, 232 }, 2, 2,
+        57, 2, 2, 1.0f);
+    Check(denseTwoByTwo.columns >= 3 &&
+            denseTwoByTwo.rows >= 3 &&
+            denseTwoByTwo.columns * denseTwoByTwo.rows > 4 &&
+            denseTwoByTwo.iconSize >=
+                denseTwoByTwo.minimumIconSize,
+        "a default 2x2 titleless Collection must gain at least a 3x3 dense grid without shrinking icons below 80 percent");
+    const auto denseLandscape = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 300, 150 }, 2, 2,
+        50, 2, 2, 1.0f);
+    const auto densePortrait = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 150, 300 }, 2, 2,
+        50, 2, 2, 1.0f);
+    Check(denseLandscape.columns > denseLandscape.rows &&
+            densePortrait.rows > densePortrait.columns &&
+            denseLandscape.columns * denseLandscape.rows ==
+                densePortrait.columns * densePortrait.rows &&
+            denseLandscape.iconSize >=
+                denseLandscape.minimumIconSize &&
+            densePortrait.iconSize >=
+                densePortrait.minimumIconSize,
+        "dense titleless layouts must maximize capacity without forcing rectangular widgets into square grids");
+    const auto denseLargeIcons = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 184, 232 }, 2, 2,
+        70, 2, 2, 2.0f);
+    Check(denseLargeIcons.iconSize >=
+            denseLargeIcons.minimumIconSize &&
+            denseLargeIcons.columns * denseLargeIcons.rows <=
+                denseTwoByTwo.columns * denseTwoByTwo.rows,
+        "larger icon and spacing settings must recompute density while preserving the 80 percent floor");
+    const auto denseFallback = titleless::ResolveDenseLayout(
+        RECT{ 0, 0, 60, 60 }, 2, 2,
+        50, 2, 2, 1.0f);
+    Check(denseFallback.columns == 2 &&
+            denseFallback.rows == 2 &&
+            denseFallback.iconSize <
+                denseFallback.minimumIconSize,
+        "an undersized frame with no qualified dense candidate must fall back to the original row and column counts");
+    const RECT denseIconRect = itemVisual::ResolveCenteredIconRect(
+        localLayout::ItemRect(denseTwoByTwo.geometry, 0),
+        denseTwoByTwo.iconSize);
+    Check(denseIconRect.right - denseIconRect.left ==
+                denseTwoByTwo.iconSize &&
+            denseIconRect.bottom - denseIconRect.top ==
+                denseTwoByTwo.iconSize,
+        "dense items, highlights, placeholders, and tooltip anchors must share one centered icon edge length");
     const RECT tooltipFrame{ 0, 0, 240, 180 };
     const RECT titlelessBottomAnchor{ 180, 138, 228, 178 };
     const RECT bottomTooltip = titleless::ResolveTooltipBounds(

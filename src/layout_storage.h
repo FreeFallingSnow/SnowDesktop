@@ -115,6 +115,7 @@ struct Document
     std::optional<float> iconSpacing;
     std::optional<float> componentSpacing;
     std::optional<float> iconSizeScale;
+    // Legacy layout-wide migration input. New layouts persist the widget field.
     std::optional<bool> collectionLargeFolderTitleless;
     std::optional<int> shortcutArrowMode;
     std::optional<bool> iconBeautifyEnabled;

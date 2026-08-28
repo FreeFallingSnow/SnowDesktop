@@ -311,7 +311,8 @@ public:
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
         const std::wstring& name, bool isDir, bool showLabel = true,
-        bool centerIconVertically = false) const;
+        bool centerIconVertically = false,
+        int forcedIconSize = 0) const;
 
     const std::wstring& GetSearchText() const { return searchText_; }
     void SetSearchText(const std::wstring& text);

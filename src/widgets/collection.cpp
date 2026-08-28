@@ -4,7 +4,8 @@
  *
  * 实现固定大小的缩略图网格控件，支持分类标签页和"全部"拼贴按钮。
  * Collection 是桌面上的一类特殊容器控件，以网格形式展示其子项缩略图，
- * 提供紧凑模式（2x2 网格）和标准模式（与桌面网格对齐）两种布局。
+ * 提供紧凑模式（2x2 网格）和大文件夹模式；无字大文件夹会在
+ * 图标缩放下限内解析容量最大的固定网格。
  * 当子项数量超过内联容量时，最后一个槽位变为"全部"拼贴按钮，
  * 以 2x2 缩略图形式展示剩余项目。
  */
@@ -55,6 +56,31 @@ static snowdesktop::PageItemVisualMetrics CollectionVisualMetrics(
     return widget->GetItemVisualMetrics();
 }
 
+static bool CollectionTitlelessActive(const Collection* widget)
+{
+    const DesktopWidget* data = widget
+        ? widget->GetWidgetData() : nullptr;
+    return data &&
+        snowdesktop::collection_titleless_rules::IsActive(
+            data->largeFolderTitleless,
+            data->scrollContainerMode,
+            data->gridSpan.columns,
+            data->gridSpan.rows);
+}
+
+static snowdesktop::collection_titleless_rules::DenseLayout
+CollectionDenseLayout(Collection* widget)
+{
+    if (!widget || !widget->GetWidgetData()) return {};
+    DesktopWidget* data = widget->GetWidgetData();
+    const auto metrics = CollectionVisualMetrics(widget);
+    return snowdesktop::collection_titleless_rules::ResolveDenseLayout(
+        widget->GetFrameRect(),
+        data->gridSpan.columns, data->gridSpan.rows,
+        metrics.iconSize, metrics.sideInset, metrics.topInset,
+        widget->GetLayoutSpacingScale());
+}
+
 static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     Collection* widget, int fixedRows = 0)
 {
@@ -73,7 +99,7 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
         content = widget->GetBodyRect();
     const auto metrics = CollectionVisualMetrics(widget);
     const float spacing = widget->GetLayoutSpacingScale();
-    if (data->listMode)
+    if (data->scrollContainerMode && data->listMode)
     {
         return snowdesktop::widget_item_layout::ResolveList(
             content,
@@ -81,6 +107,8 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
                 metrics.minimumListHeight),
             spacing);
     }
+    if (CollectionTitlelessActive(widget))
+        return CollectionDenseLayout(widget).geometry;
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, std::max(1, data->gridSpan.columns), fixedRows,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
@@ -154,31 +182,47 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
  * @brief 获取集合的内联容量（直接显示的缩略图数量）
  *
  * 紧凑模式（单行单列）下返回 4（2x2 网格），
- * 非紧凑模式下返回 (列数 x 行数 - 1)，预留最后一个位置给"全部"按钮。
- * @param widget  桌面控件描述符
+ * 非紧凑模式下使用当前解析网格的槽位数减一，预留最后一个位置给
+ * "全部"按钮；无字模式的解析网格可能比组件跨度更密集。
+ * @param collection 集合组件
  * @return 内联可显示的缩略图数量
  */
-static size_t GetCollectionInlineCapacity(const DesktopWidget& widget)
+static size_t GetCollectionInlineCapacity(const Collection* collection)
 {
+    const DesktopWidget* widget = collection
+        ? collection->GetWidgetData() : nullptr;
+    if (!widget) return 0;
     if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
-            widget.gridSpan.columns, widget.gridSpan.rows)) return 4;
-    return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
+            widget->gridSpan.columns, widget->gridSpan.rows)) return 4;
+    int columns = std::max(1, widget->gridSpan.columns);
+    int rows = std::max(1, widget->gridSpan.rows);
+    if (CollectionTitlelessActive(collection))
+    {
+        const auto dense = CollectionDenseLayout(
+            const_cast<Collection*>(collection));
+        columns = dense.columns;
+        rows = dense.rows;
+    }
+    return static_cast<size_t>(columns * rows - 1);
 }
 
 /**
  * @brief 获取"全部"拼贴按钮的槽位索引
  *
  * 紧凑模式下无"全部"按钮，返回 (size_t)-1。
- * 非紧凑模式下返回最后一个槽位的索引（= 总网格数 - 1）。
- * @param widget  桌面控件描述符
+ * 非紧凑模式下返回当前解析网格的最后一个槽位索引。
+ * @param collection 集合组件
  * @return 槽位索引，若不存在"全部"按钮则返回 (size_t)-1
  */
-static size_t GetCollectionAllButtonSlot(const DesktopWidget& widget)
+static size_t GetCollectionAllButtonSlot(const Collection* collection)
 {
+    const DesktopWidget* widget = collection
+        ? collection->GetWidgetData() : nullptr;
+    if (!widget) return static_cast<size_t>(-1);
     if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
-            widget.gridSpan.columns, widget.gridSpan.rows))
+            widget->gridSpan.columns, widget->gridSpan.rows))
         return static_cast<size_t>(-1);
-    return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
+    return GetCollectionInlineCapacity(collection);
 }
 
 static RECT GetCollectionCompactSlotRect(
@@ -502,15 +546,13 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     bool compact = snowdesktop::widget_item_layout::IsCompactCollectionSpan(
         data_->gridSpan.columns, data_->gridSpan.rows);
     const bool titlelessLargeFolder =
-        snowdesktop::collection_titleless_rules::IsActive(
-            app_->collectionLargeFolderTitleless_,
-            data_->scrollContainerMode,
-            data_->gridSpan.columns,
-            data_->gridSpan.rows);
+        CollectionTitlelessActive(this);
+    const int titlelessIconSize = titlelessLargeFolder
+        ? CollectionDenseLayout(this).iconSize : 0;
     auto& slots = GetSlots();
     const size_t displayItemCount = CollectionItemCount(this);
     size_t inlineCapacity = std::min(
-        GetCollectionInlineCapacity(*data_), displayItemCount);
+        GetCollectionInlineCapacity(this), displayItemCount);
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
     std::wstring hoveredTooltipTitle;
@@ -552,7 +594,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (privacyActive)
                 DrawPrivacyPlaceholder(context, slotRect,
                     di.name, false, !titlelessLargeFolder,
-                    titlelessLargeFolder);
+                    titlelessLargeFolder, titlelessIconSize);
             else
             {
                 // Fixed large-folder tracks occupy the complete frame; the
@@ -567,7 +609,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     icon->Draw(context, slotRect,
                         di.selected ? 2 : (pointerOver ? 1 : 0),
-                        lt, false, false, data_, true, true);
+                        lt, false, false, data_, true, true,
+                        titlelessIconSize);
                     if (canShowTitlelessTooltip && pointerOver)
                     {
                         const std::wstring_view identity =
@@ -580,9 +623,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                                     *data_, identity)
                                 : di.name;
                         hoveredTooltipAnchor =
-                            snowdesktop::ResolveVerticallyCenteredIconRect(
-                                slotRect,
-                                app_->GetItemIconRect(slotRect));
+                            snowdesktop::ResolveCenteredIconRect(
+                                slotRect, titlelessIconSize);
                     }
                 }
                 else
@@ -605,7 +647,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     }
 
     // "All" button: 2×2 mosaic of remaining items
-    size_t allSlot = GetCollectionAllButtonSlot(*data_);
+    size_t allSlot = GetCollectionAllButtonSlot(this);
     if (allSlot != static_cast<size_t>(-1) && !compact &&
         displayItemCount > inlineCapacity)
     {
@@ -632,8 +674,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             RECT mosaicRect = app_->GetItemIconRect(allRect);
             if (titlelessLargeFolder)
                 mosaicRect =
-                    snowdesktop::ResolveVerticallyCenteredIconRect(
-                        allRect, mosaicRect);
+                    snowdesktop::ResolveCenteredIconRect(
+                        allRect, titlelessIconSize);
             for (int j = 0; j < 4; ++j)
             {
                 RECT tile = GetCollectionCompactSlotRect(this,
@@ -733,7 +775,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     }
 
     // ── Original: large folder mode ─────────────────────────
-    size_t inlineCap = GetCollectionInlineCapacity(*data_);
+    size_t inlineCap = GetCollectionInlineCapacity(this);
     size_t visible = std::min(
         inlineCap, CollectionItemCount(this));
     RECT body = GetBodyRect();
@@ -766,7 +808,7 @@ size_t Collection::GetSlotCount() const
         return CollectionItemCount(
             const_cast<Collection*>(this));
 
-    size_t inlineCap = GetCollectionInlineCapacity(*data_);
+    size_t inlineCap = GetCollectionInlineCapacity(this);
     size_t visible = std::min(inlineCap,
         CollectionItemCount(const_cast<Collection*>(this)));
 
@@ -786,7 +828,8 @@ Item* Collection::GetSlotItem(size_t idx) const
     if (!data_ || !app_ ||
         idx >= CollectionItemCount(const_cast<Collection*>(this)))
         return nullptr;
-    if (!data_->scrollContainerMode && idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
+    if (!data_->scrollContainerMode &&
+        idx >= GetCollectionInlineCapacity(this)) return nullptr;
     if (auto* scene = GetPreviewScene())
     {
         DesktopItem* sample = scene->FindDesktopItem(data_->itemKeys[idx]);
@@ -942,10 +985,10 @@ RECT Collection::GetAllButtonRect() const
         InflateRect(&body, -Cu(6.0f), -Cu(6.0f));
         return body;
     }
-    size_t allSlot = GetCollectionAllButtonSlot(*data_);
+    size_t allSlot = GetCollectionAllButtonSlot(this);
     if (allSlot == static_cast<size_t>(-1)) return {};
     if (CollectionItemCount(const_cast<Collection*>(this)) <=
-        GetCollectionInlineCapacity(*data_))
+        GetCollectionInlineCapacity(this))
         return {};
     return GetCollectionSlotRect(this, allSlot, body);
 }
@@ -997,10 +1040,10 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
     if (compact)
         return base == WidgetHit::Content ? WidgetHit::CollectionOpenBtn : base;
 
-    size_t allSlot = GetCollectionAllButtonSlot(*data_);
+    size_t allSlot = GetCollectionAllButtonSlot(this);
     if (allSlot != static_cast<size_t>(-1) &&
         CollectionItemCount(const_cast<Collection*>(this)) >
-            GetCollectionInlineCapacity(*data_))
+            GetCollectionInlineCapacity(this))
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, GetBodyRect());
         if (PtInRect(&allRect, pt)) return WidgetHit::CollectionOpenBtn;

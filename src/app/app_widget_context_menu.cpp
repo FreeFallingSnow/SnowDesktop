@@ -733,7 +733,7 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             const std::wstring titlelessLabel = toggleLabel(
                 _LW("app.interact.large_folder_titleless"),
-                collectionLargeFolderTitleless_);
+                widget.largeFolderTitleless);
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetToggleLargeFolderTitleless,
                 titlelessLabel.c_str());
@@ -1397,8 +1397,14 @@ void DesktopApp::ShowWidgetContextMenu(
         if (widgets_[widgetIndex].type ==
             DesktopWidgetType::Collection)
         {
-            collectionLargeFolderTitleless_ =
-                !collectionLargeFolderTitleless_;
+            widgets_[widgetIndex].largeFolderTitleless =
+                !widgets_[widgetIndex].largeFolderTitleless;
+            for (auto& c : containers_)
+            {
+                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+                if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
+                { wc->InvalidateSlots(); break; }
+            }
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
         }

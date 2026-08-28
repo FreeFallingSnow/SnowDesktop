@@ -3289,7 +3289,6 @@ private:
     bool iconSpacingPreviewActive_ = false;
     float itemIconSizeScale_ = kDefaultItemIconSizeScale;
     bool itemIconSizePreviewActive_ = false;
-    bool collectionLargeFolderTitleless_ = false;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;
     bool itemFontSizePreviewActive_ = false;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;

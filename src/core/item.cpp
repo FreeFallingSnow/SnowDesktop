@@ -104,7 +104,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     bool drawText, bool quickNavLayout,
     const DesktopWidget* demoCollection,
     bool iconOnlyHighlight,
-    bool centerIconVertically)
+    bool centerIconVertically,
+    int forcedIconSize)
 {
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -116,10 +117,14 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     const float dragOpacity = dragged ? 0.6f : 1.0f;
     const float alpha = dragOpacity * cutOpacity;
 
-    RECT iconRect = quickNavLayout
-        ? app_->GetQuickNavItemIconRect(rect)
-        : app_->GetItemIconRect(rect);
-    if (centerIconVertically && !quickNavLayout)
+    RECT iconRect = forcedIconSize > 0 && !quickNavLayout
+        ? snowdesktop::ResolveCenteredIconRect(
+            rect, forcedIconSize)
+        : (quickNavLayout
+            ? app_->GetQuickNavItemIconRect(rect)
+            : app_->GetItemIconRect(rect));
+    if (forcedIconSize <= 0 &&
+        centerIconVertically && !quickNavLayout)
         iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
             rect, iconRect);
     const RECT highlightRect = iconOnlyHighlight && !quickNavLayout

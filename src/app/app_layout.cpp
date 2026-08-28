@@ -141,15 +141,6 @@ void DesktopApp::LoadLayoutSlots()
     itemIconSizeScale_ = std::clamp(
         document.iconSizeScale.value_or(kDefaultItemIconSizeScale),
         kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
-    const bool anyLegacyTitlelessCollection = std::any_of(
-        document.widgets.begin(), document.widgets.end(),
-        [](const snowdesktop::layout_storage::WidgetRecord& widget) {
-            return widget.largeFolderTitleless;
-        });
-    collectionLargeFolderTitleless_ =
-        snowdesktop::collection_titleless_rules::ResolveStoredMode(
-            document.collectionLargeFolderTitleless,
-            anyLegacyTitlelessCollection);
 
     if (document.shortcutArrowMode)
         shortcutArrowMode_ = std::clamp(
@@ -407,6 +398,11 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.largeFolderTitleless =
+            widget.type == DesktopWidgetType::Collection &&
+            snowdesktop::collection_titleless_rules::ResolveStoredMode(
+                document.collectionLargeFolderTitleless,
+                saved.largeFolderTitleless);
         widget.keepWhenDesktopHidden = saved.keepWhenDesktopHidden;
         widget.showTitle = saved.showTitle.value_or(
             widget.type != DesktopWidgetType::LuaScript);
@@ -834,8 +830,6 @@ void DesktopApp::SaveLayoutSlots()
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
-         << ",\n  \"collectionLargeFolderTitleless\": "
-         << (collectionLargeFolderTitleless_ ? "true" : "false")
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
@@ -971,6 +965,8 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"largeFolderTitleless\": "
+             << (w.largeFolderTitleless ? "true" : "false")
              << ", \"keepWhenDesktopHidden\": "
              << (w.keepWhenDesktopHidden ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")

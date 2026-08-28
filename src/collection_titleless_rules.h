@@ -1,11 +1,25 @@
 #pragma once
 
+#include "widget_item_layout.h"
+
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <windows.h>
 
 namespace snowdesktop::collection_titleless_rules
 {
+
+inline constexpr float kMinimumIconScale = 0.8f;
+
+struct DenseLayout
+{
+    widget_item_layout::Layout geometry{};
+    int columns = 1;
+    int rows = 1;
+    int iconSize = 1;
+    int minimumIconSize = 1;
+};
 
 inline bool IsLargeFolderMode(
     bool scrollContainerMode, int columns, int rows)
@@ -22,9 +36,95 @@ inline bool IsActive(bool enabled,
 }
 
 inline bool ResolveStoredMode(
-    std::optional<bool> globalMode, bool anyLegacyWidgetEnabled)
+    std::optional<bool> globalMode, bool widgetMode)
 {
-    return globalMode.value_or(anyLegacyWidgetEnabled);
+    return globalMode.value_or(widgetMode);
+}
+
+inline int ResolveFittedIconSize(
+    const widget_item_layout::Layout& layout,
+    int baseIconSize, int horizontalInset, int verticalInset)
+{
+    return std::clamp(std::min({
+        std::max(1, baseIconSize),
+        std::max(1, layout.horizontal.cell -
+            std::max(0, horizontalInset) * 2),
+        std::max(1, layout.vertical.cell -
+            std::max(0, verticalInset) * 2)
+    }), 1, std::max(1, baseIconSize));
+}
+
+inline DenseLayout ResolveDenseLayout(
+    RECT viewport, int baseColumns, int baseRows,
+    int baseIconSize, int horizontalInset, int verticalInset,
+    float spacingScale)
+{
+    baseColumns = std::max(1, baseColumns);
+    baseRows = std::max(1, baseRows);
+    baseIconSize = std::max(1, baseIconSize);
+    horizontalInset = std::max(0, horizontalInset);
+    verticalInset = std::max(0, verticalInset);
+
+    DenseLayout result;
+    result.columns = baseColumns;
+    result.rows = baseRows;
+    result.minimumIconSize = std::max(1,
+        static_cast<int>(std::ceil(
+            baseIconSize * kMinimumIconScale)));
+
+    const int minimumCellWidth =
+        result.minimumIconSize + horizontalInset * 2;
+    const int minimumCellHeight =
+        result.minimumIconSize + verticalInset * 2;
+    result.geometry = widget_item_layout::ResolveGrid(
+        viewport, baseColumns, baseRows,
+        minimumCellWidth, minimumCellHeight, spacingScale);
+    result.iconSize = ResolveFittedIconSize(
+        result.geometry, baseIconSize,
+        horizontalInset, verticalInset);
+
+    const int width = std::max<LONG>(
+        1, viewport.right - viewport.left);
+    const int height = std::max<LONG>(
+        1, viewport.bottom - viewport.top);
+    const int maximumColumns = std::max(
+        baseColumns, width / std::max(1, minimumCellWidth));
+    const int maximumRows = std::max(
+        baseRows, height / std::max(1, minimumCellHeight));
+
+    bool foundQualified = false;
+    int bestCapacity = 0;
+    for (int columns = baseColumns;
+         columns <= maximumColumns; ++columns)
+    {
+        for (int rows = baseRows; rows <= maximumRows; ++rows)
+        {
+            const auto geometry = widget_item_layout::ResolveGrid(
+                viewport, columns, rows,
+                minimumCellWidth, minimumCellHeight, spacingScale);
+            const int iconSize = ResolveFittedIconSize(
+                geometry, baseIconSize,
+                horizontalInset, verticalInset);
+            if (iconSize < result.minimumIconSize)
+                continue;
+
+            const int capacity = columns * rows;
+            if (foundQualified &&
+                (capacity < bestCapacity ||
+                 (capacity == bestCapacity &&
+                  iconSize <= result.iconSize)))
+                continue;
+
+            foundQualified = true;
+            bestCapacity = capacity;
+            result.geometry = geometry;
+            result.columns = columns;
+            result.rows = rows;
+            result.iconSize = iconSize;
+        }
+    }
+
+    return result;
 }
 
 inline RECT ResolveTooltipBounds(

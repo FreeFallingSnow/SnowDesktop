@@ -138,7 +138,8 @@ public:
         bool quickNavLayout = false,
         const DesktopWidget* demoCollection = nullptr,
         bool iconOnlyHighlight = false,
-        bool centerIconVertically = false);
+        bool centerIconVertically = false,
+        int forcedIconSize = 0);
     /** @brief 单独绘制标题，供选中标题前景层使用。 */
     void DrawTitle(ID2D1RenderTarget* context, RECT rect,
         bool selected, float opacity = 1.0f,

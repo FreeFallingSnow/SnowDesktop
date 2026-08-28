@@ -447,7 +447,7 @@ int main()
             *spacingLayout.componentSpacing == 1.5f &&
             spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f &&
             spacingLayout.collectionLargeFolderTitleless.value_or(false),
-        "component spacing, icon size, and the global Collection titleless mode decode as optional layout settings");
+        "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"itemFontSize\":18,\"listItemFontSize\":16}",
