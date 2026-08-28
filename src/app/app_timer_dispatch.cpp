@@ -270,8 +270,6 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
         OnMouseMoveAt(0, clientPoint);
         return;
     }
-    if (route != DwellTargetRefreshRoute::SelfOleDragOver)
-        return;
 
     DWORD keyState = MK_LBUTTON;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
@@ -280,6 +278,19 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
         keyState |= MK_ALT;
     if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
         keyState |= MK_SHIFT;
+    if (route == DwellTargetRefreshRoute::ExternalLocalFeedback)
+    {
+        // External OLE sources may not issue another DragOver callback while
+        // the pointer is stationary. Re-resolve only SnowDesktop's local
+        // target and hint so the completed dwell becomes visible and is also
+        // retained for Drop, without re-entering the source's OLE loop.
+        RefreshDragTargetAt(clientPoint, static_cast<int>(
+            keyState & (MK_CONTROL | MK_ALT | MK_SHIFT)));
+        return;
+    }
+    if (route != DwellTargetRefreshRoute::SelfOleDragOver)
+        return;
+
     POINT screenPoint = clientPoint;
     ClientToScreen(hwnd_, &screenPoint);
     DWORD effect = DROPEFFECT_COPY |

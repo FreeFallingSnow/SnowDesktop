@@ -7,7 +7,7 @@ enum class DwellTargetRefreshRoute
 {
     NativePointer,
     SelfOleDragOver,
-    AwaitExternalOleCallback,
+    ExternalLocalFeedback,
 };
 
 enum class QueryContinueDragAction
@@ -43,7 +43,7 @@ constexpr DwellTargetRefreshRoute SelectDwellTargetRefreshRoute(
     if (selfOleDragActive)
         return DwellTargetRefreshRoute::SelfOleDragOver;
     if (externalOleDragActive)
-        return DwellTargetRefreshRoute::AwaitExternalOleCallback;
+        return DwellTargetRefreshRoute::ExternalLocalFeedback;
     return DwellTargetRefreshRoute::NativePointer;
 }
 

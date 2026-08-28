@@ -291,8 +291,8 @@ int main(int argc, char** argv)
             oleDrag::DwellTargetRefreshRoute::SelfOleDragOver &&
         oleDrag::SelectDwellTargetRefreshRoute(
             false, true) ==
-            oleDrag::DwellTargetRefreshRoute::AwaitExternalOleCallback,
-        "Dock dwell must not re-enter native drag handling from an OLE loop");
+        oleDrag::DwellTargetRefreshRoute::ExternalLocalFeedback,
+        "dwell completion must locally refresh stationary external OLE feedback without re-entering the source drag loop");
     Check(
         oleDrag::SelectQueryContinueDragAction(
             true, true, true, true, true) ==
