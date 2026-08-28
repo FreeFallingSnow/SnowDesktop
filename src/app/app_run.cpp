@@ -785,6 +785,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.widgetsPage.canPublishDevelopmentPackage = []() {
         return IsSteamWorkshopPublisherAvailable();
     };
+    settingsHostOptions.widgetsPage.workshopAvailable = []() {
+        return WidgetEngine::IsSteamWorkshopBridgeAvailable();
+    };
     settingsHostOptions.widgetsPage.publishDevelopmentPackage = [](
         const std::filesystem::path& projectDirectory) {
         const auto paths = WidgetEngine::GetWidgetPackagePaths();

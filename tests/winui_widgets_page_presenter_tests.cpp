@@ -106,6 +106,8 @@ void TestWidgetsPagePresenterContract(
 
     Check(header.find("WidgetRestorableVersionSnapshot") !=
                 std::string::npos &&
+            header.find("bool workshopAvailable = false") !=
+                std::string::npos &&
             header.find("canCreateDevelopmentProject") !=
                 std::string::npos &&
             header.find("canInstallDevelopmentSnapshot") !=
@@ -121,6 +123,21 @@ void TestWidgetsPagePresenterContract(
             source.find("package.canPublishDevelopmentPackage") !=
                 std::string::npos,
         "legacy development, rollback, publishing and Workshop actions are capability-gated host seams");
+
+    Check(source.find("const bool hasWorkshopItem = workshopAvailable &&") !=
+                std::string::npos &&
+            source.find("if (workshopAvailable)\n"
+                        "            {\n"
+                        "                muxc::StackPanel failureActions") !=
+                std::string::npos &&
+            source.find("workshopAvailable &&\n"
+                        "                            !current->workshopExternalItemId.empty()") !=
+                std::string::npos &&
+            source.find("workshopButton.Visibility(workshopAvailable") !=
+                std::string::npos &&
+            source.find("source.workshop && source.available") ==
+                std::string::npos,
+        "Workshop entry points and unsubscribe wording follow the host capability instead of historical metadata");
 
     const auto sourceRegion = [&source](const char* beginMarker,
                                         const char* endMarker) {

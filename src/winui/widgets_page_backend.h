@@ -100,6 +100,8 @@ struct WidgetsPageBackendOptions
     /** Shell work stays outside the backend and remains HWND/process owned. */
     std::function<WidgetsPageHostOperationResult(
         std::string_view sourceId)> openWorkshop;
+    /** True only when this distribution includes the Steam bridge. */
+    std::function<bool()> workshopAvailable;
     /** Opens one bound Workshop item. The backend validates the published
      * item identity against its immutable package snapshot before invoking
      * this shell-owned callback. */

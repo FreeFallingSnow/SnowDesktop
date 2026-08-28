@@ -1035,6 +1035,19 @@ struct WidgetsPageBackend::Impl final
         return ownerThreadId != 0 && ownerThreadId == GetCurrentThreadId();
     }
 
+    [[nodiscard]] bool WorkshopAvailable() const noexcept
+    {
+        if (!options.workshopAvailable) return false;
+        try
+        {
+            return options.workshopAvailable();
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
     [[nodiscard]] std::uint64_t NextTaskId() noexcept
     {
         ++nextTaskId;
@@ -1577,6 +1590,7 @@ struct WidgetsPageBackend::Impl final
             state->developerOverridesVisible =
                 options.developerOverridesVisible &&
                 options.developerOverridesVisible();
+            state->workshopAvailable = WorkshopAvailable();
             CaptureAgentSkillState();
             std::vector<InstalledWidgetPackageSnapshot> converted;
             const auto groups = GroupPackages(
@@ -2751,7 +2765,8 @@ struct WidgetsPageBackend::Impl final
                     candidate.externalItemId == request.externalItemId &&
                     candidate.version == request.version;
             });
-        if (failure == package->workshopInstallFailures.end() ||
+        if (!WorkshopAvailable() ||
+            failure == package->workshopInstallFailures.end() ||
             failure->sourceId != L"steam-workshop" ||
             failure->externalItemId.empty())
         {
@@ -3514,7 +3529,8 @@ struct WidgetsPageBackend::Impl final
                     failure.externalItemId == request.externalItemId &&
                     failure.version == request.version;
             });
-        if ((!installedIdentity && !failureIdentity) ||
+        if (!WorkshopAvailable() ||
+            (!installedIdentity && !failureIdentity) ||
             request.externalItemId.empty() || !options.openWorkshopItem)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
@@ -3574,15 +3590,11 @@ struct WidgetsPageBackend::Impl final
             workshopExternalItemId =
                 WideToUtf8(snapshot->workshopExternalItemId);
         }
-        if (!workshopExternalItemId.empty())
+        if (widgets_page_backend_detail::
+                ShouldUnsubscribeWorkshopBeforeUninstall(
+                    !workshopExternalItemId.empty(), WorkshopAvailable(),
+                    static_cast<bool>(options.unsubscribeWorkshop)))
         {
-            if (!options.unsubscribeWorkshop)
-            {
-                FinishTask(WidgetsPageHostOperationResult::Failure(
-                    L("app.settings.widgets_error_unsubscribe_unavailable",
-                        L"Steam Workshop unsubscription is unavailable.")));
-                return false;
-            }
             const std::uint64_t taskId = activeTaskId;
             const std::uint64_t taskGeneration = generation;
             const std::uint64_t taskActivation = activation;
@@ -3655,7 +3667,7 @@ struct WidgetsPageBackend::Impl final
 
     bool OpenWorkshop(const WidgetsPageRequest& request)
     {
-        if (!options.openWorkshop)
+        if (!WorkshopAvailable() || !options.openWorkshop)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
                 L("app.settings.widgets_error_workshop_unavailable",
@@ -3725,7 +3737,8 @@ struct WidgetsPageBackend::Impl final
     bool SynchronizeSource(const WidgetsPageRequest& request)
     {
         if (BusyForMutation()) return ReportBusy();
-        if (!options.synchronizeSource || !options.canSynchronizeSource)
+        if (!WorkshopAvailable() || !options.synchronizeSource ||
+            !options.canSynchronizeSource)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
                 L("app.settings.widgets_error_source_sync_unavailable",

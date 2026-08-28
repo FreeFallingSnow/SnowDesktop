@@ -9,6 +9,14 @@
 namespace snowdesktop::winui::widgets_page_backend_detail
 {
 
+[[nodiscard]] constexpr bool ShouldUnsubscribeWorkshopBeforeUninstall(
+    bool hasWorkshopItem,
+    bool workshopAvailable,
+    bool unsubscribeAvailable) noexcept
+{
+    return hasWorkshopItem && workshopAvailable && unsubscribeAvailable;
+}
+
 struct ReviewedPackageFileIdentity
 {
     std::uint64_t volumeSerialNumber = 0;

@@ -300,6 +300,7 @@ struct WidgetsPagePresenter::Impl
     std::wstring developerActionStatus;
     std::wstring agentSkillStatusError;
     int agentSkillTargetMask = 0;
+    bool workshopAvailable = false;
     bool developerPublisherAvailable = false;
     bool developerOverridesVisible = false;
     PackageFilter filter = PackageFilter::All;
@@ -2251,7 +2252,7 @@ struct WidgetsPagePresenter::Impl
         muxc::TextBlock& sourceIdText,
         std::vector<muxc::Button>& advancedActions)
     {
-        const bool hasWorkshopItem =
+        const bool hasWorkshopItem = workshopAvailable &&
             !package.workshopExternalItemId.empty();
         const bool hasAdvancedAction = actions.invoke &&
             (package.canCreateDevelopmentProject ||
@@ -2496,51 +2497,54 @@ struct WidgetsPagePresenter::Impl
                     L"Workshop install failed")})));
             if (!failure.error.empty())
                 detailsBody.Children().Append(MakeSecondaryText(failure.error));
-            muxc::StackPanel failureActions;
-            failureActions.Orientation(muxc::Orientation::Horizontal);
-            failureActions.HorizontalAlignment(
-                mux::HorizontalAlignment::Right);
-            failureActions.Spacing(8.0);
-            muxc::Button retry = MakeActionButton(L(
-                "app.settings.widgets_retry_install", L"Retry install"));
-            HookClick(retry,
-                [this, packageId = package.packageId,
-                    sourceId = failure.sourceId,
-                    externalItemId = failure.externalItemId,
-                    version = failure.version](const auto&, const auto&) {
-                    WidgetsPageRequest request;
-                    request.command =
-                        WidgetsPageCommand::RetryWorkshopInstall;
-                    request.packageId = packageId;
-                    request.sourceId = sourceId;
-                    request.externalItemId = externalItemId;
-                    request.version = version;
-                    Emit(std::move(request));
-                }, revokers);
-            failureActions.Children().Append(retry);
-            if (!failure.externalItemId.empty())
+            if (workshopAvailable)
             {
-                muxc::Button open = MakeActionButton(L(
-                    "app.settings.widgets_open_workshop_item",
-                    L"Open Workshop page"));
-                HookClick(open,
+                muxc::StackPanel failureActions;
+                failureActions.Orientation(muxc::Orientation::Horizontal);
+                failureActions.HorizontalAlignment(
+                    mux::HorizontalAlignment::Right);
+                failureActions.Spacing(8.0);
+                muxc::Button retry = MakeActionButton(L(
+                    "app.settings.widgets_retry_install", L"Retry install"));
+                HookClick(retry,
                     [this, packageId = package.packageId,
                         sourceId = failure.sourceId,
                         externalItemId = failure.externalItemId,
-                        version = failure.version](
-                        const auto&, const auto&) {
+                        version = failure.version](const auto&, const auto&) {
                         WidgetsPageRequest request;
                         request.command =
-                            WidgetsPageCommand::OpenWorkshopItem;
+                            WidgetsPageCommand::RetryWorkshopInstall;
                         request.packageId = packageId;
                         request.sourceId = sourceId;
                         request.externalItemId = externalItemId;
                         request.version = version;
                         Emit(std::move(request));
                     }, revokers);
-                failureActions.Children().Append(open);
+                failureActions.Children().Append(retry);
+                if (!failure.externalItemId.empty())
+                {
+                    muxc::Button open = MakeActionButton(L(
+                        "app.settings.widgets_open_workshop_item",
+                        L"Open Workshop page"));
+                    HookClick(open,
+                        [this, packageId = package.packageId,
+                            sourceId = failure.sourceId,
+                            externalItemId = failure.externalItemId,
+                            version = failure.version](
+                            const auto&, const auto&) {
+                            WidgetsPageRequest request;
+                            request.command =
+                                WidgetsPageCommand::OpenWorkshopItem;
+                            request.packageId = packageId;
+                            request.sourceId = sourceId;
+                            request.externalItemId = externalItemId;
+                            request.version = version;
+                            Emit(std::move(request));
+                        }, revokers);
+                    failureActions.Children().Append(open);
+                }
+                detailsBody.Children().Append(failureActions);
             }
-            detailsBody.Children().Append(failureActions);
         }
 
         muxc::Button enabledAction{nullptr};
@@ -2661,7 +2665,8 @@ struct WidgetsPagePresenter::Impl
                     if (!current)
                         return;
                     RequestUninstall(packageId, PackageDisplayName(*current),
-                        !current->workshopExternalItemId.empty());
+                        workshopAvailable &&
+                            !current->workshopExternalItemId.empty());
                 },
                 revokers);
             detailsBody.Children().Append(uninstall);
@@ -2929,13 +2934,6 @@ struct WidgetsPagePresenter::Impl
 
     void RenderManagementControls()
     {
-        const bool workshopAvailable = std::any_of(
-            sources.begin(), sources.end(), [](const auto& source) {
-                return source.workshop && source.available;
-            }) || std::any_of(packages.begin(), packages.end(),
-                [](const auto& package) {
-                    return !package.workshopExternalItemId.empty();
-                });
         installFileButton.IsEnabled(static_cast<bool>(actions.invoke));
         workshopButton.Visibility(workshopAvailable
                 ? mux::Visibility::Visible
@@ -3014,9 +3012,12 @@ struct WidgetsPagePresenter::Impl
         const std::wstring previousQuery = query;
         const PackageFilter previousFilter = filter;
         const bool firstPublication = !hasRevision;
+        const bool workshopPresentationChanged = firstPublication ||
+            workshopAvailable != snapshot.workshopAvailable;
         const bool installedPresentationChanged = firstPublication ||
             packages != snapshot.installed || developerOverridesVisible !=
-                snapshot.developerOverridesVisible;
+                snapshot.developerOverridesVisible ||
+            workshopPresentationChanged;
         const bool developerPresentationChanged =
             installedPresentationChanged ||
             agentSkills != snapshot.agentSkills ||
@@ -3040,6 +3041,7 @@ struct WidgetsPagePresenter::Impl
         developerActionStatus = snapshot.developerActionStatus;
         developmentWorkspace = snapshot.developmentWorkspace;
         componentCliPath = snapshot.componentCliPath;
+        workshopAvailable = snapshot.workshopAvailable;
         developerPublisherAvailable =
             snapshot.developerPublisherAvailable;
         errors = snapshot.errors;
@@ -3071,7 +3073,8 @@ struct WidgetsPagePresenter::Impl
                 !installedQueryChanged && previousFilter == filter &&
                 TryPatchInstalledRows(previousPackages,
                     previousDeveloperOverridesVisible !=
-                        developerOverridesVisible);
+                        developerOverridesVisible ||
+                    workshopPresentationChanged);
             if (!patched)
                 RenderInstalledRows();
         }

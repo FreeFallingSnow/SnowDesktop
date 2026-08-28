@@ -410,6 +410,8 @@ struct WidgetsPageSnapshot
     std::wstring developerActionStatus;
     std::wstring developmentWorkspace;
     std::wstring componentCliPath;
+    /** Host capability; historical Workshop metadata is not sufficient. */
+    bool workshopAvailable = false;
     bool developerPublisherAvailable = false;
     std::vector<WidgetRuntimeErrorSnapshot> errors;
     std::vector<WidgetRuntimeDiagnosticSnapshot> diagnostics;

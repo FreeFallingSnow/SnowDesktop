@@ -109,7 +109,10 @@ void TestCoreStateAndMutations(const std::string& header,
             "mutations reuse the existing WidgetEngine application API");
     }
 
-    Check(header.find("unsubscribeWorkshop") !=
+    Check(header.find("workshopAvailable") != std::string::npos &&
+            header.find("unsubscribeWorkshop") !=
+                std::string::npos &&
+            source.find("state->workshopAvailable = WorkshopAvailable()") !=
                 std::string::npos &&
             source.find("options.unsubscribeWorkshop(") !=
                 std::string::npos &&
@@ -232,6 +235,7 @@ void TestInjectedHostCapabilities(const std::string& header,
 {
     for (const char* boundary : {
              "pickPackage", "confirmInstall", "openWorkshop",
+             "workshopAvailable",
              "openWorkshopItem", "addPackageToDesktop",
              "agentSkillTargetMask", "setAgentSkillTargetMask",
              "openDevelopmentFolder",
@@ -336,6 +340,12 @@ void TestAsyncIdentityAndStaleResultRejection(const std::string& header,
 void TestOutstandingOperationLedgerBehavior()
 {
     using namespace snowdesktop::winui::widgets_page_backend_detail;
+    Check(ShouldUnsubscribeWorkshopBeforeUninstall(true, true, true) &&
+            !ShouldUnsubscribeWorkshopBeforeUninstall(false, true, true) &&
+            !ShouldUnsubscribeWorkshopBeforeUninstall(true, false, true) &&
+            !ShouldUnsubscribeWorkshopBeforeUninstall(true, true, false),
+        "Workshop unsubscription is optional and local uninstall remains available without its capability");
+
     ReviewedPackageFileIdentity reviewedIdentity;
     reviewedIdentity.volumeSerialNumber = 9;
     reviewedIdentity.fileId[0] = 42;
@@ -430,7 +440,6 @@ void TestUserVisibleFeedbackLocalization(const std::string& source)
              "app.settings.widgets_error_development_folder_open",
              "app.settings.widgets_error_workshop_item_stale",
              "app.settings.widgets_error_uninstall_unavailable",
-             "app.settings.widgets_error_unsubscribe_unavailable",
              "app.settings.widgets_error_operation_tracking",
              "app.settings.widgets_error_unsubscribe_failed",
              "app.settings.widgets_error_workshop_unavailable",
@@ -453,6 +462,32 @@ void TestUserVisibleFeedbackLocalization(const std::string& source)
             source.find("source.status = Utf8ToWide(status)") ==
                 std::string::npos,
         "source health labels use localized UI states instead of provider diagnostics");
+}
+
+void TestWorkshopCapabilityGating(const std::string& source,
+    const std::string& appRun)
+{
+    Check(appRun.find(
+              "settingsHostOptions.widgetsPage.workshopAvailable = []()") !=
+                std::string::npos &&
+            appRun.find("WidgetEngine::IsSteamWorkshopBridgeAvailable()") !=
+                std::string::npos,
+        "the host publishes Workshop availability from the deployed bridge");
+    Check(source.find("!WorkshopAvailable() || !options.openWorkshop") !=
+                std::string::npos &&
+            source.find("!WorkshopAvailable() ||\n"
+                        "            (!installedIdentity && !failureIdentity)") !=
+                std::string::npos &&
+            source.find("!WorkshopAvailable() || !options.synchronizeSource") !=
+                std::string::npos,
+        "Workshop commands are rejected when the distribution has no bridge");
+    Check(source.find(
+              "ShouldUnsubscribeWorkshopBeforeUninstall(") !=
+                std::string::npos &&
+            source.find(
+              "app.settings.widgets_error_unsubscribe_unavailable") ==
+                std::string::npos,
+        "a missing Workshop bridge falls through to the local uninstall path");
 }
 
 void TestV2OnlyContract(const std::string& source)
@@ -638,6 +673,7 @@ void TestBackendContract(const std::filesystem::path& repository)
     TestV2OnlyContract(source);
     TestLocalInstallIdentityBinding(source);
     TestStructuredInstallConfirmation(header, source);
+    TestWorkshopCapabilityGating(source, appRun);
     TestWorkshopAuthoritativeCompletion(appHeader, appRun, timerDispatch);
 }
 } // namespace
