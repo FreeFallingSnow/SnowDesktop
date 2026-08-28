@@ -22,11 +22,114 @@
   - 评论中应提醒后续 Pull Request 不要直接以 `main` 为目标。
 - 合入版本分支时应保留贡献者提交及作者信息。需要补充修改时，使用独立提交，不改写贡献者原提交。
 
+## Commit 信息规范
+
+### 通用要求
+
+- 由维护者或 Agent 新建的 Commit 必须同时提供中文和英文信息；中英文必须表达同一事实范围，
+  不得在其中一种语言中省略风险、限制或未验证状态。
+- 首行摘要应简洁、具体，不写“修复问题”“更新代码”“一些调整”“fix bug”等无法识别改动
+  对象的笼统描述，不以句号结尾。
+- Commit 只能描述该提交实际包含的改动和已经达到的验证状态。视觉、交互、兼容性等未完成实际
+  复现验证的改动，只能作为明确标记的 `try` Commit 保存，不得使用 `fix` 类型或“修复 / 解决 /
+  resolved / fixed”等结论性措辞。
+- 非平凡改动应在正文中分别说明中文内容、英文内容和实际验证；中英文说明必须对应，验证命令
+  及结果只记录真实执行过的内容。
+- 推荐正文格式：
+
+  ```text
+  中文：
+  - 说明改动及影响范围
+
+  English:
+  - Describe the change and its impact
+
+  验证 / Validation:
+  - scripts/test.bat（26/26 通过 / 26/26 passed）
+  - scripts/build.bat（Release 构建通过 / Release build passed）
+  ```
+
+- 纯文档、注释或无需完整构建的改动，应如实写明实际检查方式，不得虚构测试或省略“未运行”的
+  原因。存在已知限制时，使用 `限制 / Limitations` 段落中英双语说明。
+- 外部贡献者的既有 Commit 不得仅为符合本规范而改写；维护者新增的补充 Commit、版本分支 PR
+  标题和最终版本 Commit 仍须遵守本规范。
+
+### 版本开发分支 Commit
+
+- `release/vA.B.C.D` 上的每个开发 Commit 使用以下首行格式：
+
+  ```text
+  <type>(<scope>): <中文摘要> / <English summary>
+  ```
+
+- `<scope>` 可省略；使用稳定、简短的英文模块名，例如 `icon`、`dock`、`widget`、`build`、
+  `release`、`l10n`。
+- `<type>` 使用以下类型：
+  - `feat`：经过验证的新功能；
+  - `fix`：已经复现并验证解决的缺陷；
+  - `perf`：经过测量或明确验证的性能改进；
+  - `refactor`：不改变外部行为的代码重构；
+  - `test`：测试新增或调整；
+  - `docs`：文档或注释；
+  - `build`：构建系统或依赖；
+  - `ci`：持续集成配置；
+  - `chore`：不属于以上类别的维护工作；
+  - `try`：编译已经通过、但目标场景尚未完成实际验证的独立尝试；
+  - `verify`：对一个或多个 `try` Commit 完成实际场景验证，并记录结论和证据；
+  - `revert`：撤销已有 Commit，并在正文注明被撤销的哈希和原因。
+- 示例：
+
+  ```text
+  test(icon): 增加图标尺寸选择规则测试 / Add icon size selection rule tests
+  docs(agent): 规范双语提交信息 / Define bilingual commit message conventions
+  ```
+
+- 每个编译成功的代码尝试都必须独立提交，且必须在继续下一轮代码修改前创建 Commit；不得把多个
+  已经分别编译通过的尝试压成一个版本分支 Commit。编译失败的中间状态不得提交，应继续修改到
+  下一次编译通过后再创建一个 `try` Commit。
+- 除下述纯组件更新外，`try` Commit 的首行必须同时包含“编译通过，待验证”和
+  `build passed, validation pending`，例如：
+
+  ```text
+  try(icon): 尝试调整高分辨率图标加载（编译通过，待验证） / Try adjusting high-resolution icon loading (build passed, validation pending)
+  ```
+
+- 纯组件更新不执行宿主编译；尚待 SnowDesktop 实际场景验证时，应使用 `try(widget)` Commit，
+  首行同时包含“组件验证通过，待实机验证”和 `widget checks passed, runtime validation pending`。
+  正文必须写明实际通过的组件级检查、尚未运行的目标场景验证和已知限制，不得声称宿主编译通过。
+- `try` Commit 正文必须写明：实际通过的编译命令、已运行的测试、尚未运行的目标场景验证、已知
+  限制。纯组件更新按上一条记录组件级检查；只通过定向目标编译时必须写出目标名，不得笼统写成
+  Release 构建通过。
+- 一个尝试后续完成实际验证且无需再改代码时，使用独立的 `verify` Commit 记录验证对象、步骤、
+  结果以及对应的 `try` Commit 哈希；允许使用空 Commit 作为纯验证记录。验证失败时也应使用
+  `verify` Commit 如实记录失败结论，再由后续 `try` Commit 保存下一次编译通过的调整。
+- `fix`、`feat` 或 `perf` 仅用于该 Commit 本身包含最终改动，并且提交前已经完成对应缺陷复现、
+  功能验收或性能测量的情况。不得事后改写已有 `try` Commit 来伪装其在创建时已经验证。
+
+### `main` 版本 Commit
+
+- 版本分支通过 **Squash and merge** 合入 `main` 时，唯一版本 Commit 的首行格式为：
+
+  ```text
+  vA.B.C.D - <中文简要更新> / <Brief English update>
+  ```
+
+- 中文和英文摘要应概括该版本最重要、已经验证的用户可见变化，不罗列内部实现细节，不使用
+  Conventional Commit 的 `feat:`、`fix:` 等前缀。
+- Commit 正文按“中文 / English / 验证”格式列出主要更新和发布验证；发布说明可更详细，但不得
+  把未验证内容写成已完成结果。
+- 示例：
+
+  ```text
+  v1.0.4.0 - 改进图标显示与 Dock 稳定性 / Improve icon rendering and Dock stability
+  ```
+- Pull Request 标题若将作为 GitHub Squash Commit 的默认标题，应在合并前调整为上述双语版本格式。
+
 ## 版本发布
 
 - 一个版本的所有功能、修复和资源更新先在对应的 `release/vA.B.C.D` 分支完成并验证。
 - 从版本分支发布到 `main` 时必须使用 **Squash and merge**，确保 `main` 每个版本只新增一条提交。
-- `main` 上的版本提交建议命名为 `vA.B.C.D - 简要更新说明`。
+- `main` 上的版本提交必须遵守“`main` 版本 Commit”规范，使用中英双语摘要。
 - 版本分支压缩合入 `main` 并完成发布后：
   - 在 `main` 对应提交上创建 `vA.B.C.D` 标签；
   - 不继续复用旧版本分支；
@@ -42,6 +145,11 @@
 
 ## 构建与验证
 
+- 仅修改 SnowDesktop Lua 组件包，且未修改宿主原生代码、公共组件 API、CMake 或构建脚本时，
+  属于纯组件更新：无需运行 `scripts/build.bat` 编译宿主，也无需运行 `scripts/test.bat` 的宿主完整
+  测试。应改用 `snowwidget lint`、组件测试、包校验和打包等组件级入口完成与改动相匹配的验证，
+  并在 Commit 和交付说明中如实记录实际执行的命令与结果。只要改动越出组件包边界，仍须遵守
+  下列标准构建与完整测试要求。
 - Release 构建的标准验证入口是 `scripts/build.bat`。
 - 在报告构建通过前，必须实际运行 `scripts/build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
 - `scripts/build.bat` 默认不得终止 SnowDesktop 或 Explorer。若应用或 Hook DLL 被占用，Agent 可在
@@ -57,16 +165,40 @@
   聚合目标是测试可执行文件的唯一清单。新增测试不得在批处理脚本中再维护一份目标列表。
 - CTest 使用 `contract`、`integration`、`rules` 等标签支持定向验证；Agent 可在开发中
   按标签执行，但交付前仍需运行完整测试。
+- 创建 `fix`、`feat`、`perf` 或 `verify` Commit 前，必须对其所声称的结果完成与问题性质相匹配的
+  实际验证。对于视觉、交互、兼容性等无法仅由自动化测试证明的问题，必须使用用户提供的复现
+  对象、原始场景或等价的可观察证据验证；仅凭代码推断、构建成功或通用测试通过，不得宣称问题
+  已经修复。
+- SnowDesktop 的桌面宿主窗口无法被 `computer-use` 稳定发现和捕捉。使用该技能验证桌面视觉或
+  交互时，如果目标桌面窗口未在首次正常枚举中作为唯一可操作窗口出现，应立即停止这条验证
+  路径；不得反复启动应用、枚举窗口、切换窗口或尝试其他无效绕过。此类场景应如实标记为待用户
+  实际验证，或改用稳定、可观察的等价证据；一次偶然捕捉成功不得作为可重复的验证依据。
+- 未完成实际验证、但编译已经通过的改动必须按“版本开发分支 Commit”规范及时创建 `try`
+  Commit。其提交信息必须使用“尝试”“调整”“待验证”等中性表述，并明确区分“编译通过”与
+  “目标问题验证通过”，不得包含表示问题已经确认解决的措辞。
 
 ## 仓库内容边界
 
 - `widgets/` 同时包含内置 Lua 组件与面向用户提供的
   `snowdesktop-lua-widget` Agent Skill；后者是产品的组件开发功能，必须继续随软件分发，
   不得当作临时 Agent 文件删除。
+- `snowdesktop-lua-widget` Agent Skill 是提供给 SnowDesktop 用户开发、调试和打包 Lua
+  组件的产品能力，不是本仓库常规开发工作的默认操作指南。排查或修改宿主原生代码、Dock、
+  拖放、构建、测试、发布流程，以及维护该 Skill 自身的文档或分发文件时，不得仅因仓库中存在
+  该 Skill、任务提到组件或路径位于 `widgets/` 就自动加载它。
+- 只有用户明确要求使用 `snowdesktop-lua-widget`，或当前任务确实是在创建、修改、调试、验证
+  或打包一个 SnowDesktop Lua 组件包时，才允许加载该 Skill；加载前应先确认任务对象是 Lua
+  组件包而不是宿主功能。
 - `tests/` 仅保存测试源码，测试目标统一在 `CMakeLists.txt` 注册。
 - `scripts/` 保存人工与自动化入口；根目录不再新增脚本副本。
 - `.build/`、`.build_debug/`、`artifacts/` 和 `docs/html/` 是生成目录，不得提交。
 - `.codex-probes/` 是 Agent 临时探测目录，不得提交或依赖其中内容。
+
+## 本地化
+
+- 新增或修改面向用户的界面文案时，必须同步更新 `lang/` 中的全部语言目录，并使用各目录对应语言的真实翻译。
+- 不得用英文或其他语言的占位文本凑齐翻译键集合。`en-US` 仅可作为运行时意外缺失翻译时的回退，不能替代已提交目录中的目标语言翻译。
+- 完成文案改动后必须运行本地化契约测试；通过键集合检查不代表翻译质量合格，还应人工检查是否存在语言混搭、未翻译文本和占位文本。
 
 ## 工作区安全
 

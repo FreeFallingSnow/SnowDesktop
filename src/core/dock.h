@@ -133,6 +133,7 @@ public:
     RECT GetHoveredTitleBounds(POINT pointer) const;
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
+    void SetReservedArea(RECT area);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
@@ -146,6 +147,7 @@ private:
         Trailing,
     };
 
+    bool IsMagnificationSuppressed() const;
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;

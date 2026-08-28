@@ -5,9 +5,16 @@
 #include <shlwapi.h>
 
 #include <algorithm>
+#include <mutex>
 
 namespace
 {
+std::mutex& EverythingApiMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
 std::wstring FileNameFromPath(const std::wstring& path)
 {
     if (path.empty()) return {};
@@ -18,6 +25,7 @@ std::wstring FileNameFromPath(const std::wstring& path)
 
 EverythingSearchClient::~EverythingSearchClient()
 {
+    std::scoped_lock lock(EverythingApiMutex());
     Everything_CleanUp();
 }
 
@@ -27,6 +35,8 @@ std::vector<EverythingSearchResult> EverythingSearchClient::Search(
     std::vector<EverythingSearchResult> results;
     if (query.empty() || maxResults == 0)
         return results;
+
+    std::scoped_lock lock(EverythingApiMutex());
 
     Everything_Reset();
     Everything_SetSearchW(query.c_str());

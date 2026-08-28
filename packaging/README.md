@@ -24,8 +24,10 @@ Agent、CI 或其他自动化调用：
 scripts\release.bat status
 scripts\release.bat status -Json
 scripts\release.bat package
+scripts\release.bat package -ReloadShell
 scripts\release.bat sync-release
 scripts\release.bat prepare
+scripts\release.bat prepare -ReloadShell
 scripts\release.bat open
 ```
 
@@ -33,6 +35,11 @@ scripts\release.bat open
 提交或推送。如果二进制 Release 仓库在同步前已有未提交修改，Agent 必须先
 审查，再为 `sync-release` 或 `prepare` 增加
 `-Yes -ConfirmVersion A.B.C.0`。
+
+发布 CLI 默认不会关闭 SnowDesktop 或重启 Explorer。构建产物被正在运行的
+SnowDesktop 或 Explorer 任务栏 Hook 占用时，应先正常退出应用；需要自动解除占用时，
+为 `package` 或 `prepare` 增加 `-ReloadShell`。该选项会终止 SnowDesktop 并短暂重启
+Explorer。发布 TUI 检测到占用时会显示相同副作用并请求确认。
 
 会改变源码 Git 历史或远程状态的命令必须显式确认版本：
 
@@ -83,18 +90,51 @@ artifacts\
 
 ## 包内容与运行模式
 
-携带版和 MSIX 使用同一份 `SnowDesktop.exe` 与
-`SnowDesktopTaskbarHook.dll`。程序在运行时检查包身份：
+携带版和 MSIX 使用同一份 `SnowDesktop.exe` 与运行时载荷。程序在运行时检查包身份：
 
-- 携带版将数据写入 `exe\data`，通过注册表 Run 项管理开机自启；
-- MSIX 将数据写入 `LocalState\data`，通过 MSIX `StartupTask` 管理自启；
+- 携带版将数据写入 `exe\data`；
+- MSIX 将数据写入 `LocalState\data`；
+- 两种部署统一通过当前用户的 `\SnowDesktop\Startup` 登录计划任务管理自启，
+  同一时间只允许其中一个部署成为任务目标；1.0.4.0 仍保留旧 MSIX
+  `StartupTask` 清单声明作为一次性迁移输入，迁移后会禁用它并删除旧携带版
+  Run/StartupApproved 值；
 - 携带版直接使用程序目录的 `widgets`；
 - MSIX 将内置组件复制到可写的 `LocalState\data\widgets`。
+
+主程序使用 Microsoft Windows App SDK 2.4.0 自包含部署。MSBuild 会在
+`.build\Release\SnowDesktop.deployment.json` 中记录构建实际选择的运行时 DLL、
+PRI、XBF、WinMD、资源文件、哈希及官方 `package.appxfragment`；携带版、MSIX
+和 Steam 包都只按这份清单逐项复制，不会通配复制构建目录。打包会拒绝绝对路径、
+路径穿越、大小写冲突、缺失文件及哈希不一致。MSIX 还会把清单列出的官方
+activatable-class 扩展合并进 `AppxManifest.xml`，因此目标机器无需预装 Windows
+App SDK Runtime。清单中来源为 Windows App SDK、Windows ML 和 WebView2 的运行时
+DLL、PRI、WinMD、XAML 资源及语言卫星文件统一放在 `SnowDesktop.Runtime` 私有程序集
+目录；SnowDesktop 自带的任务栏/壁纸 Hook 与 32 位注入器也放在该目录。主程序的 XBF、
+PRI、WinMD 与应用资源仍保留在包根目录。打包脚本会将主程序内嵌
+WinRT 激活清单迁移到私有程序集清单，并同步重写 MSIX activatable-class 路径。
+Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
+复制到载荷的 `licenses` 目录。Windows App SDK ML 以独立的 MSBuild 项提供
+Machine Learning、ONNX Runtime 和 DirectML DLL；清单会显式收集这三个文件及其许可和
+NOTICE，避免仅复制主 Windows App SDK 项时遗漏。WebView2 WinRT Core DLL 与 WinMD 也
+来自独立的 NuGet 项，并以同样方式连同许可和 NOTICE 纳入清单。携带版和 MSIX 包含
+`snowwidget.exe`，但不携带只适用于 Steam 的创意工坊管理器；Steam 包才包含管理器，且将
+`steam_api64.dll` 放入同一运行时目录并通过私有程序集加载。所有载荷都会校验 Agent Skill
+内嵌 CLI 与独立 CLI 完全一致。
+
+任务栏 Hook 通过 XAML Diagnostics TAP 接入 Explorer。该接口没有对应的进程级关闭 API，
+因此 Hook 模块可能一直映射到 Explorer 重启为止。SnowDesktop 不再直接注入构建或发行目录
+里的 DLL，而是先复制到 `%TEMP%\SnowDesktop\RuntimeHooks\` 下的进程专属目录；Wallpaper
+Engine 的 32/64 位 Hook 也复用同一部署机制，避免目标进程无法加载受保护的 MSIX 安装目录。
+正常退出后即使临时副本仍在目标进程中，也不会锁住便携目录、安装目录或下一次构建的输出文件。
+启动时会清理已经不再占用的旧临时副本。
 
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过
 Windows SDK `makepri.exe` 创建 `resources.pri`。16–48 像素使用简化图标，
-60–256 像素使用完整图标。
+60–256 像素使用完整图标。MSIX 的包级 PRI 会合入 Windows App SDK 自带的
+`Microsoft.UI`、`Microsoft.UI.Xaml` 和运行时资源图，使安装态 WinUI 能加载主题
+字典。生成索引时只暂时排除已经由应用 PRI 或组件 PRI 覆盖的重复输入，完成后会
+恢复 `SnowDesktop.pri` 与 WinUI 根目录资源，并校验上述组件资源图确实存在。
 
 包清单中的支持语言由 `lang\*.json` 文件名自动生成。文件名必须是有效的
 BCP-47 语言标签，例如 `en-US.json`、`zh-CN.json`。默认语言 `en-US`（如果

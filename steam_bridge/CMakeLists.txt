@@ -5,13 +5,24 @@ set(SNOWDESKTOP_STEAMWORKS_SDK_ROOT
     "$ENV{SNOWDESKTOP_STEAMWORKS_SDK_ROOT}" CACHE PATH
     "External Steamworks SDK root; leave empty for an SDK-free bridge build")
 
+add_library(SnowDesktopSteamAppIdentity INTERFACE)
+target_compile_features(SnowDesktopSteamAppIdentity INTERFACE cxx_std_20)
+target_include_directories(SnowDesktopSteamAppIdentity INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_definitions(SnowDesktopSteamAppIdentity INTERFACE
+    SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
+    SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID=${SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID})
+
 add_library(SnowDesktopSteamWorkshopCore STATIC
     src/steam_workshop_core.cpp)
 target_compile_features(SnowDesktopSteamWorkshopCore PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopSteamWorkshopCore PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(SnowDesktopSteamWorkshopCore PUBLIC
+    SnowDesktopSteamAppIdentity)
 
 add_library(SnowDesktopWorkshopManagerSupport STATIC
+    src/authoring_toolchain.cpp
     src/manager_localization.cpp
     src/package_tool.cpp
     src/workshop_project.cpp)
@@ -32,7 +43,7 @@ add_executable(SnowDesktopWorkshopManager WIN32
 target_link_libraries(SnowDesktopWorkshopManager PRIVATE
     SnowDesktopSteamWorkshopCore
     SnowDesktopWorkshopManagerSupport
-    SnowDesktopImgui
+    SnowDesktopWorkshopImgui
     d3d11 dxgi ole32 shell32 shlwapi user32 windowscodecs winhttp)
 
 if (MSVC)
@@ -50,7 +61,8 @@ if (MSVC)
         "${CMAKE_CURRENT_SOURCE_DIR}/manager_version.rc.in"
         "${SNOWDESKTOP_WORKSHOP_MANAGER_VERSION_RESOURCE}" @ONLY)
     target_sources(SnowDesktopWorkshopManager PRIVATE
-        "${SNOWDESKTOP_WORKSHOP_MANAGER_VERSION_RESOURCE}")
+        "${SNOWDESKTOP_WORKSHOP_MANAGER_VERSION_RESOURCE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager_resources.rc")
 endif()
 
 foreach(STEAM_TARGET IN ITEMS
@@ -81,6 +93,21 @@ add_custom_command(TARGET SnowDesktopWorkshopManager POST_BUILD
         "${CMAKE_SOURCE_DIR}/lang"
         "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/lang"
     COMMENT "Copying shared SnowDesktop language catalogs...")
+
+add_custom_command(TARGET SnowDesktopWorkshopManager POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${CMAKE_SOURCE_DIR}/widgets/snowdesktop-lua-widget"
+        "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget"
+    COMMENT "Copying the SnowDesktop authoring Skill...")
+
+add_dependencies(SnowDesktopWorkshopManager snowwidget)
+add_custom_command(TARGET SnowDesktopWorkshopManager POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:snowwidget>"
+        "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin/snowwidget.exe"
+    COMMENT "Embedding snowwidget CLI in the Workshop Manager Agent Skill...")
 
 if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
     if (NOT WIN32)

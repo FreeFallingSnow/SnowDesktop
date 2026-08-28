@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_preview_stage.h"
 
 // Reusable Direct2D drawing primitives.
 
@@ -6,13 +7,27 @@ void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, floa
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
+    DrawD2DRoundedRectangle(
+        ctx, ToD2DRect(rect), radius,
+        fill, stroke, strokeWidth);
+}
+
+void DesktopApp::DrawD2DRoundedRectangle(
+    ID2D1RenderTarget* ctx, D2D1_RECT_F rect,
+    float radius, D2D1_COLOR_F fill,
+    D2D1_COLOR_F stroke, float strokeWidth)
+{
+    if (!ctx || rect.right <= rect.left ||
+        rect.bottom <= rect.top)
+        return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {
         brushCache_.clear();
         brushCacheContext_ = ctx;
     }
 
-    D2D1_ROUNDED_RECT rounded = D2D1::RoundedRect(ToD2DRect(rect), radius, radius);
+    D2D1_ROUNDED_RECT rounded =
+        D2D1::RoundedRect(rect, radius, radius);
     if (fill.a > 0.0f)
     {
         std::uint64_t k = D2DColorBrushKey(fill);
@@ -47,7 +62,8 @@ void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, floa
 
 void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
-    const PersonalizationSettings* effectSettings, bool registerBackdrop)
+    const PersonalizationSettings* effectSettings, bool registerBackdrop,
+    std::uintptr_t backdropOwnerKey)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -58,9 +74,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
 
     PersonalizationSettings p = effectSettings
         ? *effectSettings
-        : (settingsWindow_
-            ? settingsWindow_->GetPersonalization()
-            : PersonalizationSettings::DarkPreset());
+        : CurrentPersonalization();
     radius = std::max(0.0f, radius);
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
@@ -78,17 +92,32 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
-    if (p.glassEnabled && registerBackdrop)
+    if (p.glassEnabled && desktopWidgetCompositionDrawInProgress_)
+    {
+        desktopWidgetBackdropRequestedDuringDraw_ = true;
+        desktopWidgetBackdropCornerRadiusDuringDraw_ = radius;
+        desktopWidgetBackdropBlurRadiusDuringDraw_ = p.glassBlurRadius;
+    }
+    else if (p.glassEnabled && registerBackdrop)
     {
         if (renderingFloatingDock_)
-            floatingDockBackdropCompositor_.AddPanel(
+        {
+            if (!renderingPersistentDockHost_)
+                return;
+            renderingPersistentDockHost_->backdrop.AddPanel(
                 snowdesktop::floating_dock_rules::
                     DesktopRectToWindowRect(
-                        frame, floatingDockSourceRect_),
-                radius, p.glassBlurRadius);
+                        frame,
+                        renderingPersistentDockHost_->sourceRect),
+                radius, p.glassBlurRadius,
+                backdropOwnerKey);
+        }
         else
+        {
             desktopBackdropCompositor_.AddPanel(
-                frame, radius, p.glassBlurRadius);
+                frame, radius, p.glassBlurRadius,
+                backdropOwnerKey);
+        }
     }
 
     if (fill.a > 0.0f)
@@ -130,7 +159,8 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
     if (!ctx || IsRectEmptyRect(frame))
         return;
 
-    constexpr UINT kNoiseSize = 64;
+    constexpr UINT kNoiseSize = static_cast<UINT>(
+        snowdesktop::widget_preview::AcrylicNoiseSize);
     const std::uintptr_t contextKey =
         reinterpret_cast<std::uintptr_t>(ctx) & ~std::uintptr_t{1};
     const std::uintptr_t cacheKey = contextKey |
@@ -141,23 +171,8 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         if (acrylicNoiseBrushCache_.size() >= 8)
             acrylicNoiseBrushCache_.clear();
 
-        std::array<std::uint32_t, kNoiseSize * kNoiseSize> pixels{};
-        std::uint32_t state = 0x534E4F57u; // "SNOW", fixed seed.
-        for (std::uint32_t& pixel : pixels)
-        {
-            state ^= state << 13;
-            state ^= state >> 17;
-            state ^= state << 5;
-            // System acrylic uses a very subtle texture. Keep alpha between
-            // roughly 0.8% and 3.1%, with polarity selected by content theme.
-            const std::uint8_t alpha = static_cast<std::uint8_t>(
-                2u + ((state >> 24) & 0x06u));
-            const std::uint8_t channel = lightTheme ? 0u : alpha;
-            pixel = (static_cast<std::uint32_t>(alpha) << 24) |
-                (static_cast<std::uint32_t>(channel) << 16) |
-                (static_cast<std::uint32_t>(channel) << 8) |
-                static_cast<std::uint32_t>(channel);
-        }
+        const auto pixels =
+            snowdesktop::widget_preview::GenerateAcrylicNoise(lightTheme);
 
         D2D1_BITMAP_PROPERTIES1 bitmapProperties =
             D2D1::BitmapProperties1(

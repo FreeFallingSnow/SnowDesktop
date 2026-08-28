@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cwchar>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -66,7 +67,92 @@ SharedState* g_sharedState = nullptr;
 UINT g_applyMessage = 0;
 std::atomic<DWORD> g_watchedOwnerProcessId{0};
 std::atomic_bool g_forceRestore{false};
+std::atomic_bool g_taskbarTapStarted{false};
 UINT g_taskViewStateMessage = 0;
+UINT g_registryQueryMessage = 0;
+
+std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
+{
+    return std::wstring(kRegistryQueryMappingPrefix) + L"." +
+        std::to_wstring(ownerProcessId);
+}
+
+void ProcessRegistryQuery(DWORD ownerProcessId)
+{
+    if (!ownerProcessId)
+        return;
+    const std::wstring mappingName =
+        RegistryQueryMappingName(ownerProcessId);
+    HANDLE mapping = OpenFileMappingW(
+        FILE_MAP_ALL_ACCESS, FALSE, mappingName.c_str());
+    if (!mapping)
+        return;
+    auto* state = static_cast<SharedRegistryQueryState*>(MapViewOfFile(
+        mapping, FILE_MAP_ALL_ACCESS, 0, 0,
+        sizeof(SharedRegistryQueryState)));
+    if (!state)
+    {
+        CloseHandle(mapping);
+        return;
+    }
+    if (state->magic != kRegistryQueryMagic ||
+        state->version != kRegistryQueryVersion ||
+        state->size != sizeof(SharedRegistryQueryState) ||
+        state->ownerProcessId != ownerProcessId ||
+        state->status != kRegistryQueryPending ||
+        !state->subKey[0] || !state->valueName[0] ||
+        state->valueSize > std::size(state->value))
+    {
+        UnmapViewOfFile(state);
+        CloseHandle(mapping);
+        return;
+    }
+
+    LONG result = ERROR_INVALID_PARAMETER;
+    DWORD valueType = REG_NONE;
+    DWORD valueSize = 0;
+    HKEY key = nullptr;
+    switch (state->operation)
+    {
+    case RegistryOperation::Query:
+        result = RegOpenKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+            KEY_QUERY_VALUE, &key);
+        valueSize = static_cast<DWORD>(std::size(state->value));
+        if (result == ERROR_SUCCESS)
+        {
+            result = RegQueryValueExW(key, state->valueName, nullptr,
+                &valueType, state->value, &valueSize);
+            RegCloseKey(key);
+        }
+        break;
+    case RegistryOperation::DeleteValue:
+        result = RegOpenKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+            KEY_SET_VALUE, &key);
+        if (result == ERROR_SUCCESS)
+        {
+            result = RegDeleteValueW(key, state->valueName);
+            RegCloseKey(key);
+        }
+        break;
+    case RegistryOperation::SetValue:
+        result = RegCreateKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+            nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+        if (result == ERROR_SUCCESS)
+        {
+            result = RegSetValueExW(key, state->valueName, 0,
+                state->valueType, state->value, state->valueSize);
+            RegCloseKey(key);
+        }
+        break;
+    }
+    state->operationResult = result;
+    state->valueType = valueType;
+    state->valueSize = valueSize;
+    MemoryBarrier();
+    InterlockedExchange(&state->status, kRegistryQueryCompleted);
+    UnmapViewOfFile(state);
+    CloseHandle(mapping);
+}
 
 bool PostTaskViewState(bool visible)
 {
@@ -663,23 +749,13 @@ public:
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
         {
-            // Shared memory is gone (process exited/crashed). Clear any
-            // applied content theme and backdrop on all registered taskbars.
+            // Shared memory is gone (process exited/crashed). Restore the
+            // values that Explorer owned before SnowDesktop changed them.
             for (auto& [handle, info] : taskbars_)
             {
                 (void)handle;
-                if (info.rootElement && info.appliedContentTheme >= 0)
-                {
-                    try
-                    {
-                        info.rootElement.ClearValue(
-                            wux::FrameworkElement::RequestedThemeProperty());
-                        info.appliedContentTheme = -1;
-                    }
-                    catch (...) {}
-                }
-                RestoreControl(info.background);
-                RestoreControl(info.border);
+                if (RestoreTaskbarVisuals(info) && info.taskbar)
+                    PostMessageW(info.taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);
             }
             return;
         }
@@ -725,17 +801,10 @@ public:
             // A native target still needs an explicit system-theme value while
             // the controller is active for other dynamic rules. Only remove our
             // local value when the controller itself is disabled or exits.
-            if (info.rootElement && !controllerEnabled &&
-                info.appliedContentTheme >= 0)
+            bool restoredNativeVisuals = false;
+            if (!controllerEnabled)
             {
-                try
-                {
-                    info.rootElement.ClearValue(
-                        wux::FrameworkElement::RequestedThemeProperty());
-                    info.rootElement.InvalidateArrange();
-                    info.appliedContentTheme = -1;
-                }
-                catch (...) {}
+                restoredNativeVisuals = RestoreContentTheme(info);
             }
             else if (info.rootElement && controllerEnabled)
             {
@@ -767,8 +836,10 @@ public:
 
             if (!enabled)
             {
-                RestoreControl(info.background);
-                RestoreControl(info.border);
+                restoredNativeVisuals = RestoreControl(info.background) ||
+                    restoredNativeVisuals;
+                restoredNativeVisuals = RestoreControl(info.border) ||
+                    restoredNativeVisuals;
             }
             else
             {
@@ -779,6 +850,13 @@ public:
             }
             info.appliedGeneration = snapshot.generation;
             info.appliedEnabled = enabled;
+            if (!controllerEnabled && restoredNativeVisuals && info.taskbar)
+            {
+                // Explorer owns the normal taskbar appearance. Replaying its
+                // composition-change path makes it re-evaluate current theme
+                // resources after our local XAML values have been removed.
+                PostMessageW(info.taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);
+            }
             applied = true;
         }
         if (applied)
@@ -808,8 +886,39 @@ private:
         HWND taskbar = nullptr;
         LONG appliedGeneration = -1;
         LONG appliedContentTheme = -1;
+        wux::ElementTheme nativeRequestedTheme = wux::ElementTheme::Default;
         bool appliedEnabled = false;
     };
+
+    static bool RestoreContentTheme(TaskbarInfo& info)
+    {
+        if (!info.rootElement || info.appliedContentTheme < 0)
+            return false;
+        try
+        {
+            // ClearValue would discard an explicit RequestedTheme that was
+            // already owned by Explorer. Restore the value observed before our
+            // first override so native light/dark detection remains intact.
+            info.rootElement.RequestedTheme(info.nativeRequestedTheme);
+            info.rootElement.InvalidateArrange();
+            info.appliedContentTheme = -1;
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    static bool RestoreTaskbarVisuals(TaskbarInfo& info)
+    {
+        bool restored = RestoreContentTheme(info);
+        restored = RestoreControl(info.background) || restored;
+        restored = RestoreControl(info.border) || restored;
+        info.appliedGeneration = -1;
+        info.appliedEnabled = false;
+        return restored;
+    }
 
     static void ApplyBackdrop(ControlInfo& control, const Snapshot& snapshot)
     {
@@ -928,12 +1037,14 @@ private:
         control.appliedBlur = 0.0f;
     }
 
-    static void RestoreControl(ControlInfo& control)
+    static bool RestoreControl(ControlInfo& control)
     {
+        const bool wasApplied = control.appliedFill != nullptr;
         if (control.control && control.originalFill)
             control.control.Fill(control.originalFill);
         control.appliedFill = nullptr;
         control.appliedStyle = -1;
+        return wasApplied;
     }
 
     template<typename T>
@@ -990,6 +1101,8 @@ private:
             info.taskbar = taskbar;
             info.rootElement = rootGrid.try_as<wux::FrameworkElement>();
             info.appliedContentTheme = -1;
+            if (info.rootElement)
+                info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             if (taskbar && subclassedTaskbars_.insert(taskbar).second)
                 SetWindowSubclass(taskbar, TaskbarSubclassProc,
                     kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this));
@@ -1234,11 +1347,50 @@ bool IsExplorerProcess()
     }
     return _wcsicmp(fileName, L"explorer.exe") == 0;
 }
+
+void StartTaskbarTapIfNeeded()
+{
+    if (!IsExplorerProcess())
+        return;
+    bool expected = false;
+    if (!g_taskbarTapStarted.compare_exchange_strong(expected, true))
+        return;
+    HANDLE thread = CreateThread(
+        nullptr, 0, InstallTaskbarTap, nullptr, 0, nullptr);
+    if (!thread)
+    {
+        g_taskbarTapStarted.store(false);
+        SetHookStatus(kStatusFailed, GetLastError());
+        SignalReady();
+        return;
+    }
+    CloseHandle(thread);
+}
 }
 
 extern "C" __declspec(dllexport) LRESULT CALLBACK
 SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
 {
+    if (code >= 0)
+        StartTaskbarTapIfNeeded();
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK
+SnowDesktopRegistryQueryHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && lParam)
+    {
+        if (!g_registryQueryMessage)
+            g_registryQueryMessage =
+                RegisterWindowMessageW(kRegistryQueryMessageName);
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (g_registryQueryMessage &&
+            message->message == g_registryQueryMessage)
+        {
+            ProcessRegistryQuery(static_cast<DWORD>(message->wParam));
+        }
+    }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
@@ -1265,14 +1417,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
     {
         g_module = instance;
         DisableThreadLibraryCalls(instance);
-        if (IsExplorerProcess())
-        {
-            HANDLE thread = CreateThread(nullptr, 0, InstallTaskbarTap,
-                nullptr, 0, nullptr);
-            if (!thread)
-                return FALSE;
-            CloseHandle(thread);
-        }
     }
     return TRUE;
 }

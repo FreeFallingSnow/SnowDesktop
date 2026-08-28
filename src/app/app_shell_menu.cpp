@@ -148,6 +148,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 void DesktopApp::RestoreDesktopWindowLayer()
 {
     ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
     if (!hwnd_ || !IsWindow(hwnd_))
         return;
     POINT origin{ virtualLeft_, virtualTop_ };
@@ -165,33 +166,68 @@ void DesktopApp::RestoreDesktopWindowLayer()
 
 void DesktopApp::ApplyFloatingDockLayerPolicy()
 {
-    if (!floatingDockVisible_ ||
-        !floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_))
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            ApplyFloatingDockLayerPolicy(*host);
+}
+
+void DesktopApp::ApplyFloatingDockLayerPolicy(
+    PersistentDockHost& host)
+{
+    if (!host.active || !host.hwnd ||
+        !IsWindow(host.hwnd))
         return;
+    const bool promoted =
+        IsPersistentDockHostEffectivelyFloating(host);
+
+    if (!promoted)
+    {
+        // A desktop-band Dock is still a top-level no-activate window. Place
+        // it immediately above Explorer's desktop host and therefore below
+        // every ordinary application, while preserving the same HWND and
+        // compositor resources used by floating mode.
+        HWND insertAfter = nullptr;
+        const HWND desktopHost =
+            desktopWindows_.host && IsWindow(desktopWindows_.host)
+                ? desktopWindows_.host : nullptr;
+        if (desktopHost)
+        {
+            insertAfter = GetWindow(desktopHost, GW_HWNDPREV);
+            while (insertAfter)
+            {
+                wchar_t className[96]{};
+                GetClassNameW(
+                    insertAfter, className,
+                    static_cast<int>(std::size(className)));
+                if (!IsPersistentDockHostWindow(insertAfter) &&
+                    _wcsicmp(
+                        className,
+                        L"SnowDesktopBackdropWindow") != 0)
+                {
+                    break;
+                }
+                insertAfter = GetWindow(
+                    insertAfter, GW_HWNDPREV);
+            }
+        }
+        host.backdrop.SetPopupWindowPairZOrder(
+            host.hwnd,
+            insertAfter ? insertAfter : HWND_TOP,
+            false);
+        return;
+    }
+
     const bool shouldBeTopmost =
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(
                 true,
                 shellPopupMenuLayerDepth_);
-    const bool isTopmost =
-        (GetWindowLongPtrW(
-            floatingDockHwnd_, GWL_EXSTYLE) &
-            WS_EX_TOPMOST) != 0;
-    if (snowdesktop::floating_dock_rules::
-            ShouldChangeFloatingDockTopmost(
-                isTopmost, shouldBeTopmost))
-    {
-        SetWindowPos(
-            floatingDockHwnd_,
-            shouldBeTopmost
-                ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE |
-                SWP_NOACTIVATE);
-    }
-    floatingDockBackdropCompositor_.
-        SetPopupTopmost(shouldBeTopmost);
+    host.backdrop.SetPopupWindowPairZOrder(
+        host.hwnd,
+        shouldBeTopmost
+            ? HWND_TOPMOST : HWND_NOTOPMOST,
+        shouldBeTopmost);
+    ApplyDragPreviewLayerPolicy();
 }
 
 void DesktopApp::BeginShellPopupMenuLayer()
@@ -201,17 +237,37 @@ void DesktopApp::BeginShellPopupMenuLayer()
     FlushPendingCompositionCommit();
     FlushPendingQuickNavigationCompositionCommit();
     ++shellPopupMenuLayerDepth_;
+    if (shellPopupMenuLayerDepth_ == 1)
+    {
+        if (shellHoverTraceActive_)
+            FlushShellHoverTrace();
+        BeginShellHoverTrace();
+    }
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MenuBegin);
     ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
 }
 
 void DesktopApp::EndShellPopupMenuLayer()
 {
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MenuEnd);
     if (shellPopupMenuLayerDepth_ > 0)
         --shellPopupMenuLayerDepth_;
     else
         shellPopupMenuLayerDepth_ = 0;
+    if (shellPopupMenuLayerDepth_ == 0)
+        shellHoverTraceMenuEndTick_ = GetTickCount64();
     ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
     RefocusFloatingDockKeyboardSession();
+    if (shellPopupMenuLayerDepth_ == 0)
+    {
+        ReconcileDesktopHoverState(
+            snowdesktop::desktop_hover_rules::
+                ShellPopupCloseReconcileMode());
+    }
     FlushPendingCompositionCommit();
     FlushPendingQuickNavigationCompositionCommit();
 }

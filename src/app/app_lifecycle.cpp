@@ -1,7 +1,12 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "../widget_engine_settings_backend.h"
+#include "../widget_settings_service.h"
+#include "../http_runtime.h"
 
 // Desktop host lifecycle.
+
+DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
@@ -13,12 +18,15 @@ DesktopApp::~DesktopApp()
     quickNavigationAnimationFrameToken_ = 0;
     dockBounceAnimationFrameToken_ = 0;
     pageNotifyAnimationFrameToken_ = 0;
+    navHotEdgeHintToken_ = 0;
     pointerRecoveryFrameToken_ = 0;
     floatingDockHoverTailToken_ = 0;
     desktopPointerPresentPending_ = false;
     floatingDockPointerPresentPending_ = false;
     pageNotifyFadeOutToken_ = 0;
+    shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
+    StopSteamWorkshopWatcher();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
@@ -26,12 +34,16 @@ DesktopApp::~DesktopApp()
     dockWindowTransition_.reset();
     dockWindowPreview_.reset();
     UnregisterFloatingDockHotkey();
+    DestroyDragPreviewWindow();
     DestroyFloatingDockWindow();
+    quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
+    StopDemoIconLoader();
     StopIconLoader();
     ClearQuickNavigationEverythingResults();
+    widgetAccessibilityProvider_.reset();
+    ShutdownSettingsInfrastructure();
     widgetEngine_.reset();
-    settingsWindow_.reset();
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
     {
         if (!app.iconBitmap) continue;
@@ -55,6 +67,25 @@ DesktopApp::~DesktopApp()
     }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
+}
+
+void DesktopApp::ShutdownSettingsInfrastructure() noexcept
+{
+    CancelSettingsUpdateCheck();
+    if (settingsUpdateHttpService_)
+        settingsUpdateHttpService_->Stop();
+    settingsUpdateHttpService_.reset();
+    settingsWindow_.reset();
+    if (widgetSettingsService_)
+    {
+        widgetSettingsService_->CloseAll();
+        widgetSettingsService_.reset();
+    }
+    widgetSettingsBackend_.reset();
+    if (settingsController_)
+        (void)settingsController_->CloseSession();
+    settingsController_.reset();
+    settingsHostActions_.reset();
 }
 
 /**
@@ -130,12 +161,16 @@ void DesktopApp::RegisterOleDropTarget()
 
 void DesktopApp::ResetDesktopWindowResources()
 {
+    if (widgetAccessibilityProvider_ && hwnd_)
+        widgetAccessibilityProvider_->DetachWindow(hwnd_);
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
     desktopBackdropCompositor_.Reset();
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
     CancelAllDockWindowActivationObservations();
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     nativeGlassPanelReadyLogged_ = false;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -146,13 +181,18 @@ void DesktopApp::ResetDesktopWindowResources()
         KillTimer(hwnd_, kRecycleBinPollTimerId);
         KillTimer(hwnd_, kWidgetRefreshTimerId);
         StopRecycleBinWatcher();
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
-        KillTimer(hwnd_, kCollectionGroupTabDwellTimerId);
+        StopSteamWorkshopWatcher();
         KillTimer(hwnd_, kOleDragUiPumpTimerId);
         CancelUiAnimationFrame();
         if (pageNotifyFadeOutToken_)
             uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
         pageNotifyFadeOutToken_ = 0;
+        if (navHotEdgeHintToken_)
+            uiAnimationScheduler_.Cancel(navHotEdgeHintToken_);
+        navHotEdgeHintToken_ = 0;
+        navHotEdgeHintVisible_ = false;
+        navHotEdgeHover_ = false;
+        navHoverSide_ = 0;
         KillTimer(hwnd_, kTaskbarRevealGuardTimerId);
         for (const auto& [timerId, _] : widgetTimerIds_)
             uiAnimationScheduler_.Cancel(timerId);
@@ -164,9 +204,12 @@ void DesktopApp::ResetDesktopWindowResources()
         else
             popupAnimation_.ResetHidden();
         if (!luaWidgetPanelRequest_.widgetId.empty())
-            FinalizeCloseLuaWidgetPanel();
+            FinalizeCloseLuaWidgetPanel(false);
         else
+        {
+            pendingLuaWidgetPanelOpen_.reset();
             luaWidgetPanelAnimation_.ResetHidden();
+        }
         if (dropTargetRegistered_)
             RevokeDragDrop(hwnd_);
     }
@@ -182,6 +225,8 @@ void DesktopApp::ResetDesktopWindowResources()
     }
 
     DestroyDragHintWindow();
+    DestroyDragPreviewWindow();
+    DestroyFloatingPopupWindow();
     DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();
     if (inputHwnd_ && IsWindow(inputHwnd_))
@@ -200,6 +245,9 @@ void DesktopApp::ResetDesktopWindowResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
+    ResetWidgetMarqueeComposition();
+    ResetDesktopWidgetComposition();
+    ResetDesktopForegroundComposition();
     dcompSurface_.Reset();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
@@ -621,6 +669,9 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     if (!hwnd_)
         return false;
 
+    if (widgetAccessibilityProvider_)
+        widgetAccessibilityProvider_->AttachWindow(hwnd_);
+
     AttachWindowToDesktopHost(parent);
     if (!CreateDesktopInputWindow(parent))
         return fail();
@@ -655,14 +706,26 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
     RegisterShellChangeNotifications();
+    StartDemoIconLoader();
+    StartSteamWorkshopWatcher();
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
     SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();
 
+    // Every replacement overlay is preceded by ResetDesktopWindowResources,
+    // which retires the scheduler tokens owned by the previous HWND. Rebind
+    // here, after the new host is fully initialized, so both display-topology
+    // recovery and Explorer recreation after system resume restore Lua widget
+    // refresh, named-schedule and animation deadlines.
+    if (widgetEngine_)
+        widgetEngine_->RebindHostTimers();
+
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    ReconcileDesktopHoverState();
+    ReconcileDesktopHoverState(
+        snowdesktop::desktop_hover_rules::
+            ReconcileMode::AllowImmediateActivation);
     InvalidateRect(hwnd_, nullptr, TRUE);
     UpdateWindow(hwnd_);
     return true;
@@ -688,11 +751,11 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         return;
 
     // These resources belong to the Explorer shell rather than to the custom
-    // desktop window. Restore them even when the native desktop is selected.
+    // desktop window. Restore the tray icon even when the native desktop is
+    // selected, but never push cached taskbar settings back into Windows here.
     if (startupInitializationComplete_)
         AddTrayIcon(true);
-    SetSystemTaskbarAutoHideEnabled(dockSettings_.systemTaskbarAutoHide);
-    SetSystemTaskbarAlignmentCentered(dockSettings_.systemTaskbarAlignment == 1);
+    SyncSystemTaskbarSettingsFromWindows();
     if (controlHwnd_ && IsWindow(controlHwnd_))
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
 
@@ -702,6 +765,10 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     if (!customDesktopVisible_)
         return;
 
+    // Only an actual Explorer process replacement is allowed to request a new
+    // WorkerW. Ordinary host polling and same-process shell changes stay read-only.
+    if (explorerDesktopRecreatePending_)
+        EnsureDesktopWorkerWindow();
     DesktopWindows current = FindDesktopWindows();
     if (!current.host || !IsWindow(current.host))
         return;
@@ -721,6 +788,7 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         RegisterOleDropTarget();
         RegisterShellChangeNotifications();
         StartRecycleBinWatcher();
+        StartSteamWorkshopWatcher();
     }
     else
     {
@@ -728,6 +796,7 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         if (!CreateDesktopOverlayWindow())
             return;
         StartRecycleBinWatcher();
+        StartSteamWorkshopWatcher();
     }
     explorerDesktopRecreatePending_ = false;
     GetWindowThreadProcessId(desktopWindows_.host,
@@ -817,9 +886,17 @@ void DesktopApp::RequestExit()
 {
     if (exitRequested_)
         return;
+    if (settingsWindow_ && settingsWindow_->IsVisible() &&
+        !settingsWindow_->FlushPendingChanges())
+    {
+        return;
+    }
     exitRequested_ = true;
+    shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
+    quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
+    StopDemoIconLoader();
     StopIconLoader();
     RestoreExplorerIcons();
     if (hwnd_ && IsWindow(hwnd_))
@@ -837,8 +914,14 @@ void DesktopApp::RequestExit()
         PostQuitMessage(0);
 }
 
-void DesktopApp::RequestRestart()
+bool DesktopApp::RequestRestart()
 {
+    if (settingsWindow_ && settingsWindow_->IsVisible() &&
+        !settingsWindow_->FlushPendingChanges())
+    {
+        return false;
+    }
+
     wchar_t exePath[MAX_PATH * 4]{};
     const DWORD pathLen = GetModuleFileNameW(
         nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
@@ -847,7 +930,7 @@ void DesktopApp::RequestRestart()
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
             _LW("app.run.no_path"), _LW("app.run.restart_failed"),
             MB_OK | MB_ICONERROR);
-        return;
+        return false;
     }
 
     std::wstring commandLine = L"\"";
@@ -886,10 +969,11 @@ void DesktopApp::RequestRestart()
             _LFW("app.run.restart_error", std::to_wstring(error));
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
             _LW("app.run.restart_failed"), MB_OK | MB_ICONERROR);
-        return;
+        return false;
     }
 
     CloseHandle(processInfo.hThread);
     CloseHandle(processInfo.hProcess);
     RequestExit();
+    return true;
 }

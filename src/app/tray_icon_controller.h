@@ -26,8 +26,17 @@ public:
     void Remove(HWND fallbackOwner = nullptr);
     bool ShowBalloon(
         HWND owner,
+        const std::string& notificationId,
         const std::wstring& title,
         const std::wstring& message);
+    bool UpdateBalloon(
+        HWND owner,
+        const std::string& notificationId,
+        const std::wstring& title,
+        const std::wstring& message);
+    bool DismissBalloon(
+        HWND owner,
+        const std::string& notificationId);
 
     bool IsAdded() const { return added_; }
     static TrayCallbackAction ClassifyCallback(LPARAM value);
@@ -36,4 +45,5 @@ private:
     HICON icon_ = nullptr;
     HWND owner_ = nullptr;
     bool added_ = false;
+    std::string activeNotificationId_;
 };

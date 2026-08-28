@@ -24,13 +24,41 @@ void DesktopApp::UnregisterFloatingDockHotkey()
 void DesktopApp::ApplyFloatingDockHotkey()
 {
     UnregisterFloatingDockHotkey();
-    if (!generalSettings_.dockEnabled ||
-        !snowdesktop::floating_dock_rules::
-            HasAnySummonTrigger(
-                dockSettings_.floatingShortcutMode,
-                dockSettings_.floatingEdgeSwipeEnabled))
+
+    // Passive drag reveal belongs only to summon-only mode. Clearing it here
+    // keeps a settings toggle from leaving a Host effectively floating after
+    // ordinary desktop visibility has been restored.
+    if (!dockSettings_.showOnlyWhenSummoned)
     {
-        CloseFloatingDock();
+        bool passiveStateChanged = false;
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (!host)
+                continue;
+            passiveStateChanged = passiveStateChanged ||
+                host->passivelyRevealed;
+            host->passivelyRevealed = false;
+            host->passiveRevealTick = 0;
+            host->passiveLeaveStartTick = 0;
+        }
+        if (passiveStateChanged)
+        {
+            RefreshFloatingDockVisibilityState();
+            UpdatePersistentDockHostVisibility();
+        }
+    }
+
+    if (!generalSettings_.dockEnabled ||
+        (!dockSettings_.showOnlyWhenSummoned &&
+            !snowdesktop::floating_dock_rules::
+                HasAnySummonTrigger(
+                    dockSettings_.floatingShortcutMode,
+                    snowdesktop::dock_settings_rules::
+                        IsFloatingEdgeSwipeEnabled(
+                            dockSettings_.showOnlyWhenSummoned,
+                            dockSettings_.floatingEdgeSwipeEnabled))))
+    {
+        CloseAllFloatingDocks();
         return;
     }
 
@@ -79,10 +107,11 @@ void DesktopApp::ApplyFloatingDockHotkey()
         }
     }
 
-    // This lightweight control timer serves both optional edge-swipe
-    // recognition and mandatory outside-click dismissal. Keeping both in one
-    // sampler prevents competing GetAsyncKeyState calls from consuming the
-    // same click transition.
+    // This lightweight control timer serves passive drag-edge reveal,
+    // optional edge-swipe recognition and mandatory outside-click dismissal.
+    // Keeping them in one sampler prevents competing GetAsyncKeyState calls
+    // from consuming the same click transition. It also remains available
+    // while a hidden Dock HWND cannot receive mouse or OLE drag messages.
     if (SetTimer(
             target, kFloatingDockEdgeSwipeTimerId,
             kFloatingDockEdgeSwipeIntervalMs,
@@ -90,6 +119,198 @@ void DesktopApp::ApplyFloatingDockHotkey()
     {
         floatingDockEdgeSwipeHwnd_ = target;
     }
+}
+
+bool DesktopApp::UpdatePassiveDragRevealHosts(
+    POINT cursorScreen)
+{
+    if (!generalSettings_.dockEnabled ||
+        !dockSettings_.showOnlyWhenSummoned)
+    {
+        return false;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    const bool internalDragActive =
+        dragSession_.IsActive();
+    const bool oleDragActive =
+        dragDropController_.IsTransportActive();
+    const bool dragRevealActive =
+        internalDragActive || oleDragActive;
+    const bool contextMenuActive =
+        HasActiveContextMenuSession();
+    bool passiveDragRevealedThisSample = false;
+
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active ||
+            !ownedHost->container)
+        {
+            continue;
+        }
+        PersistentDockHost& host = *ownedHost;
+        MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+        if (!host.monitor ||
+            !GetMonitorInfoW(host.monitor, &monitorInfo))
+        {
+            host.passiveLeaveStartTick = 0;
+            continue;
+        }
+
+        RECT dockScreenRect = host.dockRect;
+        if (hwnd_ && IsWindow(hwnd_))
+        {
+            MapWindowPoints(
+                hwnd_, nullptr,
+                reinterpret_cast<POINT*>(&dockScreenRect), 2);
+        }
+        else
+        {
+            OffsetRect(
+                &dockScreenRect,
+                virtualLeft_, virtualTop_);
+        }
+
+        UINT dpiX = 96;
+        UINT dpiY = 96;
+        if (FAILED(GetDpiForMonitor(
+                host.monitor, MDT_EFFECTIVE_DPI,
+                &dpiX, &dpiY)))
+        {
+            dpiX = 96;
+        }
+        const int edgeBand =
+            snowdesktop::floating_dock_rules::
+                ScaleEdgeSwipeDip(
+                    snowdesktop::floating_dock_rules::
+                        kPassiveDragRevealEdgeBandDip,
+                    dpiX);
+        const bool pointerInEdgeProjection =
+            snowdesktop::floating_dock_rules::
+                IsPointInDockEdgeProjection(
+                    cursorScreen,
+                    monitorInfo.rcMonitor,
+                    dockScreenRect,
+                    dockSettings_.position,
+                    edgeBand);
+        const bool passiveDragRevealRequested =
+            snowdesktop::floating_dock_rules::
+                ShouldPassivelyRevealDockForDragAtEdge(
+                    pointerInEdgeProjection,
+                    internalDragActive,
+                    oleDragActive);
+        const bool pointerInEdgeCorridor =
+            snowdesktop::floating_dock_rules::
+                IsPointInDockEdgeCorridor(
+                    cursorScreen,
+                    monitorInfo.rcMonitor,
+                    dockScreenRect,
+                    dockSettings_.position);
+
+        bool previewAssociated = false;
+        if (dockWindowPreview_ &&
+            dockWindowPreview_->IsVisible() &&
+            !IsRectEmpty(&dockWindowPreviewAnchorScreen_))
+        {
+            const POINT previewAnchorCenter{
+                (dockWindowPreviewAnchorScreen_.left +
+                    dockWindowPreviewAnchorScreen_.right) / 2,
+                (dockWindowPreviewAnchorScreen_.top +
+                    dockWindowPreviewAnchorScreen_.bottom) / 2
+            };
+            previewAssociated = MonitorFromPoint(
+                previewAnchorCenter,
+                MONITOR_DEFAULTTONEAREST) == host.monitor;
+        }
+        const bool associatedSurfaceActive =
+            contextMenuActive ||
+            collectionPopupDockHost_ == &host ||
+            quickNavigationDockHost_ == &host ||
+            previewAssociated;
+        const bool keepPassiveDragReveal =
+            associatedSurfaceActive ||
+            (dragRevealActive &&
+                pointerInEdgeCorridor);
+        const bool leaveDelayElapsed =
+            snowdesktop::floating_dock_rules::
+                HasPassiveDragLeaveDelayElapsed(
+                    host.passiveLeaveStartTick,
+                    now);
+        const auto action =
+            snowdesktop::floating_dock_rules::
+                ResolvePassiveDragRevealUpdate(
+                    true,
+                    host.promoted,
+                    host.passivelyRevealed,
+                    passiveDragRevealRequested,
+                    keepPassiveDragReveal,
+                    host.passiveLeaveStartTick != 0,
+                    leaveDelayElapsed);
+
+        bool visibilityChanged = false;
+        switch (action)
+        {
+        case snowdesktop::floating_dock_rules::
+                PassiveDragRevealAction::Reveal:
+            host.passivelyRevealed = true;
+            host.passiveRevealTick = now;
+            host.passiveLeaveStartTick = 0;
+            visibilityChanged = true;
+            passiveDragRevealedThisSample = true;
+            break;
+        case snowdesktop::floating_dock_rules::
+                PassiveDragRevealAction::BeginLeave:
+            host.passiveLeaveStartTick = now;
+            break;
+        case snowdesktop::floating_dock_rules::
+                PassiveDragRevealAction::CancelLeave:
+            host.passiveLeaveStartTick = 0;
+            break;
+        case snowdesktop::floating_dock_rules::
+                PassiveDragRevealAction::Hide:
+            host.passivelyRevealed = false;
+            host.passiveRevealTick = 0;
+            host.passiveLeaveStartTick = 0;
+            visibilityChanged = true;
+            break;
+        case snowdesktop::floating_dock_rules::
+                PassiveDragRevealAction::None:
+        default:
+            break;
+        }
+
+        if (visibilityChanged)
+        {
+            RefreshFloatingDockVisibilityState();
+            bool revealFramePrepared = false;
+            if (host.passivelyRevealed)
+            {
+                POINT cursorDesktop = cursorScreen;
+                if (hwnd_ && IsWindow(hwnd_))
+                    ScreenToClient(hwnd_, &cursorDesktop);
+                else
+                {
+                    cursorDesktop.x -= virtualLeft_;
+                    cursorDesktop.y -= virtualTop_;
+                }
+                lastMousePoint_ = cursorDesktop;
+                // Prepare the Dock and native-backdrop panel list while both
+                // HWNDs are still hidden. Showing first can expose the frame
+                // retained from the previous reveal for one composition tick.
+                revealFramePrepared =
+                    RenderFloatingDockCompositionFrame(host);
+                if (revealFramePrepared)
+                    revealFramePrepared =
+                        FlushPendingCompositionCommit();
+            }
+            UpdatePersistentDockHostVisibility(host);
+            if (host.passivelyRevealed &&
+                !revealFramePrepared)
+                InvalidateFloatingDockWindow(host, true);
+        }
+    }
+
+    return passiveDragRevealedThisSample;
 }
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
@@ -131,6 +352,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // suppression, so retire it after the physical press has ended.
         dockSuppressClickReleaseEntry_ =
             static_cast<size_t>(-1);
+        ClearDockPressedState();
     }
 
     POINT cursor{};
@@ -149,7 +371,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         desktopPoint.y -= virtualTop_;
     }
 
-    if (floatingDockVisible_ && pointerPressed)
+    // Passive drag reveal must run before the legacy button/drag early return
+    // below. An ordinary pointer still needs the existing edge-swipe gesture,
+    // which starts a manual floating session and remains visible until closed.
+    const bool passiveDragRevealedThisSample =
+        UpdatePassiveDragRevealHosts(cursor);
+
+    if (floatingDockVisible_ && pointerPressed &&
+        !passiveDragRevealedThisSample)
     {
         if (leftButtonPressed &&
             TryActivateDockPopupFromMenuPointerPress(
@@ -186,26 +415,41 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             quickNavigationOpen_
                 ? quickNavigationRect_
                 : RECT{};
-        if (snowdesktop::floating_dock_rules::
+        const RECT dockPopupInteractionRect =
+            snowdesktop::floating_dock_rules::
+                DockAssociatedPopupInteractionRect(
+                    popupAnchoredToDock_,
+                    floatingPopupCollectionRegion_);
+        if (!IsPointOnPromotedDock(desktopPoint) &&
+            snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
                         dragDropController_.IsExternalDragActive(),
                     HasActiveContextMenuSession(),
                     desktopPoint,
-                    floatingDockRect_,
-                    floatingDockPopupRect_,
+                    RECT{},
+                    dockPopupInteractionRect,
                     previewDesktopRect,
                     quickNavigationInteractionRect))
         {
-            CloseFloatingDock();
+            // A physical outside click owns the foreground transition. Do not
+            // restore the window that preceded the floating Dock: doing so can
+            // race the clicked window's activation and force two DWM/backdrop
+            // source changes through the shared close handoff.
+            CloseAllFloatingDocks(
+                FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.Reset();
             return;
         }
     }
 
     if (!generalSettings_.dockEnabled ||
-        !dockSettings_.floatingEdgeSwipeEnabled ||
+        !snowdesktop::dock_settings_rules::
+            IsFloatingEdgeSwipeEnabled(
+                dockSettings_.showOnlyWhenSummoned,
+                dockSettings_.floatingEdgeSwipeEnabled) ||
         dragSession_.IsActive() ||
+        dragDropController_.IsTransportActive() ||
         buttonsDown != 0)
     {
         floatingDockEdgeSwipeDetector_.Reset();
@@ -269,10 +513,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             dockSettings_.position,
             GetTickCount(), edgeBand,
             requiredTravel);
-    if (triggered && !floatingDockVisible_)
+    const PersistentDockHost* targetHost =
+        FindPersistentDockHost(dock);
+    if (triggered &&
+        (!targetHost ||
+            !IsPersistentDockHostPromoted(*targetHost)))
     {
         WriteDiagnosticLogEntry(
             L"Floating Dock edge swipe received");
-        ShowFloatingDock();
+        ShowFloatingDock(monitor);
     }
 }

@@ -1,8 +1,35 @@
 #include "app.h"
+#include "../desktop_keyboard_rules.h"
+#include "../drag_input_rules.h"
 
 #include <imm.h>
+#include <shldisp.h>
 
 // Main desktop-window message dispatch.
+
+bool DesktopApp::RequestWindowsShutdownDialog()
+{
+    ComPtr<IShellDispatch> shell;
+    HRESULT result = CoCreateInstance(
+        CLSID_Shell, nullptr,
+        CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER,
+        IID_PPV_ARGS(&shell));
+    if (SUCCEEDED(result))
+        result = shell->ShutdownWindows();
+    if (FAILED(result))
+    {
+        wchar_t message[160]{};
+        wsprintfW(message,
+            L"Desktop Alt+F4 shutdown dialog request failed hr=0x%08X",
+            static_cast<unsigned>(result));
+        WriteDiagnosticLogEntry(message);
+        return false;
+    }
+
+    WriteDiagnosticLogEntry(
+        L"Desktop Alt+F4 requested the Windows shutdown dialog");
+    return true;
+}
 
 bool DesktopApp::HandleShellContextMenuMessage(
     UINT message, WPARAM wParam, LPARAM lParam,
@@ -58,6 +85,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case WM_GETOBJECT:
+    {
+        LRESULT accessibilityResult = 0;
+        if (widgetAccessibilityProvider_ &&
+            widgetAccessibilityProvider_->TryHandleGetObject(
+                hwnd, wp, lp, accessibilityResult))
+            return accessibilityResult;
+        break;
+    }
     case WM_NCHITTEST:
         // The desktop overlay intentionally owns input across its complete
         // client area. Be explicit for the resized portion of the layered
@@ -73,6 +109,110 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             {
                 if (dock->ContainsInteractivePoint(point))
                     return MA_NOACTIVATE;
+            }
+        }
+        break;
+    }
+    case WM_SETCURSOR:
+    {
+        if (LOWORD(lp) != HTCLIENT) break;
+        bool resizeCursor = detailColumnResizeActive_;
+        bool cursorPointAvailable = false;
+        bool pointInsideCollectionPopup = false;
+        POINT point{};
+        if (!resizeCursor && GetCursorPos(&point) &&
+            ScreenToClient(hwnd_, &point))
+        {
+            cursorPointAvailable = true;
+            if (IsCollectionPopupInteractive())
+            {
+                if (const DesktopWidget* popupWidget =
+                        GetOpenPopupWidget())
+                {
+                    const RECT popup =
+                        GetCollectionPopupRect(*popupWidget);
+                    pointInsideCollectionPopup =
+                        PtInRect(&popup, point) != FALSE;
+                    resizeCursor =
+                        HitTestCollectionPopupDetailsDivider(
+                            point, popup) !=
+                        snowdesktop::list_detail_rules::
+                            Column::None;
+                }
+            }
+            for (auto it = containers_.rbegin();
+                 !resizeCursor &&
+                    !pointInsideCollectionPopup &&
+                    it != containers_.rend(); ++it)
+            {
+                if (desktopIconsHidden_ &&
+                    !IsRetainedContainer(it->get()))
+                    continue;
+                auto* widget =
+                    dynamic_cast<WidgetContainer*>(it->get());
+                if (!widget) continue;
+                const WidgetHit hit = widget->HitTestWidget(point);
+                resizeCursor =
+                    hit == WidgetHit::DetailsModifiedDivider ||
+                    hit == WidgetHit::DetailsTypeDivider ||
+                    hit == WidgetHit::DetailsSizeDivider;
+                if (resizeCursor || hit != WidgetHit::None) break;
+            }
+        }
+        if (resizeCursor)
+        {
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            return TRUE;
+        }
+        if (widgetEngine_ && cursorPointAvailable)
+        {
+            if (!luaWidgetPanelRequest_.widgetId.empty() &&
+                luaWidgetPanelAnimation_.IsInteractive())
+            {
+                const RECT content = GetLuaWidgetPanelContentRect();
+                if (PtInRect(&content, point))
+                {
+                    const std::string cursor =
+                        widgetEngine_->InteractionCursorAt(
+                            luaWidgetPanelRequest_.widgetId,
+                            point.x - content.left,
+                            point.y - content.top,
+                            luaWidgetPanelRequest_.surface);
+                    LPCWSTR cursorId = nullptr;
+                    if (cursor == "hand") cursorId = IDC_HAND;
+                    else if (cursor == "text") cursorId = IDC_IBEAM;
+                    else if (cursor == "crosshair") cursorId = IDC_CROSS;
+                    if (cursorId)
+                    {
+                        SetCursor(LoadCursorW(nullptr, cursorId));
+                        return TRUE;
+                    }
+                }
+            }
+            const size_t widgetIndex =
+                HitTestStandaloneWidgetIndex(point);
+            if (widgetIndex < widgets_.size() &&
+                widgets_[widgetIndex].type ==
+                    DesktopWidgetType::LuaScript &&
+                HitTestStandaloneWidget(widgetIndex, point) ==
+                    WidgetHit::Content)
+            {
+                const RECT frame = GetStandaloneWidgetFrameRect(
+                    widgets_[widgetIndex]);
+                const std::string cursor =
+                    widgetEngine_->InteractionCursorAt(
+                        widgets_[widgetIndex].id,
+                        point.x - frame.left,
+                        point.y - frame.top);
+                LPCWSTR cursorId = nullptr;
+                if (cursor == "hand") cursorId = IDC_HAND;
+                else if (cursor == "text") cursorId = IDC_IBEAM;
+                else if (cursor == "crosshair") cursorId = IDC_CROSS;
+                if (cursorId)
+                {
+                    SetCursor(LoadCursorW(nullptr, cursorId));
+                    return TRUE;
+                }
             }
         }
         break;
@@ -108,6 +248,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         bool wasDragging = dragSession_.IsActive();
         virtualWidth_ = LOWORD(lp);
         virtualHeight_ = HIWORD(lp);
+        ResetDesktopWidgetComposition();
         dcompSurface_.Reset();
         UpdateLayoutWorkArea();
         LayoutItems();
@@ -141,7 +282,76 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_MOUSEMOVE:
     {
-        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const bool nativeDragActive =
+            snowdesktop::drag_input_rules::IsNativeDragActive(
+                dragSession_.IsActive(),
+                dragDropController_.IsTransportActive());
+        const bool primaryButtonDown = nativeDragActive &&
+            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        const bool sampleNativeDrag =
+            snowdesktop::drag_input_rules::ShouldSampleLivePointer(
+                nativeDragActive, primaryButtonDown);
+        const bool widgetInteractionActive =
+            middleButtonWidgetMove_ ||
+            widgetAction_ != WidgetAction::None ||
+            detailColumnResizeActive_ ||
+            luaWidgetPanelMouseDown_;
+        const bool samplePassiveHover =
+            snowdesktop::desktop_hover_rules::
+                ShouldResamplePassiveMouseMove(
+                    mouseDown_,
+                    dragSession_.IsActive(),
+                    widgetInteractionActive);
+        if (sampleNativeDrag || samplePassiveHover)
+        {
+            // Costly frames and modal Shell loops can leave old WM_MOUSEMOVE
+            // messages queued for this HWND. Native item drags must follow the
+            // physical pointer; passive hover additionally verifies that the
+            // sample still belongs to the paired desktop surface.
+            POINT cursorScreen{};
+            if (!GetCursorPos(&cursorScreen))
+            {
+                // A captured drag must keep making progress even if the live
+                // sample fails transiently. Passive hover has no equivalent
+                // gesture state, so retain its existing drop-on-failure rule.
+                if (samplePassiveHover)
+                    return 0;
+            }
+            else
+            {
+                if (samplePassiveHover)
+                {
+                    const HWND hitWindow =
+                        WindowFromPoint(cursorScreen);
+                    const bool pointerOnContentWindow =
+                        IsSameWindowTree(hwnd_, hitWindow);
+                    const bool pointerOnPairedBackdropWindow =
+                        desktopBackdropCompositor_.
+                            IsBackdropWindow(hitWindow);
+                    if (!snowdesktop::desktop_hover_rules::
+                            ShouldRetainHoverAcrossMouseLeave(
+                                pointerOnContentWindow,
+                                pointerOnPairedBackdropWindow))
+                    {
+                        if (lastMousePoint_.x != LONG_MIN ||
+                            lastMousePoint_.y != LONG_MIN)
+                        {
+                            OnMouseLeave();
+                        }
+                        return 0;
+                    }
+                }
+                POINT sampledClient = cursorScreen;
+                if (!ScreenToClient(hwnd_, &sampledClient))
+                {
+                    if (samplePassiveHover)
+                        return 0;
+                }
+                else
+                    pt = sampledClient;
+            }
+        }
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
             GetCapture() != hwnd_ && !mouseDown_ &&
             !middleButtonWidgetMove_ && !dragSession_.IsActive() &&
@@ -152,16 +362,69 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 OnMouseLeave();
             return 0;
         }
-        OnMouseMove(wp, lp);
+        bool dragPreviewSynced = false;
+        OnMouseMoveAt(wp, pt, &dragPreviewSynced);
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         // Keep this synchronous; routing pointer feedback through
         // UiAnimationScheduler makes drag/Dock hover trail the pointer
         // (f29a882 regression).
-        PresentPointerInteractionFrame();
+        PresentPointerInteractionFrame(dragPreviewSynced);
         return 0;
     }
     case WM_MOUSELEAVE:
+    {
+        // The native backdrop is a sibling HWND behind the D2D content HWND.
+        // Updating its region when a hover-only glass widget appears can make
+        // TrackMouseEvent report a leave even though the pointer is still on
+        // the same logical desktop surface. Clearing hover here removes that
+        // region again and creates a show/leave/hide/move feedback loop.
+        // Re-sample only the paired desktop content/backdrop windows before
+        // accepting the leave; external dialogs and unrelated SnowDesktop
+        // popups remain genuine leave targets.
+        POINT cursorScreen{};
+        if (GetCursorPos(&cursorScreen))
+        {
+            const HWND hitWindow =
+                WindowFromPoint(cursorScreen);
+            const bool pointerOnContentWindow =
+                IsSameWindowTree(hwnd_, hitWindow);
+            const bool pointerOnPairedBackdropWindow =
+                desktopBackdropCompositor_.
+                    IsBackdropWindow(hitWindow);
+            if (snowdesktop::desktop_hover_rules::
+                    ShouldRetainHoverAcrossMouseLeave(
+                        pointerOnContentWindow,
+                        pointerOnPairedBackdropWindow))
+            {
+                POINT cursorClient = cursorScreen;
+                if (ScreenToClient(
+                        hwnd_, &cursorClient))
+                {
+                    const bool pointerPositionChanged =
+                        cursorClient.x != lastMousePoint_.x ||
+                        cursorClient.y != lastMousePoint_.y;
+                    const bool widgetInteractionActive =
+                        middleButtonWidgetMove_ ||
+                        widgetAction_ != WidgetAction::None ||
+                        detailColumnResizeActive_ ||
+                        luaWidgetPanelMouseDown_;
+                    const bool passiveHover =
+                        snowdesktop::desktop_hover_rules::
+                            ShouldResamplePassiveMouseMove(
+                                mouseDown_,
+                                dragSession_.IsActive(),
+                                widgetInteractionActive);
+                    lastMousePoint_ = cursorClient;
+                    if (snowdesktop::desktop_hover_rules::
+                            ShouldPresentRetainedMouseLeave(
+                                passiveHover,
+                                pointerPositionChanged))
+                        PresentPassiveHoverVisualChange();
+                }
+                return 0;
+            }
+        }
         if (floatingDockHoverHandoffPending_)
         {
             POINT cursorPoint{};
@@ -182,26 +445,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (GetCursorPos(&cursor))
             {
                 ScreenToClient(hwnd_, &cursor);
-                const bool inFloatingLayer =
-                    PtInRect(
-                        &floatingDockRect_,
-                        cursor) ||
-                    (!IsRectEmpty(
-                            &floatingDockPopupRect_) &&
-                        PtInRect(
-                            &floatingDockPopupRect_,
-                            cursor)) ||
-                    (!IsRectEmpty(
-                            &floatingDockTooltipRect_) &&
-                        PtInRect(
-                            &floatingDockTooltipRect_,
-                            cursor));
-                if (inFloatingLayer)
+                if (IsPointInPromotedDockLayer(cursor))
                     return 0;
             }
         }
         OnMouseLeave();
         return 0;
+    }
     case WM_LBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -211,7 +461,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             widgetAction_ == WidgetAction::None &&
             !luaWidgetPanelMouseDown_)
             return 0;
-        OnLeftButtonUp(wp, lp);
+        OnLeftButtonUpAt(wp, pt);
         InvalidateFloatingDockWindow(true);
         return 0;
     }
@@ -223,7 +473,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             !middleButtonWidgetMove_ &&
             widgetAction_ == WidgetAction::None)
             return 0;
-        OnMiddleButtonUp(wp, lp);
+        OnMiddleButtonUpAt(wp, pt);
         return 0;
     }
     case WM_MOUSEWHEEL:
@@ -252,6 +502,37 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const auto clearSelectionAfterAcceptedOpen =
+            [this](bool accepted) {
+                if (!accepted)
+                    return;
+                ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            };
+
+        if (!luaWidgetPanelRequest_.widgetId.empty() &&
+            luaWidgetPanelAnimation_.IsInteractive())
+        {
+            const RECT content = GetLuaWidgetPanelContentRect();
+            if (PtInRect(&content, pt) && widgetEngine_)
+            {
+                const std::string& surface =
+                    luaWidgetPanelRequest_.surface;
+                const char* eventName = surface == "dialog"
+                    ? "onDialogDoubleClick"
+                    : (surface == "popover"
+                        ? "onPopoverDoubleClick"
+                        : "onPanelDoubleClick");
+                widgetEngine_->InvokeMouseEvent(
+                    luaWidgetPanelRequest_.widgetId,
+                    eventName,
+                    pt.x - content.left,
+                    pt.y - content.top, 1, 0);
+                return 0;
+            }
+            if (luaWidgetPanelRequest_.modal)
+                return 0;
+        }
 
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
@@ -290,6 +571,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                             entryIndex;
                         dockPressedContainer_ = dock;
                         dockPressedEntry_ = entryIndex;
+                        dockPressedClosedCollectionPopup_ = false;
                         mouseDownPoint_ = pt;
                         mouseDown_ = true;
                         dockPendingDoubleClickEntry_ =
@@ -297,14 +579,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickFrequentItem_ =
                             static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        CloseCollectionPopup();
-                        ClearSelection();
+                        CloseCollectionPopup(false);
                         if (target.available)
-                            ShellExecuteW(
-                                hwnd_, L"open",
-                                target.path.c_str(),
-                                nullptr, nullptr,
-                                SW_SHOWNORMAL);
+                            clearSelectionAfterAcceptedOpen(
+                                shellLaunchWorker_.Enqueue(
+                                    hwnd_, target.path));
                         InvalidateRect(
                             hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
@@ -316,13 +595,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        ClearSelection();
                         if (entryIndex < dockEntries_.size())
                         {
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
                             if (itemIndex < items_.size())
-                                LaunchDesktopItem(itemIndex, true);
+                                clearSelectionAfterAcceptedOpen(
+                                    LaunchDesktopItem(
+                                        itemIndex, true));
                         }
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
@@ -353,9 +633,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        ClearSelection();
                         if (itemIndex < items_.size())
-                            LaunchDesktopItem(itemIndex, true);
+                            clearSelectionAfterAcceptedOpen(
+                                LaunchDesktopItem(
+                                    itemIndex, true));
                         InvalidateRect(hwnd_, &dockBounds, FALSE);
                         specialDoubleClickHandled = true;
                     }
@@ -442,10 +723,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.
                             folderEntries[i].fullPath;
-                    ShellExecuteW(
-                        hwnd_, L"open", path.c_str(),
-                        nullptr, nullptr, SW_SHOWNORMAL);
-                    CloseCollectionPopup();
+                    if (shellLaunchWorker_.Enqueue(
+                            hwnd_, path))
+                        CloseCollectionPopup();
                     return 0;
                 }
                 return 0;
@@ -469,8 +749,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
                     if (itemIndex != static_cast<size_t>(-1))
                     {
-                        LaunchDesktopItem(itemIndex);
-                        CloseCollectionPopup();
+                        if (LaunchDesktopItem(itemIndex))
+                            CloseCollectionPopup();
                         return 0;
                     }
                 }
@@ -522,7 +802,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     {
                         const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
                         if (itemIndex < items_.size())
-                            LaunchDesktopItem(itemIndex);
+                            clearSelectionAfterAcceptedOpen(
+                                LaunchDesktopItem(itemIndex));
                         return 0;
                     }
                 }
@@ -531,8 +812,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     FolderEntry* entry = folderIcon->GetFolderEntry();
                     if (entry)
                     {
-                        ShellExecuteW(nullptr, L"open", entry->fullPath.c_str(),
-                            nullptr, nullptr, SW_SHOWNORMAL);
+                        clearSelectionAfterAcceptedOpen(
+                            shellLaunchWorker_.Enqueue(
+                                hwnd_, entry->fullPath));
                         return 0;
                     }
                 }
@@ -542,7 +824,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         int hit = HitTestItem(pt);
         if (hit >= 0)
         {
-            LaunchDesktopItem(static_cast<size_t>(hit));
+            clearSelectionAfterAcceptedOpen(
+                LaunchDesktopItem(
+                    static_cast<size_t>(hit)));
             return 0;
         }
 
@@ -573,8 +857,58 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
-        OnKeyDown(wp);
+    {
+        const bool repeated =
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
+        if (TryHandlePageNavigationKey(wp, repeated))
+            return 0;
+        DispatchLuaWidgetViewKeyEvent(wp, true,
+            repeated);
+        OnKeyDown(wp, repeated);
         return 0;
+    }
+    case WM_SYSKEYDOWN:
+    {
+        using snowdesktop::desktop_keyboard_rules::AltF4Action;
+        const AltF4Action altF4Action =
+            snowdesktop::desktop_keyboard_rules::ResolveAltF4Action(
+                true,
+                wp == VK_F4,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 29)) != 0,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        if (altF4Action != AltF4Action::PassThrough)
+        {
+            if (altF4Action ==
+                AltF4Action::RequestWindowsShutdownDialog)
+                RequestWindowsShutdownDialog();
+            return 0;
+        }
+        if (TryHandlePageNavigationKey(
+                wp,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0))
+            return 0;
+        if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
+            DispatchLuaWidgetViewKeyEvent(wp, true,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        break;
+    }
+    case WM_SYSCHAR:
+    {
+        if (wp > 0x7f) break;
+        const char key = static_cast<char>(wp);
+        if (!((key >= 'A' && key <= 'Z') ||
+                (key >= 'a' && key <= 'z') ||
+                (key >= '0' && key <= '9')))
+            break;
+        const bool repeated =
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
+        if (!OnKeyDown(static_cast<WPARAM>(key), repeated)) break;
+        return 0;
+    }
     case WM_HOTKEY:
         if (settingsWindow_ &&
             settingsWindow_->IsHotkeyCaptureActive())
@@ -602,18 +936,66 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     case WM_KEYUP:
+        DispatchLuaWidgetViewKeyEvent(wp, false, false);
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_SYSKEYUP:
+        if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
+            DispatchLuaWidgetViewKeyEvent(wp, false, false);
+        break;
+    case WM_KILLFOCUS:
+        if (widgetEngine_)
+        {
+            widgetEngine_->ClearHostViewKeyState();
+            widgetEngine_->CancelInteractionPointerPress();
+        }
+        break;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        ForgetLuaWidgetPanelCapture(hwnd);
+        if (msg == WM_CANCELMODE ||
+            !IsOwnedPointerCaptureWindow(
+                reinterpret_cast<HWND>(lp)))
+        {
+            if (CanCancelPointerPressAfterCaptureLoss())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+            }
+        }
+        break;
     case WM_DISPLAYCHANGE:
+        InvalidateDragHintRaster();
         ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
-        ScheduleDisplayTopologyRefresh();
+    {
+        InvalidateDragHintRaster();
+        const wchar_t* settingArea =
+            reinterpret_cast<const wchar_t*>(lp);
+        const bool traySettings = settingArea &&
+            _wcsicmp(settingArea, L"TraySettings") == 0;
+        const bool immersiveColor = settingArea &&
+            _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
+
+        if (!traySettings && !immersiveColor)
+            ScheduleDisplayTopologyRefresh();
+        if (immersiveColor)
+            ApplyPersistentDockHostAppearance();
         InvalidateRect(hwnd_, nullptr, FALSE);
-        // Explorer broadcasts this message when view options such as
-        // "Hidden items" change. Re-enumerate both desktop and mapped folders.
-        ReloadItems(false);
+        // Explorer also broadcasts this message for view options such as
+        // "Hidden items". Theme and taskbar notifications do not change the
+        // desktop namespace, so avoid a synchronous full item reload for them.
+        if (!traySettings && !immersiveColor)
+            ReloadItems(false);
+        return 0;
+    }
+    case WM_FONTCHANGE:
+    case WM_THEMECHANGED:
+        InvalidateDragHintRaster();
+        if (msg == WM_THEMECHANGED)
+            ApplyPersistentDockHostAppearance();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case kShellChangeMessage:
     {
@@ -629,14 +1011,32 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (SHChangeNotification_Lock(notify, 1, &pidls, &eventId))
                 SHChangeNotification_Unlock(notify);
         }
+        shellReloadPending_ = true;
+        shellReloadLayoutFromDiskPending_ = true;
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
         return 0;
     }
     case kIconLoadedMessage:
         OnIconLoaded(wp, lp);
         return 0;
+    case kDemoIconDecodedMessage:
+        OnDemoIconDecoded(lp);
+        return 0;
+    case kWidgetConsentResolvedMessage:
+        CompleteLuaWidgetConsent(wp, lp);
+        return 0;
+    case kWidgetConsentOpenedMessage:
+        NotifyLuaWidgetConsentDialogOpened(wp, lp);
+        return 0;
+    case kWidgetAudioAnalysisWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnAudioAnalysisWake();
+        return 0;
     case kQuickNavigationAppsIndexedMessage:
         OnQuickNavigationAppsIndexed(wp, lp);
+        return 0;
+    case kQuickNavigationEverythingSearchMessage:
+        OnQuickNavigationEverythingSearchCompleted(wp);
         return 0;
     case kCommitRenameMessage:
         renameCommitPending_ = false;
@@ -648,9 +1048,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kForegroundInteractionChangedMessage:
         ReconcileDesktopHoverState();
         return 0;
-    case kFloatingDockBackdropCommitMessage:
-        FinalizeFloatingDockBackdropCleanup(
-            static_cast<UINT_PTR>(wp));
+    case kSteamWorkshopSubscriptionReadyMessage:
+        PollSteamWorkshopSubscriptions();
+        return 0;
+    case kSteamWorkshopSubscriptionChangedMessage:
+        PollSteamWorkshopSubscriptions(true);
         return 0;
     case WM_TIMER:
         OnTimer(wp);
@@ -662,6 +1064,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RequestExit();
         return 0;
     case WM_DESTROY:
+        if (widgetAccessibilityProvider_)
+            widgetAccessibilityProvider_->DetachWindow(hwnd);
+        StopDemoIconLoader();
         if (luaInlineEdit_)
             CommitLuaInlineTextEdit(false);
         UnregisterNavigationHotkey();

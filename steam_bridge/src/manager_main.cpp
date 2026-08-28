@@ -19,8 +19,10 @@
 #include "manager_localization.h"
 #include "package_tool.h"
 #include "preview_cache.h"
+#include "steam_app_identity.h"
 #include "steam_workshop_core.h"
 #include "workshop_project.h"
+#include "resource.h"
 
 #include <algorithm>
 #include <array>
@@ -50,6 +52,98 @@ ComPtr<ID3D11Device> gDevice;
 ComPtr<ID3D11DeviceContext> gContext;
 ComPtr<IDXGISwapChain> gSwapChain;
 ComPtr<ID3D11RenderTargetView> gRenderTarget;
+float gDpiScale = 1.0f;
+
+constexpr float kSidebarWidthDip = 176.0f;
+constexpr float kSettingControlWidthDip = 320.0f;
+
+void SetupLightTheme()
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.Alpha = 1.0f;
+    style.FrameRounding = 4.0f;
+    style.WindowRounding = 0.0f;
+    style.ChildRounding = 0.0f;
+    style.ScrollbarSize = 10.0f;
+    style.ScrollbarRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.TabRounding = 4.0f;
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+    colors[ImGuiCol_ChildBg] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    colors[ImGuiCol_PopupBg] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    colors[ImGuiCol_Border] = ImVec4(0.78f, 0.78f, 0.82f, 1.00f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.82f, 0.82f, 0.87f, 1.00f);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+    colors[ImGuiCol_Text] = ImVec4(0.10f, 0.10f, 0.14f, 1.00f);
+    colors[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.55f, 0.60f, 1.00f);
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.25f, 0.55f, 0.90f, 0.35f);
+    colors[ImGuiCol_InputTextCursor] = ImVec4(0.08f, 0.08f, 0.12f, 1.00f);
+    colors[ImGuiCol_Header] = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.84f, 0.84f, 0.88f, 1.00f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
+    colors[ImGuiCol_Button] = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.24f, 0.56f, 0.96f, 1.00f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.14f, 0.42f, 0.84f, 1.00f);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.18f, 0.50f, 0.92f, 1.00f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.24f, 0.55f, 0.92f, 1.00f);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.30f, 0.60f, 0.96f, 1.00f);
+    colors[ImGuiCol_Tab] = ImVec4(0.90f, 0.90f, 0.93f, 1.00f);
+    colors[ImGuiCol_TabHovered] = ImVec4(0.84f, 0.84f, 0.88f, 1.00f);
+    colors[ImGuiCol_TabActive] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    colors[ImGuiCol_TableHeaderBg] = ImVec4(0.92f, 0.92f, 0.95f, 1.00f);
+    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
+    colors[ImGuiCol_TableBorderLight] = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
+    colors[ImGuiCol_Separator] = ImVec4(0.78f, 0.78f, 0.83f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(1.00f, 1.00f, 1.00f, 0.00f);
+    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.80f, 0.80f, 0.84f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.70f, 0.70f, 0.75f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);
+}
+
+bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor();
+    return clicked;
+}
+
+bool SecondaryButton(const char* label, const ImVec2& size = ImVec2(0, 0))
+{
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::PushStyleColor(ImGuiCol_Text, style.Colors[ImGuiCol_Text]);
+    ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_FrameBg]);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+        style.Colors[ImGuiCol_FrameBgHovered]);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+        style.Colors[ImGuiCol_FrameBgActive]);
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(4);
+    return clicked;
+}
+
+float BeginSettingRow(const char* label, float controlWidth)
+{
+    const float rowStart = ImGui::GetCursorPosX();
+    const float rowRight = rowStart + ImGui::GetContentRegionAvail().x;
+    const float controlX = std::max(rowStart,
+        rowRight - std::max(1.0f, controlWidth));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(controlX);
+    return controlX;
+}
+
+float ButtonWidth(const char* label)
+{
+    return ImGui::CalcTextSize(label).x +
+        ImGui::GetStyle().FramePadding.x * 2.0f;
+}
 
 std::string WideToUtf8(std::wstring_view value)
 {
@@ -89,11 +183,30 @@ std::string NowIso8601()
     return buffer;
 }
 
-void OpenUrl(std::string_view url)
+std::string FormatLocalTime(std::uint32_t timestamp)
+{
+    if (timestamp == 0) return "-";
+    const std::time_t value = static_cast<std::time_t>(timestamp);
+    std::tm local{};
+    if (localtime_s(&local, &value) != 0) return "-";
+    char buffer[32]{};
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", &local);
+    return buffer;
+}
+
+bool OpenUrl(std::string_view url)
 {
     const auto wide = Utf8ToWide(url);
-    ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr,
-        SW_SHOWNORMAL);
+    if (wide.empty()) return false;
+    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", wide.c_str(),
+        nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(opened) > 32;
+}
+
+void OpenSteamUrlWithWebFallback(
+    std::string_view steamUrl, std::string_view webUrl)
+{
+    if (!OpenUrl(steamUrl)) OpenUrl(webUrl);
 }
 
 void OpenDirectory(const std::filesystem::path& path)
@@ -218,6 +331,7 @@ std::optional<std::string> ReadMainLanguageSetting(
 struct ManagerArguments
 {
     std::filesystem::path developmentRoot;
+    std::filesystem::path projectDirectory;
     std::filesystem::path settingsFile;
     std::string language;
 };
@@ -228,12 +342,17 @@ public:
     explicit WorkshopManagerApp(ManagerArguments arguments,
         std::filesystem::path languageDirectory)
         : developmentRoot_(std::move(arguments.developmentRoot)),
+          projectDirectory_(std::move(arguments.projectDirectory)),
           settingsFile_(std::move(arguments.settingsFile)),
           currentLanguage_(std::move(arguments.language))
     {
         std::string error;
         if (!localization_.Load(languageDirectory, currentLanguage_, error))
             SetMessage(false, error);
+        std::error_code directoryError;
+        if (!developmentRoot_.empty())
+            std::filesystem::create_directories(
+                developmentRoot_, directoryError);
         const bool loaded = store_.Load(error);
         if (!loaded) SetMessage(false, error);
         if (loaded && !developmentRoot_.empty())
@@ -247,8 +366,22 @@ public:
             }
             else if (!error.empty()) SetMessage(false, error);
         }
-        if (!store_.Projects().empty())
+        if (loaded && !projectDirectory_.empty())
+        {
+            WorkshopProject* focusedProject = nullptr;
+            error.clear();
+            if (store_.AddDirectory(
+                    projectDirectory_, focusedProject, error) &&
+                focusedProject)
+            {
+                selectedLocalId_ = focusedProject->localId;
+                if (!store_.Save(error)) SetMessage(false, error);
+            }
+            else if (!error.empty()) SetMessage(false, error);
+        }
+        if (selectedLocalId_.empty() && !store_.Projects().empty())
             selectedLocalId_ = store_.Projects().front().localId;
+        if (steam_.Status().compiled) RefreshPublished(1);
     }
 
     ~WorkshopManagerApp()
@@ -275,6 +408,7 @@ public:
         if (store_.AddDirectory(path, project, error) && store_.Save(error))
         {
             selectedLocalId_ = project->localId;
+            activePage_ = 0;
             SetMessageUnlocked(true, T("已添加本地项目", "Local project added"));
         }
         else SetMessageUnlocked(false, error);
@@ -288,28 +422,34 @@ public:
         ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
         ImGui::Begin("SnowDesktop Workshop Manager", nullptr,
             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoSavedSettings);
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse);
         RenderHeader(window);
-        ImGui::Separator();
-        if (ImGui::BeginTabBar("manager-tabs"))
+        ImGui::Spacing();
+        const float sidebarPadding = 8.0f * gDpiScale;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+            ImVec2(sidebarPadding, sidebarPadding));
+        ImGui::BeginChild("manager-sidebar",
+            ImVec2(kSidebarWidthDip * gDpiScale, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
+        RenderSidebar();
+        ImGui::EndChild();
+        ImGui::SameLine();
+        const float contentPadding = 16.0f * gDpiScale;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+            ImVec2(contentPadding, contentPadding));
+        ImGui::BeginChild("manager-content", ImVec2(0, 0),
+            ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+            ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        ImGui::PopStyleVar();
+        switch (activePage_)
         {
-            if (ImGui::BeginTabItem(T("本地项目", "Local Projects")))
-            {
-                RenderLocalProjects(window);
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem(T("我的 Workshop", "My Workshop")))
-            {
-                RenderWorkshop();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem(T("诊断", "Diagnostics")))
-            {
-                RenderDiagnostics();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
+        case 0: RenderLocalProjects(window); break;
+        case 1: RenderWorkshop(); break;
+        default: activePage_ = 0; break;
         }
+        ImGui::EndChild();
         ImGui::End();
     }
 
@@ -370,22 +510,16 @@ private:
 
     void RenderHeader(HWND window)
     {
+        (void)window;
         ImGui::TextUnformatted(T("SnowDesktop 创意工坊创作者管理器",
             "SnowDesktop Workshop Creator Manager"));
         ImGui::SameLine();
         ImGui::TextDisabled("v%s", SNOWDESKTOP_VERSION);
-
-        // Keep actions on their own responsive row. The old fixed right offset
-        // clipped the buttons at narrow window widths and under DPI scaling.
-        ImGui::BeginDisabled(busy_.load());
-        if (ImGui::Button(T("添加组件目录", "Add component folder")))
-        {
-            if (const auto path = PickPath(window, true)) AddDroppedDirectory(*path);
-        }
-        ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button(T("打开网页工坊", "Open Workshop")))
-            OpenUrl("https://steamcommunity.com/workshop/");
+        const SteamStatus steamStatus = steam_.Status();
+        ImGui::TextDisabled("%s", steamStatus.initialized && steamStatus.loggedOn
+            ? T("Steam 已连接", "Steam connected")
+            : T("Steam 未连接", "Steam disconnected"));
         std::lock_guard lock(mutex_);
         if (!message_.empty())
         {
@@ -401,49 +535,106 @@ private:
         }
     }
 
+    void RenderSidebar()
+    {
+        if (ImGui::Selectable((std::string(T("发布组件", "Publish component")) +
+                "###PublishComponentPage").c_str(), activePage_ == 0))
+            activePage_ = 0;
+        if (ImGui::Selectable((std::string(T("我的 Workshop", "My Workshop")) +
+                "###MyWorkshopPage").c_str(), activePage_ == 1))
+            activePage_ = 1;
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (SecondaryButton(T("打开创意工坊", "Open Workshop"),
+                ImVec2(-1, 0)))
+            OpenSteamUrlWithWebFallback(
+                SteamWorkshopClientUrl(), SteamWorkshopHomeUrl());
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", T("本地项目", "Local Projects"));
+        ImGui::Spacing();
+
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##local-search",
+            T("搜索名称或路径", "Search name or path"),
+            localSearch_, std::size(localSearch_));
+        ImGui::Spacing();
+        std::lock_guard lock(mutex_);
+        if (store_.Projects().empty())
+        {
+            ImGui::TextWrapped("%s", T(
+                "添加包含 widget.json 的组件目录，或把目录拖入此窗口。",
+                "Add a component directory containing widget.json, or drop it onto this window."));
+        }
+        else
+        {
+            for (const auto& project : store_.Projects())
+            {
+                const std::string name = WideToUtf8(
+                    project.sourceDirectory.filename().wstring());
+                const std::string path = WideToUtf8(
+                    project.sourceDirectory.wstring());
+                const std::string haystack = name + " " +
+                    project.packageId + " " + project.localId + " " + path;
+                if (localSearch_[0] && haystack.find(localSearch_) ==
+                    std::string::npos)
+                    continue;
+                if (ImGui::Selectable((name + "##" +
+                        project.localId).c_str(),
+                        selectedLocalId_ == project.localId))
+                {
+                    selectedLocalId_ = project.localId;
+                    tagsBuffer_ = JoinTags(project.tags);
+                    titleBuffer_.clear();
+                    descriptionBuffer_.clear();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", path.c_str());
+            }
+        }
+    }
+
     void RenderLocalProjects(HWND window)
     {
-        std::lock_guard lock(mutex_);
-        ImGui::SetNextItemWidth(300.0f);
-        ImGui::InputTextWithHint("##local-search",
-            T("搜索名称、UUID 或路径", "Search name, UUID, or path"),
-            localSearch_, std::size(localSearch_));
-        ImGui::BeginChild("local-list", ImVec2(330, 0), true);
-        for (const auto& project : store_.Projects())
-        {
-            const std::string label = project.packageId.empty()
-                ? WideToUtf8(project.sourceDirectory.filename().wstring())
-                : project.packageId;
-            const std::string haystack = label + " " + project.localId + " " +
-                WideToUtf8(project.sourceDirectory.wstring());
-            if (localSearch_[0] && haystack.find(localSearch_) ==
-                std::string::npos)
-                continue;
-            if (ImGui::Selectable((label + "##" + project.localId).c_str(),
-                    selectedLocalId_ == project.localId))
-            {
-                selectedLocalId_ = project.localId;
-                tagsBuffer_ = JoinTags(project.tags);
-                titleBuffer_.clear();
-                descriptionBuffer_.clear();
-            }
-            ImGui::TextDisabled("%s", WideToUtf8(
-                project.sourceDirectory.filename().wstring()).c_str());
-        }
-        ImGui::EndChild();
+        ImGui::SeparatorText(T("发布组件", "Publish component"));
+        ImGui::Spacing();
+        const char* openRoot = T("打开目录", "Open folder");
+        const std::string openRootButton =
+            std::string(openRoot) + "###OpenDevelopmentRoot";
+        const char* addFolder = T("添加组件目录", "Add component folder");
+        if (SecondaryButton(openRootButton.c_str()))
+            OpenDirectory(developmentRoot_);
         ImGui::SameLine();
-        ImGui::BeginChild("local-detail", ImVec2(0, 0), true);
+        ImGui::BeginDisabled(busy_.load());
+        if (BlueButton(addFolder))
+        {
+            if (const auto path = PickPath(window, true)) AddDroppedDirectory(*path);
+        }
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("%s", WideToUtf8(developmentRoot_.wstring()).c_str());
+        ImGui::Spacing();
+        std::lock_guard lock(mutex_);
+        if (store_.Projects().empty())
+        {
+            ImGui::TextWrapped("%s", T(
+                "添加包含 widget.json 的组件目录，或把目录拖入此窗口。",
+                "Add a component directory containing widget.json, or drop it onto this window."));
+            return;
+        }
         WorkshopProject* project = FindProjectUnlocked(selectedLocalId_);
         if (!project)
         {
             ImGui::TextWrapped("%s", T(
                 "添加包含 widget.json 的组件目录，或把目录拖入此窗口。",
                 "Add a component directory containing widget.json, or drop it onto this window."));
-            ImGui::EndChild();
             return;
         }
+        ImGui::PushID(project->localId.c_str());
         RenderProjectDetailsUnlocked(window, *project);
-        ImGui::EndChild();
+        ImGui::PopID();
     }
 
     void RefreshLanguageFromMainSettings(HWND window)
@@ -471,38 +662,43 @@ private:
 
     void RenderProjectDetailsUnlocked(HWND window, WorkshopProject& project)
     {
-        ImGui::Text("%s", WideToUtf8(project.sourceDirectory.filename().wstring()).c_str());
-        ImGui::TextDisabled("Local UUID: %s", project.localId.c_str());
+        ImGui::SeparatorText(WideToUtf8(
+            project.sourceDirectory.filename().wstring()).c_str());
         ImGui::TextWrapped("%s", WideToUtf8(project.sourceDirectory.wstring()).c_str());
-        if (ImGui::Button(T("打开目录", "Open folder")))
+        ImGui::Spacing();
+        const char* openLabel = T("打开目录", "Open folder");
+        const std::string openProjectButton =
+            std::string(openLabel) + "###OpenProjectDirectory";
+        const char* validateLabel = T("校验", "Validate");
+        const char* packLabel = T("校验并打包", "Validate and pack");
+        if (SecondaryButton(openProjectButton.c_str()))
             OpenDirectory(project.sourceDirectory);
         ImGui::SameLine();
         ImGui::BeginDisabled(busy_.load());
-        if (ImGui::Button(T("校验", "Validate")))
+        if (SecondaryButton(validateLabel))
         {
             const std::string id = project.localId;
             StartInspect(id, false);
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("校验并打包", "Validate and pack")))
+        if (BlueButton(packLabel))
         {
             const std::string id = project.localId;
             StartInspect(id, true);
         }
         ImGui::EndDisabled();
-        ImGui::Separator();
-        ImGui::Text("Package ID: %s", project.packageId.empty() ?
-            T("尚未校验", "Not inspected") : project.packageId.c_str());
-        ImGui::Text("PublishedFileId: %s", project.publishedFileId ?
-            std::to_string(*project.publishedFileId).c_str() :
-            T("未绑定", "Not bound"));
-        ImGui::Text("%s: %s", T("最后发布版本", "Last published version"),
-            project.lastPublishedVersion.empty() ? "-" :
-            project.lastPublishedVersion.c_str());
-        ImGui::Text("SHA-256: %s", project.lastPublishedSha256.empty() ?
-            "-" : project.lastPublishedSha256.c_str());
-        ImGui::Text("%s: %s", T("主预览", "Primary preview"),
-            project.primaryPreview.empty() ? "-" :
+        if (!project.lastPublishedVersion.empty())
+        {
+            BeginSettingRow(T("最后发布版本", "Last published version"),
+                kSettingControlWidthDip * gDpiScale);
+            ImGui::TextDisabled("%s",
+                project.lastPublishedVersion.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::SeparatorText(T("主预览", "Primary preview"));
+        ImGui::TextDisabled("%s", project.primaryPreview.empty() ?
+            T("未绑定", "Not bound") :
             WideToUtf8(project.primaryPreview.wstring()).c_str());
         if (!project.primaryPreview.empty())
         {
@@ -511,8 +707,9 @@ private:
             const PreviewTexture texture = previewCache_.Get(previewKey);
             if (texture.view)
             {
-                const float scale = std::min(360.0f / texture.width,
-                    180.0f / texture.height);
+                const float scale = std::min(
+                    (360.0f * gDpiScale) / texture.width,
+                    (180.0f * gDpiScale) / texture.height);
                 ImGui::Image(ImTextureRef(static_cast<ImTextureID>(
                     reinterpret_cast<std::uintptr_t>(texture.view))),
                     ImVec2(texture.width * scale, texture.height * scale));
@@ -521,7 +718,7 @@ private:
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
                     "%s", texture.error.c_str());
         }
-        if (ImGui::Button(T("选择主预览", "Choose primary preview")))
+        if (SecondaryButton(T("选择主预览", "Choose primary preview")))
         {
             if (const auto path = PickPath(window, false))
             {
@@ -537,11 +734,13 @@ private:
         std::array<char, 1024> tags{};
         std::copy_n(tagsBuffer_.c_str(),
             std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText(T("标签（逗号分隔）", "Tags (comma-separated)"),
-                tags.data(), tags.size()))
+        BeginSettingRow(T("标签（逗号分隔）", "Tags (comma-separated)"),
+            kSettingControlWidthDip * gDpiScale);
+        ImGui::SetNextItemWidth(kSettingControlWidthDip * gDpiScale);
+        if (ImGui::InputText("##project-tags", tags.data(), tags.size()))
             tagsBuffer_ = tags.data();
-        if (ImGui::Button(T("保存标签", "Save tags")))
+        BeginSettingRow("", ButtonWidth(T("保存标签", "Save tags")));
+        if (SecondaryButton(T("保存标签", "Save tags")))
         {
             project.tags = SplitTags(tagsBuffer_);
             std::string error;
@@ -558,14 +757,21 @@ private:
             std::array<char, 256> title{};
             std::copy_n(titleBuffer_.c_str(),
                 std::min(titleBuffer_.size(), title.size() - 1), title.data());
-            if (ImGui::InputText(T("初始标题", "Initial title"), title.data(),
-                    title.size())) titleBuffer_ = title.data();
+            BeginSettingRow(T("初始标题", "Initial title"),
+                kSettingControlWidthDip * gDpiScale);
+            ImGui::SetNextItemWidth(kSettingControlWidthDip * gDpiScale);
+            if (ImGui::InputText("##initial-title", title.data(), title.size()))
+                titleBuffer_ = title.data();
             std::array<char, 4096> description{};
             std::copy_n(descriptionBuffer_.c_str(),
                 std::min(descriptionBuffer_.size(), description.size() - 1),
                 description.data());
-            if (ImGui::InputTextMultiline(T("初始说明", "Initial description"),
-                    description.data(), description.size(), ImVec2(-1, 90)))
+            BeginSettingRow(T("初始说明", "Initial description"),
+                kSettingControlWidthDip * gDpiScale);
+            if (ImGui::InputTextMultiline("##initial-description",
+                    description.data(), description.size(),
+                    ImVec2(kSettingControlWidthDip * gDpiScale,
+                        90.0f * gDpiScale)))
                 descriptionBuffer_ = description.data();
         }
         else
@@ -573,22 +779,26 @@ private:
             ImGui::TextWrapped("%s", T(
                 "更新默认只上传 package.snowwidget 和关联 metadata，不覆盖网页端标题、说明或可见性。",
                 "Updates upload only package.snowwidget and association metadata; web-managed title, description, and visibility are preserved."));
-            ImGui::Checkbox(T("同时更新主预览", "Also update primary preview"),
-                &updatePreview_);
-            ImGui::Checkbox(T("同时更新标签", "Also update tags"),
-                &updateTags_);
+            BeginSettingRow(T("同时更新主预览", "Also update primary preview"),
+                ImGui::GetFrameHeight());
+            ImGui::Checkbox("##update-preview", &updatePreview_);
+            BeginSettingRow(T("同时更新标签", "Also update tags"),
+                ImGui::GetFrameHeight());
+            ImGui::Checkbox("##update-tags", &updateTags_);
         }
         ImGui::BeginDisabled(busy_.load() || submitStarted_.load() ||
             project.packageId.empty());
-        if (ImGui::Button(creating ? T("创建私有项目并上传", "Create private item and upload") :
+        if (BlueButton(creating ? T("创建私有项目并上传", "Create private item and upload") :
                 T("上传新版本", "Upload new version")))
             StartPublish(project.localId);
         ImGui::EndDisabled();
         if (project.publishedFileId)
         {
             ImGui::SameLine();
-            if (ImGui::Button(T("打开 Steam Owner Controls", "Open Steam Owner Controls")))
-                OpenUrl(CommunityItemUrl(*project.publishedFileId));
+            if (SecondaryButton(T("打开 Steam Owner Controls", "Open Steam Owner Controls")))
+                OpenSteamUrlWithWebFallback(
+                    SteamCommunityItemClientUrl(*project.publishedFileId),
+                    CommunityItemUrl(*project.publishedFileId));
         }
         if (submitStarted_.load())
         {
@@ -597,8 +807,8 @@ private:
                 "Steam 已开始 SubmitItemUpdate；按 Valve 限制，此阶段不可取消或关闭窗口。",
                 "Steam has started SubmitItemUpdate; this stage cannot be cancelled or closed."));
         }
-        ImGui::Separator();
-        if (ImGui::Button(T("仅移除本地记录", "Remove local record only")))
+        ImGui::Spacing();
+        if (SecondaryButton(T("仅移除本地记录", "Remove local record only")))
         {
             const std::string id = project.localId;
             std::string error;
@@ -743,20 +953,24 @@ private:
                     T("上传成功；已打开 Steam 项目页面",
                       "Upload complete; opening the Steam item page"));
             }
-            OpenUrl(result->communityUrl);
+            OpenSteamUrlWithWebFallback(
+                SteamCommunityItemClientUrl(result->publishedFileId),
+                result->communityUrl);
         });
     }
 
     void RenderWorkshop()
     {
+        ImGui::SeparatorText(T("我的 Workshop", "My Workshop"));
+        ImGui::Spacing();
         ImGui::BeginDisabled(busy_.load());
-        if (ImGui::Button(T("刷新我的项目", "Refresh my items")))
+        if (BlueButton(T("刷新我的项目", "Refresh my items")))
             RefreshPublished(publishedPage_);
         ImGui::SameLine();
-        if (ImGui::Button("<") && publishedPage_ > 1)
+        if (SecondaryButton("<") && publishedPage_ > 1)
             RefreshPublished(publishedPage_ - 1);
         ImGui::SameLine();
-        if (ImGui::Button(">") && (publishedTotalPages_ == 0 ||
+        if (SecondaryButton(">") && (publishedTotalPages_ == 0 ||
                 publishedPage_ < publishedTotalPages_))
             RefreshPublished(publishedPage_ + 1);
         ImGui::EndDisabled();
@@ -767,7 +981,7 @@ private:
         if (ImGui::BeginTable("published-items", 7,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
-            ImVec2(0, 300)))
+            ImVec2(0, 300.0f * gDpiScale)))
         {
             ImGui::TableSetupColumn(T("项目", "Item"));
             ImGui::TableSetupColumn(T("更新时间", "Updated"));
@@ -787,7 +1001,8 @@ private:
                         ImGuiSelectableFlags_SpanAllColumns))
                     selectedWorkshopId_ = item.publishedFileId;
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%u", item.updatedAt);
+                const std::string updated = FormatLocalTime(item.updatedAt);
+                ImGui::TextUnformatted(updated.c_str());
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%llu", item.subscriptions);
                 ImGui::TableSetColumnIndex(3);
@@ -812,10 +1027,6 @@ private:
         }
         ImGui::SeparatorText(T("项目详情", "Item details"));
         ImGui::Text("%s", item->title.c_str());
-        ImGui::Text("PublishedFileId: %llu", item->publishedFileId);
-        ImGui::Text("Owner: %llu  App ID: %u", item->ownerSteamId,
-            item->consumerAppId);
-        ImGui::TextWrapped("Preview: %s", item->previewUrl.c_str());
         if (!item->previewUrl.empty())
         {
             previewCache_.Request(item->publishedFileId, item->previewUrl);
@@ -823,8 +1034,8 @@ private:
                 previewCache_.Get(item->publishedFileId);
             if (texture.view)
             {
-                const float maximumWidth = 420.0f;
-                const float maximumHeight = 220.0f;
+                const float maximumWidth = 420.0f * gDpiScale;
+                const float maximumHeight = 220.0f * gDpiScale;
                 const float scale = std::min(maximumWidth / texture.width,
                     maximumHeight / texture.height);
                 ImGui::Image(ImTextureRef(static_cast<ImTextureID>(
@@ -838,12 +1049,13 @@ private:
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
                     "%s", texture.error.c_str());
         }
-        ImGui::TextWrapped("Metadata: %s", item->metadata.c_str());
-        if (ImGui::Button(T("打开 Steam Owner Controls", "Open Steam Owner Controls")))
-            OpenUrl(CommunityItemUrl(item->publishedFileId));
+        if (SecondaryButton(T("打开 Steam Owner Controls", "Open Steam Owner Controls")))
+            OpenSteamUrlWithWebFallback(
+                SteamCommunityItemClientUrl(item->publishedFileId),
+                CommunityItemUrl(item->publishedFileId));
         ImGui::SameLine();
         ImGui::BeginDisabled(selectedLocalId_.empty());
-        if (ImGui::Button(T("绑定到当前本地项目", "Bind to selected local project")))
+        if (BlueButton(T("绑定到当前本地项目", "Bind to selected local project")))
         {
             WorkshopProject* project = FindProjectUnlocked(selectedLocalId_);
             std::string error;
@@ -910,66 +1122,12 @@ private:
         });
     }
 
-    void RenderDiagnostics()
-    {
-        const SteamStatus status = steam_.Status();
-        ImGui::Text("Steamworks compiled: %s", status.compiled ? "yes" : "no");
-        ImGui::Text("Steam initialized: %s", status.initialized ? "yes" : "no");
-        ImGui::Text("Steam logged on: %s", status.loggedOn ? "yes" : "no");
-        ImGui::Text("App ID: %u", status.appId);
-        ImGui::Text("Steam ID: %s", status.steamId.c_str());
-        ImGui::TextWrapped("Diagnostic: %s", status.diagnostic.c_str());
-        ImGui::Separator();
-        ImGui::TextWrapped("Project store: %s",
-            WideToUtf8(store_.StorePath().wstring()).c_str());
-        ImGui::TextWrapped("snowwidget.exe: %s",
-            WideToUtf8(packageTool_.Executable().wstring()).c_str());
-        ImGui::TextWrapped("Preview cache: %s",
-            WideToUtf8(previewCache_.Root().wstring()).c_str());
-        ImGui::TextWrapped("%s", T(
-            "SDK-free 构建仍可添加、校验和打包本地组件；Steam 查询和上传会显示不可用诊断。",
-            "SDK-free builds still add, validate, and package local components; Steam queries and uploads show an unavailable diagnostic."));
-        if (eulaKnown_.load())
-            ImGui::Text("Workshop agreement: %s",
-                eulaAccepted_.load() ? "accepted" : "action required");
-        ImGui::BeginDisabled(busy_.load());
-        if (ImGui::Button(T("初始化 Steam", "Initialize Steam")))
-        {
-            StartWork([this]
-            {
-                CoreError error;
-                if (steam_.Initialize(error))
-                    SetMessage(true, T("Steam 初始化成功", "Steam initialized"));
-                else SetMessage(false, error.code + ": " + error.message);
-            });
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(T("检查创意工坊协议", "Check Workshop agreement")))
-        {
-            StartWork([this]
-            {
-                CoreError error;
-                const auto status = steam_.GetEulaStatus(error);
-                if (!status)
-                {
-                    SetMessage(false, error.code + ": " + error.message);
-                    return;
-                }
-                eulaKnown_.store(true);
-                eulaAccepted_.store(status->accepted && !status->needsAction);
-                SetMessage(true, status->accepted && !status->needsAction ?
-                    T("创意工坊协议已接受", "Workshop agreement accepted") :
-                    T("需要在 Steam 页面处理创意工坊协议",
-                      "Workshop agreement requires action on Steam"));
-            });
-        }
-        ImGui::EndDisabled();
-    }
-
     ManagerLocalization localization_;
     std::filesystem::path developmentRoot_;
+    std::filesystem::path projectDirectory_;
     std::filesystem::path settingsFile_;
     std::string currentLanguage_;
+    int activePage_ = 0;
     std::optional<std::filesystem::file_time_type> settingsWriteTime_;
     std::chrono::steady_clock::time_point nextLanguageCheck_{};
     ProjectStore store_;
@@ -981,8 +1139,6 @@ private:
     std::atomic_bool busy_ = false;
     std::atomic_bool submitStarted_ = false;
     std::atomic<float> progressFraction_ = 0.0f;
-    std::atomic_bool eulaKnown_ = false;
-    std::atomic_bool eulaAccepted_ = false;
     std::string selectedLocalId_;
     std::uint64_t selectedWorkshopId_ = 0;
     std::vector<PublishedItem> published_;
@@ -1000,6 +1156,29 @@ private:
 };
 
 WorkshopManagerApp* gApp = nullptr;
+bool gRenderingFrame = false;
+constexpr UINT_PTR kLiveResizeTimer = 0x5344;
+
+void RenderManagerFrame(HWND window)
+{
+    if (!gApp || gRenderingFrame || !ImGui::GetCurrentContext() ||
+        !gDevice.Get() || !gContext.Get() || !gSwapChain.Get() ||
+        !gRenderTarget.Get())
+        return;
+
+    gRenderingFrame = true;
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+    gApp->Render(window);
+    ImGui::Render();
+    const float clear[4] = { 0.96f, 0.96f, 0.97f, 1.0f };
+    gContext->OMSetRenderTargets(1, gRenderTarget.GetAddressOf(), nullptr);
+    gContext->ClearRenderTargetView(gRenderTarget.Get(), clear);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    gSwapChain->Present(1, 0);
+    gRenderingFrame = false;
+}
 
 bool CreateDevice(HWND window)
 {
@@ -1064,8 +1243,23 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message,
             gSwapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam),
                 DXGI_FORMAT_UNKNOWN, 0);
             RecreateRenderTarget();
+            RenderManagerFrame(window);
         }
         return 0;
+    case WM_ENTERSIZEMOVE:
+        SetTimer(window, kLiveResizeTimer, 16, nullptr);
+        return 0;
+    case WM_EXITSIZEMOVE:
+        KillTimer(window, kLiveResizeTimer);
+        RenderManagerFrame(window);
+        return 0;
+    case WM_TIMER:
+        if (wParam == kLiveResizeTimer)
+        {
+            RenderManagerFrame(window);
+            return 0;
+        }
+        break;
     case WM_DPICHANGED:
         if (const RECT* rect = reinterpret_cast<const RECT*>(lParam))
             SetWindowPos(window, nullptr, rect->left, rect->top,
@@ -1112,6 +1306,11 @@ ManagerArguments ReadArguments()
         {
             result.developmentRoot = arguments[++index];
         }
+        else if (std::wstring_view(arguments[index]) ==
+            L"--project-directory")
+        {
+            result.projectDirectory = arguments[++index];
+        }
         else if (std::wstring_view(arguments[index]) == L"--language")
         {
             result.language = WideToUtf8(arguments[++index]);
@@ -1124,6 +1323,9 @@ ManagerArguments ReadArguments()
         }
     }
     LocalFree(arguments);
+    if (result.developmentRoot.empty())
+        result.developmentRoot = ExecutableDirectory() / L"data" /
+            L"widgets" / L"dev";
     if (!settingsSpecified && !languageSpecified)
         result.settingsFile = ExecutableDirectory() / L"data" /
             L"SnowDesktop.general.json";
@@ -1139,6 +1341,13 @@ ManagerArguments ReadArguments()
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
+    if (!EnsureExpectedSteamEnvironmentIfMissing())
+    {
+        MessageBoxW(nullptr,
+            L"Unable to create the local Steam App ID context.",
+            L"SnowDesktop Workshop Manager", MB_OK | MB_ICONERROR);
+        return 1;
+    }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
     HANDLE singleInstance = CreateMutexW(nullptr, FALSE,
@@ -1152,9 +1361,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         return 0;
     }
     const wchar_t* className = L"SnowDesktopWorkshopManagerWindow";
+    HICON largeIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
+    HICON smallIcon = static_cast<HICON>(LoadImageW(instance,
+        MAKEINTRESOURCEW(IDI_APPICON_SMALL), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+        LR_DEFAULTCOLOR));
     WNDCLASSEXW windowClass{ sizeof(windowClass), CS_CLASSDC,
-        WindowProcedure, 0, 0, instance, nullptr, LoadCursorW(nullptr, IDC_ARROW),
-        nullptr, nullptr, className, nullptr };
+        WindowProcedure, 0, 0, instance, largeIcon,
+        LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, className,
+        smallIcon };
     RegisterClassExW(&windowClass);
     HWND window = CreateWindowExW(WS_EX_APPWINDOW, className,
         L"SnowDesktop Workshop Creator Manager",
@@ -1175,10 +1390,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     const UINT dpi = GetDpiForWindow(window);
     const float scale = std::max(1.0f, static_cast<float>(dpi) / 96.0f);
-    ImGui::StyleColorsDark();
+    gDpiScale = scale;
+    SetupLightTheme();
     ImGuiStyle& style = ImGui::GetStyle();
     style.ScaleAllSizes(scale);
-    style.WindowRounding = 8.0f * scale;
+    style.WindowRounding = 0.0f;
     style.FrameRounding = 5.0f * scale;
     wchar_t windowsDirectory[MAX_PATH]{};
     if (!GetWindowsDirectoryW(windowsDirectory,
@@ -1211,16 +1427,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
             if (message.message == WM_QUIT) running = false;
         }
         if (!running) break;
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-        app.Render(window);
-        ImGui::Render();
-        const float clear[4] = { 0.055f, 0.065f, 0.085f, 1.0f };
-        gContext->OMSetRenderTargets(1, gRenderTarget.GetAddressOf(), nullptr);
-        gContext->ClearRenderTargetView(gRenderTarget.Get(), clear);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        gSwapChain->Present(1, 0);
+        RenderManagerFrame(window);
     }
     gApp = nullptr;
     ImGui_ImplDX11_Shutdown();
@@ -1232,6 +1439,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     gDevice.Reset();
     DestroyWindow(window);
     UnregisterClassW(className, instance);
+    if (smallIcon) DestroyIcon(smallIcon);
     CloseHandle(singleInstance);
     CoUninitialize();
     return 0;

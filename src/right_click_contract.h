@@ -15,6 +15,8 @@ enum class SlotItemKind : std::uint8_t
     CollectionGroupLabel,
     FileGroupLabel,
     Widget,
+    LogicalSlotItem,
+    Count,
 };
 
 enum class ContextMenuKind : std::uint8_t
@@ -29,7 +31,42 @@ enum class ContextMenuKind : std::uint8_t
     Background,
     FileGroupSourceTab,
     CollectionGroupTab,
+    LogicalSlotItem,
 };
+
+enum class LuaWidgetMenuScope : std::uint8_t
+{
+    Widget,
+    Element,
+};
+
+constexpr LuaWidgetMenuScope ResolveLuaWidgetMenuScope(
+    bool hasElementAction) noexcept
+{
+    return hasElementAction
+        ? LuaWidgetMenuScope::Element
+        : LuaWidgetMenuScope::Widget;
+}
+
+constexpr bool ShouldOfferComponentPanelShortcut(
+    LuaWidgetMenuScope scope) noexcept
+{
+    return scope == LuaWidgetMenuScope::Element;
+}
+
+template <typename MenuItems>
+constexpr bool HasLuaElementMenuAction(const MenuItems& items) noexcept
+{
+    for (const auto& item : items)
+    {
+        if (!item.actionId.empty() && item.elementContext && !item.separator)
+            return true;
+        if (!item.children.empty() &&
+            HasLuaElementMenuAction(item.children))
+            return true;
+    }
+    return false;
+}
 
 constexpr ContextMenuKind ResolveSlotItemMenu(
     slot_contract::SlotSurfaceKind surface,
@@ -91,6 +128,10 @@ constexpr ContextMenuKind ResolveSlotItemMenu(
         surface == Surface::FileGroup)
         return ContextMenuKind::FileGroupSourceTab;
 
+    if (item == SlotItemKind::LogicalSlotItem &&
+        surface == Surface::LuaLogicalSlot)
+        return ContextMenuKind::LogicalSlotItem;
+
     return ContextMenuKind::None;
 }
 
@@ -109,6 +150,7 @@ constexpr ContextMenuKind ResolveContainerMenu(
     case Surface::FolderMapping:
     case Surface::CollectionGroup:
     case Surface::FileGroup:
+    case Surface::LuaLogicalSlot:
     case Surface::Guide:
         return ContextMenuKind::Widget;
     default:

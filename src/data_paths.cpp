@@ -190,6 +190,7 @@ void MigrateLegacyDataPaths()
         L"SnowDesktop.personalization.json",
         L"SnowDesktop.dock.json",
         L"SnowDesktop.dock-usage.json",
+        L"SnowDesktop.widget-notifications.json",
         L"SnowDesktop.log",
         L"SnowDesktop_crash.log",
     };

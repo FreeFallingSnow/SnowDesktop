@@ -6,6 +6,7 @@
  */
 
 #pragma once
+#include "diagnostic_log.h"
 #include "types.h"
 
 #include <wrl/client.h>
@@ -14,6 +15,7 @@
 #include <dwrite.h>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 using Microsoft::WRL::ComPtr;
@@ -78,9 +80,17 @@ IDWriteTextFormat* CreateFluentTextFormat(
     IDWriteFactory* factory, float fontSize = 14.0f);
 
 /**
+ * @brief 请求 Explorer 创建桌面 WorkerW 宿主。
+ * @details 该操作会向 Progman 发送未公开的 Shell 消息，只应在首次启用软件桌面
+ *          或确认 Explorer 进程已重建时调用，不能用于周期性状态探测。
+ * @return 消息成功送达或当前没有 Progman 窗口时返回 true
+ */
+bool EnsureDesktopWorkerWindow();
+
+/**
  * @brief 查找桌面相关窗口
  * @details 定位 Progman、WorkerW、DefView、ListView 以及桌面宿主窗口的句柄，
- *          同时记录 ListView 的初始可见状态。是桌面集成功能的核心入口。
+ *          不发送会改变 Explorer 桌面窗口结构的消息，可安全用于周期性探测。
  * @return DesktopWindows 结构，包含所有找到的窗口句柄
  */
 DesktopWindows FindDesktopWindows();
@@ -212,7 +222,7 @@ bool AreExplorerHiddenItemsVisible();
 
 float CalculateWidgetCellScale(int cellWidth, int cellHeight);
 int ScaleWidgetCu(float value, float cellScale);
-float ScaleWidgetFontCu(float value, float cellScale);
+float ScaleWidgetFontCu(float valueCu, float cellScale);
 
 /**
  * @brief 创建自顶向下的 32 位 DIB 位图
@@ -257,15 +267,42 @@ HBITMAP CopyBitmapToAlphaDib(HBITMAP source, SIZE& size);
 HBITMAP CreateAlphaBitmapFromIcon(HICON icon, int width, int height, SIZE& size);
 
 /**
+ * @brief 直接从文件资源提取图标位图
+ * @details 绕过 Shell 图标画布，按资源索引提取原始 HICON，并转换为
+ *          32 位带 Alpha 通道的 DIB 位图。适用于 Shell 为低分辨率图标
+ *          强制添加兼容外框的经典应用程序。
+ * @param resourcePath EXE、DLL 或 ICO 资源路径
+ * @param iconIndex 图标资源索引
+ * @param bitmapSize [out] 返回位图的实际尺寸
+ * @param requestedSize 目标源位图长边，内部会归一化到 64..256 像素档位
+ * @return 成功返回 DIB 位图句柄，失败返回 nullptr
+ */
+HBITMAP GetDirectIconResourceBitmap(std::wstring_view resourcePath,
+    int iconIndex, SIZE& bitmapSize,
+    int requestedSize = kIconBitmapSize);
+
+/**
  * @brief 获取高分辨率 Shell 图标位图
  * @details 通过 IShellIconImageSize 或 Shell_GetImageLists 接口获取桌面项
  *          的高分辨率图标，并转换为 32 位带 Alpha 通道的 DIB 位图。
  * @param pidl 桌面项的绝对 PIDL
  * @param fallbackIndex 获取低分辨率图标时的回退系统图标索引
  * @param bitmapSize [out] 返回位图的实际尺寸
+ * @param allowThumbnail 是否允许 Shell 返回缩略图；为 false 时强制原生图标表示
+ * @param requestedSize 目标源位图长边，内部会归一化到 64..256 像素档位
+ * @param preferDirectIconExtraction 是否优先绕过 ImageFactory 直接提取 HICON
+ * @param forShortcut 是否按快捷方式语义请求未叠加箭头的源图标
+ * @param sourcePath Shell 项的文件系统路径，用于从快捷方式源文件直接提取图标
+ * @param returnedThumbnail [out] 实际返回缩略图时写入 true，普通图标或失败时写入 false
  * @return 成功返回 DIB 位图句柄，失败返回 nullptr
  */
-HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl, int fallbackIndex, SIZE& bitmapSize, bool fullQuality = false);
+HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
+    int fallbackIndex, SIZE& bitmapSize, bool allowThumbnail = false,
+    int requestedSize = kIconBitmapSize,
+    bool preferDirectIconExtraction = false,
+    bool forShortcut = false,
+    std::wstring_view sourcePath = {},
+    bool* returnedThumbnail = nullptr);
 
 /**
  * @brief 从坐标值创建 RECT 结构
@@ -360,14 +397,3 @@ std::string JsonEscapeUtf8(const std::wstring& value);
  * @return 成功解析返回 true，格式错误返回 false
  */
 bool ParseJsonStringAt(const std::string& text, size_t quote, std::string& value, size_t& end);
-
-enum class DiagnosticLogLevel
-{
-    Debug,
-    Info,
-    Warning,
-    Error,
-};
-
-void WriteDiagnosticLogEntry(const wchar_t* message,
-    DiagnosticLogLevel level = DiagnosticLogLevel::Info);

@@ -50,14 +50,98 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
     const int availableHeight =
         std::max(1, static_cast<int>(
             work.bottom - work.top) - 24);
+    const bool popover =
+        luaWidgetPanelRequest_.surface == "popover";
     const int width = std::clamp(
         luaWidgetPanelRequest_.width,
-        std::min(320, availableWidth),
+        std::min(popover ? 200 : 320, availableWidth),
         availableWidth);
     const int height = std::clamp(
         luaWidgetPanelRequest_.height,
-        std::min(280, availableHeight),
+        std::min(popover ? 120 : 280, availableHeight),
         availableHeight);
+    if (luaWidgetPanelRequest_.surface == "dialog")
+    {
+        const int left = work.left +
+            (availableWidth + 24 - width) / 2;
+        const int top = work.top +
+            (availableHeight + 24 - height) / 2;
+        return MakeRect(
+            left, top, left + width, top + height);
+    }
+    if (popover && luaWidgetPanelRequest_.hasAnchor)
+    {
+        constexpr int gap = 8;
+        const RECT anchor = luaWidgetPanelRequest_.anchorRect;
+        std::string placement = luaWidgetPanelRequest_.placement;
+        if (placement == "auto")
+        {
+            if (work.bottom - anchor.bottom >= height + gap)
+                placement = "bottomStart";
+            else if (anchor.top - work.top >= height + gap)
+                placement = "topStart";
+            else if (work.right - anchor.right >= width + gap)
+                placement = "right";
+            else if (anchor.left - work.left >= width + gap)
+                placement = "left";
+            else
+                placement = "bottomStart";
+        }
+        else if (placement.starts_with("bottom") &&
+            work.bottom - anchor.bottom < height + gap &&
+            anchor.top - work.top >= height + gap)
+        {
+            placement.replace(0, 6, "top");
+        }
+        else if (placement.starts_with("top") &&
+            anchor.top - work.top < height + gap &&
+            work.bottom - anchor.bottom >= height + gap)
+        {
+            placement.replace(0, 3, "bottom");
+        }
+        else if (placement == "right" &&
+            work.right - anchor.right < width + gap &&
+            anchor.left - work.left >= width + gap)
+        {
+            placement = "left";
+        }
+        else if (placement == "left" &&
+            anchor.left - work.left < width + gap &&
+            work.right - anchor.right >= width + gap)
+        {
+            placement = "right";
+        }
+        int left = anchor.left;
+        int top = anchor.bottom + gap;
+        if (placement == "top" || placement == "bottom")
+            left = (anchor.left + anchor.right - width) / 2;
+        else if (placement == "topEnd" ||
+            placement == "bottomEnd")
+            left = anchor.right - width;
+        else if (placement == "left")
+        {
+            left = anchor.left - width - gap;
+            top = (anchor.top + anchor.bottom - height) / 2;
+        }
+        else if (placement == "right")
+        {
+            left = anchor.right + gap;
+            top = (anchor.top + anchor.bottom - height) / 2;
+        }
+        if (placement == "top" || placement == "topStart" ||
+            placement == "topEnd")
+            top = anchor.top - height - gap;
+        left = std::clamp(left,
+            static_cast<int>(work.left + 12),
+            static_cast<int>(std::max<LONG>(
+                work.left + 12, work.right - width - 12)));
+        top = std::clamp(top,
+            static_cast<int>(work.top + 12),
+            static_cast<int>(std::max<LONG>(
+                work.top + 12, work.bottom - height - 12)));
+        return MakeRect(
+            left, top, left + width, top + height);
+    }
     int left =
         luaWidgetPanelAnchorPoint_.x + 12;
     int top =
@@ -91,15 +175,22 @@ RECT DesktopApp::GetLuaWidgetPanelContentRect() const
     const RECT panel = GetLuaWidgetPanelRect();
     if (IsRectEmptyRect(panel))
         return {};
+    const bool compact =
+        luaWidgetPanelRequest_.surface == "popover";
+    const int horizontalInset = compact ? 14 : 18;
+    const int bottomInset = compact ? 14 : 18;
+    const int topInset = luaWidgetPanelRequest_.showHeader ? 56 : 14;
     return MakeRect(
-        panel.left + 18, panel.top + 56,
-        panel.right - 18, panel.bottom - 18);
+        panel.left + horizontalInset, panel.top + topInset,
+        panel.right - horizontalInset, panel.bottom - bottomInset);
 }
 
 RECT DesktopApp::GetLuaWidgetPanelCloseRect() const
 {
     const RECT panel = GetLuaWidgetPanelRect();
     if (IsRectEmptyRect(panel))
+        return {};
+    if (!luaWidgetPanelRequest_.showHeader)
         return {};
     return MakeRect(
         panel.right - 50, panel.top + 12,
@@ -155,10 +246,13 @@ void DesktopApp::PrepareLuaWidgetPanelAnimationCache()
     if (!ready)
         luaWidgetPanelAnimationCacheRect_ = {};
     else
-        PrepareCompositionAnimationOverlay(
+    {
+        (void)PrepareCompositionAnimationOverlay(
             luaWidgetPanelAnimationOverlay_,
             luaWidgetPanelAnimationRenderCache_,
-            luaWidgetPanelAnimationCacheRect_);
+            luaWidgetPanelAnimationCacheRect_,
+            UiCompositionAnimationHost::FloatingPopup);
+    }
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 }
@@ -191,21 +285,31 @@ void DesktopApp::DrawLuaWidgetPanel(
     {
         ctx->GetTransform(&previousTransform);
         const D2D1_POINT_2F origin =
-            D2D1::Point2F(
-                std::clamp(
+            luaWidgetPanelRequest_.surface == "dialog"
+                ? D2D1::Point2F(
                     static_cast<float>(
-                        luaWidgetPanelAnchorPoint_.x),
+                        luaWidgetPanelRect_.left +
+                        (luaWidgetPanelRect_.right -
+                            luaWidgetPanelRect_.left) / 2),
                     static_cast<float>(
-                        luaWidgetPanelRect_.left),
-                    static_cast<float>(
-                        luaWidgetPanelRect_.right)),
-                std::clamp(
-                    static_cast<float>(
-                        luaWidgetPanelAnchorPoint_.y),
-                    static_cast<float>(
-                        luaWidgetPanelRect_.top),
-                    static_cast<float>(
-                        luaWidgetPanelRect_.bottom)));
+                        luaWidgetPanelRect_.top +
+                        (luaWidgetPanelRect_.bottom -
+                            luaWidgetPanelRect_.top) / 2))
+                : D2D1::Point2F(
+                    std::clamp(
+                        static_cast<float>(
+                            luaWidgetPanelAnchorPoint_.x),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.left),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.right)),
+                    std::clamp(
+                        static_cast<float>(
+                            luaWidgetPanelAnchorPoint_.y),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.top),
+                        static_cast<float>(
+                            luaWidgetPanelRect_.bottom)));
         ctx->SetTransform(
             D2D1::Matrix3x2F::Scale(
                 animation.scale,
@@ -250,40 +354,43 @@ void DesktopApp::DrawLuaWidgetPanel(
             foreground.b, 0.34f),
         1.2f);
 
-    RECT titleRect = MakeRect(
-        luaWidgetPanelRect_.left + 22,
-        luaWidgetPanelRect_.top + 13,
-        luaWidgetPanelRect_.right - 58,
-        luaWidgetPanelRect_.top + 49);
-    DrawD2DTextEllipsis(
-        ctx, luaWidgetPanelRequest_.title,
-        titleRect, itemTextFormat_.Get(),
-        foreground,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-    const RECT closeRect =
-        GetLuaWidgetPanelCloseRect();
-    const bool closeHovered =
-        PtInRect(&closeRect, lastMousePoint_) != FALSE;
-    if (closeHovered)
+    if (luaWidgetPanelRequest_.showHeader)
     {
-        DrawD2DRoundedRectangle(
-            ctx, closeRect, 9.0f,
-            D2D1::ColorF(
-                foreground.r, foreground.g,
-                foreground.b, 0.12f),
-            D2D1::ColorF(
-                foreground.r, foreground.g,
-                foreground.b, 0.0f),
-            0.0f);
+        RECT titleRect = MakeRect(
+            luaWidgetPanelRect_.left + 22,
+            luaWidgetPanelRect_.top + 13,
+            luaWidgetPanelRect_.right - 58,
+            luaWidgetPanelRect_.top + 49);
+        DrawD2DTextEllipsis(
+            ctx, luaWidgetPanelRequest_.title,
+            titleRect, itemTextFormat_.Get(),
+            foreground,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        const RECT closeRect =
+            GetLuaWidgetPanelCloseRect();
+        const bool closeHovered =
+            PtInRect(&closeRect, lastMousePoint_) != FALSE;
+        if (closeHovered)
+        {
+            DrawD2DRoundedRectangle(
+                ctx, closeRect, 9.0f,
+                D2D1::ColorF(
+                    foreground.r, foreground.g,
+                    foreground.b, 0.12f),
+                D2D1::ColorF(
+                    foreground.r, foreground.g,
+                    foreground.b, 0.0f),
+                0.0f);
+        }
+        DrawD2DTextEllipsis(
+            ctx, L"×", closeRect,
+            itemTextFormat_.Get(), foreground,
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+            false);
     }
-    DrawD2DTextEllipsis(
-        ctx, L"×", closeRect,
-        itemTextFormat_.Get(), foreground,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-        false);
 
     const auto source = std::find_if(
         widgets_.begin(), widgets_.end(),
@@ -305,7 +412,8 @@ void DesktopApp::DrawLuaWidgetPanel(
         ToD2DRect(content),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     widgetEngine_->RenderWidgetPanel(
-        source->id, ctx, content);
+        source->id, ctx, content,
+        luaWidgetPanelRequest_.surface);
     ctx->PopAxisAlignedClip();
     if (animationApplied)
         ctx->SetTransform(previousTransform);

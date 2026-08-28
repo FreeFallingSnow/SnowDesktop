@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../folder_mapping_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
 
@@ -14,6 +15,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
         bool shortcutArrow = false;
         bool isShortcut = false;
         bool isApplicationShortcut = false;
+        bool iconIsMediaThumbnail = false;
         IconState iconState = IconState::Loading;
     };
     std::unordered_map<std::wstring, OldFolderIcon> oldFolderIconCache;
@@ -28,6 +30,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
             old.shortcutArrow = entry.shortcutArrow;
             old.isShortcut = entry.isShortcut;
             old.isApplicationShortcut = entry.isApplicationShortcut;
+            old.iconIsMediaThumbnail = entry.iconIsMediaThumbnail;
             old.iconState = entry.iconState;
             oldFolderIconCache.emplace(ToUpperInvariant(entry.fullPath), std::move(old));
             entry.iconBitmap = nullptr;
@@ -46,7 +49,13 @@ void DesktopApp::EnumerateFolderMappingEntries(
         }
         return;
     }
-    std::wstring search = widget.sourceFolderPath + L"\\*";
+    // 磁盘根目录（如 "C:\"）自身以反斜杠结尾：直接拼接会生成 "C:\\名称"
+    // 这种双反斜杠路径，SHParseDisplayName 对其返回 E_INVALIDARG，
+    // 图标加载任务因此永远无法入队，条目只能停留在占位图标。
+    // ChildPath 先剥离尾部分隔符，再用单一反斜杠拼接搜索串与条目路径。
+    std::wstring search =
+        snowdesktop::folder_mapping_rules::ChildPath(
+            widget.sourceFolderPath, L"*");
     WIN32_FIND_DATAW fd{};
     HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
     if (hFind == INVALID_HANDLE_VALUE) {
@@ -66,12 +75,22 @@ void DesktopApp::EnumerateFolderMappingEntries(
         if (!showHiddenItems && (fd.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)) continue;
         FolderEntry entry;
         entry.name = fd.cFileName;
-        entry.fullPath = widget.sourceFolderPath + L"\\" + fd.cFileName;
+        entry.fullPath =
+            snowdesktop::folder_mapping_rules::ChildPath(
+                widget.sourceFolderPath, fd.cFileName);
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         entry.lastWriteTime = fd.ftLastWriteTime;
+        if (!entry.isDirectory)
+        {
+            entry.fileSize =
+                (static_cast<std::uint64_t>(fd.nFileSizeHigh) << 32) |
+                static_cast<std::uint64_t>(fd.nFileSizeLow);
+        }
         SHFILEINFOW info{};
-        SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX);
+        SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info),
+            SHGFI_SYSICONINDEX | SHGFI_TYPENAME);
         entry.sysIconIndex = info.iIcon;
+        entry.typeName = info.szTypeName;
 
         auto oldIt = oldFolderIconCache.find(ToUpperInvariant(entry.fullPath));
         if (oldIt != oldFolderIconCache.end() && oldIt->second.sysIconIndex == entry.sysIconIndex) {
@@ -80,6 +99,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
             entry.shortcutArrow = oldIt->second.shortcutArrow;
             entry.isShortcut = oldIt->second.isShortcut;
             entry.isApplicationShortcut = oldIt->second.isApplicationShortcut;
+            entry.iconIsMediaThumbnail = oldIt->second.iconIsMediaThumbnail;
             entry.iconState = oldIt->second.iconState;
             oldIt->second.bitmap = nullptr;
             oldFolderIconCache.erase(oldIt);

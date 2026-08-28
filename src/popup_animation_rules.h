@@ -23,6 +23,30 @@ inline float EaseInOutSmooth(float progress)
         (3.0f - 2.0f * value);
 }
 
+inline float ScaleForProgress(float progress)
+{
+    return kMinimumScale +
+        (1.0f - kMinimumScale) *
+            EaseInOutSmooth(progress);
+}
+
+/**
+ * @brief 返回从当前全局 smoothstep 进度到目标端点的归一化初始斜率。
+ *
+ * 原生合成动画只运行剩余片段。使用该斜率构造局部三次曲线，可令任意次数
+ * 的开关反向都继续沿同一条全局 smoothstep 曲线，而不是从当前缩放重新起步。
+ */
+inline float ScaleSegmentNormalizedStartSlope(
+    float progress, bool opening)
+{
+    const float value = ClampUnit(progress);
+    const float slope = opening
+        ? 6.0f * value / (1.0f + 2.0f * value)
+        : 6.0f * (1.0f - value) /
+            (3.0f - 2.0f * value);
+    return std::clamp(slope, 0.0f, 2.0f);
+}
+
 struct Visual
 {
     float progress = 0.0f;
@@ -33,6 +57,7 @@ struct Visual
 enum class ExistingSourceAction
 {
     OpenAtRequestedAnchor,
+    OpenAfterExistingCloses,
     CloseExisting,
     KeepClosing,
     ReopenExisting,
@@ -41,11 +66,16 @@ enum class ExistingSourceAction
 inline ExistingSourceAction ResolveExistingSourceAction(
     bool sameSource,
     bool interactive,
-    bool closingStartedByCurrentPress = false)
+    bool closingStartedByCurrentPress = false,
+    bool existingSourceClosing = false)
 {
     if (!sameSource)
-        return ExistingSourceAction::
-            OpenAtRequestedAnchor;
+    {
+        return closingStartedByCurrentPress ||
+                existingSourceClosing
+            ? ExistingSourceAction::OpenAfterExistingCloses
+            : ExistingSourceAction::OpenAtRequestedAnchor;
+    }
     if (interactive)
         return ExistingSourceAction::CloseExisting;
     return closingStartedByCurrentPress
@@ -141,12 +171,9 @@ public:
 
     [[nodiscard]] Visual GetVisual() const
     {
-        const float easedScale =
-            EaseInOutSmooth(progress_);
         return {
             progress_,
-            kMinimumScale +
-                (1.0f - kMinimumScale) * easedScale,
+            ScaleForProgress(progress_),
             progress_ > 0.0f
         };
     }

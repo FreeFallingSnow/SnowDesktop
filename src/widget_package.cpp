@@ -2,6 +2,8 @@
 
 #include "json_value.h"
 #include "language_fallback.h"
+#include "widget_logical_slot_manifest.h"
+#include "widget_permission_broker.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -142,6 +144,15 @@ std::string Lower(std::string value)
     return value;
 }
 
+bool DecimalIdentifier(std::string_view value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char character)
+        {
+            return character >= '0' && character <= '9';
+        });
+}
+
 bool StartsWithPath(const std::filesystem::path& child,
     const std::filesystem::path& root)
 {
@@ -158,9 +169,304 @@ bool StartsWithPath(const std::filesystem::path& child,
 
 bool HasReparsePoint(const std::filesystem::path& path)
 {
+    const HANDLE handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        FILE_ATTRIBUTE_TAG_INFO information{};
+        const bool isReparsePoint = GetFileInformationByHandleEx(handle,
+            FileAttributeTagInfo, &information, sizeof(information)) &&
+            (information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        CloseHandle(handle);
+        if (isReparsePoint) return true;
+    }
     const DWORD attributes = GetFileAttributesW(path.c_str());
     return attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool PathContainsReparsePoint(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(path, ec);
+    if (ec) return false;
+    const auto normalized = absolute.lexically_normal();
+    auto current = normalized.root_path();
+    if (!current.empty() && HasReparsePoint(current)) return true;
+    for (const auto& component : normalized.relative_path())
+    {
+        current /= component;
+        if (HasReparsePoint(current)) return true;
+    }
+    return false;
+}
+
+struct PermissionExpansion
+{
+    std::vector<std::string> required;
+    std::vector<std::string> optional;
+    std::vector<std::string> networkDomains;
+
+    bool Empty() const
+    {
+        return required.empty() && optional.empty() && networkDomains.empty();
+    }
+};
+
+std::string DescribePermissionExpansion(const PermissionExpansion& expansion)
+{
+    std::vector<std::string> descriptions;
+    descriptions.reserve(expansion.required.size() + expansion.optional.size() +
+        expansion.networkDomains.size());
+    for (const auto& permission : expansion.required)
+        descriptions.push_back(
+            "update requests a new required permission: " + permission);
+    for (const auto& permission : expansion.optional)
+        descriptions.push_back(
+            "update requests a new optional permission: " + permission);
+    for (const auto& domain : expansion.networkDomains)
+        descriptions.push_back(
+            "update requests a new network domain: " + domain);
+
+    std::ostringstream output;
+    for (std::size_t index = 0; index < descriptions.size(); ++index)
+    {
+        if (index != 0) output << "; ";
+        output << descriptions[index];
+    }
+    return output.str();
+}
+
+bool IsResourceName(std::string_view value)
+{
+    if (value.empty() || value.size() > 64 ||
+        !std::islower(static_cast<unsigned char>(value.front())))
+        return false;
+    return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::islower(ch) || std::isdigit(ch) || ch == '-' || ch == '_';
+    });
+}
+
+std::uint16_t ReadBig16(const std::string& data, std::size_t offset)
+{
+    return static_cast<std::uint16_t>(
+        (static_cast<unsigned char>(data[offset]) << 8) |
+        static_cast<unsigned char>(data[offset + 1]));
+}
+
+std::uint32_t ReadBig32(const std::string& data, std::size_t offset)
+{
+    return (static_cast<std::uint32_t>(
+        static_cast<unsigned char>(data[offset])) << 24) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 1])) << 16) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 2])) << 8) |
+        static_cast<unsigned char>(data[offset + 3]);
+}
+
+std::uint32_t ReadLittle32(const std::string& data, std::size_t offset)
+{
+    return static_cast<unsigned char>(data[offset]) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 1])) << 8) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 2])) << 16) |
+        (static_cast<std::uint32_t>(
+            static_cast<unsigned char>(data[offset + 3])) << 24);
+}
+
+std::uint16_t ReadLittle16(const std::string& data, std::size_t offset)
+{
+    return static_cast<unsigned char>(data[offset]) |
+        (static_cast<std::uint16_t>(
+            static_cast<unsigned char>(data[offset + 1])) << 8);
+}
+
+bool PixelCountAllowed(std::uint32_t width, std::uint32_t height)
+{
+    return width > 0 && height > 0 &&
+        static_cast<std::uint64_t>(width) * height <= 64ull * 1024ull * 1024ull;
+}
+
+bool SkipGifSubBlocks(const std::string& data, std::size_t& offset)
+{
+    while (offset < data.size())
+    {
+        const std::size_t size = static_cast<unsigned char>(data[offset++]);
+        if (size == 0) return true;
+        if (size > data.size() - offset) return false;
+        offset += size;
+    }
+    return false;
+}
+
+bool StaticGifIsValid(const std::string& data)
+{
+    if (data.size() < 13 ||
+        (data.compare(0, 6, "GIF87a") != 0 &&
+            data.compare(0, 6, "GIF89a") != 0) ||
+        !PixelCountAllowed(ReadLittle16(data, 6), ReadLittle16(data, 8)))
+        return false;
+    std::size_t offset = 13;
+    const unsigned char screenFlags =
+        static_cast<unsigned char>(data[10]);
+    if (screenFlags & 0x80)
+    {
+        const std::size_t colorTableBytes =
+            3u << ((screenFlags & 0x07) + 1);
+        if (colorTableBytes > data.size() - offset) return false;
+        offset += colorTableBytes;
+    }
+    unsigned int imageCount = 0;
+    while (offset < data.size())
+    {
+        const unsigned char block =
+            static_cast<unsigned char>(data[offset++]);
+        if (block == 0x3b) return imageCount == 1;
+        if (block == 0x21)
+        {
+            if (offset >= data.size()) return false;
+            ++offset;
+            if (!SkipGifSubBlocks(data, offset)) return false;
+            continue;
+        }
+        if (block != 0x2c || offset + 9 > data.size()) return false;
+        if (++imageCount > 1 ||
+            !PixelCountAllowed(ReadLittle16(data, offset + 4),
+                ReadLittle16(data, offset + 6)))
+            return false;
+        const unsigned char imageFlags =
+            static_cast<unsigned char>(data[offset + 8]);
+        offset += 9;
+        if (imageFlags & 0x80)
+        {
+            const std::size_t colorTableBytes =
+                3u << ((imageFlags & 0x07) + 1);
+            if (colorTableBytes > data.size() - offset) return false;
+            offset += colorTableBytes;
+        }
+        if (offset >= data.size()) return false;
+        ++offset;
+        if (!SkipGifSubBlocks(data, offset)) return false;
+    }
+    return false;
+}
+
+bool IconDirectoryIsValid(const std::string& data)
+{
+    if (data.size() < 6 || ReadLittle16(data, 0) != 0 ||
+        ReadLittle16(data, 2) != 1)
+        return false;
+    const std::uint16_t count = ReadLittle16(data, 4);
+    if (count == 0 || count > 256 ||
+        static_cast<std::size_t>(count) > (data.size() - 6) / 16)
+        return false;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const std::size_t entry = 6 + index * 16;
+        const std::uint32_t width =
+            static_cast<unsigned char>(data[entry]) == 0 ? 256 :
+                static_cast<unsigned char>(data[entry]);
+        const std::uint32_t height =
+            static_cast<unsigned char>(data[entry + 1]) == 0 ? 256 :
+                static_cast<unsigned char>(data[entry + 1]);
+        const std::uint32_t bytes = ReadLittle32(data, entry + 8);
+        const std::uint32_t imageOffset = ReadLittle32(data, entry + 12);
+        if (!PixelCountAllowed(width, height) || bytes == 0 ||
+            imageOffset > data.size() || bytes > data.size() - imageOffset)
+            return false;
+    }
+    return true;
+}
+
+bool JpegDimensionsAllowed(const std::string& data)
+{
+    std::size_t offset = 2;
+    while (offset + 4 <= data.size())
+    {
+        while (offset < data.size() &&
+            static_cast<unsigned char>(data[offset]) != 0xff)
+            ++offset;
+        while (offset < data.size() &&
+            static_cast<unsigned char>(data[offset]) == 0xff)
+            ++offset;
+        if (offset >= data.size()) break;
+        const unsigned char marker =
+            static_cast<unsigned char>(data[offset++]);
+        if (marker == 0xd8 || marker == 0xd9 ||
+            (marker >= 0xd0 && marker <= 0xd7))
+            continue;
+        if (offset + 2 > data.size()) break;
+        const std::uint16_t length = ReadBig16(data, offset);
+        if (length < 2 || offset + length > data.size()) break;
+        const bool startOfFrame =
+            (marker >= 0xc0 && marker <= 0xc3) ||
+            (marker >= 0xc5 && marker <= 0xc7) ||
+            (marker >= 0xc9 && marker <= 0xcb) ||
+            (marker >= 0xcd && marker <= 0xcf);
+        if (startOfFrame && length >= 7)
+        {
+            const std::uint32_t height = ReadBig16(data, offset + 3);
+            const std::uint32_t width = ReadBig16(data, offset + 5);
+            return PixelCountAllowed(width, height);
+        }
+        offset += length;
+    }
+    return false;
+}
+
+bool ResourceContentIsValid(const std::filesystem::path& path,
+    const PackageResource& resource)
+{
+    std::string data;
+    if (!ReadFile(path, data, kMaxResourceBytes)) return false;
+    const std::string extension = Lower(path.extension().string());
+    if (resource.type == "font")
+    {
+        if (data.size() < 4) return false;
+        return (extension == ".ttf" &&
+                static_cast<unsigned char>(data[0]) == 0x00 &&
+                static_cast<unsigned char>(data[1]) == 0x01 &&
+                static_cast<unsigned char>(data[2]) == 0x00 &&
+                static_cast<unsigned char>(data[3]) == 0x00) ||
+            (extension == ".otf" && data.compare(0, 4, "OTTO") == 0);
+    }
+    if (resource.type != "image") return false;
+    if (extension == ".png")
+    {
+        return data.size() >= 24 &&
+            data.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0 &&
+            data.compare(12, 4, "IHDR") == 0 &&
+            PixelCountAllowed(ReadBig32(data, 16), ReadBig32(data, 20));
+    }
+    if (extension == ".jpg" || extension == ".jpeg")
+    {
+        return data.size() >= 4 &&
+            static_cast<unsigned char>(data[0]) == 0xff &&
+            static_cast<unsigned char>(data[1]) == 0xd8 &&
+            JpegDimensionsAllowed(data);
+    }
+    if (extension == ".gif")
+        return StaticGifIsValid(data);
+    if (extension == ".bmp")
+    {
+        if (data.size() < 26 || data.compare(0, 2, "BM") != 0) return false;
+        const std::int32_t width = static_cast<std::int32_t>(
+            ReadLittle32(data, 18));
+        const std::int32_t height = static_cast<std::int32_t>(
+            ReadLittle32(data, 22));
+        if (width <= 0 || height == 0 || height ==
+            (std::numeric_limits<std::int32_t>::min)())
+            return false;
+        return PixelCountAllowed(static_cast<std::uint32_t>(width),
+            static_cast<std::uint32_t>(height < 0 ? -height : height));
+    }
+    if (extension == ".ico")
+        return IconDirectoryIsValid(data);
+    return false;
 }
 
 bool ReadString(const JsonValue& object, const char* name, std::string& output)
@@ -289,10 +595,42 @@ std::string ManifestJson(const PackageManifest& manifest)
         << ", \"rows\": " << manifest.minRows << "},\n"
         << "  \"maxSize\": {\"columns\": " << manifest.maxColumns
         << ", \"rows\": " << manifest.maxRows << "},\n"
+        << "  \"resources\": {";
+    {
+        bool first = true;
+        std::vector<std::string> resourceNames;
+        resourceNames.reserve(manifest.resources.size());
+        for (const auto& [name, resource] : manifest.resources)
+        {
+            (void)resource;
+            resourceNames.push_back(name);
+        }
+        std::sort(resourceNames.begin(), resourceNames.end());
+        for (const auto& name : resourceNames)
+        {
+            const auto& resource = manifest.resources.at(name);
+            if (!first) out << ", ";
+            first = false;
+            out << '"' << JsonEscape(name) << "\": {\"type\": \""
+                << JsonEscape(resource.type) << "\", \"path\": \""
+                << JsonEscape(resource.path) << "\", \"license\": \""
+                << JsonEscape(resource.license) << "\"}";
+        }
+    }
+    out << "},\n"
+        << "  \"slots\": "
+        << snowdesktop::widget_runtime::SerializeLogicalSlotDeclarations(
+            manifest.logicalSlots) << ",\n"
         << "  \"permissions\": ";
     appendArray(out, manifest.permissions);
+    out << ",\n  \"optionalPermissions\": ";
+    appendArray(out, manifest.optionalPermissions);
     out << ",\n  \"networkDomains\": ";
     appendArray(out, manifest.networkDomains);
+    out << ",\n  \"requiredFeatures\": ";
+    appendArray(out, manifest.requiredFeatures);
+    out << ",\n  \"optionalFeatures\": ";
+    appendArray(out, manifest.optionalFeatures);
     out << "\n}\n";
     return out.str();
 }
@@ -307,32 +645,6 @@ std::string Timestamp()
         time.wSecond, time.wMilliseconds);
     return buffer;
 }
-
-struct BundledLegacyComponent
-{
-    const wchar_t* filename;
-    const char* nameKey;
-    const char* packageId;
-};
-
-constexpr std::array<BundledLegacyComponent, 8> kBundledLegacyComponents{ {
-    { L"analog_clock.lua", "lua_widget.analog_clock.name",
-        "64107f41-197a-426a-8f86-6eeb020f56b0" },
-    { L"digital_clock.lua", "lua_widget.digital_clock.name",
-        "b731dc11-92fa-404b-abf7-34741cd25277" },
-    { L"media_control.lua", "lua_widget.media_control.name",
-        "9ccc7bd1-2a5a-473a-9bf7-a7d9ed5605ef" },
-    { L"pomodoro.lua", "lua_widget.pomodoro.name",
-        "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23" },
-    { L"quick_launcher.lua", "lua_widget.quick_launcher.name",
-        "5b22d9ef-3802-48a3-8632-dcf9a3c41668" },
-    { L"rss_reader.lua", "lua_widget.rss_reader.name",
-        "3a8b02f9-560c-49b9-9b22-bc4405d863ea" },
-    { L"sticky_note.lua", "lua_widget.sticky_note.name",
-        "4664f034-3c7c-4469-9a82-44db90f68094" },
-    { L"system_monitor.lua", "lua_widget.system_monitor.name",
-        "7d6803f2-63fd-428d-b947-6e07437ead2a" },
-} };
 
 std::uint32_t Crc32(const unsigned char* data, std::size_t size)
 {
@@ -516,13 +828,7 @@ bool WriteStoreZip(const std::filesystem::path& root,
 
 bool IsKnownPermission(const std::string& permission)
 {
-    static const std::set<std::string> permissions = {
-        "calendar.read", "calendar.write",
-        "desktop.action", "desktop.read", "everything.search",
-        "media.action", "media.read", "network.http", "system.read",
-        "ui.contextMenu", "ui.input", "ui.notify",
-    };
-    return permissions.contains(permission);
+    return IsKnownWidgetPermission(permission);
 }
 
 bool IsExplicitDnsName(const std::string& domain)
@@ -550,6 +856,32 @@ bool IsExplicitDnsName(const std::string& domain)
         begin = end + 1;
     }
     return hasLetter;
+}
+
+bool IsFeatureId(const std::string& feature)
+{
+    if (feature.size() < 3 || feature.size() > 96 ||
+        feature.find('.') == std::string::npos)
+        return false;
+    std::size_t begin = 0;
+    while (begin < feature.size())
+    {
+        const auto end = feature.find('.', begin);
+        const auto length = (end == std::string::npos
+            ? feature.size() : end) - begin;
+        if (length == 0 || length > 32 ||
+            !std::islower(static_cast<unsigned char>(feature[begin])))
+            return false;
+        for (std::size_t index = begin; index < begin + length; ++index)
+        {
+            const unsigned char ch = feature[index];
+            if (!(std::isalpha(ch) || std::isdigit(ch) || ch == '-'))
+                return false;
+        }
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return true;
 }
 
 bool IsBcp47Tag(const std::string& locale)
@@ -832,6 +1164,17 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
         error = "package version does not match the source metadata";
         return false;
     }
+    if (expected.schemaVersion > 0 &&
+        actual.schemaVersion != expected.schemaVersion)
+    {
+        error = "package schema version does not match the source metadata";
+        return false;
+    }
+    if (expected.apiVersion > 0 && actual.apiVersion != expected.apiVersion)
+    {
+        error = "package API version does not match the source metadata";
+        return false;
+    }
     const std::set<std::string> actualPermissions(
         actual.permissions.begin(), actual.permissions.end());
     const std::set<std::string> expectedPermissions(
@@ -841,6 +1184,17 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
         error = "package permissions do not match the source metadata";
         return false;
     }
+    const std::set<std::string> actualOptionalPermissions(
+        actual.optionalPermissions.begin(),
+        actual.optionalPermissions.end());
+    const std::set<std::string> expectedOptionalPermissions(
+        expected.optionalPermissions.begin(),
+        expected.optionalPermissions.end());
+    if (actualOptionalPermissions != expectedOptionalPermissions)
+    {
+        error = "package optional permissions do not match the source metadata";
+        return false;
+    }
     const std::set<std::string> actualDomains(
         actual.networkDomains.begin(), actual.networkDomains.end());
     const std::set<std::string> expectedDomains(
@@ -848,6 +1202,35 @@ bool MatchesExpectedManifest(const PackageManifest& actual,
     if (actualDomains != expectedDomains)
     {
         error = "package network domains do not match the source metadata";
+        return false;
+    }
+    const std::set<std::string> actualRequiredFeatures(
+        actual.requiredFeatures.begin(), actual.requiredFeatures.end());
+    const std::set<std::string> expectedRequiredFeatures(
+        expected.requiredFeatures.begin(), expected.requiredFeatures.end());
+    if (actualRequiredFeatures != expectedRequiredFeatures)
+    {
+        error = "package required features do not match the source metadata";
+        return false;
+    }
+    const std::set<std::string> actualOptionalFeatures(
+        actual.optionalFeatures.begin(), actual.optionalFeatures.end());
+    const std::set<std::string> expectedOptionalFeatures(
+        expected.optionalFeatures.begin(), expected.optionalFeatures.end());
+    if (actualOptionalFeatures != expectedOptionalFeatures)
+    {
+        error = "package optional features do not match the source metadata";
+        return false;
+    }
+    if (!expected.resources.empty() && actual.resources != expected.resources)
+    {
+        error = "package resources do not match the source metadata";
+        return false;
+    }
+    if (!expected.logicalSlots.empty() &&
+        actual.logicalSlots != expected.logicalSlots)
+    {
+        error = "package logical slots do not match the source metadata";
         return false;
     }
     return true;
@@ -860,6 +1243,29 @@ PackageManifest LocalizePackageManifest(PackageManifest manifest,
     return LocalizedManifest(std::move(manifest), requestedLocale);
 }
 
+bool IsExecutablePackageContract(int schemaVersion, int apiVersion) noexcept
+{
+    return schemaVersion == kPackageSchemaVersion &&
+        apiVersion == kHostApiVersion;
+}
+
+bool IsExecutablePackageContract(const PackageManifest& manifest) noexcept
+{
+    return IsExecutablePackageContract(
+        manifest.schemaVersion, manifest.apiVersion);
+}
+
+std::vector<std::string> DeclaredPermissions(
+    const PackageManifest& manifest)
+{
+    std::vector<std::string> result = manifest.permissions;
+    for (const auto& permission : manifest.optionalPermissions)
+        if (std::find(result.begin(), result.end(), permission) ==
+            result.end())
+            result.push_back(permission);
+    return result;
+}
+
 std::optional<PackageDetails> IWidgetPackageSource::GetVersionDetails(
     const std::string& externalItemId, const std::string& version,
     std::string& error)
@@ -870,107 +1276,6 @@ std::optional<PackageDetails> IWidgetPackageSource::GetVersionDetails(
     if (details)
         error = "package source did not provide metadata for the requested version";
     return std::nullopt;
-}
-
-LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
-    const std::filesystem::path& sourceWidgets,
-    const std::filesystem::path& destinationWidgets)
-{
-    LegacyLooseImportResult result;
-    std::error_code ec;
-    if (!std::filesystem::exists(sourceWidgets, ec))
-    {
-        result.ok = !ec;
-        if (ec) result.error = "cannot inspect legacy component directory: " +
-            ec.message();
-        return result;
-    }
-    if (ec || !std::filesystem::is_directory(sourceWidgets, ec) ||
-        HasReparsePoint(sourceWidgets))
-    {
-        result.error = ec
-            ? "cannot inspect legacy component directory: " + ec.message()
-            : "legacy component source is not a safe directory";
-        return result;
-    }
-
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> pairs;
-    for (std::filesystem::directory_iterator it(sourceWidgets, ec), end;
-        !ec && it != end; it.increment(ec))
-    {
-        const auto script = it->path();
-        if (Lower(script.extension().string()) != ".lua")
-            continue;
-        const auto scriptStatus = it->symlink_status(ec);
-        if (ec)
-            break;
-        if (!std::filesystem::is_regular_file(scriptStatus) ||
-            HasReparsePoint(script))
-        {
-            result.error = "legacy component script is not a safe file: " +
-                PathUtf8(script.filename());
-            return result;
-        }
-
-        const auto manifest = script.parent_path() /
-            (script.stem().wstring() + L".widget.json");
-        const auto manifestStatus = std::filesystem::symlink_status(manifest, ec);
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-        if (!std::filesystem::exists(manifestStatus))
-            continue;
-        if (!std::filesystem::is_regular_file(manifestStatus) ||
-            HasReparsePoint(manifest))
-        {
-            result.error = "legacy component manifest is not a safe file: " +
-                PathUtf8(manifest.filename());
-            return result;
-        }
-        pairs.emplace_back(script, manifest);
-    }
-    if (ec)
-    {
-        result.error = "cannot enumerate legacy component directory: " +
-            ec.message();
-        return result;
-    }
-    if (pairs.empty())
-    {
-        result.ok = true;
-        return result;
-    }
-
-    std::filesystem::create_directories(destinationWidgets, ec);
-    if (ec)
-    {
-        result.error = "cannot create legacy component destination: " +
-            ec.message();
-        return result;
-    }
-    for (const auto& [script, manifest] : pairs)
-    {
-        std::filesystem::copy_file(script,
-            destinationWidgets / script.filename(),
-            std::filesystem::copy_options::overwrite_existing, ec);
-        if (!ec)
-        {
-            std::filesystem::copy_file(manifest,
-                destinationWidgets / manifest.filename(),
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
-        if (ec)
-        {
-            result.error = "cannot copy legacy component pair: " +
-                PathUtf8(script.filename()) + ": " + ec.message();
-            return result;
-        }
-        ++result.copiedPairs;
-    }
-    result.ok = true;
-    return result;
 }
 
 bool ValidationReport::Ok() const
@@ -1323,8 +1628,91 @@ bool WidgetPackageValidator::ReadManifest(
     ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
     bool arraysValid = true;
     manifest.permissions = ReadStringArray(root, "permissions", arraysValid);
+    manifest.optionalPermissions =
+        ReadStringArray(root, "optionalPermissions", arraysValid);
     manifest.networkDomains =
         ReadStringArray(root, "networkDomains", arraysValid);
+    manifest.requiredFeatures =
+        ReadStringArray(root, "requiredFeatures", arraysValid);
+    manifest.optionalFeatures =
+        ReadStringArray(root, "optionalFeatures", arraysValid);
+    {
+        std::vector<snowdesktop::widget_runtime::
+            LogicalSlotManifestError> slotErrors;
+        (void)snowdesktop::widget_runtime::ParseLogicalSlotDeclarations(
+            root.Find("slots"), manifest.logicalSlots, slotErrors);
+        for (const auto& slotError : slotErrors)
+            report.Add(ValidationSeverity::Error, slotError.code,
+                manifestPath, slotError.message);
+    }
+    if (const JsonValue* resources = root.Find("resources"))
+    {
+        if (!resources->IsObject())
+        {
+            report.Add(ValidationSeverity::Error, "manifest.resources",
+                manifestPath, "resources must be an object");
+        }
+        else
+        {
+            if (resources->object.size() > kMaxPackageResources)
+            {
+                report.Add(ValidationSeverity::Error,
+                    "manifest.resourceCount", manifestPath,
+                    "resources cannot contain more than 32 entries");
+            }
+            for (const auto& [name, value] : resources->object)
+            {
+                if (!IsResourceName(name))
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourceName", manifestPath,
+                        "resource names must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_': " +
+                            name);
+                    continue;
+                }
+                if (!value.IsObject())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resource", manifestPath,
+                        "resource descriptors must be objects: " + name);
+                    continue;
+                }
+                PackageResource resource;
+                ReadString(value, "type", resource.type);
+                ReadString(value, "path", resource.path);
+                ReadString(value, "license", resource.license);
+                if (resource.type != "image" && resource.type != "font")
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourceType", manifestPath,
+                        "resource type must be image or font: " + name);
+                }
+                const std::filesystem::path resourcePath =
+                    Utf8ToWide(resource.path);
+                const std::string extension = Lower(
+                    resourcePath.extension().string());
+                const bool extensionValid = resource.type == "image"
+                    ? (extension == ".png" || extension == ".jpg" ||
+                        extension == ".jpeg" || extension == ".bmp" ||
+                        extension == ".gif" || extension == ".ico")
+                    : (extension == ".ttf" || extension == ".otf");
+                if (!IsSafeRelativePath(resourcePath) || !extensionValid)
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourcePath", manifestPath,
+                        "resource path is unsafe or has an unsupported extension: " +
+                            name);
+                }
+                if (resource.type == "font" && resource.license.empty())
+                {
+                    report.Add(ValidationSeverity::Error,
+                        "manifest.resourceLicense", manifestPath,
+                        "font resources must declare a license: " + name);
+                }
+                manifest.resources.emplace(name, std::move(resource));
+            }
+        }
+    }
 
     if (const JsonValue* locales = root.Find("locales");
         locales && locales->IsObject())
@@ -1370,9 +1758,12 @@ bool WidgetPackageValidator::ReadManifest(
             manifest.locales.emplace(locale, std::move(localized));
         }
     }
+    const bool currentContract =
+        manifest.schemaVersion == kPackageSchemaVersion &&
+        manifest.apiVersion == kHostApiVersion;
     if (manifest.schemaVersion != kPackageSchemaVersion)
         report.Add(ValidationSeverity::Error, "manifest.schemaVersion",
-            manifestPath, "schemaVersion must be 1");
+            manifestPath, "schemaVersion must be 2");
     if (!IsUuid(manifest.id))
         report.Add(ValidationSeverity::Error, "manifest.id", manifestPath,
             "id must be an immutable UUID");
@@ -1389,6 +1780,14 @@ bool WidgetPackageValidator::ReadManifest(
     if (manifest.apiVersion != kHostApiVersion)
         report.Add(ValidationSeverity::Error, "manifest.apiVersion",
             manifestPath, "apiVersion is not supported by this host");
+    if (!currentContract &&
+        (manifest.schemaVersion == kPackageSchemaVersion ||
+            manifest.apiVersion == kHostApiVersion))
+    {
+        report.Add(ValidationSeverity::Error, "manifest.contractVersion",
+            manifestPath,
+            "schemaVersion and apiVersion must both be 2");
+    }
     if (manifest.dataVersion < 1)
         report.Add(ValidationSeverity::Error, "manifest.dataVersion",
             manifestPath, "dataVersion must be a positive integer");
@@ -1423,7 +1822,7 @@ bool WidgetPackageValidator::ReadManifest(
     }
     if (!arraysValid)
         report.Add(ValidationSeverity::Error, "manifest.array", manifestPath,
-            "permissions and networkDomains must be string arrays");
+            "permissions, domains, and feature declarations must be string arrays");
     std::set<std::string> uniquePermissions;
     for (const auto& permission : manifest.permissions)
     {
@@ -1434,10 +1833,24 @@ bool WidgetPackageValidator::ReadManifest(
             report.Add(ValidationSeverity::Error, "manifest.permissionDuplicate",
                 manifestPath, "duplicate permission: " + permission);
     }
+    for (const auto& permission : manifest.optionalPermissions)
+    {
+        if (!IsKnownPermission(permission))
+            report.Add(ValidationSeverity::Error,
+                "manifest.optionalPermission", manifestPath,
+                "unknown optional permission: " + permission);
+        if (!uniquePermissions.insert(permission).second)
+            report.Add(ValidationSeverity::Error,
+                "manifest.permissionDuplicate", manifestPath,
+                "required and optional permissions must be unique: " +
+                    permission);
+    }
     if (!manifest.networkDomains.empty() &&
-        !uniquePermissions.contains("network.http"))
+        !uniquePermissions.contains("network.http") &&
+        !uniquePermissions.contains("network.internet"))
         report.Add(ValidationSeverity::Error, "manifest.networkDomains",
-            manifestPath, "networkDomains requires network.http permission");
+            manifestPath,
+            "networkDomains requires network.http or network.internet permission");
     std::set<std::string> uniqueDomains;
     for (const auto& domain : manifest.networkDomains)
     {
@@ -1448,6 +1861,28 @@ bool WidgetPackageValidator::ReadManifest(
             report.Add(ValidationSeverity::Error,
                 "manifest.networkDomainDuplicate", manifestPath,
                 "duplicate network domain: " + domain);
+    }
+    std::set<std::string> uniqueFeatures;
+    for (const auto& feature : manifest.requiredFeatures)
+    {
+        if (!IsFeatureId(feature))
+            report.Add(ValidationSeverity::Error, "manifest.feature",
+                manifestPath, "invalid required feature id: " + feature);
+        if (!uniqueFeatures.insert(feature).second)
+            report.Add(ValidationSeverity::Error,
+                "manifest.featureDuplicate", manifestPath,
+                "duplicate feature: " + feature);
+    }
+    for (const auto& feature : manifest.optionalFeatures)
+    {
+        if (!IsFeatureId(feature))
+            report.Add(ValidationSeverity::Error,
+                "manifest.optionalFeature", manifestPath,
+                "invalid optional feature id: " + feature);
+        if (!uniqueFeatures.insert(feature).second)
+            report.Add(ValidationSeverity::Error,
+                "manifest.featureDuplicate", manifestPath,
+                "required and optional features must be unique: " + feature);
     }
     return report.Ok();
 }
@@ -1554,14 +1989,58 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
             root / Utf8ToWide(manifest.preview), ec)))
         report.Add(ValidationSeverity::Error, "package.previewMissing",
             manifest.preview, "preview path is unsafe or missing");
+    std::size_t fontCount = 0;
+    for (const auto& [name, resource] : manifest.resources)
+    {
+        if (resource.type == "font") ++fontCount;
+        const std::filesystem::path relative = Utf8ToWide(resource.path);
+        const std::filesystem::path fullPath = root / relative;
+        ec.clear();
+        if (!IsSafeRelativePath(relative) ||
+            !std::filesystem::is_regular_file(fullPath, ec))
+        {
+            report.Add(ValidationSeverity::Error,
+                "package.resourceMissing", relative,
+                "declared resource is missing: " + name);
+            continue;
+        }
+        const auto size = std::filesystem::file_size(fullPath, ec);
+        if (ec || size > kMaxResourceBytes)
+        {
+            report.Add(ValidationSeverity::Error,
+                "package.resourceSize", relative,
+                "resource is unreadable or exceeds the 8 MiB limit: " +
+                    name);
+            continue;
+        }
+        if (!ResourceContentIsValid(fullPath, resource))
+        {
+            report.Add(ValidationSeverity::Error,
+                "package.resourceContent", relative,
+                "resource signature, dimensions, or declared type is invalid: " +
+                    name);
+        }
+    }
+    if (fontCount > 8)
+    {
+        report.Add(ValidationSeverity::Error, "package.resourceFontCount",
+            root / L"widget.json",
+            "a package cannot declare more than 8 fonts");
+    }
     if (outputManifest) *outputManifest = std::move(manifest);
     return report;
 }
 
 ValidationReport WidgetPackageValidator::ValidateArchive(
-    const std::filesystem::path& archive, PackageManifest* manifest) const
+    const std::filesystem::path& archive) const
 {
     ValidationReport report;
+    if (PathContainsReparsePoint(archive))
+    {
+        report.Add(ValidationSeverity::Error, "archive.reparse", archive,
+            "package archive and its path cannot contain reparse points");
+        return report;
+    }
     std::error_code ec;
     const auto size = std::filesystem::file_size(archive, ec);
     if (ec || size > kMaxArchiveBytes)
@@ -1575,7 +2054,6 @@ ValidationReport WidgetPackageValidator::ValidateArchive(
             "package archive must use the .snowwidget extension");
     // Full entry validation happens during secure extraction. This function
     // deliberately never invokes the Windows shell ZIP handler.
-    if (manifest) *manifest = {};
     return report;
 }
 
@@ -1599,14 +2077,15 @@ bool WidgetPackageManager::Initialize(std::string& error)
     }
     if (!LoadRegistry(error)) return false;
     if (!Refresh(error)) return false;
-    MigrateBundledLegacyPackages();
     return true;
 }
 
 bool WidgetPackageManager::LoadRegistry(std::string& error)
 {
     registry_.clear();
-    legacyAliases_.clear();
+    permissionDecisions_.clear();
+    developmentOverrides_.clear();
+    steamSubscriptionsByAccount_.clear();
     std::error_code ec;
     if (!std::filesystem::exists(paths_.registry, ec)) return true;
     std::string text;
@@ -1638,6 +2117,16 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             ReadString(value, "activeVersion", entry.activeVersion);
             ReadString(value, "providerId", entry.source.providerId);
             ReadString(value, "externalItemId", entry.source.externalItemId);
+            if (const JsonValue* permissionState =
+                    value.Find("permissionState");
+                permissionState)
+            {
+                const auto parsed = permissionState->IsString()
+                    ? ParsePermissionDecisionState(permissionState->string)
+                    : std::nullopt;
+                entry.permissionState = parsed.value_or(
+                    PermissionDecisionState::Pending);
+            }
             bool arraysValid = true;
             entry.grantedPermissions =
                 ReadStringArray(value, "grantedPermissions", arraysValid);
@@ -1651,13 +2140,69 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
                 registry_[entry.packageId] = std::move(entry);
         }
     }
-    if (const JsonValue* aliases = root.Find("legacyAliases");
-        aliases && aliases->IsObject())
+    if (const JsonValue* decisions = root.Find("permissionDecisions");
+        decisions && decisions->IsArray())
     {
-        for (const auto& [name, value] : aliases->object)
+        for (const auto& value : decisions->array)
+        {
+            if (!value.IsObject()) continue;
+            PermissionDecisionRecord record;
+            ReadString(value, "packageId", record.packageId);
+            ReadString(value, "providerId", record.source.providerId);
+            ReadString(value, "externalItemId",
+                record.source.externalItemId);
+            if (const JsonValue* state = value.Find("state"); state)
+            {
+                const auto parsed = state->IsString()
+                    ? ParsePermissionDecisionState(state->string)
+                    : std::nullopt;
+                record.state = parsed.value_or(
+                    PermissionDecisionState::Pending);
+            }
+            bool arraysValid = true;
+            record.requestedPermissions =
+                ReadStringArray(value, "requestedPermissions", arraysValid);
+            record.requestedOptionalPermissions =
+                ReadStringArray(value, "requestedOptionalPermissions",
+                    arraysValid);
+            record.requestedNetworkDomains =
+                ReadStringArray(value, "requestedNetworkDomains", arraysValid);
+            ReadString(value, "requestedScopeFingerprint",
+                record.requestedScopeFingerprint);
+            record.grantedPermissions =
+                ReadStringArray(value, "grantedPermissions", arraysValid);
+            record.grantedNetworkDomains =
+                ReadStringArray(value, "grantedNetworkDomains", arraysValid);
+            if (!WidgetPackageValidator::IsUuid(record.packageId) ||
+                record.source.providerId.empty() ||
+                record.source.externalItemId.empty())
+                continue;
+            const std::string key = record.packageId + "\n" +
+                record.source.providerId + "\n" +
+                record.source.externalItemId;
+            permissionDecisions_[key] = std::move(record);
+        }
+    }
+    if (const JsonValue* overrides = root.Find("developmentOverrides");
+        overrides && overrides->IsArray())
+    {
+        for (const auto& value : overrides->array)
             if (value.IsString() &&
                 WidgetPackageValidator::IsUuid(value.string))
-                legacyAliases_[name] = value.string;
+                developmentOverrides_.insert(value.string);
+    }
+    if (const JsonValue* history = root.Find(
+            "steamSubscriptionsByAccount");
+        history && history->IsObject())
+    {
+        for (const auto& [accountId, value] : history->object)
+        {
+            if (!DecimalIdentifier(accountId) || !value.IsArray()) continue;
+            auto& subscriptions = steamSubscriptionsByAccount_[accountId];
+            for (const auto& item : value.array)
+                if (item.IsString() && DecimalIdentifier(item.string))
+                    subscriptions.insert(item.string);
+        }
     }
     return true;
 }
@@ -1680,6 +2225,8 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
             << "\",\"providerId\":\"" << JsonEscape(entry.source.providerId)
             << "\",\"externalItemId\":\""
             << JsonEscape(entry.source.externalItemId)
+            << "\",\"permissionState\":\""
+            << PermissionDecisionStateName(entry.permissionState)
             << "\",\"enabled\":" << (entry.enabled ? "true" : "false")
             << ",\"grantedPermissions\":[";
         for (std::size_t permission = 0;
@@ -1698,17 +2245,116 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
         out << "]}";
     }
     if (!entries.empty()) out << '\n';
-    out << "  ],\n  \"legacyAliases\": {";
-    std::vector<std::pair<std::string, std::string>> aliases(
-        legacyAliases_.begin(), legacyAliases_.end());
-    std::sort(aliases.begin(), aliases.end());
-    for (std::size_t i = 0; i < aliases.size(); ++i)
+    out << "  ],\n  \"developmentOverrides\": [";
+    std::vector<std::string> developmentOverrides(
+        developmentOverrides_.begin(), developmentOverrides_.end());
+    std::sort(developmentOverrides.begin(), developmentOverrides.end());
+    for (std::size_t i = 0; i < developmentOverrides.size(); ++i)
     {
         if (i) out << ',';
-        out << "\n    \"" << JsonEscape(aliases[i].first) << "\":\""
-            << JsonEscape(aliases[i].second) << '"';
+        out << "\n    \"" << JsonEscape(developmentOverrides[i]) << '"';
     }
-    if (!aliases.empty()) out << '\n';
+    if (!developmentOverrides.empty()) out << '\n';
+    out << "  ],\n  \"permissionDecisions\": [";
+    std::vector<const PermissionDecisionRecord*> decisions;
+    decisions.reserve(permissionDecisions_.size());
+    for (const auto& [key, decision] : permissionDecisions_)
+    {
+        (void)key;
+        decisions.push_back(&decision);
+    }
+    std::sort(decisions.begin(), decisions.end(),
+        [](const auto* a, const auto* b) {
+            return std::tie(a->packageId, a->source.providerId,
+                       a->source.externalItemId) <
+                std::tie(b->packageId, b->source.providerId,
+                       b->source.externalItemId);
+        });
+    for (std::size_t i = 0; i < decisions.size(); ++i)
+    {
+        if (i) out << ',';
+        const auto& decision = *decisions[i];
+        out << "\n    {\"packageId\":\""
+            << JsonEscape(decision.packageId)
+            << "\",\"providerId\":\""
+            << JsonEscape(decision.source.providerId)
+            << "\",\"externalItemId\":\""
+            << JsonEscape(decision.source.externalItemId)
+            << "\",\"state\":\""
+            << PermissionDecisionStateName(decision.state)
+            << "\",\"requestedScopeFingerprint\":\""
+            << JsonEscape(decision.requestedScopeFingerprint)
+            << "\",\"requestedPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < decision.requestedPermissions.size(); ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                decision.requestedPermissions[permission]) << '"';
+        }
+        out << "],\"requestedOptionalPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < decision.requestedOptionalPermissions.size();
+            ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                decision.requestedOptionalPermissions[permission]) << '"';
+        }
+        out << "],\"requestedNetworkDomains\":[";
+        for (std::size_t domain = 0;
+            domain < decision.requestedNetworkDomains.size(); ++domain)
+        {
+            if (domain) out << ',';
+            out << '"' << JsonEscape(
+                decision.requestedNetworkDomains[domain]) << '"';
+        }
+        out << "],\"grantedPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < decision.grantedPermissions.size(); ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                decision.grantedPermissions[permission]) << '"';
+        }
+        out << "],\"grantedNetworkDomains\":[";
+        for (std::size_t domain = 0;
+            domain < decision.grantedNetworkDomains.size(); ++domain)
+        {
+            if (domain) out << ',';
+            out << '"' << JsonEscape(
+                decision.grantedNetworkDomains[domain]) << '"';
+        }
+        out << "]}";
+    }
+    if (!decisions.empty()) out << '\n';
+    out << "  ],\n  \"steamSubscriptionsByAccount\": {";
+    std::vector<std::string> accounts;
+    accounts.reserve(steamSubscriptionsByAccount_.size());
+    for (const auto& [accountId, subscriptions] :
+        steamSubscriptionsByAccount_)
+    {
+        (void)subscriptions;
+        accounts.push_back(accountId);
+    }
+    std::sort(accounts.begin(), accounts.end());
+    for (std::size_t account = 0; account < accounts.size(); ++account)
+    {
+        if (account) out << ',';
+        const auto& accountId = accounts[account];
+        std::vector<std::string> subscriptions(
+            steamSubscriptionsByAccount_.at(accountId).begin(),
+            steamSubscriptionsByAccount_.at(accountId).end());
+        std::sort(subscriptions.begin(), subscriptions.end());
+        out << "\n    \"" << JsonEscape(accountId) << "\":[";
+        for (std::size_t item = 0; item < subscriptions.size(); ++item)
+        {
+            if (item) out << ',';
+            out << '\"' << JsonEscape(subscriptions[item]) << '\"';
+        }
+        out << ']';
+    }
+    if (!accounts.empty()) out << '\n';
     out << "  }\n}\n";
     return AtomicWrite(paths_.registry, out.str(), error);
 }
@@ -1716,6 +2362,86 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
 bool WidgetPackageManager::Refresh(std::string& error)
 {
     packages_.clear();
+    invalidPackages_.clear();
+    enum class ExplicitDecisionResult
+    {
+        NotFound,
+        Applied,
+        ScopeMismatch,
+    };
+    const auto applyExplicitDecision = [&](InstalledPackage& package) {
+        const std::string key = package.manifest.id + "\n" +
+            package.source.providerId + "\n" +
+            package.source.externalItemId;
+        const auto decision = permissionDecisions_.find(key);
+        if (decision == permissionDecisions_.end())
+            return ExplicitDecisionResult::NotFound;
+        const std::set<std::string> requestedPermissions(
+            decision->second.requestedPermissions.begin(),
+            decision->second.requestedPermissions.end());
+        const std::set<std::string> declaredPermissions(
+            package.manifest.permissions.begin(),
+            package.manifest.permissions.end());
+        const std::set<std::string> requestedOptionalPermissions(
+            decision->second.requestedOptionalPermissions.begin(),
+            decision->second.requestedOptionalPermissions.end());
+        const std::set<std::string> declaredOptionalPermissions(
+            package.manifest.optionalPermissions.begin(),
+            package.manifest.optionalPermissions.end());
+        const std::set<std::string> requestedDomains(
+            decision->second.requestedNetworkDomains.begin(),
+            decision->second.requestedNetworkDomains.end());
+        const std::set<std::string> declaredDomains(
+            package.manifest.networkDomains.begin(),
+            package.manifest.networkDomains.end());
+        const std::string requestedScopeFingerprint =
+            decision->second.requestedScopeFingerprint.empty()
+            ? WidgetPermissionBroker::ScopeFingerprint(
+                decision->second.requestedPermissions,
+                decision->second.requestedOptionalPermissions,
+                decision->second.requestedNetworkDomains)
+            : decision->second.requestedScopeFingerprint;
+        const std::string declaredScopeFingerprint =
+            WidgetPermissionBroker::ScopeFingerprint(
+                package.manifest.permissions,
+                package.manifest.optionalPermissions,
+                package.manifest.networkDomains);
+        if (requestedPermissions != declaredPermissions ||
+            requestedOptionalPermissions !=
+                declaredOptionalPermissions ||
+            requestedDomains != declaredDomains ||
+            requestedScopeFingerprint != declaredScopeFingerprint)
+            return ExplicitDecisionResult::ScopeMismatch;
+        package.permissionState = decision->second.state;
+        const auto grant = WidgetPermissionBroker::Evaluate(
+            package.permissionState,
+            package.manifest.permissions,
+            package.manifest.optionalPermissions,
+            package.manifest.networkDomains,
+            decision->second.grantedPermissions,
+            decision->second.grantedNetworkDomains);
+        package.grantedPermissions = grant.permissions;
+        package.grantedNetworkDomains = grant.networkDomains;
+        return ExplicitDecisionResult::Applied;
+    };
+    const auto applyScopeMismatchBlock = [](
+        InstalledPackage& package, ExplicitDecisionResult result) {
+        if (result != ExplicitDecisionResult::ScopeMismatch) return;
+        const auto declaredPermissions = DeclaredPermissions(
+            package.manifest);
+        const bool requiresConsent = !PermissionsRequiringConsent(
+            declaredPermissions).empty();
+        if (!requiresConsent)
+        {
+            package.permissionState = PermissionDecisionState::Granted;
+            package.grantedPermissions = declaredPermissions;
+            package.grantedNetworkDomains = package.manifest.networkDomains;
+            return;
+        }
+        package.permissionState = PermissionDecisionState::Pending;
+        package.grantedPermissions.clear();
+        package.grantedNetworkDomains.clear();
+    };
     auto scanRoot = [&](const std::filesystem::path& root, bool builtin,
         bool development) {
         std::error_code ec;
@@ -1729,7 +2455,31 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 PackageManifest manifest;
                 const auto report = validator_.ValidateDirectory(
                     it->path(), &manifest);
-                if (!report.Ok()) continue;
+                if (!report.Ok())
+                {
+                    // The bundled Agent Skill intentionally shares the
+                    // built-in root without being a component package.
+                    if (!builtin || std::filesystem::is_regular_file(
+                            it->path() / L"widget.json", ec))
+                    {
+                        InvalidPackage invalid;
+                        invalid.manifest = std::move(manifest);
+                        invalid.packageId = invalid.manifest.id;
+                        invalid.root = it->path();
+                        invalid.report = report;
+                        invalid.builtin = builtin;
+                        invalid.development = development;
+                        invalid.source = {
+                            builtin ? "builtin" : "local-directory",
+                            PathUtf8(it->path().filename()) };
+                        invalid.selected = builtin ||
+                            developmentOverrides_.contains(
+                                invalid.manifest.id);
+                        invalidPackages_.push_back(std::move(invalid));
+                    }
+                    ec.clear();
+                    continue;
+                }
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = it->path();
@@ -1737,11 +2487,18 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 package.development = development;
                 package.source = { builtin ? "builtin" : "local-directory",
                     PathUtf8(it->path().filename()) };
-                package.grantedPermissions = package.manifest.permissions;
+                package.permissionState =
+                    PermissionDecisionState::LegacyImplicit;
+                package.grantedPermissions =
+                    DeclaredPermissions(package.manifest);
                 package.grantedNetworkDomains =
                     package.manifest.networkDomains;
                 package.enabled = true;
-                package.active = true;
+                applyScopeMismatchBlock(
+                    package, applyExplicitDecision(package));
+                package.active = builtin ||
+                    developmentOverrides_.contains(package.manifest.id);
+                package.selected = package.active;
                 packages_.push_back(std::move(package));
                 continue;
             }
@@ -1755,31 +2512,62 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 PackageManifest manifest;
                 const auto report = validator_.ValidateDirectory(
                     versionIt->path(), &manifest);
-                if (!report.Ok() || manifest.id != id) continue;
+                if (!report.Ok() || manifest.id != id)
+                {
+                    InvalidPackage invalid;
+                    invalid.manifest = std::move(manifest);
+                    invalid.packageId = id;
+                    invalid.root = versionIt->path();
+                    invalid.report = report;
+                    const auto registryIt = registry_.find(id);
+                    invalid.source = registryIt != registry_.end()
+                        ? registryIt->second.source
+                        : PackageSourceRef{ "local", id };
+                    invalid.selected = registryIt != registry_.end() &&
+                        registryIt->second.activeVersion ==
+                            invalid.manifest.version;
+                    if (report.Ok() && invalid.manifest.id != id)
+                    {
+                        invalid.report.Add(ValidationSeverity::Error,
+                            "package.idDirectory", versionIt->path(),
+                            "manifest id does not match the installed package directory");
+                    }
+                    invalidPackages_.push_back(std::move(invalid));
+                    continue;
+                }
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = versionIt->path();
                 const auto registryIt = registry_.find(id);
                 package.active = registryIt != registry_.end() &&
                     registryIt->second.activeVersion == package.manifest.version;
+                package.selected = package.active;
                 package.enabled = registryIt == registry_.end() ||
                     registryIt->second.enabled;
                 if (registryIt != registry_.end())
                 {
                     package.source = registryIt->second.source;
-                    package.grantedPermissions =
-                        registryIt->second.grantedPermissions.empty()
-                        ? package.manifest.permissions
-                        : registryIt->second.grantedPermissions;
-                    package.grantedNetworkDomains =
-                        registryIt->second.grantedNetworkDomains.empty()
-                        ? package.manifest.networkDomains
-                        : registryIt->second.grantedNetworkDomains;
+                    package.permissionState =
+                        registryIt->second.permissionState;
+                    const auto grant = WidgetPermissionBroker::Evaluate(
+                        package.permissionState,
+                        package.manifest.permissions,
+                        package.manifest.optionalPermissions,
+                        package.manifest.networkDomains,
+                        registryIt->second.grantedPermissions,
+                        registryIt->second.grantedNetworkDomains);
+                    package.grantedPermissions = grant.permissions;
+                    package.grantedNetworkDomains = grant.networkDomains;
+                    applyScopeMismatchBlock(
+                        package, applyExplicitDecision(package));
                 }
                 else
                 {
                     package.source = { "local", id };
-                    package.grantedPermissions = package.manifest.permissions;
+                    package.permissionState =
+                        PermissionDecisionState::LegacyImplicit;
+                    package.grantedPermissions =
+                        DeclaredPermissions(package.manifest);
                     package.grantedNetworkDomains =
                         package.manifest.networkDomains;
                 }
@@ -1793,10 +2581,12 @@ bool WidgetPackageManager::Refresh(std::string& error)
     scanRoot(paths_.installed, false, false);
     scanRoot(paths_.development, false, true);
 
-    // A development package shadows the installed or built-in copy explicitly.
+    // Development packages are inert candidates until the user explicitly
+    // activates an override for the shared package UUID.
     std::set<std::string> developmentIds;
     for (const auto& package : packages_)
-        if (package.development) developmentIds.insert(package.manifest.id);
+        if (package.development && package.active)
+            developmentIds.insert(package.manifest.id);
     for (auto& package : packages_)
         if (!package.development && developmentIds.contains(package.manifest.id))
             package.active = false;
@@ -1816,11 +2606,68 @@ std::vector<InstalledPackage> WidgetPackageManager::ListPackages() const
     return packages_;
 }
 
+std::vector<InvalidPackage> WidgetPackageManager::ListInvalidPackages() const
+{
+    return invalidPackages_;
+}
+
+bool WidgetPackageManager::ContainsPackage(const std::string& packageId) const
+{
+    return std::any_of(packages_.begin(), packages_.end(),
+        [&](const auto& package)
+        {
+            return package.manifest.id == packageId;
+        });
+}
+
+std::unordered_map<std::string, std::vector<std::string>>
+WidgetPackageManager::SteamSubscriptionHistory() const
+{
+    std::unordered_map<std::string, std::vector<std::string>> result;
+    for (const auto& [accountId, subscriptions] :
+        steamSubscriptionsByAccount_)
+    {
+        auto& values = result[accountId];
+        values.assign(subscriptions.begin(), subscriptions.end());
+        std::sort(values.begin(), values.end());
+    }
+    return result;
+}
+
+bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
+    const std::string& accountId,
+    const std::vector<std::string>& publishedFileIds, std::string& error)
+{
+    if (!DecimalIdentifier(accountId) ||
+        !std::all_of(publishedFileIds.begin(), publishedFileIds.end(),
+            DecimalIdentifier))
+    {
+        error = "invalid Steam subscription history identity";
+        return false;
+    }
+
+    const auto previous = steamSubscriptionsByAccount_.find(accountId);
+    const bool existed = previous != steamSubscriptionsByAccount_.end();
+    std::unordered_set<std::string> previousSubscriptions;
+    if (existed) previousSubscriptions = previous->second;
+    steamSubscriptionsByAccount_[accountId] =
+        std::unordered_set<std::string>(publishedFileIds.begin(),
+            publishedFileIds.end());
+    if (SaveRegistry(error)) return true;
+    if (existed)
+        steamSubscriptionsByAccount_[accountId] =
+            std::move(previousSubscriptions);
+    else
+        steamSubscriptionsByAccount_.erase(accountId);
+    return false;
+}
+
 std::optional<InstalledPackage> WidgetPackageManager::Resolve(
     const std::string& packageId) const
 {
     if (const auto registry = registry_.find(packageId);
-        registry != registry_.end() && !registry->second.enabled)
+        registry != registry_.end() && !registry->second.enabled &&
+        !developmentOverrides_.contains(packageId))
         return std::nullopt;
     const InstalledPackage* builtinFallback = nullptr;
     for (const auto& package : packages_)
@@ -1962,22 +2809,41 @@ bool WidgetPackageManager::CommitStagedPackage(
     }
     if (existing != registry_.end() && !allowPermissionExpansion)
     {
-        std::set<std::string> granted(
-            existing->second.grantedPermissions.begin(),
-            existing->second.grantedPermissions.end());
-        if (granted.empty())
+        std::vector<std::string> currentRequired;
+        std::vector<std::string> currentDeclared;
+        std::vector<std::string> currentDomains;
+        if (const auto current = Resolve(manifest.id))
         {
-            if (const auto current = Resolve(manifest.id))
-                granted.insert(current->manifest.permissions.begin(),
-                    current->manifest.permissions.end());
+            currentRequired = current->manifest.permissions;
+            currentDeclared = DeclaredPermissions(current->manifest);
+            currentDomains = current->manifest.networkDomains;
         }
+        const std::set<std::string> previouslyRequired(
+            currentRequired.begin(), currentRequired.end());
+        const std::set<std::string> previouslyRequested(
+            currentDeclared.begin(), currentDeclared.end());
+        PermissionExpansion expansion;
         for (const auto& permission : manifest.permissions)
         {
-            if (!granted.contains(permission))
-            {
-                error = "update requests a new permission: " + permission;
-                return false;
-            }
+            if (!previouslyRequired.contains(permission))
+                expansion.required.push_back(permission);
+        }
+        for (const auto& permission : manifest.optionalPermissions)
+        {
+            if (!previouslyRequested.contains(permission))
+                expansion.optional.push_back(permission);
+        }
+        const std::set<std::string> previouslyRequestedDomains(
+            currentDomains.begin(), currentDomains.end());
+        for (const auto& domain : manifest.networkDomains)
+        {
+            if (!previouslyRequestedDomains.contains(domain))
+                expansion.networkDomains.push_back(domain);
+        }
+        if (!expansion.Empty())
+        {
+            error = DescribePermissionExpansion(expansion);
+            return false;
         }
     }
     const auto target = paths_.installed / Utf8ToWide(manifest.id) /
@@ -2004,8 +2870,17 @@ bool WidgetPackageManager::CommitStagedPackage(
     entry.packageId = manifest.id;
     entry.activeVersion = manifest.version;
     entry.source = sourceRef;
-    entry.grantedPermissions = manifest.permissions;
-    entry.grantedNetworkDomains = manifest.networkDomains;
+    const auto declaredPermissions = DeclaredPermissions(manifest);
+    const bool requiresConsent = !PermissionsRequiringConsent(
+        declaredPermissions).empty();
+    entry.permissionState = requiresConsent
+        ? PermissionDecisionState::Pending
+        : PermissionDecisionState::Granted;
+    if (!requiresConsent)
+    {
+        entry.grantedPermissions = declaredPermissions;
+        entry.grantedNetworkDomains = manifest.networkDomains;
+    }
     entry.enabled = true;
     const auto oldEntry = registry_.find(manifest.id);
     const std::optional<RegistryEntry> previous = oldEntry == registry_.end()
@@ -2272,7 +3147,10 @@ bool WidgetPackageManager::InstallFromSource(IWidgetPackageSource& source,
     if (artifact->packageId != details->manifest.id ||
         !WidgetPackageValidator::IsUuid(artifact->packageId))
     {
-        error = "provider returned an invalid package identity";
+        error = "provider returned an invalid package identity: artifact=" +
+            (artifact->packageId.empty() ? "<empty>" : artifact->packageId) +
+            ", expected=" +
+            (details->manifest.id.empty() ? "<empty>" : details->manifest.id);
         quarantineOrRemove();
         return false;
     }
@@ -2283,7 +3161,14 @@ bool WidgetPackageManager::InstallFromSource(IWidgetPackageSource& source,
         return false;
     }
 
-    const PackageSourceRef sourceRef{ source.ProviderId(), externalItemId };
+    const PackageSourceRef sourceRef = details->source;
+    if (sourceRef.providerId != source.ProviderId() ||
+        sourceRef.externalItemId.empty())
+    {
+        error = "provider returned an invalid source identity";
+        quarantineOrRemove();
+        return false;
+    }
     const bool ok = std::filesystem::is_directory(artifact->localPath, ec)
         ? InstallDirectory(artifact->localPath, sourceRef, allowSourceChange,
             installed, report, error, allowPermissionExpansion,
@@ -2385,6 +3270,317 @@ bool WidgetPackageManager::SetEnabled(const std::string& packageId,
     return Refresh(error);
 }
 
+bool WidgetPackageManager::SetPermissionDecision(
+    const std::string& packageId, PermissionDecisionState state,
+    const std::vector<std::string>& grantedPermissions,
+    const std::vector<std::string>& grantedNetworkDomains,
+    std::string& error)
+{
+    std::optional<InstalledPackage> package = Resolve(packageId);
+    if (!package)
+    {
+        if (const auto registered = registry_.find(packageId);
+            registered != registry_.end())
+        {
+            const auto managed = std::find_if(packages_.begin(),
+                packages_.end(), [&](const auto& candidate) {
+                    return candidate.manifest.id == packageId &&
+                        candidate.manifest.version ==
+                            registered->second.activeVersion &&
+                        candidate.source == registered->second.source;
+                });
+            if (managed != packages_.end()) package = *managed;
+        }
+    }
+    if (!package)
+    {
+        const auto selected = std::find_if(packages_.begin(),
+            packages_.end(), [&](const auto& candidate) {
+                return candidate.manifest.id == packageId &&
+                    candidate.active;
+            });
+        if (selected != packages_.end()) package = *selected;
+    }
+    if (!package)
+    {
+        error = "package is unavailable";
+        return false;
+    }
+    if (state == PermissionDecisionState::LegacyImplicit)
+    {
+        error = "legacy implicit permission state cannot be user-authored";
+        return false;
+    }
+    if ((state == PermissionDecisionState::Pending ||
+            state == PermissionDecisionState::Denied) &&
+        (!grantedPermissions.empty() || !grantedNetworkDomains.empty()))
+    {
+        error = "pending or denied decisions cannot retain granted scopes";
+        return false;
+    }
+    const std::vector<std::string> allDeclaredPermissions =
+        DeclaredPermissions(package->manifest);
+    const std::set<std::string> declaredPermissions(
+        allDeclaredPermissions.begin(),
+        allDeclaredPermissions.end());
+    const std::set<std::string> declaredDomains(
+        package->manifest.networkDomains.begin(),
+        package->manifest.networkDomains.end());
+    if (!std::all_of(grantedPermissions.begin(), grantedPermissions.end(),
+            [&](const auto& permission) {
+                return declaredPermissions.contains(permission);
+            }) ||
+        !std::all_of(grantedNetworkDomains.begin(),
+            grantedNetworkDomains.end(), [&](const auto& domain) {
+                return declaredDomains.contains(domain);
+            }))
+    {
+        error = "granted scopes must be declared by the active package";
+        return false;
+    }
+
+    PermissionDecisionRecord record;
+    record.packageId = packageId;
+    record.source = package->source;
+    record.state = state;
+    record.requestedPermissions = package->manifest.permissions;
+    record.requestedOptionalPermissions =
+        package->manifest.optionalPermissions;
+    record.requestedNetworkDomains = package->manifest.networkDomains;
+    record.requestedScopeFingerprint =
+        WidgetPermissionBroker::ScopeFingerprint(
+            record.requestedPermissions,
+            record.requestedOptionalPermissions,
+            record.requestedNetworkDomains);
+    record.grantedPermissions = grantedPermissions;
+    record.grantedNetworkDomains = grantedNetworkDomains;
+    const std::string key = packageId + "\n" +
+        record.source.providerId + "\n" + record.source.externalItemId;
+    const auto previousDecision = permissionDecisions_.find(key);
+    const std::optional<PermissionDecisionRecord> oldDecision =
+        previousDecision == permissionDecisions_.end()
+        ? std::nullopt
+        : std::optional<PermissionDecisionRecord>(previousDecision->second);
+    const auto registry = registry_.find(packageId);
+    const bool updateRegistry = registry != registry_.end() &&
+        registry->second.source == package->source;
+    const std::optional<RegistryEntry> oldRegistry = updateRegistry
+        ? std::optional<RegistryEntry>(registry->second)
+        : std::nullopt;
+
+    permissionDecisions_[key] = record;
+    if (updateRegistry)
+    {
+        registry->second.permissionState = state;
+        registry->second.grantedPermissions = grantedPermissions;
+        registry->second.grantedNetworkDomains = grantedNetworkDomains;
+    }
+    if (SaveRegistry(error) && Refresh(error)) return true;
+
+    const std::string originalError = error;
+    if (oldDecision)
+        permissionDecisions_[key] = *oldDecision;
+    else
+        permissionDecisions_.erase(key);
+    if (oldRegistry) registry_[packageId] = *oldRegistry;
+    std::string rollbackError;
+    SaveRegistry(rollbackError);
+    Refresh(rollbackError);
+    error = originalError;
+    return false;
+}
+
+bool WidgetPackageManager::CreateDevelopmentProject(
+    const std::string& packageId, std::filesystem::path& projectRoot,
+    std::string& error)
+{
+    projectRoot.clear();
+    const auto existingDevelopment = std::find_if(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.development && package.manifest.id == packageId;
+        });
+    if (existingDevelopment != packages_.end())
+    {
+        error = "a development project already exists for this component";
+        return false;
+    }
+
+    const auto installed = std::find_if(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.manifest.id == packageId && package.active &&
+                !package.builtin && !package.development;
+        });
+    if (installed == packages_.end())
+    {
+        error = "the installed component is unavailable";
+        return false;
+    }
+
+    PackageManifest sourceManifest;
+    const ValidationReport sourceReport = validator_.ValidateDirectory(
+        installed->root, &sourceManifest);
+    if (!sourceReport.Ok() || sourceManifest.id != packageId)
+    {
+        error = "the installed component failed validation";
+        return false;
+    }
+
+    const std::filesystem::path staging =
+        CreateStagingPath("development");
+    std::error_code ec;
+    auto discardStaging = [&]
+    {
+        std::error_code cleanupError;
+        std::filesystem::remove_all(staging, cleanupError);
+    };
+    if (!CopyPackageTree(installed->root, staging, error))
+    {
+        discardStaging();
+        return false;
+    }
+
+    PackageManifest copiedManifest;
+    const ValidationReport copiedReport = validator_.ValidateDirectory(
+        staging, &copiedManifest);
+    if (!copiedReport.Ok() || copiedManifest.id != sourceManifest.id ||
+        copiedManifest.version != sourceManifest.version)
+    {
+        discardStaging();
+        error = "the development copy failed validation";
+        return false;
+    }
+
+    const std::wstring baseName = Utf8ToWide(
+        copiedManifest.slug.empty() ? copiedManifest.id : copiedManifest.slug);
+    std::filesystem::path destination = paths_.development / baseName;
+    for (unsigned suffix = 2; std::filesystem::exists(destination, ec);
+        ++suffix)
+    {
+        if (suffix > 10000)
+        {
+            destination = paths_.development /
+                (baseName + L"-" + Utf8ToWide(GenerateUuid()));
+            break;
+        }
+        destination = paths_.development /
+            (baseName + L"-" + std::to_wstring(suffix));
+    }
+    if (ec)
+    {
+        discardStaging();
+        error = "cannot inspect the development workspace: " + ec.message();
+        return false;
+    }
+
+    std::filesystem::rename(staging, destination, ec);
+    if (ec)
+    {
+        discardStaging();
+        error = "cannot create the development project: " + ec.message();
+        return false;
+    }
+    if (!Refresh(error))
+    {
+        std::error_code cleanupError;
+        std::filesystem::remove_all(destination, cleanupError);
+        std::string refreshError;
+        Refresh(refreshError);
+        return false;
+    }
+
+    const auto created = std::find_if(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.development && package.manifest.id == packageId &&
+                package.root == destination;
+        });
+    if (created == packages_.end())
+    {
+        std::filesystem::remove_all(destination, ec);
+        std::string refreshError;
+        Refresh(refreshError);
+        error = "the development project could not be loaded";
+        return false;
+    }
+    projectRoot = destination;
+    return true;
+}
+
+bool WidgetPackageManager::SetDevelopmentOverride(
+    const std::string& packageId, bool active, std::string& error)
+{
+    const bool developmentExists = std::any_of(
+        packages_.begin(), packages_.end(), [&](const auto& package)
+        {
+            return package.development &&
+                package.manifest.id == packageId;
+        });
+    if (active && !developmentExists)
+    {
+        error = "development package is unavailable";
+        return false;
+    }
+
+    const bool previous = developmentOverrides_.contains(packageId);
+    if (active)
+        developmentOverrides_.insert(packageId);
+    else
+        developmentOverrides_.erase(packageId);
+    if (!SaveRegistry(error))
+    {
+        if (previous)
+            developmentOverrides_.insert(packageId);
+        else
+            developmentOverrides_.erase(packageId);
+        return false;
+    }
+    const auto rollbackOverride = [&](std::string originalError) {
+        if (previous)
+            developmentOverrides_.insert(packageId);
+        else
+            developmentOverrides_.erase(packageId);
+        std::string rollbackError;
+        const bool saved = SaveRegistry(rollbackError);
+        if (saved) Refresh(rollbackError);
+        error = std::move(originalError);
+        if (!rollbackError.empty())
+            error += "; development override rollback failed: " +
+                rollbackError;
+        return false;
+    };
+
+    if (!Refresh(error))
+        return rollbackOverride(error);
+
+    if (active)
+    {
+        const auto resolved = Resolve(packageId);
+        if (!resolved || !resolved->development)
+        {
+            return rollbackOverride(
+                "development package could not be activated");
+        }
+        const std::vector<std::string> declaredPermissions =
+            DeclaredPermissions(resolved->manifest);
+        const bool sensitive = !PermissionsRequiringConsent(
+            declaredPermissions).empty();
+        if (sensitive && resolved->permissionState ==
+                PermissionDecisionState::LegacyImplicit)
+        {
+            std::string permissionError;
+            if (!SetPermissionDecision(packageId,
+                    PermissionDecisionState::Pending, {}, {},
+                    permissionError))
+            {
+                return rollbackOverride(std::move(permissionError));
+            }
+        }
+    }
+    return true;
+}
+
 bool WidgetPackageManager::Rollback(const std::string& packageId,
     const std::string& version, std::string& error)
 {
@@ -2442,395 +3638,12 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
     return Refresh(error);
 }
 
-std::vector<LegacyPackage> WidgetPackageManager::ScanLegacyPackages() const
-{
-    std::vector<LegacyPackage> result;
-    for (const auto& root : { paths_.builtin, paths_.installed.parent_path() })
-    {
-        std::error_code ec;
-        for (std::filesystem::directory_iterator it(root, ec), end;
-            !ec && it != end; it.increment(ec))
-        {
-            std::error_code entryError;
-            if (!it->is_regular_file(entryError) ||
-                Lower(it->path().extension().string()) != ".lua")
-                continue;
-            LegacyPackage package;
-            package.scriptPath = it->path();
-            package.legacyName = it->path().filename().wstring();
-            package.manifestPath = it->path().parent_path() /
-                (it->path().stem().wstring() + L".widget.json");
-            if (!HasReparsePoint(package.scriptPath) &&
-                std::filesystem::is_regular_file(
-                    package.manifestPath, entryError) &&
-                !HasReparsePoint(package.manifestPath))
-                result.push_back(std::move(package));
-        }
-    }
-    std::sort(result.begin(), result.end(),
-        [](const auto& a, const auto& b) {
-            return _wcsicmp(a.legacyName.c_str(), b.legacyName.c_str()) < 0;
-        });
-    return result;
-}
-
-std::optional<std::string> WidgetPackageManager::BundledReplacementId(
-    const LegacyPackage& legacy) const
-{
-    const BundledLegacyComponent* descriptor = nullptr;
-    const auto filename = legacy.scriptPath.filename().wstring();
-    for (const auto& candidate : kBundledLegacyComponents)
-    {
-        if (_wcsicmp(candidate.filename, filename.c_str()) == 0)
-        {
-            descriptor = &candidate;
-            break;
-        }
-    }
-    if (!descriptor) return std::nullopt;
-
-    // Portable and older packaged builds stored shipped and user-authored
-    // loose components in the same directory. The shipped localization key is
-    // the provenance marker that prevents a custom file with a colliding name
-    // from being silently replaced.
-    std::string text;
-    JsonValue root;
-    std::string nameKey;
-    if (!ReadFile(legacy.manifestPath, text, 1024 * 1024) ||
-        !ParseJson(text, root) || !root.IsObject() ||
-        !ReadString(root, "nameKey", nameKey) ||
-        nameKey != descriptor->nameKey)
-        return std::nullopt;
-
-    const auto package = std::find_if(packages_.begin(), packages_.end(),
-        [&](const InstalledPackage& installed) {
-            return installed.builtin &&
-                installed.manifest.id == descriptor->packageId;
-        });
-    if (package == packages_.end()) return std::nullopt;
-    return std::string(descriptor->packageId);
-}
-
-std::vector<LegacyPackage> WidgetPackageManager::FindLegacyPackages() const
-{
-    std::vector<LegacyPackage> result;
-    for (const auto& legacy : ScanLegacyPackages())
-        if (!BundledReplacementId(legacy))
-            result.push_back(legacy);
-    return result;
-}
-
-LegacyMigrationResult WidgetPackageManager::ReplaceBundledLegacy(
-    const LegacyPackage& legacy, const std::string& packageId)
-{
-    LegacyMigrationResult result;
-    result.legacyName = legacy.legacyName;
-    result.packageId = packageId;
-    const auto retirementDirectory =
-        CreateStagingPath("retired-builtin");
-
-    std::error_code ec;
-    std::filesystem::create_directories(retirementDirectory, ec);
-    if (ec)
-    {
-        result.error = "cannot create retirement staging: " + ec.message();
-        return result;
-    }
-    auto stage = [&](const std::filesystem::path& source) {
-        ec.clear();
-        const bool copied = std::filesystem::copy_file(source,
-            retirementDirectory / source.filename(),
-            std::filesystem::copy_options::overwrite_existing, ec);
-        return copied && !ec;
-    };
-    if (!stage(legacy.scriptPath) || !stage(legacy.manifestPath))
-    {
-        result.error = "cannot stage retired built-in component";
-        if (ec) result.error += ": " + ec.message();
-        ec.clear();
-        std::filesystem::remove_all(retirementDirectory, ec);
-        return result;
-    }
-
-    const std::string alias = WideToUtf8(legacy.legacyName);
-    const auto previous = legacyAliases_.find(alias);
-    const std::optional<std::string> previousValue =
-        previous == legacyAliases_.end()
-        ? std::nullopt : std::optional<std::string>(previous->second);
-    legacyAliases_[alias] = packageId;
-    if (!SaveRegistry(result.error))
-    {
-        if (previousValue) legacyAliases_[alias] = *previousValue;
-        else legacyAliases_.erase(alias);
-        ec.clear();
-        std::filesystem::remove_all(retirementDirectory, ec);
-        return result;
-    }
-
-    std::string cleanupError;
-    auto removeOldFile = [&](const std::filesystem::path& path) {
-        ec.clear();
-        const bool removed = std::filesystem::remove(path, ec);
-        if (removed && !ec) return true;
-        cleanupError = "cannot remove replaced built-in file " +
-            PathUtf8(path) + ": " + (ec ? ec.message() : "file not removed");
-        return false;
-    };
-    const bool removedScript = removeOldFile(legacy.scriptPath);
-    const bool removedManifest = removeOldFile(legacy.manifestPath);
-    if (!removedScript || !removedManifest)
-    {
-        // Restore the pair from the timestamped backup so the cleanup remains
-        // retryable at the next launch instead of leaving a half-migrated pair.
-        if (removedScript)
-        {
-            ec.clear();
-            std::filesystem::copy_file(
-                retirementDirectory / legacy.scriptPath.filename(),
-                legacy.scriptPath,
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
-        if (removedManifest)
-        {
-            ec.clear();
-            std::filesystem::copy_file(
-                retirementDirectory / legacy.manifestPath.filename(),
-                legacy.manifestPath,
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
-        result.error = std::move(cleanupError);
-        ec.clear();
-        std::filesystem::remove_all(retirementDirectory, ec);
-        return result;
-    }
-
-    ec.clear();
-    std::filesystem::remove_all(retirementDirectory, ec);
-    result.ok = true;
-    result.report.Add(ValidationSeverity::Info, "migration.builtin",
-        legacy.legacyName,
-        "shipped legacy component was replaced by its folder package; "
-        "instance storage is retained");
-    return result;
-}
-
-std::filesystem::path WidgetPackageManager::PendingLegacyStoragePath() const
-{
-    return paths_.registry.parent_path() / L"legacy-storage.pending.json";
-}
-
-bool WidgetPackageManager::PrepareBundledLegacyStorage(std::string& error)
-{
-    const auto pending = PendingLegacyStoragePath();
-    std::error_code ec;
-    if (std::filesystem::is_regular_file(pending, ec))
-        return true;
-
-    const auto storage =
-        paths_.registry.parent_path().parent_path() /
-            L"SnowDesktop.storage.json";
-    ec.clear();
-    if (!std::filesystem::is_regular_file(storage, ec))
-        return true;
-
-    std::string text;
-    if (!ReadFile(storage, text, 16 * 1024 * 1024))
-    {
-        error = "cannot read legacy component storage before replacement";
-        return false;
-    }
-    return AtomicWrite(pending, text, error);
-}
-
-void WidgetPackageManager::MigrateBundledLegacyPackages()
-{
-    automaticLegacyMigrationResults_.clear();
-    std::vector<std::pair<LegacyPackage, std::string>> bundled;
-    for (const auto& legacy : ScanLegacyPackages())
-    {
-        const auto packageId = BundledReplacementId(legacy);
-        if (packageId) bundled.emplace_back(legacy, *packageId);
-    }
-    if (bundled.empty()) return;
-
-    std::string storageError;
-    if (!PrepareBundledLegacyStorage(storageError))
-    {
-        for (const auto& [legacy, packageId] : bundled)
-        {
-            LegacyMigrationResult result;
-            result.legacyName = legacy.legacyName;
-            result.packageId = packageId;
-            result.error = storageError;
-            automaticLegacyMigrationResults_.push_back(std::move(result));
-        }
-        OutputDebugStringA(
-            ("SnowDesktop: automatic built-in widget migration stopped: " +
-                storageError + "\n").c_str());
-        return;
-    }
-
-    for (const auto& [legacy, packageId] : bundled)
-    {
-        auto result = ReplaceBundledLegacy(legacy, packageId);
-        std::ostringstream diagnostic;
-        diagnostic << "SnowDesktop: automatic built-in widget migration "
-            << (result.ok ? "succeeded for " : "failed for ")
-            << WideToUtf8(legacy.legacyName);
-        if (!result.ok) diagnostic << ": " << result.error;
-        diagnostic << '\n';
-        OutputDebugStringA(diagnostic.str().c_str());
-        automaticLegacyMigrationResults_.push_back(std::move(result));
-    }
-}
-
-std::optional<std::string> WidgetPackageManager::ResolveLegacyPackageId(
-    const std::wstring& legacyName) const
-{
-    const std::wstring filename =
-        std::filesystem::path(legacyName).filename().wstring();
-    const std::string name = WideToUtf8(filename);
-    for (const auto& [alias, packageId] : legacyAliases_)
-        if (_stricmp(alias.c_str(), name.c_str()) == 0 &&
-            Resolve(packageId).has_value())
-            return packageId;
-    for (const auto& package : packages_)
-    {
-        if (!package.active || !package.enabled ||
-            package.source.providerId != "legacy-import")
-            continue;
-        if (_stricmp(package.source.externalItemId.c_str(), name.c_str()) == 0)
-            return package.manifest.id;
-    }
-
-    // An MSIX upgrade replaces the read-only install directory atomically, so
-    // shipped loose files from the previous version are already gone before
-    // this process starts. Resolve their old layout names directly to the new
-    // immutable built-in IDs. A real user-authored loose pair with the same
-    // filename always wins and must still go through explicit migration.
-    for (const auto& legacy : ScanLegacyPackages())
-    {
-        if (_wcsicmp(legacy.legacyName.c_str(),
-                filename.c_str()) == 0 &&
-            !BundledReplacementId(legacy))
-        {
-            return std::nullopt;
-        }
-    }
-    for (const auto& descriptor : kBundledLegacyComponents)
-    {
-        if (_wcsicmp(descriptor.filename, filename.c_str()) != 0)
-            continue;
-        const auto replacement = Resolve(descriptor.packageId);
-        if (replacement && replacement->builtin)
-            return std::string(descriptor.packageId);
-    }
-    return std::nullopt;
-}
-
-LegacyMigrationResult WidgetPackageManager::MigrateLegacy(
-    const LegacyPackage& legacy, const std::optional<std::string>& preferredId)
-{
-    if (const auto packageId = BundledReplacementId(legacy))
-        return ReplaceBundledLegacy(legacy, *packageId);
-
-    LegacyMigrationResult result;
-    result.legacyName = legacy.legacyName;
-    std::string text;
-    JsonValue root;
-    PackageManifest manifest;
-    if (!ReadFile(legacy.manifestPath, text, 1024 * 1024) ||
-        !ParseJson(text, root) || !root.IsObject())
-    {
-        result.error = "legacy manifest is missing or invalid";
-        return result;
-    }
-    manifest.schemaVersion = kPackageSchemaVersion;
-    manifest.id = preferredId && WidgetPackageValidator::IsUuid(*preferredId)
-        ? *preferredId : GenerateUuid();
-    manifest.slug = Lower(WideToUtf8(legacy.scriptPath.stem().wstring()));
-    std::replace_if(manifest.slug.begin(), manifest.slug.end(),
-        [](unsigned char ch) {
-            return !(std::islower(ch) || std::isdigit(ch) || ch == '-');
-        }, '-');
-    manifest.version = "1.0.0";
-    ReadString(root, "version", manifest.version);
-    if (!WidgetPackageValidator::IsSemVer(manifest.version))
-        manifest.version = "1.0.0";
-    manifest.apiVersion = kHostApiVersion;
-    manifest.dataVersion = 1;
-    manifest.entry = "main.lua";
-    ReadString(root, "minHostVersion", manifest.minHostVersion);
-    ReadString(root, "name", manifest.name);
-    ReadString(root, "description", manifest.description);
-    ReadString(root, "publisher", manifest.author);
-    ReadString(root, "license", manifest.license);
-    ReadSize(root, "defaultSize", manifest.defaultColumns, manifest.defaultRows);
-    ReadSize(root, "minSize", manifest.minColumns, manifest.minRows);
-    ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
-    bool arraysValid = true;
-    manifest.permissions = ReadStringArray(root, "permissions", arraysValid);
-    manifest.networkDomains =
-        ReadStringArray(root, "networkDomains", arraysValid);
-    if (manifest.name.empty()) manifest.name = manifest.slug;
-
-    const auto staging = CreateStagingPath("migration");
-    std::error_code ec;
-    std::filesystem::create_directories(staging, ec);
-    std::string error;
-    if (ec || !std::filesystem::copy_file(legacy.scriptPath,
-        staging / L"main.lua", std::filesystem::copy_options::overwrite_existing,
-        ec) || !AtomicWrite(staging / L"widget.json",
-        ManifestJson(manifest), error))
-    {
-        result.error = error.empty() ? "cannot stage legacy package" : error;
-        return result;
-    }
-    result.report = validator_.ValidateDirectory(staging, &manifest);
-    if (!result.report.Ok())
-    {
-        result.error = "migrated package failed validation";
-        const auto quarantine = paths_.quarantine /
-            (L"migration-" + legacy.scriptPath.stem().wstring() + L"-" +
-                Utf8ToWide(Timestamp()));
-        std::filesystem::rename(staging, quarantine, ec);
-        return result;
-    }
-
-    result.backupDirectory = paths_.migrations /
-        (Utf8ToWide(Timestamp()) + L"-" + legacy.scriptPath.stem().wstring());
-    std::filesystem::create_directories(result.backupDirectory, ec);
-    std::filesystem::copy_file(legacy.scriptPath,
-        result.backupDirectory / legacy.scriptPath.filename(),
-        std::filesystem::copy_options::overwrite_existing, ec);
-    std::filesystem::copy_file(legacy.manifestPath,
-        result.backupDirectory / legacy.manifestPath.filename(),
-        std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec)
-    {
-        result.error = "cannot create migration backup: " + ec.message();
-        return result;
-    }
-    InstalledPackage installed;
-    if (!CommitStagedPackage(staging, manifest,
-        { "legacy-import", WideToUtf8(legacy.legacyName) }, false, false,
-        installed, result.error))
-        return result;
-    result.ok = true;
-    result.packageId = manifest.id;
-    // Old files are never executable again. The timestamped backup remains the
-    // recovery/import source if the author needs to repair the converted package.
-    std::filesystem::remove(legacy.scriptPath, ec);
-    ec.clear();
-    std::filesystem::remove(legacy.manifestPath, ec);
-    return result;
-}
-
 std::string WidgetPackageManager::Sha256File(
     const std::filesystem::path& path)
 {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return {};
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     DWORD objectSize = 0;
@@ -2846,6 +3659,7 @@ std::string WidgetPackageManager::Sha256File(
             &resultSize, 0) < 0)
     {
         if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
+        CloseHandle(file);
         return {};
     }
     std::vector<UCHAR> object(objectSize);
@@ -2854,25 +3668,34 @@ std::string WidgetPackageManager::Sha256File(
         nullptr, 0, 0) < 0)
     {
         BCryptCloseAlgorithmProvider(algorithm, 0);
+        CloseHandle(file);
         return {};
     }
-    std::array<char, 64 * 1024> buffer{};
-    while (file)
+    std::array<UCHAR, 64 * 1024> buffer{};
+    bool readSucceeded = true;
+    for (;;)
     {
-        file.read(buffer.data(), buffer.size());
-        const auto count = file.gcount();
-        if (count > 0 && BCryptHashData(hash,
-            reinterpret_cast<PUCHAR>(buffer.data()),
-            static_cast<ULONG>(count), 0) < 0)
+        DWORD count = 0;
+        if (!::ReadFile(file, buffer.data(),
+                static_cast<DWORD>(buffer.size()), &count, nullptr))
         {
-            BCryptDestroyHash(hash);
-            BCryptCloseAlgorithmProvider(algorithm, 0);
-            return {};
+            // Read errors (for example a disconnected device/pipe) are not
+            // EOF. Never return the digest of a successfully read prefix.
+            readSucceeded = false;
+            break;
+        }
+        if (count == 0) break;
+        if (BCryptHashData(hash, buffer.data(), count, 0) < 0)
+        {
+            readSucceeded = false;
+            break;
         }
     }
-    const bool ok = BCryptFinishHash(hash, digest.data(), hashSize, 0) >= 0;
+    const bool ok = readSucceeded &&
+        BCryptFinishHash(hash, digest.data(), hashSize, 0) >= 0;
     BCryptDestroyHash(hash);
     BCryptCloseAlgorithmProvider(algorithm, 0);
+    CloseHandle(file);
     if (!ok) return {};
     std::ostringstream out;
     out << std::hex << std::setfill('0');
@@ -3092,13 +3915,28 @@ bool StaticCatalogSource::ReadCatalog(std::vector<PackageDetails>& entries,
         ReadString(value, "author", detail.manifest.author);
         ReadString(value, "license", detail.manifest.license);
         ReadString(value, "minHostVersion", detail.manifest.minHostVersion);
+        ReadInteger(value, "schemaVersion", detail.manifest.schemaVersion);
         ReadInteger(value, "apiVersion", detail.manifest.apiVersion);
         ReadInteger(value, "dataVersion", detail.manifest.dataVersion);
         bool arraysValid = true;
         detail.manifest.permissions =
             ReadStringArray(value, "permissions", arraysValid);
+        detail.manifest.optionalPermissions =
+            ReadStringArray(value, "optionalPermissions", arraysValid);
         detail.manifest.networkDomains =
             ReadStringArray(value, "networkDomains", arraysValid);
+        detail.manifest.requiredFeatures =
+            ReadStringArray(value, "requiredFeatures", arraysValid);
+        detail.manifest.optionalFeatures =
+            ReadStringArray(value, "optionalFeatures", arraysValid);
+        {
+            std::vector<snowdesktop::widget_runtime::
+                LogicalSlotManifestError> slotErrors;
+            if (!snowdesktop::widget_runtime::ParseLogicalSlotDeclarations(
+                    value.Find("slots"), detail.manifest.logicalSlots,
+                    slotErrors))
+                arraysValid = false;
+        }
         if (const JsonValue* locales = value.Find("locales");
             locales && locales->IsObject())
         {
@@ -3325,10 +4163,14 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         std::string author;
         std::string license;
         std::string minHostVersion;
+        int schemaVersion = 0;
         int apiVersion = 0;
         int dataVersion = 0;
         std::vector<std::string> permissions;
+        std::vector<std::string> optionalPermissions;
         std::vector<std::string> networkDomains;
+        std::vector<std::string> requiredFeatures;
+        std::vector<std::string> optionalFeatures;
         std::unordered_map<std::string, LocalizedMetadata> locales;
         std::vector<std::string> tags;
         std::string changeNotes;
@@ -3358,13 +4200,21 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
                 ReadString(value, "author", record.author);
                 ReadString(value, "license", record.license);
                 ReadString(value, "minHostVersion", record.minHostVersion);
+                ReadInteger(value, "schemaVersion", record.schemaVersion);
                 ReadInteger(value, "apiVersion", record.apiVersion);
                 ReadInteger(value, "dataVersion", record.dataVersion);
                 bool arraysValid = true;
                 record.permissions =
                     ReadStringArray(value, "permissions", arraysValid);
+                record.optionalPermissions =
+                    ReadStringArray(value, "optionalPermissions",
+                        arraysValid);
                 record.networkDomains =
                     ReadStringArray(value, "networkDomains", arraysValid);
+                record.requiredFeatures =
+                    ReadStringArray(value, "requiredFeatures", arraysValid);
+                record.optionalFeatures =
+                    ReadStringArray(value, "optionalFeatures", arraysValid);
                 if (const JsonValue* locales = value.Find("locales");
                     locales && locales->IsObject())
                 {
@@ -3399,8 +4249,13 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         publishedManifest.slug, request.artifact.version, externalId,
         request.title, request.description, publishedManifest.author,
         publishedManifest.license, publishedManifest.minHostVersion,
+        publishedManifest.schemaVersion,
         publishedManifest.apiVersion, publishedManifest.dataVersion,
-        publishedManifest.permissions, publishedManifest.networkDomains,
+        publishedManifest.permissions,
+        publishedManifest.optionalPermissions,
+        publishedManifest.networkDomains,
+        publishedManifest.requiredFeatures,
+        publishedManifest.optionalFeatures,
         publishedManifest.locales, request.tags, request.changeNotes,
         PathUtf8(relative), actualSha256 });
     std::sort(records.begin(), records.end(),
@@ -3425,7 +4280,8 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
             << "\",\"license\":\"" << JsonEscape(record.license)
             << "\",\"minHostVersion\":\""
             << JsonEscape(record.minHostVersion)
-            << "\",\"apiVersion\":" << record.apiVersion
+            << "\",\"schemaVersion\":" << record.schemaVersion
+            << ",\"apiVersion\":" << record.apiVersion
             << ",\"dataVersion\":" << record.dataVersion
             << ",\"permissions\":[";
         for (std::size_t permission = 0;
@@ -3434,12 +4290,34 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
             if (permission) out << ',';
             out << '"' << JsonEscape(record.permissions[permission]) << '"';
         }
+        out << "],\"optionalPermissions\":[";
+        for (std::size_t permission = 0;
+            permission < record.optionalPermissions.size(); ++permission)
+        {
+            if (permission) out << ',';
+            out << '"' << JsonEscape(
+                record.optionalPermissions[permission]) << '"';
+        }
         out << "],\"networkDomains\":[";
         for (std::size_t domain = 0;
             domain < record.networkDomains.size(); ++domain)
         {
             if (domain) out << ',';
             out << '"' << JsonEscape(record.networkDomains[domain]) << '"';
+        }
+        out << "],\"requiredFeatures\":[";
+        for (std::size_t feature = 0;
+            feature < record.requiredFeatures.size(); ++feature)
+        {
+            if (feature) out << ',';
+            out << '"' << JsonEscape(record.requiredFeatures[feature]) << '"';
+        }
+        out << "],\"optionalFeatures\":[";
+        for (std::size_t feature = 0;
+            feature < record.optionalFeatures.size(); ++feature)
+        {
+            if (feature) out << ',';
+            out << '"' << JsonEscape(record.optionalFeatures[feature]) << '"';
         }
         out << "],\"locales\":{";
         std::vector<std::string> localeNames;

@@ -46,7 +46,7 @@ void DesktopApp::ShowBalloonNotification(const std::wstring& title, const std::w
 {
     HWND owner = controlHwnd_ ? controlHwnd_ : hwnd_;
     trayIconController_.ShowBalloon(
-        owner, title, message);
+        owner, {}, title, message);
 }
 
 /**
@@ -174,7 +174,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         ShowSettingsWindow();
         break;
     case kTrayRestartCommand:
-        RequestRestart();
+        (void)RequestRestart();
         break;
     case kTrayRestartExplorerCommand:
         if (!RestartWindowsExplorer())
@@ -183,9 +183,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
-        if (settingsWindow_)
-            settingsWindow_->ShowExitConfirm();
-        else
+        if (!settingsWindow_ || !settingsWindow_->ShowExitConfirm())
             RequestExit();
         break;
     case kTrayDesktopIconThisPC:

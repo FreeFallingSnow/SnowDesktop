@@ -24,6 +24,8 @@ $repositoryRoot = [System.IO.Path]::GetFullPath(
 $packagingDirectory = Join-Path $repositoryRoot "packaging"
 $buildOutput = Join-Path $repositoryRoot ".build\Release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
+$runtimeDirectory = "SnowDesktop.Runtime"
+Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
 
 function Assert-ChildPath {
     param(
@@ -88,12 +90,25 @@ function Copy-Directory {
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
 }
 
+function Assert-NoDeveloperAssets {
+    param([Parameter(Mandatory = $true)][string]$Destination)
+
+    $forbidden = @(Get-ChildItem -LiteralPath $Destination -Recurse -Force |
+        Where-Object {
+            $_.FullName.Substring($Destination.Length).TrimStart('\') `
+                -match '(^|\\)developer_assets(\\|$)'
+        })
+    if ($forbidden.Count -ne 0) {
+        throw "Release payload contains developer-only assets: $($forbidden.FullName -join ', ')"
+    }
+}
+
 function Copy-Payload {
     param([Parameter(Mandatory = $true)][string]$Destination)
 
     $requiredFiles = @(
         (Join-Path $buildOutput "SnowDesktop.exe"),
-        (Join-Path $buildOutput "SnowDesktopTaskbarHook.dll"),
+        (Join-Path $buildOutput "snowwidget.exe"),
         (Join-Path $repositoryRoot "LICENSE"),
         (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"),
         (Join-Path $repositoryRoot "README.md"),
@@ -106,17 +121,26 @@ function Copy-Payload {
         Copy-Item -LiteralPath $file -Destination $Destination -Force
     }
 
-    $licensesDestination = Join-Path $Destination "licenses"
-    New-Item -ItemType Directory -Path $licensesDestination -Force |
+    $runtimeDestination = Join-Path $Destination $runtimeDirectory
+    New-Item -ItemType Directory -Path $runtimeDestination -Force |
         Out-Null
-    $fluentIconsLicense = Join-Path $repositoryRoot `
-        "third_party\fluentui-system-icons\LICENSE"
-    if (-not (Test-Path -LiteralPath $fluentIconsLicense -PathType Leaf)) {
-        throw "Required Fluent System Icons license was not found: $fluentIconsLicense"
+    foreach ($name in @(
+            "SnowDesktopTaskbarHook.dll",
+            "SnowDesktopWallpaperHook.dll",
+            "SnowDesktopWallpaperHook32.dll",
+            "SnowDesktopWallpaperInjector32.exe")) {
+        $file = Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "Required runtime file was not found: $file"
+        }
+        Copy-Item -LiteralPath $file `
+            -Destination (Join-Path $runtimeDestination $name) -Force
     }
-    Copy-Item -LiteralPath $fluentIconsLicense `
-        -Destination (Join-Path $licensesDestination `
-            "FluentSystemIcons-LICENSE.txt") -Force
+
+    $licensesDestination = Join-Path $Destination "licenses"
+    Copy-SnowDesktopRepositoryLicenses `
+        -RepositoryRoot $repositoryRoot `
+        -Destination $licensesDestination
 
     Copy-Directory `
         -Source (Join-Path $repositoryRoot "widgets") `
@@ -125,6 +149,30 @@ function Copy-Payload {
         -Source (Join-Path $repositoryRoot "lang") `
         -Destination (Join-Path $Destination "lang")
 
+    $builtSkillCli = Join-Path $buildOutput `
+        "widgets\snowdesktop-lua-widget\bin\snowwidget.exe"
+    if (-not (Test-Path -LiteralPath $builtSkillCli -PathType Leaf) -or
+        (Get-Sha256 -Path $builtSkillCli) -cne
+            (Get-Sha256 -Path (Join-Path $buildOutput "snowwidget.exe"))) {
+        throw "The built Agent Skill does not contain the current snowwidget.exe."
+    }
+    $skillDestination = Join-Path $Destination `
+        "widgets\snowdesktop-lua-widget\bin"
+    New-Item -ItemType Directory -Path $skillDestination -Force | Out-Null
+    Copy-Item -LiteralPath $builtSkillCli `
+        -Destination (Join-Path $skillDestination "snowwidget.exe") -Force
+
+    $null = Copy-SnowDesktopDeploymentPayload `
+        -BuildOutput $buildOutput `
+        -Destination $Destination `
+        -RuntimeDirectory $runtimeDirectory
+    Enable-SnowDesktopPrivateRuntimeAssembly `
+        -BuildOutput $buildOutput `
+        -PackageRoot $Destination `
+        -Version $version `
+        -RuntimeDirectory $runtimeDirectory
+
+    Assert-NoDeveloperAssets -Destination $Destination
 }
 
 function Write-Logo {
@@ -190,6 +238,75 @@ function Get-MakeAppxPath {
         }
     }
     throw "makeappx.exe was not found in the Windows SDK."
+}
+
+function New-SnowDesktopPackageResourceIndex {
+    param(
+        [Parameter(Mandatory = $true)][string]$MakePri,
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$HoldingRoot
+    )
+
+    # Keep the Windows App SDK component PRIs visible so MakePri merges their
+    # Microsoft.UI and Microsoft.UI.Xaml resource maps into the package graph.
+    # SnowDesktop.pri already indexes the app XBF files, while the executable-
+    # root WinUI assets duplicate entries supplied by the component PRI. Hide
+    # only those two inputs during indexing, then restore the package payload.
+    $relativeInputs = @("SnowDesktop.pri", "Microsoft.UI.Xaml")
+    New-Item -ItemType Directory -Path $HoldingRoot -Force | Out-Null
+    $movedInputs = @()
+    try {
+        foreach ($relativeInput in $relativeInputs) {
+            $source = Join-Path $PackageRoot $relativeInput
+            if (-not (Test-Path -LiteralPath $source)) {
+                throw "Required package PRI input was not found: $source"
+            }
+            $destination = Join-Path $HoldingRoot $relativeInput
+            Move-Item -LiteralPath $source -Destination $destination
+            $movedInputs += [pscustomobject]@{
+                Source = $source
+                Destination = $destination
+            }
+        }
+
+        & $MakePri new `
+            /pr $PackageRoot `
+            /cf $ConfigPath `
+            /mn (Join-Path $PackageRoot "AppxManifest.xml") `
+            /of (Join-Path $PackageRoot "resources.pri") `
+            /o /v
+        $makePriExitCode = $LASTEXITCODE
+    }
+    finally {
+        [array]::Reverse($movedInputs)
+        foreach ($movedInput in $movedInputs) {
+            Move-Item -LiteralPath $movedInput.Destination `
+                -Destination $movedInput.Source
+        }
+    }
+    if ($makePriExitCode -ne 0) {
+        throw "MakePri new failed with exit code $makePriExitCode."
+    }
+
+    $dumpPath = Join-Path $HoldingRoot "resources.xml"
+    & $MakePri dump `
+        /if (Join-Path $PackageRoot "resources.pri") `
+        /of $dumpPath /o
+    if ($LASTEXITCODE -ne 0) {
+        throw "MakePri dump failed with exit code $LASTEXITCODE."
+    }
+    [xml]$dump = Get-Content -LiteralPath $dumpPath -Encoding UTF8 -Raw
+    $componentMaps = @($dump.PriInfo.ResourceMap.ResourceMapSubtree |
+        ForEach-Object { $_.name })
+    foreach ($requiredMap in @(
+            "Microsoft.UI",
+            "Microsoft.UI.Xaml",
+            "Microsoft.WindowsAppRuntime")) {
+        if ($componentMaps -cnotcontains $requiredMap) {
+            throw "Package resources.pri is missing the $requiredMap component resource map."
+        }
+    }
 }
 
 function Escape-XmlAttribute {
@@ -433,6 +550,11 @@ if ($manifest -match "@[A-Z_]+@") {
     (Join-Path $msixStage "AppxManifest.xml"),
     $manifest,
     [System.Text.UTF8Encoding]::new($false))
+Merge-SnowDesktopAppxFragments `
+    -BuildOutput $buildOutput `
+    -PackageRoot $msixStage `
+    -ManifestPath (Join-Path $msixStage "AppxManifest.xml") `
+    -RuntimeDirectory $runtimeDirectory
 
 $makeAppx = Get-MakeAppxPath
 $makePri = Join-Path (Split-Path -Parent $makeAppx) "makepri.exe"
@@ -448,15 +570,11 @@ $priConfig = Join-Path $stagingRoot "priconfig.xml"
 if ($LASTEXITCODE -ne 0) {
     throw "MakePri createconfig failed with exit code $LASTEXITCODE."
 }
-& $makePri new `
-    /pr $msixStage `
-    /cf $priConfig `
-    /mn (Join-Path $msixStage "AppxManifest.xml") `
-    /of (Join-Path $msixStage "resources.pri") `
-    /o /v
-if ($LASTEXITCODE -ne 0) {
-    throw "MakePri new failed with exit code $LASTEXITCODE."
-}
+New-SnowDesktopPackageResourceIndex `
+    -MakePri $makePri `
+    -PackageRoot $msixStage `
+    -ConfigPath $priConfig `
+    -HoldingRoot (Join-Path $stagingRoot "pri-input-hold")
 
 $msixPath = Join-Path $OutputDirectory `
     "SnowDesktop-Store-x64-$version.msix"

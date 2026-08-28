@@ -5,14 +5,18 @@
 
 #include "widget.h"
 #include "slot.h"
+#include "../core/transient_drag_slot.h"
 #include "types.h"
 #include "app.h"
 #include "drop_model.h"
 #include "collection_group_rules.h"
+#include "widget_chrome_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../search_match.h"
 #include "widget_preview_scene.h"
 #include "../l10n.h"
+#include "../item_render_layer_rules.h"
+#include "../widget_item_layout.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -73,11 +77,7 @@ std::wstring FileGroupSourceTabText(
     const DesktopWidget* child = FindFileGroupSource(
         group, sources[tabIndex]);
     if (!child) return L"";
-    const size_t count =
-        child->type == DesktopWidgetType::FolderMapping
-            ? child->folderEntries.size()
-            : child->itemKeys.size();
-    return child->title + L" " + std::to_wstring(count);
+    return child->title;
 }
 
 std::vector<int> FileGroupSourceTabWidths(
@@ -100,7 +100,7 @@ int TotalTabWidth(const std::vector<int>& widths)
     return total;
 }
 
-RECT FileGroupSourceTabRect(
+RECT FileGroupSourceTabLayoutRect(
     FileGroup* group, size_t tabIndex)
 {
     if (!group || !group->GetWidgetData()) return {};
@@ -127,6 +127,16 @@ RECT FileGroupSourceTabRect(
         left + widths[tabIndex], tabs.bottom);
     InflateRect(
         &result, -group->Cu(2.0f), -group->Cu(2.0f));
+    return result;
+}
+
+RECT FileGroupSourceTabRect(
+    FileGroup* group, size_t tabIndex)
+{
+    RECT result = FileGroupSourceTabLayoutRect(
+        group, tabIndex);
+    if (IsRectEmptyRect(result)) return {};
+    RECT tabs = FileGroupSourceTabsRect(group);
     const auto clipped =
         snowdesktop::collection_group_rules::ClipToViewport(
             {
@@ -158,6 +168,35 @@ size_t FileGroupSourceTabIndexAtPoint(
     return static_cast<size_t>(-1);
 }
 
+float ResolveInsertionItemPad(
+    Container* container, Slot* slot, HitRegion region)
+{
+    if (!container || !slot) return 0.0f;
+    const bool verticalBar =
+        container->GetInsertionStyle() == BarStyle::VBar;
+    const auto& slots = container->GetSlots();
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        if (slots[i].get() != slot) continue;
+        if (region == HitRegion::SortBefore && i > 0)
+        {
+            return snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i - 1]->GetBounds(),
+                    slots[i]->GetBounds(), verticalBar);
+        }
+        if (region == HitRegion::SortAfter && i + 1 < slots.size())
+        {
+            return snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i]->GetBounds(),
+                    slots[i + 1]->GetBounds(), verticalBar);
+        }
+        break;
+    }
+    return 0.0f;
+}
+
 struct FileGroupButtonRects
 {
     RECT date{};
@@ -174,7 +213,7 @@ FileGroupButtonRects GetFileGroupButtonRects(
     const float scale = group->GetBarScale();
     const int size = group->Cu(14.0f * scale);
     const int gap = group->Cu(4.0f * scale);
-    const int between = group->Cu(7.0f * scale);
+    const int between = group->Cu(4.0f * scale);
     const int resizeReserve = group->Cu(20.0f * scale);
     const int height = handle.bottom - handle.top;
     LONG right = handle.right - resizeReserve - gap;
@@ -221,6 +260,13 @@ public:
         savedBounds_ = sourceData_->bounds;
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
+        savedShowDetails_ = sourceData_->showDetails;
+        savedDetailShowModified_ = sourceData_->detailShowModified;
+        savedDetailShowType_ = sourceData_->detailShowType;
+        savedDetailShowSize_ = sourceData_->detailShowSize;
+        savedDetailModifiedPosition_ = sourceData_->detailModifiedPosition;
+        savedDetailTypePosition_ = sourceData_->detailTypePosition;
+        savedDetailSizePosition_ = sourceData_->detailSizePosition;
         savedDateHeaders_ = sourceData_->dateHeaders;
         savedShowCategories_ = sourceData_->showFileCategories;
         savedShowSearch_ = sourceData_->showSearchBox;
@@ -246,6 +292,13 @@ public:
         sourceData_->bounds = groupData_->bounds;
         sourceData_->cellScale = groupData_->cellScale;
         sourceData_->listMode = groupData_->listMode;
+        sourceData_->showDetails = groupData_->showDetails;
+        sourceData_->detailShowModified = groupData_->detailShowModified;
+        sourceData_->detailShowType = groupData_->detailShowType;
+        sourceData_->detailShowSize = groupData_->detailShowSize;
+        sourceData_->detailModifiedPosition = groupData_->detailModifiedPosition;
+        sourceData_->detailTypePosition = groupData_->detailTypePosition;
+        sourceData_->detailSizePosition = groupData_->detailSizePosition;
         sourceData_->dateHeaders = groupData_->dateHeaders;
         sourceData_->showFileCategories =
             groupData_->showFileCategories;
@@ -296,6 +349,13 @@ public:
         sourceData_->bounds = savedBounds_;
         sourceData_->cellScale = savedCellScale_;
         sourceData_->listMode = savedListMode_;
+        sourceData_->showDetails = savedShowDetails_;
+        sourceData_->detailShowModified = savedDetailShowModified_;
+        sourceData_->detailShowType = savedDetailShowType_;
+        sourceData_->detailShowSize = savedDetailShowSize_;
+        sourceData_->detailModifiedPosition = savedDetailModifiedPosition_;
+        sourceData_->detailTypePosition = savedDetailTypePosition_;
+        sourceData_->detailSizePosition = savedDetailSizePosition_;
         sourceData_->dateHeaders = savedDateHeaders_;
         sourceData_->showFileCategories = savedShowCategories_;
         sourceData_->showSearchBox = savedShowSearch_;
@@ -323,6 +383,16 @@ private:
     RECT savedBounds_{};
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
+    bool savedShowDetails_ = false;
+    bool savedDetailShowModified_ = false;
+    bool savedDetailShowType_ = false;
+    bool savedDetailShowSize_ = false;
+    float savedDetailModifiedPosition_ =
+        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
+    float savedDetailTypePosition_ =
+        snowdesktop::list_detail_rules::kDefaultTypePosition;
+    float savedDetailSizePosition_ =
+        snowdesktop::list_detail_rules::kDefaultSizePosition;
     bool savedDateHeaders_ = false;
     bool savedShowCategories_ = false;
     bool savedShowSearch_ = false;
@@ -351,17 +421,24 @@ std::unique_ptr<Item> CloneHostedItem(
     return nullptr;
 }
 
-int FileGroupSearchCellHeight(FileGroup* group)
+snowdesktop::widget_item_layout::Layout FileGroupSearchLocalLayout(
+    FileGroup* group)
 {
-    if (!group || !group->GetApp() ||
-        !group->GetApp()->GetDesktopGrid())
-        return kMinCellHeight;
+    if (!group || !group->GetApp() || !group->GetWidgetData())
+        return {};
     DesktopWidget* data = group->GetWidgetData();
-    for (const auto& page :
-         group->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return kMinCellHeight;
+    const RECT content = group->GetContentViewportRect();
+    const auto metrics = group->GetItemVisualMetrics();
+    const float spacing = group->GetLayoutSpacingScale();
+    if (data->listMode)
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(group->GetListRowHeight(),
+                metrics.minimumListHeight), spacing);
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), 0,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 int FileGroupSearchContentHeight(
@@ -370,15 +447,8 @@ int FileGroupSearchContentHeight(
     DesktopWidget* data =
         group ? group->GetWidgetData() : nullptr;
     if (!data) return 0;
-    if (data->listMode)
-        return static_cast<int>(count) *
-            group->Cu(38.0f);
-    const int columns =
-        std::max(1, data->gridSpan.columns);
-    const int rows = static_cast<int>(
-        (count + static_cast<size_t>(columns) - 1) /
-        static_cast<size_t>(columns));
-    return rows * FileGroupSearchCellHeight(group);
+    return snowdesktop::widget_item_layout::ContentHeight(
+        FileGroupSearchLocalLayout(group), count);
 }
 
 RECT FileGroupSearchItemRect(
@@ -387,44 +457,11 @@ RECT FileGroupSearchItemRect(
     DesktopWidget* data =
         group ? group->GetWidgetData() : nullptr;
     if (!data) return {};
-    RECT content = group->GetContentViewportRect();
     const int scroll = std::clamp(
         data->scrollOffset, 0,
         group->GetMaxScrollOffset());
-    if (data->listMode)
-    {
-        const int height = group->Cu(38.0f);
-        RECT result = MakeRect(
-            content.left,
-            content.top +
-                static_cast<LONG>(index * height) -
-                scroll,
-            content.right,
-            content.top +
-                static_cast<LONG>((index + 1) * height) -
-                scroll);
-        InflateRect(
-            &result, -group->Cu(4.0f),
-            -group->Cu(2.0f));
-        return result;
-    }
-
-    const int columns =
-        std::max(1, data->gridSpan.columns);
-    const int column = static_cast<int>(
-        index % static_cast<size_t>(columns));
-    const int row = static_cast<int>(
-        index / static_cast<size_t>(columns));
-    const int width = std::max<int>(
-        1, (content.right - content.left) / columns);
-    const int height = FileGroupSearchCellHeight(group);
-    return MakeRect(
-        content.left + column * width,
-        content.top + row * height - scroll,
-        column + 1 == columns
-            ? content.right
-            : content.left + (column + 1) * width,
-        content.top + (row + 1) * height - scroll);
+    return snowdesktop::widget_item_layout::ItemRect(
+        FileGroupSearchLocalLayout(group), index, scroll);
 }
 
 } // namespace
@@ -740,6 +777,95 @@ FileGroup::GetGroupSearchResults() const
             }
         }
     }
+    if (data_->contentSortColumn !=
+        snowdesktop::list_detail_rules::Column::None)
+    {
+        struct SortValue
+        {
+            std::wstring name;
+            std::wstring type;
+            std::optional<FILETIME> modified;
+            std::optional<std::uint64_t> size;
+        };
+        const auto valueFor = [this](const SearchResultRef& result) {
+            SortValue value;
+            if (!result.folderMapping)
+            {
+                const size_t itemIndex =
+                    app_->FindItemIndexByKey(result.desktopKey);
+                if (itemIndex < app_->items_.size())
+                {
+                    const DesktopItem& item = app_->items_[itemIndex];
+                    value.name = item.name;
+                    value.type = item.typeName;
+                    value.modified = item.modifiedTime;
+                    value.size = item.fileSize;
+                }
+                return value;
+            }
+            const size_t sourceIndex =
+                app_->FindWidgetIndexById(result.sourceId);
+            if (sourceIndex < app_->widgets_.size() &&
+                result.folderEntryIndex <
+                    app_->widgets_[sourceIndex].folderEntries.size())
+            {
+                const FolderEntry& entry = app_->widgets_[sourceIndex].
+                    folderEntries[result.folderEntryIndex];
+                value.name = entry.name;
+                value.type = entry.typeName;
+                value.modified = entry.lastWriteTime;
+                value.size = entry.fileSize;
+            }
+            return value;
+        };
+        const auto column = data_->contentSortColumn;
+        const bool ascending = data_->contentSortAscending;
+        std::stable_sort(groupSearchResults_.begin(),
+            groupSearchResults_.end(),
+            [&](const SearchResultRef& left,
+                const SearchResultRef& right) {
+                const SortValue a = valueFor(left);
+                const SortValue b = valueFor(right);
+                int comparison = 0;
+                if (column == snowdesktop::list_detail_rules::Column::Name)
+                {
+                    comparison = _wcsicmp(
+                        a.name.c_str(), b.name.c_str());
+                }
+                else if (column == snowdesktop::list_detail_rules::Column::Type)
+                {
+                    const bool hasA = !a.type.empty();
+                    const bool hasB = !b.type.empty();
+                    if (hasA != hasB) return hasA;
+                    comparison = _wcsicmp(
+                        a.type.c_str(), b.type.c_str());
+                }
+                else if (column == snowdesktop::list_detail_rules::Column::Modified)
+                {
+                    const bool hasA = a.modified.has_value();
+                    const bool hasB = b.modified.has_value();
+                    if (hasA != hasB) return hasA;
+                    if (hasA)
+                        comparison = CompareFileTime(
+                            &*a.modified, &*b.modified);
+                }
+                else if (column == snowdesktop::list_detail_rules::Column::Size)
+                {
+                    const bool hasA = a.size.has_value();
+                    const bool hasB = b.size.has_value();
+                    if (hasA != hasB) return hasA;
+                    if (hasA && *a.size != *b.size)
+                        comparison = *a.size < *b.size ? -1 : 1;
+                }
+                if (comparison != 0)
+                    return ascending
+                        ? comparison < 0
+                        : comparison > 0;
+                comparison = _wcsicmp(
+                    a.name.c_str(), b.name.c_str());
+                return comparison < 0;
+            });
+    }
     return groupSearchResults_;
 }
 
@@ -841,6 +967,7 @@ void FileGroup::InvalidateHostedView()
     groupSearchResults_.clear();
     dropPreviewValid_ = false;
     dropPreviewSourceTab_ = false;
+    dropPreviewItemPad_ = 0.0f;
     InvalidateSlots();
     for (auto& [id, source] : hostedSourceCache_)
     {
@@ -917,7 +1044,17 @@ void FileGroup::EnsureSourceTabVisible(size_t tabIndex)
         snowdesktop::collection_group_rules::
             ClampIndependentTabScroll(
                 data_->tabScrollOffset,
-                TotalTabWidth(widths), viewport);
+            TotalTabWidth(widths), viewport);
+}
+
+void FileGroup::EnsureCategoryTabVisible(
+    size_t index)
+{
+    auto* source = GetActiveSourceContainer();
+    if (!source) return;
+    HostedFileSourceScope hosted(this, source);
+    if (hosted)
+        source->EnsureCategoryTabVisible(index);
 }
 
 FileGroupEntryItem*
@@ -955,40 +1092,11 @@ std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
         const int scroll = std::clamp(
             data_->scrollOffset, 0,
             GetMaxScrollOffset());
-        size_t first = 0;
-        size_t last = results.size();
-        if (data_->listMode)
-        {
-            const int height = std::max(
-                1, Cu(38.0f));
-            first = static_cast<size_t>(
-                std::max(0, scroll / height - 1));
-            last = std::min(
-                results.size(),
-                static_cast<size_t>(
-                    (scroll + visibleHeight +
-                     height - 1) / height + 1));
-        }
-        else
-        {
-            const int columns =
-                std::max(1, data_->gridSpan.columns);
-            const int height = std::max(
-                1, FileGroupSearchCellHeight(this));
-            const int firstRow =
-                std::max(0, scroll / height - 1);
-            const int lastRow =
-                (scroll + visibleHeight +
-                 height - 1) / height + 1;
-            first = std::min(
-                results.size(),
-                static_cast<size_t>(
-                    firstRow * columns));
-            last = std::min(
-                results.size(),
-                static_cast<size_t>(
-                    lastRow * columns));
-        }
+        const auto range = snowdesktop::widget_item_layout::VisibleRange(
+            FileGroupSearchLocalLayout(this), results.size(),
+            scroll, visibleHeight);
+        const size_t first = range.first;
+        const size_t last = range.second;
         result.reserve(last - first);
         for (size_t index = first;
              index < last; ++index)
@@ -1047,30 +1155,20 @@ size_t FileGroup::GetSlotCount() const
 int FileGroup::GetItemHeight() const
 {
     if (IsGroupSearchActive())
-        return data_ && data_->listMode
-            ? Cu(38.0f)
-            : FileGroupSearchCellHeight(
-                const_cast<FileGroup*>(this));
+        return FileGroupSearchLocalLayout(
+            const_cast<FileGroup*>(this)).vertical.cell;
     auto* source = GetActiveSourceContainer();
-    if (!source) return Cu(38.0f);
+    if (!source) return GetListRowHeight();
     HostedFileSourceScope hosted(
         const_cast<FileGroup*>(this), source);
-    return hosted ? source->GetItemHeight() : Cu(38.0f);
+    return hosted ? source->GetItemHeight() : GetListRowHeight();
 }
 
 int FileGroup::GetItemWidth() const
 {
     if (IsGroupSearchActive())
-    {
-        RECT content = GetContentViewportRect();
-        return data_ && data_->listMode
-            ? std::max<int>(
-                1, content.right - content.left)
-            : std::max<int>(
-                1, (content.right - content.left) /
-                    std::max(
-                        1, data_->gridSpan.columns));
-    }
+        return FileGroupSearchLocalLayout(
+            const_cast<FileGroup*>(this)).horizontal.cell;
     auto* source = GetActiveSourceContainer();
     if (!source) return 1;
     HostedFileSourceScope hosted(
@@ -1305,7 +1403,7 @@ RECT FileGroup::GetContentViewportRect() const
             body.top = std::min<LONG>(
                 body.bottom,
                 search.bottom + Cu(4.0f));
-        return body;
+        return ApplyDetailsHeaderToViewport(body);
     }
     auto* source = GetActiveSourceContainer();
     if (!source)
@@ -1322,13 +1420,36 @@ RECT FileGroup::GetContentViewportRect() const
         if (!IsRectEmptyRect(tabs))
             body.top = std::min<LONG>(
                 body.bottom, tabs.bottom + Cu(8.0f));
-        return body;
+        return ApplyDetailsHeaderToViewport(body);
     }
     HostedFileSourceScope hosted(
         const_cast<FileGroup*>(this), source);
     return hosted
         ? source->GetContentViewportRect()
         : RECT{};
+}
+
+RECT FileGroup::GetMemberLayoutRect(size_t index) const
+{
+    if (IsGroupSearchActive())
+        return FileGroupSearchItemRect(
+            const_cast<FileGroup*>(this), index);
+    auto* source = GetActiveSourceContainer();
+    if (!source) return {};
+    HostedFileSourceScope hosted(
+        const_cast<FileGroup*>(this), source);
+    return hosted ? source->GetMemberLayoutRect(index) : RECT{};
+}
+
+const DesktopWidget* FileGroup::GetDetailsSortData() const
+{
+    if (!data_ || !app_ || IsGroupSearchActive())
+        return data_;
+    const size_t index = app_->FindWidgetIndexById(
+        GetActiveSourceId());
+    return index < app_->widgets_.size()
+        ? &app_->widgets_[index]
+        : data_;
 }
 
 void FileGroup::ApplyMarqueeSelection(
@@ -1433,6 +1554,13 @@ WidgetHit FileGroup::HitTestWidget(POINT pt) const
     if (!SourceIdAtPoint(pt).empty())
         return WidgetHit::SourceTab;
 
+    if (IsGroupSearchActive())
+    {
+        const WidgetHit details = HitTestDetailsHeader(
+            pt, GetContentViewportRect());
+        if (details != WidgetHit::None) return details;
+    }
+
     auto* source = GetActiveSourceContainer();
     if (source)
     {
@@ -1444,7 +1572,14 @@ WidgetHit FileGroup::HitTestWidget(POINT pt) const
             if (childHit == WidgetHit::CategoryTab ||
                 childHit == WidgetHit::DateHeaderToggleBtn ||
                 childHit == WidgetHit::ListToggleBtn ||
-                childHit == WidgetHit::OpenFolderBtn)
+                childHit == WidgetHit::OpenFolderBtn ||
+                childHit == WidgetHit::DetailsNameHeader ||
+                childHit == WidgetHit::DetailsModifiedHeader ||
+                childHit == WidgetHit::DetailsTypeHeader ||
+                childHit == WidgetHit::DetailsSizeHeader ||
+                childHit == WidgetHit::DetailsModifiedDivider ||
+                childHit == WidgetHit::DetailsTypeDivider ||
+                childHit == WidgetHit::DetailsSizeDivider)
                 return childHit;
         }
     }
@@ -1457,6 +1592,7 @@ HitRegion FileGroup::HitTestDrag(
     outSlot = nullptr;
     dropPreviewValid_ = false;
     dropPreviewSourceTab_ = false;
+    dropPreviewItemPad_ = 0.0f;
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt))
         return HitRegion::None;
@@ -1466,9 +1602,9 @@ HitRegion FileGroup::HitTestDrag(
     if (sourceTab != static_cast<size_t>(-1))
     {
         RECT tab = FileGroupSourceTabRect(this, sourceTab);
-        sourceTabDropSlot_ = std::make_unique<Slot>(
-            this, tab, sourceTab);
-        outSlot = sourceTabDropSlot_.get();
+        outSlot = BindTransientDragSlot(
+            sourceTabDropSlot_, this, tab, sourceTab,
+            SlotFeedbackRole::FileGroupSourceTab);
         dropPreviewBounds_ = tab;
         dropPreviewIndex_ = sourceTab;
         dropPreviewValid_ = true;
@@ -1492,24 +1628,25 @@ HitRegion FileGroup::HitTestDrag(
                 pt, searchSlot);
         if (!searchSlot) return result;
         hostedDropItem_.reset();
-        hostedDropSlot_ = std::make_unique<Slot>(
-            this, searchSlot->GetBounds(),
-            searchSlot->GetIndex());
         if (auto item = CloneHostedItem(
                 searchSlot->GetItem(), this, app_))
         {
             item->SetBounds(
                 searchSlot->GetBounds());
             hostedDropItem_ = std::move(item);
-            hostedDropSlot_->SetItem(
-                hostedDropItem_.get());
         }
         dropPreviewBounds_ =
             searchSlot->GetBounds();
         dropPreviewIndex_ =
             searchSlot->GetIndex();
+        dropPreviewItemPad_ = ResolveInsertionItemPad(
+            this, searchSlot, result);
         dropPreviewValid_ = true;
-        outSlot = hostedDropSlot_.get();
+        outSlot = BindTransientDragSlot(
+            hostedDropSlot_, this,
+            searchSlot->GetBounds(), searchSlot->GetIndex(),
+            SlotFeedbackRole::FileGroupHosted,
+            hostedDropItem_.get());
         return result;
     }
 
@@ -1525,21 +1662,22 @@ HitRegion FileGroup::HitTestDrag(
         return result;
 
     hostedDropItem_.reset();
-    hostedDropSlot_ = std::make_unique<Slot>(
-        this, sourceSlot->GetBounds(),
-        sourceSlot->GetIndex());
     if (auto item = CloneHostedItem(
             sourceSlot->GetItem(), this, app_))
     {
         item->SetBounds(sourceSlot->GetBounds());
         hostedDropItem_ = std::move(item);
-        hostedDropSlot_->SetItem(
-            hostedDropItem_.get());
     }
     dropPreviewBounds_ = sourceSlot->GetBounds();
     dropPreviewIndex_ = sourceSlot->GetIndex();
+    dropPreviewItemPad_ = ResolveInsertionItemPad(
+        source, sourceSlot, result);
     dropPreviewValid_ = true;
-    outSlot = hostedDropSlot_.get();
+    outSlot = BindTransientDragSlot(
+        hostedDropSlot_, this,
+        sourceSlot->GetBounds(), sourceSlot->GetIndex(),
+        SlotFeedbackRole::FileGroupHosted,
+        hostedDropItem_.get());
     return result;
 }
 
@@ -1601,11 +1739,8 @@ void FileGroup::DrawDropPreview(
         Slot stableSlot(
             this, dropPreviewBounds_,
             dropPreviewIndex_);
-        const float itemPad = SingleColumn()
-            ? static_cast<float>(Cu(2.0f))
-            : 0.0f;
         stableSlot.DrawDropIndicator(
-            context, region, itemPad);
+            context, region, dropPreviewItemPad_);
         return;
     }
     (void)slot;
@@ -1793,6 +1928,7 @@ void FileGroup::DrawContent(
         const auto& results =
             GetGroupSearchResults();
         RECT content = GetContentViewportRect();
+        DrawDetailsHeader(context, content);
         const bool light =
             app_->IsLightContentTheme();
         if (results.empty())
@@ -1824,6 +1960,8 @@ void FileGroup::DrawContent(
         context->PushAxisAlignedClip(
             app_->ToD2DRect(content),
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        std::vector<std::pair<Item*, RECT>>
+            foregroundTitles;
         for (const auto& slot : GetSlots())
         {
             if (!slot || !slot->GetItem())
@@ -1834,15 +1972,24 @@ void FileGroup::DrawContent(
                 continue;
             Item* item = slot->GetItem();
             bool isDirectory = false;
+            bool iconIsMediaThumbnail = false;
             int sysIconIndex = -1;
+            ListItemDetails details;
             if (auto* desktop =
                     dynamic_cast<DesktopIcon*>(item))
             {
                 DesktopItem* sourceItem =
                     desktop->GetDesktopItem();
                 if (sourceItem)
+                {
                     sysIconIndex =
                         sourceItem->sysIconIndex;
+                    iconIsMediaThumbnail =
+                        sourceItem->iconIsMediaThumbnail;
+                    details.typeName = sourceItem->typeName;
+                    details.modifiedTime = sourceItem->modifiedTime;
+                    details.fileSize = sourceItem->fileSize;
+                }
             }
             else if (auto* folder =
                          dynamic_cast<
@@ -1856,6 +2003,12 @@ void FileGroup::DrawContent(
                         sourceEntry->isDirectory;
                     sysIconIndex =
                         sourceEntry->sysIconIndex;
+                    iconIsMediaThumbnail =
+                        sourceEntry->iconIsMediaThumbnail;
+                    details.typeName = sourceEntry->typeName;
+                    details.modifiedTime = sourceEntry->lastWriteTime;
+                    details.fileSize = sourceEntry->fileSize;
+                    details.isDirectory = sourceEntry->isDirectory;
                 }
             }
             if (privacyActive)
@@ -1868,7 +2021,9 @@ void FileGroup::DrawContent(
                     item->GetIconBitmap(),
                     sysIconIndex,
                     item->GetTitle(),
-                    item->IsSelected());
+                    item->IsSelected(),
+                    iconIsMediaThumbnail,
+                    {}, nullptr, details);
             else
             {
                 const bool hovered =
@@ -1876,12 +2031,38 @@ void FileGroup::DrawContent(
                     PtInRect(
                         &cell,
                         app_->lastMousePoint_);
-                item->Draw(
-                    context, cell,
-                    item->IsSelected()
-                        ? 2 : (hovered ? 1 : 0));
+                const bool selected =
+                    item->IsSelected();
+                const int state = selected
+                    ? 2 : (hovered ? 1 : 0);
+                const auto titleLayers =
+                    snowdesktop::item_render_layer_rules::
+                        ResolveTitleLayerPlan(selected);
+                if (auto* desktop =
+                        dynamic_cast<DesktopIcon*>(item))
+                {
+                    desktop->Draw(
+                        context, cell, state,
+                        light, titleLayers.drawWithItem);
+                }
+                else if (auto* folder =
+                             dynamic_cast<
+                                 FolderEntryIcon*>(item))
+                {
+                    folder->Draw(
+                        context, cell, state,
+                        light, titleLayers.drawWithItem);
+                }
+                else
+                    item->Draw(context, cell, state);
+                if (titleLayers.drawInForeground)
+                    foregroundTitles.emplace_back(
+                        item, cell);
             }
         }
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, light);
         context->PopAxisAlignedClip();
         return;
     }
@@ -1897,6 +2078,7 @@ void FileGroup::DrawContent(
     {
         DrawSearchBox(context);
         RECT content = GetContentViewportRect();
+        DrawDetailsHeader(context, content);
         IDWriteTextFormat* centered =
             GetCuTextFormat(13.0f, false, true);
         app_->DrawD2DText(
@@ -1919,16 +2101,44 @@ void FileGroup::DrawContent(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     for (size_t i = 0; i < sources.size(); ++i)
     {
+        RECT layoutTab =
+            FileGroupSourceTabLayoutRect(this, i);
         RECT tab = FileGroupSourceTabRect(this, i);
-        if (IsRectEmptyRect(tab)) continue;
+        if (IsRectEmptyRect(layoutTab) ||
+            IsRectEmptyRect(tab))
+            continue;
         DrawCategorizedTab(
-            context, tab,
+            context, tab, layoutTab,
             FileGroupSourceTabText(this, i),
             sources[i] == active,
             !IsPreviewRendering() &&
-                PtInRect(&tab, app_->lastMousePoint_) != FALSE);
+                PtInRect(&tab, app_->lastMousePoint_) != FALSE,
+            snowdesktop::widget_chrome_rules::
+                UsesCategorizedControlAccentOutline(
+                    app_->keyboardNavVisualFocus_,
+                    app_->keyboardNavCollectionGroupTabs_ &&
+                        app_->keyboardNavMemberIndex_ ==
+                            static_cast<int>(i) &&
+                        app_->OwnsWidgetKeyboardNavigation(this)));
     }
     context->PopAxisAlignedClip();
+}
+
+int FileGroup::GetBottomBarButtonCount() const
+{
+    if (!data_ || !app_) return 2;
+    const std::wstring activeId = GetActiveSourceId();
+    const DesktopWidget* previewSource = GetPreviewScene()
+        ? GetPreviewScene()->FindWidget(activeId) : nullptr;
+    if (previewSource)
+    {
+        return previewSource->type ==
+            DesktopWidgetType::FolderMapping ? 3 : 2;
+    }
+    const size_t sourceIndex = app_->FindWidgetIndexById(activeId);
+    return sourceIndex < app_->widgets_.size() &&
+        app_->widgets_[sourceIndex].type ==
+            DesktopWidgetType::FolderMapping ? 3 : 2;
 }
 
 void FileGroup::DrawButtons(

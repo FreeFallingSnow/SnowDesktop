@@ -20,6 +20,21 @@ inline float EaseInOutSmooth(float progress)
     return value * value * (3.0f - 2.0f * value);
 }
 
+/**
+ * @brief Return the normalized initial slope for the remaining smoothstep
+ * segment when a compositor animation starts or reverses.
+ */
+inline float SegmentNormalizedStartSlope(
+    float progress, bool opening)
+{
+    const float value = ClampUnit(progress);
+    const float slope = opening
+        ? 6.0f * value / (1.0f + 2.0f * value)
+        : 6.0f * (1.0f - value) /
+            (3.0f - 2.0f * value);
+    return std::clamp(slope, 0.0f, 2.0f);
+}
+
 inline float ScaleCoordinate(
     float value, float anchor, float scale)
 {

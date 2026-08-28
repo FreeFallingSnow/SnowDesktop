@@ -21,11 +21,15 @@
 #include "item.h"
 #include "container.h"
 #include "slot.h"
+#include "../item_visual_metrics.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include <memory>
@@ -51,7 +55,7 @@ struct WidgetPreviewItem;
 enum class WidgetHit {
     None,               ///< 未命中任何有效区域
     Content,            ///< 成员项区域（item 列表/网格区）
-    MoveHandle,         ///< 底栏（除右下角缩放角外）—— 拖拽移动组件
+    MoveHandle,         ///< 底栏或无底栏组件左下手柄——拖拽移动组件
     ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
     DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮
@@ -62,6 +66,13 @@ enum class WidgetHit {
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
     GuideAddWidgetBtn,  ///< Guide：打开“添加组件”菜单
     GuideDetailsBtn,    ///< Guide：展开或收起分页说明
+    DetailsNameHeader,  ///< 详细信息：名称列表头
+    DetailsModifiedHeader, ///< 详细信息：修改日期列表头
+    DetailsTypeHeader,  ///< 详细信息：类型列表头
+    DetailsSizeHeader,  ///< 详细信息：大小列表头
+    DetailsModifiedDivider, ///< 详细信息：修改日期列宽分隔线
+    DetailsTypeDivider, ///< 详细信息：类型列宽分隔线
+    DetailsSizeDivider, ///< 详细信息：大小列宽分隔线
 };
 
 /**
@@ -102,7 +113,8 @@ public:
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
     float GetCellScale() const;
-    float GetComponentSpacingScale() const;
+    float GetLayoutSpacingScale() const;
+    virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
     int Cu(float value) const;
     float FontCu(float value) const;
     IDWriteTextFormat* GetCuTextFormat(float value, bool bold, bool centered) const;
@@ -163,7 +175,13 @@ public:
 
     // ── Chrome geometry ──────────────────────────────────
     RECT GetFrameRect() const;
+    snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const override;
     RECT GetBodyRect() const;
+    virtual RECT GetMemberLayoutRect(size_t index) const
+    {
+        (void)index;
+        return {};
+    }
     RECT GetMoveHandleRect() const;
     RECT GetResizeHandleRect() const;
     RECT GetTitleRect() const;
@@ -212,6 +230,7 @@ public:
         (void)handleRect;
         (void)hovered;
     }
+    virtual int GetBottomBarButtonCount() const { return 0; }
 
     // ── Scrollbar — subclasses override ──────────────────
     virtual int  GetScrollOffset() const { return 0; }
@@ -249,6 +268,14 @@ protected:
  * 滚动相关接口（GetScrollOffset、GetMaxScrollOffset 等）在此声明，
  * 由子类提供具体实现。滚动条绘制由 WidgetContainer::DrawScrollbar 统一处理。
  */
+struct ListItemDetails
+{
+    std::wstring typeName;
+    std::optional<FILETIME> modifiedTime;
+    std::optional<std::uint64_t> fileSize;
+    bool isDirectory = false;
+};
+
 class ScrollingItemWidget : public WidgetContainer
 {
 public:
@@ -259,13 +286,33 @@ public:
     int GetMaxScrollOffset() const override = 0;
     int GetTotalContentHeight() const override = 0;
     int GetVisibleContentHeight() const override = 0;
+    RECT GetMemberLayoutRect(size_t index) const override = 0;
 
     void DrawListItem(ID2D1DeviceContext* context, RECT cell,
         HBITMAP iconBitmap, int sysIconIndex,
-        const std::wstring& name, bool selected) const;
+        const std::wstring& name, bool selected,
+        bool iconIsMediaThumbnail,
+        std::wstring_view demoIdentity = {},
+        const DesktopWidget* demoCollection = nullptr,
+        const ListItemDetails& details = {},
+        std::optional<bool> lightTheme = std::nullopt) const;
+
+    int GetListRowHeight() const;
+    int GetDetailsHeaderHeight() const;
+    bool IsDetailsVisible() const;
+    RECT ApplyDetailsHeaderToViewport(RECT viewport) const;
+    RECT GetDetailsHeaderRectFromViewport(RECT viewport) const;
+    void DrawDetailsHeader(
+        ID2D1DeviceContext* context, RECT itemViewport,
+        std::optional<bool> lightTheme = std::nullopt) const;
+    WidgetHit HitTestDetailsHeader(
+        POINT point, RECT itemViewport) const;
+    virtual const DesktopWidget* GetDetailsSortData() const;
 
     void DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
-        const std::wstring& name, bool isDir, bool showLabel = true) const;
+        const std::wstring& name, bool isDir, bool showLabel = true,
+        bool centerIconVertically = false,
+        int forcedIconSize = 0) const;
 
     const std::wstring& GetSearchText() const { return searchText_; }
     void SetSearchText(const std::wstring& text);
@@ -320,19 +367,33 @@ public:
     RECT GetCategorizedSearchBoxRect(bool visible) const;
     /** @brief 分类滚动组件共用的标签区布局。 */
     RECT GetCategorizedTabsRect(bool visible) const;
-    /** @brief 分类滚动组件共用的标签字号。 */
+    /** @brief 分类滚动组件共用的标签条高度（cu）。 */
+    float GetCategorizedTabHeight() const;
+    /** @brief 按标签条高度联动的标签字号（cu）。 */
     float GetCategorizedTabFontSize() const;
+    /** @brief 标签行距（cu），= 标签条高度 + 4。 */
+    float GetCategorizedTabRowPitch() const;
+    /** @brief 搜索框高度（cu），= 标签条高度 − 4。 */
+    float GetCategorizedSearchBoxHeight() const;
+    /** @brief 分类标签（桌面文件/映射文件夹）是否显示文件数量。 */
+    bool ShowCategoryTabItemCounts() const;
     /** @brief 按共同字号测量并分配标签宽度。 */
     std::vector<int> BuildCategorizedTabWidths(
         const std::vector<std::wstring>& labels,
         int availableWidth) const;
-    /** @brief 绘制统一样式的单个分类标签。 */
+    /**
+     * @brief 绘制统一样式的单个分类标签。
+     * @param visibleTabRect 裁剪后的背景与命中矩形。
+     * @param layoutTabRect 未裁剪的文字布局矩形。
+     */
     void DrawCategorizedTab(
         ID2D1DeviceContext* context,
-        RECT tabRect,
+        RECT visibleTabRect,
+        RECT layoutTabRect,
         const std::wstring& label,
         bool active,
-        bool hovered) const;
+        bool hovered,
+        bool keyboardSelected = false) const;
     void SetCategorizedHostOptions(
         int tabRowOffset,
         bool searchVisibilityOverrideActive,
@@ -351,6 +412,10 @@ public:
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
     virtual bool TryScrollTabs(POINT pt, int delta) { (void)pt; (void)delta; return false; }
+    virtual void EnsureCategoryTabVisible(size_t index)
+    {
+        (void)index;
+    }
 
     BarStyle GetInsertionStyle() const override;
 
@@ -375,7 +440,10 @@ private:
         size_t& compositionStart,
         size_t& compositionLength) const;
     void DrawListItemTitle(ID2D1DeviceContext* context, RECT cell,
-        RECT iconRect, const std::wstring& title) const;
+        RECT iconRect, const std::wstring& title,
+        bool lightTheme) const;
+    snowdesktop::list_detail_rules::Columns GetDetailsColumns(
+        int availableWidth) const;
     int categorizedTabRowOffset_ = 0;
     bool categorizedSearchVisibilityOverrideActive_ = false;
     bool categorizedSearchVisible_ = false;
@@ -415,8 +483,12 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override;
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
+    std::wstring GetDragHint(Slot* slot, HitRegion region,
+        const std::vector<Item*>& sourceItems, Container* origin,
+        int mods) const override;
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     Item* GetMemberItem(size_t idx) const override;
@@ -432,6 +504,7 @@ public:
     int  GetMaxScrollOffset() const override;
     int  GetTotalContentHeight() const override;
     int  GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     bool SingleColumn() const override;
     BarStyle GetInsertionStyle() const override;
     RECT GetContentViewportRect() const override;
@@ -442,6 +515,8 @@ public:
 private:
     void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
         RECT rect, bool selected) const;
+    void DrawTitlelessTooltip(ID2D1DeviceContext* context,
+        const std::wstring& title, RECT anchor) const;
 };
 
 /**
@@ -477,10 +552,12 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override { return 2; }
     WidgetHit HitTestWidget(POINT pt) const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool IsPointInTabsRect(POINT pt) const;
     bool TryScrollTabs(POINT pt, int delta) override;
+    void EnsureCategoryTabVisible(size_t index) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
@@ -512,6 +589,7 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
@@ -539,6 +617,7 @@ private:
     mutable std::vector<LayoutSegment> layoutCache_;
     mutable std::wstring layoutCacheCategory_;
     mutable bool layoutCacheListMode_ = false;
+    mutable int layoutCacheItemHeight_ = 0;
     mutable std::vector<std::wstring> searchResultCache_;
 };
 
@@ -572,6 +651,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override { return 3; }
     WidgetHit HitTestWidget(POINT pt) const override;
     std::vector<Item*> GetSelectedItems() const override;
     Item* GetMemberItem(size_t idx) const override;
@@ -588,12 +668,14 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta) override;
+    void EnsureCategoryTabVisible(size_t index) override;
     const std::vector<size_t>& GetVisibleEntryIndices() const;
     const std::vector<std::wstring>& GetVisibleCategoryIds() const;
     void InvalidateFilterCache();
@@ -630,6 +712,7 @@ private:
     mutable std::vector<DateLayoutSegment> dateLayoutCache_;
     mutable std::vector<size_t> dateLayoutSource_;
     mutable bool dateLayoutListMode_ = false;
+    mutable int dateLayoutItemHeight_ = 0;
 };
 
 /**
@@ -682,6 +765,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
+    int GetBottomBarButtonCount() const override { return 1; }
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     void DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot,
@@ -702,8 +786,10 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
@@ -775,6 +861,7 @@ public:
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect,
         bool hovered) override;
+    int GetBottomBarButtonCount() const override;
     WidgetHit HitTestWidget(POINT pt) const override;
     HitRegion HitTestDrag(POINT pt, Slot*& outSlot) override;
     void DrawDropPreview(ID2D1DeviceContext* context, Slot* slot,
@@ -798,8 +885,10 @@ public:
     int GetMaxScrollOffset() const override;
     int GetTotalContentHeight() const override;
     int GetVisibleContentHeight() const override;
+    RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
@@ -810,6 +899,7 @@ public:
     FileGroupEntryItem* GetSourceTabItemAtPoint(POINT pt) const;
     RECT GetSourceTabRectById(const std::wstring& childId) const;
     void EnsureSourceTabVisible(size_t tabIndex);
+    void EnsureCategoryTabVisible(size_t index) override;
     void InvalidateHostedView();
     ScrollingItemWidget* GetActiveSourceContainer() const;
     ScrollingItemWidget* GetSourceContainerById(
@@ -844,6 +934,7 @@ private:
     mutable std::unique_ptr<Item> hostedDropItem_;
     mutable RECT dropPreviewBounds_{};
     mutable size_t dropPreviewIndex_ = 0;
+    mutable float dropPreviewItemPad_ = 0.0f;
     mutable bool dropPreviewValid_ = false;
     mutable bool dropPreviewSourceTab_ = false;
     mutable std::vector<SearchResultRef> groupSearchResults_;
@@ -909,6 +1000,9 @@ class LuaScript : public Widget
 public:
     using Widget::Widget;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    void DrawCompositionSurface(
+        ID2D1DeviceContext* context, RECT rect, int state,
+        bool registerBackdrop);
     void DrawPreview(ID2D1DeviceContext* context, RECT frame,
         const snowdesktop::WidgetRenderOptions& options) override;
 
@@ -923,7 +1017,7 @@ private:
     bool SafeReadFlags(WidgetEngine* engine, const std::wstring& scriptPath,
         bool& showTitle, bool& bottomBarHover);
     void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
-        WidgetEngine* engine, bool preview);
+        WidgetEngine* engine, bool preview, bool registerBackdrop);
 
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);
@@ -965,3 +1059,7 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app);
  */
 void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     int visibleHeight, int scrollOffset, bool hovered, bool lightTheme, float cellScale = 1.0f);
+
+void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
+    int contentWidth, int visibleWidth, int scrollOffset, bool hovered,
+    bool lightTheme, float cellScale = 1.0f);

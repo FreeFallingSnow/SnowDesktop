@@ -3,10 +3,14 @@
 
 #include <windows.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace
 {
@@ -40,11 +44,49 @@ snowdesktop::component_preview::Bitmap SolidBitmap(
     return bitmap;
 }
 
+bool PumpMessagesUntil(
+    const std::function<bool()>& predicate, DWORD timeoutMs)
+{
+    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    do
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (predicate()) return true;
+        Sleep(1);
+    } while (GetTickCount64() < deadline);
+    return predicate();
+}
+
 } // namespace
 
 int wmain()
 {
     using namespace snowdesktop::component_preview;
+
+    bool hasPartialRoundedCoverage = false;
+    for (int y = 0; y < 20; ++y)
+    {
+        for (int x = 0; x < 20; ++x)
+        {
+            const float coverage = detail::RoundedRectangleCoverage(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f,
+                0.0f, 0.0f, 20.0f, 20.0f, 6.0f);
+            hasPartialRoundedCoverage = hasPartialRoundedCoverage ||
+                (coverage > 0.0f && coverage < 1.0f);
+        }
+    }
+    Expect(detail::RoundedRectangleCoverage(
+               0.5f, 0.5f, 0.0f, 0.0f, 20.0f, 20.0f, 6.0f) == 0.0f &&
+            detail::RoundedRectangleCoverage(
+                10.5f, 10.5f, 0.0f, 0.0f, 20.0f, 20.0f, 6.0f) == 1.0f &&
+            hasPartialRoundedCoverage,
+        "rounded preview surfaces include antialiased edge coverage");
 
     snowdesktop::WidgetPreviewScene scene;
     scene.AddItem({ L"sample-a", L"Sample A", L"A",
@@ -68,6 +110,11 @@ int wmain()
     Expect(scene.FindFolderEntry(L"sample-a") != nullptr &&
             scene.FindFolderEntry(L"sample-a")->iconBitmap != nullptr,
         "preview scene materializes a real folder entry with generated icon");
+    BITMAP previewIcon{};
+    Expect(GetObjectW(scene.FindDesktopItem(L"sample-a")->iconBitmap,
+               sizeof(previewIcon), &previewIcon) != 0 &&
+            previewIcon.bmBitsPixel == 32,
+        "preview placeholder uses a 32-bit icon bitmap");
     Expect(scene.FindWidget(L"child") != nullptr,
         "preview scene resolves temporary child widgets");
     Expect(scene.FindWidget(L"missing") == nullptr,
@@ -77,6 +124,7 @@ int wmain()
     const RECT menuBounds{ 120, 100, 280, 420 };
     int renderCount = 0;
     bool oldFrameVisibleDuringReplacement = false;
+    StagePlacement renderedStage;
     for (UINT dpi : { 96u, 120u, 144u, 192u })
     {
         Model model;
@@ -87,13 +135,17 @@ int wmain()
         card.sizeLabel = L"3 x 2";
         const int expectedWidth = 276 + static_cast<int>(dpi / 24);
         const int expectedHeight = 232 + static_cast<int>(dpi / 32);
+        const bool expectedLightStage = (dpi / 24) % 2 == 0;
         card.previewWidth = expectedWidth;
         card.previewHeight = expectedHeight;
+        card.lightStage = expectedLightStage;
         card.cacheKey = L"mode:" + std::to_wstring(dpi);
         card.render = [&, expectedWidth, expectedHeight, dpi](
             int width, int height, UINT callbackDpi,
+            const StagePlacement& stage,
             const ApplySettings&, bool) {
             ++renderCount;
+            renderedStage = stage;
             Expect(width == expectedWidth && height == expectedHeight,
                 "renderer receives the exact desktop component size");
             Expect(callbackDpi == dpi,
@@ -109,6 +161,19 @@ int wmain()
             "preview frame commits successfully");
         Expect(IsWindowVisible(window.Handle()) != FALSE,
             "preview remains visible after commit");
+
+        const RECT cardBounds = window.CardBoundsForTesting();
+        const RECT previewBounds = window.PreviewBoundsForTesting();
+        Expect(renderedStage.canvasWidth ==
+                    cardBounds.right - cardBounds.left &&
+                renderedStage.canvasHeight ==
+                    cardBounds.bottom - cardBounds.top &&
+                renderedStage.offsetX ==
+                    previewBounds.left - cardBounds.left &&
+                renderedStage.offsetY ==
+                    previewBounds.top - cardBounds.top &&
+                renderedStage.lightTheme == expectedLightStage,
+            "component renderer receives its exact position in the full card stage");
 
         const RECT closeButton = window.CloseBoundsForTesting();
         Expect(!IsRectEmpty(&closeButton),
@@ -126,6 +191,16 @@ int wmain()
             "cached preview frame recommits successfully");
         Expect(renderCount == beforeCachedShow,
             "component render callback is cached by mode and DPI");
+
+        Model oppositeStageModel = model;
+        oppositeStageModel.cards[0].lightStage = !expectedLightStage;
+        const int beforeStageChange = renderCount;
+        Expect(window.Show(oppositeStageModel, menuBounds, nullptr, dpi,
+                (dpi / 24) % 2 == 0),
+            "preview recommits after its card stage theme changes");
+        Expect(renderCount == beforeStageChange + 1 &&
+                renderedStage.lightTheme == !expectedLightStage,
+            "card stage theme participates in model and frame caching");
     }
 
     Expect(oldFrameVisibleDuringReplacement,
@@ -144,6 +219,7 @@ int wmain()
     filledRowsCard.previewHeight = 180;
     filledRowsCard.cacheKey = L"rows:filled";
     filledRowsCard.render = [](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool) {
         return SolidBitmap(width, height, 0xff304860u);
     };
@@ -184,6 +260,7 @@ int wmain()
     firstPage.applySettings.rows = 2;
     bool hoveredFrameRendered = false;
     firstPage.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool hovered) {
         ++firstPageRenders;
         hoveredFrameRendered = hoveredFrameRendered || hovered;
@@ -197,6 +274,7 @@ int wmain()
     secondPage.applySettings.listMode = true;
     secondPage.applySettings.scrollContainerMode = true;
     secondPage.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool) {
         ++secondPageRenders;
         return SolidBitmap(width, height, 0xff604020u);
@@ -220,6 +298,12 @@ int wmain()
             IsVisuallyCentered(window.NextGlyphBoundsForTesting(),
                 window.NextBoundsForTesting()),
         "the visible paging chevrons are centered in their buttons");
+    const RECT pagedCard = window.CardBoundsForTesting();
+    Expect(window.PreviousBoundsForTesting().top >= pagedCard.bottom &&
+            window.NextBoundsForTesting().top >= pagedCard.bottom &&
+            window.MetadataBoundsForTesting().top >= pagedCard.bottom &&
+            window.ApplyBoundsForTesting().top >= pagedCard.bottom,
+        "paging, metadata, and apply controls sit below the captured card");
     RECT pagedBounds{};
     GetClientRect(window.Handle(), &pagedBounds);
     SendMessageW(window.Handle(), WM_MOUSEMOVE, 0,
@@ -267,6 +351,7 @@ int wmain()
         L"Layout", L"Icons", L"List" });
     bool optionRenderUsedListMode = false;
     optionCard.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings& settings, bool) {
         optionRenderUsedListMode = settings.listMode;
         return SolidBitmap(width, height, 0xff305070u);
@@ -280,6 +365,11 @@ int wmain()
         OptionSetting::ListMode, true);
     Expect(!IsRectEmpty(&optionListModeButton),
         "same-size preview exposes its list control");
+    Expect(optionListModeButton.top >=
+                window.CardBoundsForTesting().bottom &&
+            window.ApplyBoundsForTesting().top >=
+                window.CardBoundsForTesting().bottom,
+        "same-size options and apply control sit below the wallpaper card");
     SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
         MAKELPARAM(
             (optionListModeButton.left + optionListModeButton.right) / 2,
@@ -310,6 +400,7 @@ int wmain()
     bool collectionRenderScrolling = false;
     bool collectionRenderList = false;
     collectionCard.render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings& settings, bool) {
         collectionRenderScrolling = settings.scrollContainerMode;
         collectionRenderList = settings.listMode;
@@ -389,6 +480,7 @@ int wmain()
     replacementModel.cards[0].cacheKey = L"options:replacement";
     bool replacementRendered = false;
     replacementModel.cards[0].render = [&](int width, int height, UINT,
+            const StagePlacement&,
             const ApplySettings&, bool) {
         replacementRendered = true;
         return SolidBitmap(width, height, 0xff507030u);
@@ -427,5 +519,119 @@ int wmain()
         Expect(position.x != 0 || position.y != 0,
             "no layered-window commit passes through (0,0)");
     window.Close();
+
+    Model wallpaperModel;
+    wallpaperModel.title = L"Prefetched wallpaper";
+    Card wallpaperCard;
+    wallpaperCard.title = L"Wallpaper component";
+    wallpaperCard.previewWidth = 120;
+    wallpaperCard.previewHeight = 80;
+    wallpaperCard.cacheKey = L"wallpaper:prefetch";
+    wallpaperCard.useDesktopWallpaperStage = true;
+    wallpaperCard.render = [](int width, int height, UINT,
+            const StagePlacement&, const ApplySettings&, bool) {
+        return SolidBitmap(width, height, 0x80406080u);
+    };
+    wallpaperModel.cards.push_back(std::move(wallpaperCard));
+
+    std::atomic_int successfulCaptureCount = 0;
+    std::atomic_bool successfulCaptureStarted = false;
+    std::atomic_bool releaseSuccessfulCapture = false;
+    Window successfulPrefetch([&](const RECT& desktopBounds, DWORD,
+            const std::atomic_bool* cancelled) {
+        ++successfulCaptureCount;
+        successfulCaptureStarted.store(true, std::memory_order_relaxed);
+        while (!releaseSuccessfulCapture.load(std::memory_order_relaxed) &&
+            !(cancelled && cancelled->load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        WallpaperBackdropCaptureResult result;
+        if (cancelled && cancelled->load(std::memory_order_relaxed))
+            return result;
+        result.wallpaper.width = 1;
+        result.wallpaper.height = 1;
+        result.wallpaper.pixels = { 0xff204080u };
+        result.desktopBounds = desktopBounds;
+        return result;
+    });
+    successfulPrefetch.PrefetchDesktopWallpaperBackdrop(
+        nullptr, POINT{ 160, 160 });
+    Expect(PumpMessagesUntil([&] {
+                return successfulCaptureStarted.load(
+                    std::memory_order_relaxed);
+            }, 500),
+        "fake wallpaper capture starts without Wallpaper Engine");
+    Expect(successfulPrefetch.Show(wallpaperModel, menuBounds, nullptr,
+            96, false),
+        "preview accepts a pending prefetched wallpaper");
+    Expect(successfulPrefetch.WaitingForWallpaperEngineFrameForTesting() &&
+            IsWindowVisible(successfulPrefetch.Handle()) == FALSE,
+        "first preview stays hidden while wallpaper prefetch is pending");
+    releaseSuccessfulCapture.store(true, std::memory_order_relaxed);
+    Expect(PumpMessagesUntil([&] {
+                return IsWindowVisible(successfulPrefetch.Handle()) != FALSE;
+            }, 1000),
+        "successful prefetch reveals the waiting first preview");
+    Expect(successfulPrefetch.HasWallpaperEngineCacheForTesting() &&
+            successfulCaptureCount.load(std::memory_order_relaxed) == 1,
+        "successful prefetch is cached once for the menu lifetime");
+    successfulPrefetch.Hide();
+    Expect(successfulPrefetch.Show(wallpaperModel, menuBounds, nullptr,
+            96, false) &&
+            IsWindowVisible(successfulPrefetch.Handle()) != FALSE &&
+            successfulCaptureCount.load(std::memory_order_relaxed) == 1,
+        "later previews reuse the menu-scoped wallpaper frame");
+    successfulPrefetch.Close();
+    Expect(!successfulPrefetch.HasWallpaperEngineCacheForTesting(),
+        "closing the menu preview releases its wallpaper frame");
+
+    std::atomic_bool releaseFailedCapture = false;
+    Window failedPrefetch([&](const RECT&, DWORD,
+            const std::atomic_bool* cancelled) {
+        while (!releaseFailedCapture.load(std::memory_order_relaxed) &&
+            !(cancelled && cancelled->load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return WallpaperBackdropCaptureResult{};
+    });
+    failedPrefetch.PrefetchDesktopWallpaperBackdrop(
+        nullptr, POINT{ 160, 160 });
+    Expect(failedPrefetch.Show(wallpaperModel, menuBounds, nullptr,
+            96, false) &&
+            failedPrefetch.WaitingForWallpaperEngineFrameForTesting() &&
+            IsWindowVisible(failedPrefetch.Handle()) == FALSE,
+        "failed prefetch also defers the first preview while pending");
+    releaseFailedCapture.store(true, std::memory_order_relaxed);
+    Expect(PumpMessagesUntil([&] {
+                return IsWindowVisible(failedPrefetch.Handle()) != FALSE;
+            }, 1500) &&
+            !failedPrefetch.HasWallpaperEngineCacheForTesting(),
+        "failed prefetch reveals the preview with its static fallback");
+    failedPrefetch.Close();
+
+    std::atomic_bool cancellableCaptureStarted = false;
+    std::atomic_bool captureObservedCancellation = false;
+    Window cancellablePrefetch([&](const RECT&, DWORD,
+            const std::atomic_bool* cancelled) {
+        cancellableCaptureStarted.store(true, std::memory_order_relaxed);
+        while (!(cancelled &&
+            cancelled->load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        captureObservedCancellation.store(true,
+            std::memory_order_relaxed);
+        return WallpaperBackdropCaptureResult{};
+    });
+    cancellablePrefetch.PrefetchDesktopWallpaperBackdrop(
+        nullptr, POINT{ 160, 160 });
+    Expect(PumpMessagesUntil([&] {
+                return cancellableCaptureStarted.load(
+                    std::memory_order_relaxed);
+            }, 500),
+        "cancellable fake prefetch starts");
+    const auto closeStarted = std::chrono::steady_clock::now();
+    cancellablePrefetch.Close();
+    const auto closeElapsed = std::chrono::steady_clock::now() -
+        closeStarted;
+    Expect(captureObservedCancellation.load(std::memory_order_relaxed) &&
+            closeElapsed < std::chrono::milliseconds(750),
+        "closing the menu cancels and joins a pending prefetch promptly");
     return 0;
 }

@@ -39,10 +39,12 @@ struct WidgetRecord
     std::optional<std::string> title;
     std::optional<std::string> customTitle;
     std::optional<std::string> titleMode;
+    std::string demoIconCategory;
     std::string sourceFolderPath;
     std::string packageId;
-    std::string scriptPath;
-    std::string legacyScriptPath;
+    std::string packageSourceProvider;
+    std::string packageSourceExternalItemId;
+    std::string packageSourceUrl;
     std::string activeCategory;
     int scrollOffset = 0;
     int tabScrollOffset = 0;
@@ -50,12 +52,25 @@ struct WidgetRecord
     bool folderSortAscending = true;
     bool autoCollect = false;
     bool listMode = false;
+    bool showDetails = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    std::optional<float> detailModifiedWidth;
+    std::optional<float> detailTypeWidth;
+    std::optional<float> detailSizeWidth;
+    std::optional<float> detailModifiedPosition;
+    std::optional<float> detailTypePosition;
+    std::optional<float> detailSizePosition;
+    std::string contentSortColumn = "none";
+    bool contentSortAscending = true;
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
     bool showOnHoverOnly = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    bool largeFolderTitleless = false;
     bool keepWhenDesktopHidden = false;
     std::optional<bool> showTitle;
     std::optional<bool> bottomBarHover;
@@ -72,6 +87,13 @@ struct DockRecord
     int folderSortMode = 0;
     bool folderSortAscending = true;
     std::vector<std::string> folderItems;
+    bool listMode = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    std::optional<float> detailModifiedPosition;
+    std::optional<float> detailTypePosition;
+    std::optional<float> detailSizePosition;
 };
 
 struct Document
@@ -83,12 +105,21 @@ struct Document
     std::optional<std::string> firstPageMonitor;
     std::optional<std::string> lastPageMonitor;
     std::optional<bool> dockEnabled;
+    // cu-native font sizes. The fields without the Cu suffix are legacy point
+    // values that are converted once when older layouts are loaded.
+    std::optional<float> itemFontSizeCu;
+    std::optional<float> listItemFontSizeCu;
     std::optional<float> itemFontSize;
+    std::optional<float> listItemFontSize;
     std::optional<float> itemFontWeight;
     std::optional<float> iconSpacing;
     std::optional<float> componentSpacing;
+    std::optional<float> iconSizeScale;
+    // Legacy layout-wide migration input. New layouts persist the widget field.
+    std::optional<bool> collectionLargeFolderTitleless;
     std::optional<int> shortcutArrowMode;
     std::optional<bool> iconBeautifyEnabled;
+    std::optional<int> iconBeautifyPreset;
     std::optional<int> iconBeautifyMode;
     std::optional<float> iconBeautifyBgOpacity;
     std::optional<bool> iconBeautifyGradientEnabled;
@@ -99,6 +130,29 @@ struct Document
     std::optional<float> iconBeautifyBgEndR;
     std::optional<float> iconBeautifyBgEndG;
     std::optional<float> iconBeautifyBgEndB;
+    std::optional<int> iconBeautifyShape;
+    std::optional<float> iconBeautifyContentScale;
+    // Legacy migration input. New layouts persist numeric texture controls.
+    std::optional<int> iconBeautifyFinish;
+    std::optional<float> iconBeautifyTextureHighlightStrength;
+    std::optional<float> iconBeautifyTextureHighlightSize;
+    std::optional<float> iconBeautifyTextureHighlightAngle;
+    std::optional<float> iconBeautifyTextureShadeStrength;
+    std::optional<float> iconBeautifyTextureEdgeHighlight;
+    std::optional<bool> iconBeautifyFilterEnabled;
+    std::optional<float> iconBeautifyFilterStrength;
+    std::optional<float> iconBeautifyFilterTintR;
+    std::optional<float> iconBeautifyFilterTintG;
+    std::optional<float> iconBeautifyFilterTintB;
+    std::optional<bool> iconBeautifyOutlineEnabled;
+    // Legacy migration input. New layouts persist iconBeautifyOutlineEnabled.
+    std::optional<int> iconBeautifyOutlineMode;
+    std::optional<float> iconBeautifyOutlineWidth;
+    std::optional<float> iconBeautifyOutlineOpacity;
+    std::optional<float> iconBeautifyOutlineR;
+    std::optional<float> iconBeautifyOutlineG;
+    std::optional<float> iconBeautifyOutlineB;
+    std::optional<float> iconBeautifyShadowStrength;
     std::vector<PageRecord> pages;
     std::vector<ItemRecord> items;
     std::vector<WidgetRecord> widgets;

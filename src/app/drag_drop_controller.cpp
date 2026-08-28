@@ -1,11 +1,14 @@
 #include "drag_drop_controller.h"
+#include "../ole_drag_rules.h"
 
+#include <algorithm>
 #include <utility>
 
 void DragDropController::BeginSelfDrag()
 {
     transport_ = Transport::SelfOle;
     selfDragReturned_ = false;
+    selfDragNativeResumeRequested_ = false;
     externalSummary_ = {};
 }
 
@@ -13,6 +16,52 @@ void DragDropController::MarkSelfDragReturned()
 {
     if (transport_ == Transport::SelfOle)
         selfDragReturned_ = true;
+}
+
+void DragDropController::ClearSelfDragReturned()
+{
+    if (transport_ == Transport::SelfOle &&
+        !selfDragNativeResumeRequested_)
+    {
+        selfDragReturned_ = false;
+    }
+}
+
+void DragDropController::RequestSelfDragNativeResume()
+{
+    if (transport_ == Transport::SelfOle &&
+        selfDragReturned_)
+    {
+        selfDragNativeResumeRequested_ = true;
+    }
+}
+
+HRESULT DragDropController::QueryContinueSelfDrag(
+    bool escapePressed,
+    bool primaryButtonDown,
+    bool pointerOnDesktopSurface)
+{
+    using snowdesktop::ole_drag_rules::QueryContinueDragAction;
+    const auto action = snowdesktop::ole_drag_rules::
+        SelectQueryContinueDragAction(
+            escapePressed,
+            primaryButtonDown,
+            IsSelfDragActive(),
+            SelfDragReturned(),
+            pointerOnDesktopSurface);
+    switch (action)
+    {
+    case QueryContinueDragAction::Cancel:
+        return DRAGDROP_S_CANCEL;
+    case QueryContinueDragAction::Drop:
+        return DRAGDROP_S_DROP;
+    case QueryContinueDragAction::ResumeNative:
+        RequestSelfDragNativeResume();
+        return DRAGDROP_S_CANCEL;
+    case QueryContinueDragAction::ContinueOle:
+    default:
+        return S_OK;
+    }
 }
 
 void DragDropController::EndSelfDrag()
@@ -31,11 +80,17 @@ bool DragDropController::SelfDragReturned() const
     return selfDragReturned_;
 }
 
+bool DragDropController::SelfDragNativeResumeRequested() const
+{
+    return selfDragNativeResumeRequested_;
+}
+
 void DragDropController::BeginExternalDrag(
     ExternalDragSummary summary)
 {
     transport_ = Transport::ExternalOle;
     selfDragReturned_ = false;
+    selfDragNativeResumeRequested_ = false;
     externalSummary_ = std::move(summary);
 }
 
@@ -91,7 +146,9 @@ DragTargetResolution DragDropController::ResolveExternalTarget(
 {
     DragTargetResolution resolution =
         DragTargetResolver::ResolveExternal(
-            containers, point, filter);
+            containers, point, filter,
+            static_cast<std::size_t>(std::max(
+                1, externalSummary_.fileCount)));
     session_.UpdateTarget(
         resolution.container,
         resolution.slot,

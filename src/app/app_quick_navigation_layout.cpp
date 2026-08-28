@@ -122,8 +122,8 @@ void DesktopApp::SetQuickNavigationDesktopViewMode(
     SaveNavigationSettings(
         GetNavigationSettingsPath().c_str(),
         navigationSettings_);
-    if (settingsWindow_)
-        settingsWindow_->SyncNavigationSettings(
+    if (settingsController_)
+        (void)settingsController_->SynchronizeNavigation(
             navigationSettings_);
     quickNavigationScrollOffset_ = 0;
     quickNavigationInitialJumpOpen_ = false;
@@ -945,6 +945,7 @@ bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
 bool DesktopApp::HasQuickNavigationEverythingLoadMoreButton() const
 {
     return everythingSearchAvailable_ &&
+        !quickNavigationEverythingSearchPending_ &&
         quickNavigationEverythingHasMore_ &&
         !quickNavigationEverythingResults_.empty() &&
         !GetQuickNavigationEffectiveSearchText().empty();
@@ -996,6 +997,7 @@ bool DesktopApp::TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point)
 
     const bool appsExpanded = quickNavigationAppsExpanded_;
     RefreshQuickNavigationEverythingResults();
+    StartQueuedQuickNavigationEverythingSearch();
     quickNavigationAppsExpanded_ = appsExpanded;
     const int maxScroll = GetQuickNavigationMaxScrollOffset(quickNavigationRect_);
     if (static_cast<int>(quickNavigationEverythingResults_.size()) > oldResultCount)

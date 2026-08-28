@@ -1,4 +1,5 @@
 #include "app.h"
+#include <algorithm>
 #include <numeric>
 
 // Dock container lookup, invalidation and work-area reservation.
@@ -16,10 +17,7 @@ DockContainer* DesktopApp::GetDockContainerAtPoint(POINT point) const
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
-        if (desktopIconsHidden_ &&
-            !dockSettings_.keepWhenDesktopHidden &&
-            !(floatingDockVisible_ &&
-                dock == floatingDockContainer_))
+        if (!IsDockContainerInteractionVisible(dock))
             continue;
         if (dock->ContainsInteractivePoint(point)) return dock;
     }
@@ -35,20 +33,35 @@ void DesktopApp::InvalidateDockContainers()
     }
 }
 
+bool DesktopApp::SynchronizeDockContainerAreas()
+{
+    const size_t dockContainerCount = static_cast<size_t>(std::count_if(
+        containers_.begin(), containers_.end(), [](const auto& container) {
+            return dynamic_cast<DockContainer*>(container.get()) != nullptr;
+        }));
+    if (dockContainerCount != dockAreas_.size())
+        return false;
+
+    size_t areaIndex = 0;
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+        dock->SetReservedArea(dockAreas_[areaIndex++]);
+    }
+    return true;
+}
+
 void DesktopApp::InvalidateDockRects(BOOL erase)
 {
-    if (floatingDockVisible_)
-        InvalidateFloatingDockWindow(true);
+    if (floatingDockHostActive_)
+        InvalidatePersistentDockHosts(true);
     if (!hwnd_) return;
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock ||
-            !snowdesktop::floating_dock_rules::
-                ShouldRenderDesktopDock(
-                    floatingDockDesktopCopySuppressed_,
-                    dock ==
-                        floatingDockContainer_))
+            IsDockHostedByPersistentHost(dock))
             continue;
         const RECT bounds = dock->GetInteractiveBounds();
         InvalidateRect(hwnd_, &bounds, erase);
@@ -67,25 +80,7 @@ void DesktopApp::PrepareDockBackdropForDragTransition()
 
 int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
 {
-    const int pitchX = page.cellWidth + (page.columns > 1 ? page.gapX : 0);
-    const int pitchY = page.cellHeight + (page.rows > 1 ? page.gapY : 0);
-    const float layoutScale = std::max(0.1f, std::min(
-        static_cast<float>(std::max(1, pitchX)) / static_cast<float>(kCellWidth),
-        static_cast<float>(std::max(1, pitchY)) / static_cast<float>(kMinCellHeight)));
-    const int inset = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
-    if (page.cellHeight < static_cast<int>(std::round(50.0f * layoutScale)))
-    {
-        return std::max(1, std::min({
-            static_cast<int>(std::round(32.0f * layoutScale)),
-            std::max(1, page.cellWidth - inset * 2),
-            std::max(1, page.cellHeight - inset * 2) }));
-    }
-    const float lineHeight = itemFontSize_ * 7.0f / 6.0f * layoutScale;
-    const int textHeight = std::max(1,
-        static_cast<int>(std::floor(lineHeight * 2.0f)) - 1);
-    return std::max(1, std::min(
-        std::max(1, page.cellWidth - inset * 2),
-        std::max(1, page.cellHeight - textHeight - inset * 2)));
+    return GetPageItemVisualMetrics(page).iconSize;
 }
 
 void DesktopApp::ApplyDockWorkAreaReservation()
@@ -141,6 +136,12 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     dockAreas_.clear();
     dockWorkAreaReservationApplied_ = false;
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
+
+    const bool reserveDesktopWorkArea =
+        snowdesktop::dock_settings_rules::
+            ShouldReserveDesktopWorkArea(
+                dockSettings_.showOnlyWhenSummoned,
+                dockSettings_.allowDesktopContentOverlap);
 
     std::vector<size_t> targetPages = BuildMonitorRenderOrder();
     if (targetPages.empty())
@@ -245,9 +246,18 @@ void DesktopApp::ApplyDockWorkAreaReservation()
         reserveEdge(targetPage, bestReserved, &dockArea);
         ApplyIconSpacingToPage(targetPage);
         if (!IsRectEmptyRect(dockArea)) dockAreas_.push_back(dockArea);
+
+        // DockContainer geometry still comes from dockArea when overlap is
+        // allowed. Only restore the icon/widget work area so desktop content
+        // may occupy the same edge strip without removing the Dock itself.
+        if (!reserveDesktopWorkArea)
+        {
+            targetPage.workArea = originalWorkArea;
+            ApplyIconSpacingToPage(targetPage);
+        }
     }
     dockWorkAreaReservationApplied_ =
-        !dockAreas_.empty();
+        reserveDesktopWorkArea && !dockAreas_.empty();
     if (dockWorkAreaReservationApplied_)
         dockWorkAreaReservationPosition_ =
             dockSettings_.position;

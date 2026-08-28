@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace contract = snowdesktop::right_click_contract;
 namespace slot = snowdesktop::slot_contract;
@@ -54,6 +55,7 @@ void TestContainerMenuMatrix()
         case Surface::FolderMapping:
         case Surface::CollectionGroup:
         case Surface::FileGroup:
+        case Surface::LuaLogicalSlot:
         case Surface::Guide:
             expected = Menu::Widget;
             break;
@@ -79,7 +81,7 @@ void TestSlotItemMenuMatrix()
         slot::kSurfaceDescriptors)
     {
         for (std::size_t itemIndex = 0;
-            itemIndex < static_cast<std::size_t>(Item::None) + 1;
+            itemIndex < static_cast<std::size_t>(Item::Count);
             ++itemIndex)
         {
             const Item item =
@@ -142,6 +144,10 @@ void TestSlotItemMenuMatrix()
                 else if (item == Item::Widget)
                     expected = Menu::Widget;
                 break;
+            case Surface::LuaLogicalSlot:
+                if (item == Item::LogicalSlotItem)
+                    expected = Menu::LogicalSlotItem;
+                break;
             default:
                 break;
             }
@@ -170,6 +176,41 @@ void TestSelectionContract()
     Check(
         contract::ShouldPreserveSelectionOnRightClick(true),
         "right-clicking a selected item must preserve multi-selection");
+}
+
+void TestLuaWidgetMenuScope()
+{
+    struct MenuItem
+    {
+        std::string actionId;
+        bool elementContext = false;
+        bool separator = false;
+        std::vector<MenuItem> children;
+    };
+
+    using Scope = contract::LuaWidgetMenuScope;
+    Check(
+        contract::ResolveLuaWidgetMenuScope(false) == Scope::Widget,
+        "component actions must remain attached to the widget menu");
+    Check(
+        contract::ResolveLuaWidgetMenuScope(true) == Scope::Element,
+        "element actions must replace the widget menu at that target");
+    Check(
+        !contract::ShouldOfferComponentPanelShortcut(Scope::Widget) &&
+            contract::ShouldOfferComponentPanelShortcut(Scope::Element),
+        "only element menus expose the component-panel escape hatch");
+    const std::vector<MenuItem> nestedComponentMenu = {
+        MenuItem{ {}, false, false,
+            { MenuItem{ "component-action", false, false, {} } } }
+    };
+    const std::vector<MenuItem> nestedElementMenu = {
+        MenuItem{ {}, false, false,
+            { MenuItem{ "element-action", true, false, {} } } }
+    };
+    Check(
+        !contract::HasLuaElementMenuAction(nestedComponentMenu) &&
+            contract::HasLuaElementMenuAction(nestedElementMenu),
+        "nested Lua menu leaves must participate in element scope routing");
 }
 
 void TestMenuFocusRestoreContract()
@@ -210,6 +251,7 @@ int main()
     TestContainerMenuMatrix();
     TestSlotItemMenuMatrix();
     TestSelectionContract();
+    TestLuaWidgetMenuScope();
     TestMenuFocusRestoreContract();
     TestShellItemActionContract();
     if (failures != 0)

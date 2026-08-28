@@ -21,6 +21,56 @@ constexpr int kAppearancePresetAcrylicLight = 11;
 // component preset lists.
 constexpr int kAppearancePresetTaskbarTransparent = 12;
 
+// Compact four-theme selection shared by independent overlay surfaces.
+constexpr int kFourThemeDark = 0;
+constexpr int kFourThemeLight = 1;
+constexpr int kFourThemeAcrylicDark = 2;
+constexpr int kFourThemeAcrylicLight = 3;
+
+/** @brief Clamp a persisted four-theme selection without changing its wire values. */
+constexpr int NormalizeFourThemeSelection(int selection)
+{
+    return selection < kFourThemeDark
+        ? kFourThemeDark
+        : selection > kFourThemeAcrylicLight
+        ? kFourThemeAcrylicLight
+        : selection;
+}
+
+/** @brief Map one of the six global presets to the four independent overlay themes. */
+constexpr int FourThemeSelectionFromAppearancePreset(int presetId)
+{
+    switch (presetId)
+    {
+    case kAppearancePresetLight:
+        return kFourThemeLight;
+    case kAppearancePresetGlassDark:
+    case kAppearancePresetAcrylicDark:
+        return kFourThemeAcrylicDark;
+    case kAppearancePresetGlassLight:
+    case kAppearancePresetAcrylicLight:
+        return kFourThemeAcrylicLight;
+    default:
+        return kFourThemeDark;
+    }
+}
+
+/** @brief Convert a persisted four-theme selection back to an appearance preset ID. */
+constexpr int AppearancePresetFromFourThemeSelection(int selection)
+{
+    switch (NormalizeFourThemeSelection(selection))
+    {
+    case kFourThemeLight:
+        return kAppearancePresetLight;
+    case kFourThemeAcrylicDark:
+        return kAppearancePresetAcrylicDark;
+    case kFourThemeAcrylicLight:
+        return kAppearancePresetAcrylicLight;
+    default:
+        return kAppearancePresetDark;
+    }
+}
+
 /**
  * @brief 个性化设置结构体
  * @details 存储桌面组件的颜色与透明度外观参数，包含预设工厂方法。
@@ -28,6 +78,8 @@ constexpr int kAppearancePresetTaskbarTransparent = 12;
  */
 struct PersonalizationSettings
 {
+    bool operator==(const PersonalizationSettings&) const = default;
+
     /**
      * @name 组件背景色 (RGB)
      * @brief 组件背景填充色的 RGB 分量，取值范围 [0.0f, 1.0f]
@@ -72,10 +124,17 @@ struct PersonalizationSettings
     float barHeight = 24.0f;
 
     /**
-     * @brief 桌面文件、映射文件夹与集合组共用的分类标签字号。
+     * @brief 桌面文件、映射文件夹与集合组共用的分类标签条高度。
+     * @details 属于组件布局，不随主题预设切换。标签与搜索框文字字号
+     *          按比例（×15/34）随高度联动。
+     */
+    float categorizedTabHeight = 34.0f;
+
+    /**
+     * @brief 分类标签（桌面文件、映射文件夹）是否显示文件数量。
      * @details 属于组件布局，不随主题预设切换。
      */
-    float categorizedTabFontSize = 15.0f;
+    bool showCategoryTabCounts = true;
 
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */
@@ -150,7 +209,7 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
 bool LoadPersonalization(
     const wchar_t* path,
     PersonalizationSettings& s,
-    bool* categorizedTabFontSizeLoaded = nullptr);
+    bool* categorizedTabHeightLoaded = nullptr);
 
 /**
  * @brief 将个性化设置保存到 JSON 文件

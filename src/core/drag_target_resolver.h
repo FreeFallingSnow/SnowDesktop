@@ -30,7 +30,8 @@ public:
     static bool AcceptsInternal(
         const Container& target,
         const DragSourceList& source);
-    static bool AcceptsExternal(const Container& target);
+    static bool AcceptsExternal(const Container& target,
+        std::size_t itemCount = 1);
 
     static DragTargetResolution ResolveInternal(
         const std::vector<std::unique_ptr<Container>>& containers,
@@ -41,5 +42,6 @@ public:
     static DragTargetResolution ResolveExternal(
         const std::vector<std::unique_ptr<Container>>& containers,
         POINT point,
-        const CandidateFilter& filter = {});
+        const CandidateFilter& filter = {},
+        std::size_t itemCount = 1);
 };

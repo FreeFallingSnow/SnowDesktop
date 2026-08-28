@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_item_layout.h"
 
 // Collection-popup model lookup, selection adapter, geometry and animation-cache preparation.
 
@@ -58,65 +59,82 @@ size_t DesktopApp::GetPopupItemCount(
 
 RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
-    const std::wstring& targetPageId = popupPageId_.empty()
-        ? widget.gridCell.pageId : popupPageId_;
-    const GridPage* page = nullptr;
-    for (const auto& p : gridPages_)
-    {
-        if (p.id == targetPageId)
-        {
-            page = &p;
-            break;
-        }
-    }
-    if (!page && popupHasAnchor_)
-    {
-        for (const auto& p : gridPages_)
-        {
-            if (PtInRect(&p.bounds, popupAnchorPoint_))
-            {
-                page = &p;
-                break;
-            }
-        }
-    }
-    if (!page && !gridPages_.empty())
-        page = &gridPages_.front();
+    const GridPage* page = ResolveCollectionPopupPage(widget);
+    const auto metrics = GetCollectionPopupLayoutMetrics(widget);
 
     RECT work = page ? page->workArea : layoutWorkArea_;
     const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
     const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
-    const int cellW = GetCollectionPopupCellWidth();
-    const int cellH = GetCollectionPopupCellHeight();
-    const int availableWidth = std::max(1, workWidth - 24);
-    const int maxWidth = std::min(560, availableWidth);
-    const int popupContentWidth = std::max(1, maxWidth - kCollectionPopupPaddingX * 2);
+    const int cellW = metrics.cellWidth;
+    const int cellH = metrics.cellHeight;
+    const int availableWidth = std::max(
+        1, workWidth - metrics.edgeMargin * 2);
+    const int maxWidth = std::min(
+        metrics.maximumWidth, availableWidth);
+    const int popupContentWidth = std::max(
+        1, maxWidth - metrics.paddingX * 2);
     const int maxColumns = std::max(1,
-        (popupContentWidth + kCollectionPopupGapX) /
-        std::max(1, cellW + kCollectionPopupGapX));
+        (popupContentWidth + metrics.gapX) /
+        std::max(1, cellW + metrics.gapX));
     const size_t itemCount =
         GetPopupItemCount(widget);
-    int columns =
-        snowdesktop::collection_popup_layout::
+    const bool listMode = widget.listMode;
+    int columns = listMode
+        ? 1
+        : snowdesktop::collection_popup_layout::
             PreferredColumnCount(
                 itemCount, maxColumns);
     int rows =
+        listMode
+        ? snowdesktop::collection_popup_layout::
+            RequiredListRowCount(itemCount)
+        : snowdesktop::collection_popup_layout::
+            RequiredRowCount(itemCount, columns);
+    const int maxHeight =
         snowdesktop::collection_popup_layout::
-            RequiredRowCount(
-                itemCount, columns);
-    const int maxHeight = std::max(1, workHeight - 24);
+            ResolveMaximumHeight(
+                metrics, workHeight);
     auto popupWidthForColumns = [&](int columnCount) {
-        return kCollectionPopupPaddingX * 2 + columnCount * cellW +
-            std::max(0, columnCount - 1) * kCollectionPopupGapX;
+        if (listMode)
+            return maxWidth;
+        return metrics.paddingX * 2 + columnCount * cellW +
+            std::max(0, columnCount - 1) * metrics.gapX;
     };
     auto popupHeightForRows = [&](int rowCount) {
-        return kCollectionPopupHeaderHeight + rowCount * cellH +
-            std::max(0, rowCount - 1) * kCollectionPopupGapY +
-            kCollectionPopupBottomPadding;
+        if (listMode)
+        {
+            const RECT viewport{
+                0, 0, std::max(1, maxWidth - metrics.paddingX * 2),
+                std::numeric_limits<LONG>::max() / 4 };
+            const auto layout = snowdesktop::widget_item_layout::
+                ResolveList(
+                    viewport,
+                    snowdesktop::collection_popup_layout::
+                        ResolveListRowHeight(
+                            metrics, listItemFontSizeCu_),
+                    GetLayoutSpacingScale());
+            const int detailsHeader =
+                snowdesktop::collection_popup_layout::
+                    DetailsVisible(
+                        widget.listMode,
+                        widget.detailShowModified,
+                        widget.detailShowType,
+                        widget.detailShowSize)
+                ? snowdesktop::collection_popup_layout::
+                    ResolveDetailsHeaderHeight(metrics)
+                : 0;
+            return metrics.headerHeight + detailsHeader +
+                snowdesktop::widget_item_layout::ContentHeight(
+                    layout, static_cast<size_t>(rowCount)) +
+                metrics.bottomPadding;
+        }
+        return metrics.headerHeight + rowCount * cellH +
+            std::max(0, rowCount - 1) * metrics.gapY +
+            metrics.bottomPadding;
     };
     int width = popupWidthForColumns(columns);
     int height = popupHeightForRows(rows);
-    if (itemCount > 0 &&
+    if (!listMode && itemCount > 0 &&
         height > maxHeight &&
         columns < maxColumns)
     {
@@ -141,94 +159,223 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             {
             case DockPosition::Top:
                 left = popupAnchorPoint_.x - width / 2;
-                top = popupAnchorPoint_.y + 12;
+                top = popupAnchorPoint_.y + metrics.anchorGap;
                 break;
             case DockPosition::Left:
-                left = popupAnchorPoint_.x + 12;
+                left = popupAnchorPoint_.x + metrics.anchorGap;
                 top = popupAnchorPoint_.y - height / 2;
                 break;
             case DockPosition::Right:
-                left = popupAnchorPoint_.x - width - 12;
+                left = popupAnchorPoint_.x - width - metrics.anchorGap;
                 top = popupAnchorPoint_.y - height / 2;
                 break;
             case DockPosition::Bottom:
             default:
                 left = popupAnchorPoint_.x - width / 2;
-                top = popupAnchorPoint_.y - height - 12;
+                top = popupAnchorPoint_.y - height - metrics.anchorGap;
                 break;
             }
         }
         else
         {
-            left = popupAnchorPoint_.x + 12;
-            top = popupAnchorPoint_.y + 12;
+            left = popupAnchorPoint_.x + metrics.anchorGap;
+            top = popupAnchorPoint_.y + metrics.anchorGap;
         }
-        left = std::clamp(left, static_cast<int>(work.left + 12),
-            static_cast<int>(std::max<LONG>(work.left + 12, work.right - width - 12)));
-        top = std::clamp(top, static_cast<int>(work.top + 12),
-            static_cast<int>(std::max<LONG>(work.top + 12, work.bottom - height - 12)));
+        left = std::clamp(
+            left,
+            static_cast<int>(work.left + metrics.edgeMargin),
+            static_cast<int>(std::max<LONG>(
+                work.left + metrics.edgeMargin,
+                work.right - width - metrics.edgeMargin)));
+        top = std::clamp(
+            top,
+            static_cast<int>(work.top + metrics.edgeMargin),
+            static_cast<int>(std::max<LONG>(
+                work.top + metrics.edgeMargin,
+                work.bottom - height - metrics.edgeMargin)));
     }
     return MakeRect(left, top, left + width, top + height);
 }
 
+const GridPage* DesktopApp::ResolveCollectionPopupPage(
+    const DesktopWidget& widget) const
+{
+    const std::wstring& targetPageId = popupPageId_.empty()
+        ? widget.gridCell.pageId : popupPageId_;
+    const GridPage* page = nullptr;
+    for (const auto& p : gridPages_)
+    {
+        if (p.id == targetPageId)
+        {
+            page = &p;
+            break;
+        }
+    }
+    if (!page && popupHasAnchor_)
+    {
+        for (const auto& p : gridPages_)
+        {
+            if (PtInRect(&p.bounds, popupAnchorPoint_))
+            {
+                page = &p;
+                break;
+            }
+        }
+    }
+    if (!page && !gridPages_.empty())
+        page = &gridPages_.front();
+    return page;
+}
+
+snowdesktop::collection_popup_layout::Metrics
+DesktopApp::GetCollectionPopupLayoutMetrics(
+    const DesktopWidget& widget) const
+{
+    if (const GridPage* page =
+            ResolveCollectionPopupPage(widget))
+    {
+        const auto visualMetrics =
+            GetPageItemVisualMetrics(*page);
+        return snowdesktop::collection_popup_layout::
+            ResolveMetrics(
+                page->cellWidth,
+                page->cellHeight,
+                visualMetrics.minimumGridWidth,
+                visualMetrics.minimumGridHeight,
+                visualMetrics.layoutScale,
+                visualMetrics.minimumListHeight);
+    }
+    return snowdesktop::collection_popup_layout::
+        ResolveMetrics(
+            kCellWidth,
+            kMinCellHeight,
+            kCellWidth,
+            kMinCellHeight,
+            1.0f);
+}
+
+snowdesktop::collection_popup_layout::Metrics
+DesktopApp::GetOpenCollectionPopupLayoutMetrics() const
+{
+    if (const DesktopWidget* widget = GetOpenPopupWidget())
+        return GetCollectionPopupLayoutMetrics(*widget);
+    return snowdesktop::collection_popup_layout::
+        ResolveMetrics(
+            kCellWidth,
+            kMinCellHeight,
+            kCellWidth,
+            kMinCellHeight,
+            1.0f);
+}
+
 RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
 {
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    int top = popup.top + metrics.headerHeight;
+    if (const DesktopWidget* widget = GetOpenPopupWidget();
+        widget &&
+        snowdesktop::collection_popup_layout::DetailsVisible(
+            widget->listMode,
+            widget->detailShowModified,
+            widget->detailShowType,
+            widget->detailShowSize))
+    {
+        top += snowdesktop::collection_popup_layout::
+            ResolveDetailsHeaderHeight(metrics);
+    }
     return MakeRect(
-        popup.left + kCollectionPopupPaddingX,
-        popup.top + kCollectionPopupHeaderHeight,
-        popup.right - kCollectionPopupPaddingX,
-        popup.bottom - kCollectionPopupBottomPadding);
+        popup.left + metrics.paddingX,
+        top,
+        popup.right - metrics.paddingX,
+        popup.bottom - metrics.bottomPadding);
+}
+
+RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
+    const RECT& popup) const
+{
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget ||
+        !snowdesktop::collection_popup_layout::DetailsVisible(
+            widget->listMode,
+            widget->detailShowModified,
+            widget->detailShowType,
+            widget->detailShowSize))
+    {
+        return {};
+    }
+
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    const RECT content = GetCollectionPopupContentRect(popup);
+    return MakeRect(
+        content.left,
+        popup.top + metrics.headerHeight,
+        content.right,
+        content.top);
+}
+
+snowdesktop::list_detail_rules::Column
+DesktopApp::HitTestCollectionPopupDetailsDivider(
+    POINT point, const RECT& popup) const
+{
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget) return snowdesktop::list_detail_rules::Column::None;
+
+    const RECT header = GetCollectionPopupDetailsHeaderRect(popup);
+    if (IsRectEmptyRect(header) || !PtInRect(&header, point))
+        return snowdesktop::list_detail_rules::Column::None;
+
+    const int width = std::max<int>(1, header.right - header.left);
+    const auto columns = snowdesktop::list_detail_rules::BuildColumns(
+        width,
+        widget->detailShowModified,
+        widget->detailShowType,
+        widget->detailShowSize,
+        widget->detailModifiedPosition,
+        widget->detailTypePosition,
+        widget->detailSizePosition);
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    return snowdesktop::list_detail_rules::HitDivider(
+        columns,
+        point.x - header.left,
+        snowdesktop::collection_popup_layout::ScaleDimension(
+            4, metrics.scale));
 }
 
 RECT DesktopApp::GetDockFolderPopupSortButtonRect(
     const RECT& popup) const
 {
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    const auto headerBounds =
+        snowdesktop::collection_popup_layout::
+            ResolveHeaderVerticalBounds(metrics.scale);
     const int width = std::min(
-        104,
-        std::max(72, static_cast<int>(
+        snowdesktop::collection_popup_layout::ScaleDimension(
+            104, metrics.scale),
+        std::max(
+            snowdesktop::collection_popup_layout::ScaleDimension(
+                72, metrics.scale),
+            static_cast<int>(
             popup.right - popup.left) / 3));
     return MakeRect(
-        popup.right - 16 - width,
-        popup.top + 11,
-        popup.right - 16,
-        popup.top + 45);
+        popup.right - snowdesktop::collection_popup_layout::
+            ScaleDimension(16, metrics.scale) - width,
+        popup.top + headerBounds.sortButtonTop,
+        popup.right - snowdesktop::collection_popup_layout::
+            ScaleDimension(16, metrics.scale),
+        popup.top + headerBounds.sortButtonBottom);
 }
 
 int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
 {
+    if (const DesktopWidget* widget = GetOpenPopupWidget();
+        widget && widget->listMode)
+        return 1;
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
-    const int cellW = GetCollectionPopupCellWidth();
+    const int cellW = metrics.cellWidth;
     return std::max(1,
-        (static_cast<int>(content.right - content.left) + kCollectionPopupGapX) /
-        std::max(1, cellW + kCollectionPopupGapX));
-}
-
-int DesktopApp::GetCollectionPopupCellWidth() const
-{
-    int cellW = kCellWidth;
-    for (const auto& page : gridPages_)
-    {
-        if (page.id == popupPageId_)
-        {
-            cellW = page.cellWidth;
-            break;
-        }
-    }
-    return std::clamp(cellW, 64, kCellWidth);
-}
-
-int DesktopApp::GetCollectionPopupCellHeight() const
-{
-    int cellH = kMinCellHeight;
-    for (const auto& page : gridPages_)
-    {
-        if (page.id == popupPageId_)
-        {
-            cellH = page.cellHeight;
-            break;
-        }
-    }
-    return std::clamp(cellH, 84, kMinCellHeight);
+        (static_cast<int>(content.right - content.left) + metrics.gapX) /
+        std::max(1, cellW + metrics.gapX));
 }
 
 int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
@@ -241,28 +388,140 @@ int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RE
 
 int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const
 {
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
-    const int cellH = GetCollectionPopupCellHeight();
+    if (widget.listMode)
+    {
+        const auto layout = snowdesktop::widget_item_layout::
+            ResolveList(
+                content,
+                snowdesktop::collection_popup_layout::
+                    ResolveListRowHeight(
+                        metrics, listItemFontSizeCu_),
+                GetLayoutSpacingScale());
+        return std::max(
+            0,
+            snowdesktop::widget_item_layout::ContentHeight(
+                layout, GetPopupItemCount(widget)) -
+                std::max(1, static_cast<int>(
+                    content.bottom - content.top)));
+    }
+    const int cellH = metrics.cellHeight;
     const int rows = GetCollectionPopupRowCount(widget, popup);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     const int contentHeight = rows * std::max(1, cellH) +
-        std::max(0, rows - 1) * kCollectionPopupGapY;
+        std::max(0, rows - 1) * metrics.gapY;
     return std::max(0, contentHeight - visibleHeight);
 }
 
 RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
 {
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
-    const int cellW = GetCollectionPopupCellWidth();
-    const int cellH = GetCollectionPopupCellHeight();
+    if (const DesktopWidget* widget = GetOpenPopupWidget();
+        widget && widget->listMode)
+    {
+        const auto layout = snowdesktop::widget_item_layout::
+            ResolveList(
+                content,
+                snowdesktop::collection_popup_layout::
+                    ResolveListRowHeight(
+                        metrics, listItemFontSizeCu_),
+                GetLayoutSpacingScale());
+        return snowdesktop::widget_item_layout::ItemRect(
+            layout, linearIndex, popupScrollOffset_);
+    }
+    const int cellW = metrics.cellWidth;
+    const int cellH = metrics.cellHeight;
     const int columns = GetCollectionPopupColumnCount(popup);
     const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
     const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
     return MakeRect(
-        content.left + col * (cellW + kCollectionPopupGapX),
-        content.top + row * (cellH + kCollectionPopupGapY) - popupScrollOffset_,
-        content.left + col * (cellW + kCollectionPopupGapX) + cellW,
-        content.top + row * (cellH + kCollectionPopupGapY) - popupScrollOffset_ + cellH);
+        content.left + col * (cellW + metrics.gapX),
+        content.top + row * (cellH + metrics.gapY) - popupScrollOffset_,
+        content.left + col * (cellW + metrics.gapX) + cellW,
+        content.top + row * (cellH + metrics.gapY) - popupScrollOffset_ + cellH);
+}
+
+RECT DesktopApp::GetCollectionPopupItemIconRect(
+    const RECT& itemRect) const
+{
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget || !widget->listMode)
+        return GetItemIconRect(itemRect);
+
+    RECT nameCell = itemRect;
+    if (snowdesktop::collection_popup_layout::DetailsVisible(
+            widget->listMode,
+            widget->detailShowModified,
+            widget->detailShowType,
+            widget->detailShowSize))
+    {
+        const auto columns = snowdesktop::list_detail_rules::
+            BuildColumns(
+                std::max(1, static_cast<int>(
+                    itemRect.right - itemRect.left)),
+                widget->detailShowModified,
+                widget->detailShowType,
+                widget->detailShowSize,
+                widget->detailModifiedPosition,
+                widget->detailTypePosition,
+                widget->detailSizePosition);
+        nameCell.right = std::min<LONG>(
+            nameCell.right,
+            nameCell.left + columns.nameWidth);
+    }
+    const auto metrics = GetItemVisualMetrics(itemRect);
+    return snowdesktop::ResolveListItemIconRect(
+        nameCell,
+        nameCell.left + snowdesktop::collection_popup_layout::
+            ScaleDimension(
+                4,
+                GetOpenCollectionPopupLayoutMetrics().scale),
+        metrics);
+}
+
+RECT DesktopApp::GetCollectionPopupItemTextRect(
+    const RECT& itemRect) const
+{
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    if (!widget || !widget->listMode)
+        return GetItemTextRect(itemRect, true);
+
+    RECT nameCell = itemRect;
+    if (snowdesktop::collection_popup_layout::DetailsVisible(
+            widget->listMode,
+            widget->detailShowModified,
+            widget->detailShowType,
+            widget->detailShowSize))
+    {
+        const auto columns = snowdesktop::list_detail_rules::
+            BuildColumns(
+                std::max(1, static_cast<int>(
+                    itemRect.right - itemRect.left)),
+                widget->detailShowModified,
+                widget->detailShowType,
+                widget->detailShowSize,
+                widget->detailModifiedPosition,
+                widget->detailTypePosition,
+                widget->detailSizePosition);
+        nameCell.right = std::min<LONG>(
+            nameCell.right,
+            nameCell.left + columns.nameWidth);
+    }
+    const auto popupMetrics =
+        GetOpenCollectionPopupLayoutMetrics();
+    const RECT iconRect =
+        GetCollectionPopupItemIconRect(itemRect);
+    return MakeRect(
+        iconRect.right + snowdesktop::collection_popup_layout::
+            ScaleDimension(6, popupMetrics.scale),
+        itemRect.top + snowdesktop::collection_popup_layout::
+            ScaleDimension(2, popupMetrics.scale),
+        nameCell.right - snowdesktop::collection_popup_layout::
+            ScaleDimension(6, popupMetrics.scale),
+        itemRect.bottom - snowdesktop::collection_popup_layout::
+            ScaleDimension(2, popupMetrics.scale));
 }
 
 bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
@@ -337,11 +596,14 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
             });
     if (!ready)
         popupAnimationCacheRect_ = {};
-    else if (!floatingDockVisible_)
-        PrepareCompositionAnimationOverlay(
+    else
+    {
+        (void)PrepareCompositionAnimationOverlay(
             popupAnimationOverlay_,
             popupAnimationRenderCache_,
-            popupAnimationCacheRect_);
+            popupAnimationCacheRect_,
+            UiCompositionAnimationHost::FloatingPopup);
+    }
 
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.

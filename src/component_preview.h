@@ -1,17 +1,31 @@
 #pragma once
 
 #include "modern_menu.h"
+#include "widget_preview_stage.h"
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 namespace snowdesktop::component_preview
 {
+
+namespace detail
+{
+
+/** Pixel-center coverage for the antialiased rounded-rectangle rasterizer. */
+float RoundedRectangleCoverage(float sampleX, float sampleY,
+    float left, float top, float right, float bottom, float radius);
+
+} // namespace detail
 
 struct Bitmap
 {
@@ -20,6 +34,16 @@ struct Bitmap
     /// Premultiplied BGRA pixels, stored top-down.
     std::vector<std::uint32_t> pixels;
 };
+
+struct WallpaperBackdropCaptureResult
+{
+    widget_preview::Wallpaper wallpaper;
+    RECT desktopBounds{};
+};
+
+using WallpaperBackdropCaptureHandler = std::function<
+    WallpaperBackdropCaptureResult(const RECT&, DWORD,
+        const std::atomic_bool*)>;
 
 enum class ApplyKind
 {
@@ -64,6 +88,17 @@ struct Option
     std::wstring onLabel;
 };
 
+/** Location of the component viewport within the complete preview card stage. */
+struct StagePlacement
+{
+    int canvasWidth = 0;
+    int canvasHeight = 0;
+    int offsetX = 0;
+    int offsetY = 0;
+    bool lightTheme = false;
+    const widget_preview::Wallpaper* wallpaper = nullptr;
+};
+
 struct Card
 {
     std::wstring title;
@@ -74,10 +109,16 @@ struct Card
     /// Exact physical pixel size of the component frame on the target grid.
     int previewWidth = 0;
     int previewHeight = 0;
+    bool lightStage = false;
+    /// Optional fixed stage shared by the full card and component crop.
+    std::shared_ptr<const widget_preview::Wallpaper> stageWallpaper;
+    /// Recreate the current static Windows wallpaper behind the preview card.
+    bool useDesktopWallpaperStage = false;
     /// Includes component/mode/DPI/menu theme/personalization identity.
     std::wstring cacheKey;
     /// Called only after the exact final card viewport is known.
     std::function<Bitmap(int width, int height, UINT dpi,
+        const StagePlacement& stage,
         const ApplySettings& settings, bool hovered)> render;
     ApplySettings applySettings;
     std::vector<Option> options;
@@ -100,11 +141,13 @@ class Window
 public:
     using ApplyHandler = std::function<void(const ApplySettings&)>;
 
-    Window() = default;
+    explicit Window(WallpaperBackdropCaptureHandler captureHandler = {});
     ~Window();
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
+    /** Start the menu-scoped Wallpaper Engine capture before a preview opens. */
+    void PrefetchDesktopWallpaperBackdrop(HWND owner, POINT screenPoint);
     bool Show(const Model& model, const RECT& menuBounds,
         HWND owner, UINT dpi, bool lightTheme,
         ApplyHandler onApply = {}, const RECT& itemBounds = {},
@@ -128,6 +171,9 @@ public:
     RECT OptionBoundsForTesting(
         OptionSetting setting, bool value) const;
     RECT ApplyBoundsForTesting() const { return applyRect_; }
+    RECT CardBoundsForTesting() const { return cardRect_; }
+    RECT PreviewBoundsForTesting() const { return previewRect_; }
+    RECT MetadataBoundsForTesting() const { return metadataRect_; }
     RECT CloseBoundsForTesting() const { return closeRect_; }
     RECT PreviousBoundsForTesting() const { return previousButton_; }
     RECT PreviousGlyphBoundsForTesting() const
@@ -137,10 +183,29 @@ public:
     RECT NextBoundsForTesting() const { return nextButton_; }
     RECT NextGlyphBoundsForTesting() const { return nextGlyphRect_; }
     bool BlurEnabledForTesting() const { return blurEnabled_; }
+    bool HasWallpaperEngineCacheForTesting() const
+    {
+        return wallpaperEngineCache_ &&
+            !wallpaperEngineCache_->pixels.empty();
+    }
+    bool WaitingForWallpaperEngineFrameForTesting() const
+    {
+        return waitingForWallpaperEngineFrame_;
+    }
 
 private:
+    enum class WallpaperBackdropLoadResult
+    {
+        Ready,
+        WaitingForCapture,
+    };
+
     bool EnsureCreated(HWND owner);
     bool RenderCurrent();
+    WallpaperBackdropLoadResult LoadDesktopWallpaperBackdrop();
+    void StartWallpaperEngineBackdropCapture(const RECT& monitorBounds);
+    void FinishWallpaperEngineBackdropCapture(std::uint64_t generation);
+    void CancelWallpaperEngineBackdropCapture(bool wait);
     void SelectRelative(int delta);
     void SetOption(OptionSetting setting, bool value);
     void ApplyCurrent();
@@ -162,7 +227,9 @@ private:
     RECT previousButton_{};
     RECT nextButton_{};
     RECT pagerRect_{};
+    RECT cardRect_{};
     RECT previewRect_{};
+    RECT metadataRect_{};
     RECT applyRect_{};
     RECT closeRect_{};
     RECT previousGlyphRect_{};
@@ -190,6 +257,29 @@ private:
         modern_menu::Appearance::FollowSystem;
     ApplyHandler pendingOnApply_;
     std::unordered_map<std::wstring, Bitmap> cardFrameCache_;
+    widget_preview::Wallpaper desktopWallpaper_;
+    RECT desktopWallpaperBounds_{};
+    struct WallpaperEngineCaptureState
+    {
+        std::atomic_bool cancelled = false;
+        std::mutex mutex;
+        widget_preview::Wallpaper wallpaper;
+        RECT requestedBounds{};
+        RECT desktopBounds{};
+        std::uint64_t generation = 0;
+        bool completed = false;
+    };
+    std::shared_ptr<WallpaperEngineCaptureState>
+        wallpaperEngineCaptureState_;
+    std::thread wallpaperEngineCaptureThread_;
+    std::uint64_t wallpaperEngineCaptureGeneration_ = 0;
+    WallpaperBackdropCaptureHandler wallpaperBackdropCaptureHandler_;
+    std::shared_ptr<const widget_preview::Wallpaper>
+        wallpaperEngineCache_;
+    RECT wallpaperEngineCacheBounds_{};
+    std::shared_ptr<const widget_preview::Wallpaper>
+        desktopWallpaperEngineFrame_;
+    bool waitingForWallpaperEngineFrame_ = false;
     std::vector<POINT> committedPositions_;
 };
 

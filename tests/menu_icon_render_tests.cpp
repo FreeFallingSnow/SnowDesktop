@@ -212,6 +212,19 @@ int wmain(int argc, wchar_t** argv)
     Expect(metrics192.quickActionMaximumWidth ==
             metrics96.quickActionMaximumWidth * 2,
         "quick-action width limit follows monitor DPI");
+    Expect(metrics96.textFontHeight == 13 &&
+            metrics96.quickActionTextFontHeight == 12,
+        "96-DPI regular and quick-action text use their configured sizes");
+    Expect(metrics96.submenuArrowFontHeight == 16 &&
+            metrics120.submenuArrowFontHeight == 20 &&
+            metrics144.submenuArrowFontHeight == 24 &&
+            metrics192.submenuArrowFontHeight == 32,
+        "Fluent submenu chevron font follows monitor DPI");
+    Expect(metrics192.textFontHeight ==
+            metrics96.textFontHeight * 2 &&
+            metrics192.quickActionTextFontHeight ==
+                metrics96.quickActionTextFontHeight * 2,
+        "menu text sizes follow monitor DPI");
     Expect(metrics96.iconFontHeight == 18 &&
             metrics96.quickActionFontHeight == 18,
         "96-DPI Fluent icons use the compact menu size");
@@ -243,7 +256,8 @@ int wmain(int argc, wchar_t** argv)
     Expect(dc != nullptr, "test device context is created");
     HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
     Expect(oldBitmap != nullptr, "test bitmap is selected");
-    HFONT font = CreateFontW(-14, 0, 0, 0, FW_NORMAL,
+    HFONT font = CreateFontW(-metrics96.textFontHeight,
+        0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -254,6 +268,13 @@ int wmain(int argc, wchar_t** argv)
         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
     Expect(fluentFont != nullptr, "test Fluent icon font is created");
+    HFONT submenuArrowFont = CreateFontW(-metrics96.submenuArrowFontHeight,
+        0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,
+        CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
+    Expect(submenuArrowFont != nullptr,
+        "test Fluent submenu chevron font is created");
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,
@@ -275,12 +296,47 @@ int wmain(int argc, wchar_t** argv)
     Expect(measured.cy == metrics96.rowHeight,
         "regular menu rows use the configured height");
 
+    const snowdesktop::menu_icon::ItemView arrowOnlySubmenu{
+        L"", L"", false, true, false,
+    };
+    const RECT arrowOnlyBounds{ 0, 0, kWidth, metrics96.rowHeight };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawItem(dc, font, fluentFont,
+        arrowOnlySubmenu, arrowOnlyBounds, 0, light, metrics96,
+        submenuArrowFont),
+        "submenu chevron renders for geometry checks");
+    const RECT arrowColumn{
+        kWidth - metrics96.rightPadding - metrics96.arrowColumnWidth,
+        0,
+        kWidth - metrics96.rightPadding,
+        metrics96.rowHeight,
+    };
+    const RECT arrowInk = FindPixelsDifferentFromColorInRect(
+        pixels, kWidth, kHeight, arrowColumn, light.background);
+    const int arrowInkPixels = CountPixelsDifferentFromColorInRect(
+        pixels, kWidth, kHeight, arrowColumn, light.background);
+    const int solidArrowPixels = CountColorInRect(
+        pixels, kWidth, kHeight, arrowColumn, light.text);
+    Expect(arrowInkPixels > solidArrowPixels,
+        "Fluent submenu chevron includes anti-aliased edge coverage");
+    Expect(arrowInk.right - arrowInk.left >= 4 &&
+            arrowInk.bottom - arrowInk.top >= 7,
+        "96-DPI submenu chevron keeps a complete visible shape");
+    const int arrowRowCenterTwice =
+        arrowOnlyBounds.top + arrowOnlyBounds.bottom - 1;
+    const int arrowInkCenterTwice =
+        arrowInk.top + arrowInk.bottom - 1;
+    Expect(std::abs(arrowRowCenterTwice - arrowInkCenterTwice) <= 1,
+        "Fluent submenu chevron stays vertically centered");
+    Expect(arrowInk.right < arrowOnlyBounds.right - metrics96.rightPadding,
+        "submenu chevron keeps a safe inset from the row edge");
+
     for (const UINT alignmentDpi : std::array<UINT, 4>{ 96, 120, 144, 192 })
     {
         const auto alignmentMetrics =
             snowdesktop::menu_icon::ResolveMetrics(alignmentDpi);
         HFONT alignmentFont = CreateFontW(
-            -MulDiv(13, static_cast<int>(alignmentDpi), 96),
+            -alignmentMetrics.textFontHeight,
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -343,7 +399,8 @@ int wmain(int argc, wchar_t** argv)
         disabledBounds, ODS_DISABLED | ODS_GRAYED, light, metrics96),
         "disabled owner-draw menu item renders");
     Expect(snowdesktop::menu_icon::DrawItem(dc, font, font, submenu,
-        selectedBounds, ODS_SELECTED, light, metrics96),
+        selectedBounds, ODS_SELECTED, light, metrics96,
+        submenuArrowFont),
         "hovered owner-draw menu item renders");
     Expect(snowdesktop::menu_icon::DrawItem(dc, font, font, separator,
         separatorBounds, 0, light, metrics96),
@@ -367,6 +424,40 @@ int wmain(int argc, wchar_t** argv)
         "separator uses the themed separator color");
     Expect(accentColorPixels > 0,
         "quick-action Fluent icon contains a blue accent layer");
+
+    const std::array<std::uint8_t, 8> packageImagePixels{
+        0, 0, 255, 255,
+        255, 255, 0, 255,
+    };
+    const snowdesktop::menu_icon::ImageSourceView packageImageSource{
+        packageImagePixels.data(), packageImagePixels.size(), 2, 1, 8,
+    };
+    HBITMAP packageImage = snowdesktop::menu_icon::CreateImageBitmap(
+        packageImageSource, metrics96.iconFontHeight);
+    BITMAP packageImageInfo{};
+    Expect(packageImage &&
+            GetObjectW(packageImage, sizeof(packageImageInfo),
+                &packageImageInfo) != 0 &&
+            packageImageInfo.bmWidth == metrics96.iconFontHeight &&
+            packageImageInfo.bmHeight == metrics96.iconFontHeight,
+        "package menu image is converted to a bounded DPI-sized bitmap");
+    const snowdesktop::menu_icon::ItemView packageImageItem{
+        L"Package icon", L"", false, false, false,
+        snowdesktop::MenuQuickIcon::FontGlyph, packageImage,
+    };
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawItem(dc, font, fluentFont,
+            packageImageItem, normalBounds, 0, light, metrics96),
+        "package image menu item renders");
+    const RECT packageImageColumn{
+        metrics96.leftPadding, normalBounds.top,
+        metrics96.leftPadding + metrics96.iconColumnWidth,
+        normalBounds.bottom,
+    };
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+            packageImageColumn) > 0,
+        "package image pixels remain visible in the menu icon column");
+    DeleteObject(packageImage);
 
     const snowdesktop::menu_icon::ItemView inlinePrevious{
         L"", L"\uF15B", false, false, false,
@@ -606,6 +697,7 @@ int wmain(int argc, wchar_t** argv)
             "menu preview bitmap is written");
     }
 
+    DeleteObject(submenuArrowFont);
     DeleteObject(fluentFont);
     DeleteObject(font);
     SelectObject(dc, oldBitmap);

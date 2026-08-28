@@ -158,13 +158,13 @@ $hostProcesses = @(Get-Process -Name "SnowDesktop" -ErrorAction SilentlyContinue
 $needsRestart = $RestartHost -or
     ($hostProcesses.Count -gt 0 -and -not $targetAlreadyExisted)
 if ($needsRestart) {
-    Write-Host "Restarting SnowDesktop once to activate the development override..."
+    Write-Host "Restarting SnowDesktop once to discover the development candidate..."
     $hostProcesses | Stop-Process -Force
     Start-Sleep -Milliseconds 500
     Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot
 }
 elseif ($hostProcesses.Count -eq 0) {
-    Write-Host "Starting SnowDesktop with the development override..."
+    Write-Host "Starting SnowDesktop with the synced development candidate..."
     Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot
 }
 

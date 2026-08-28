@@ -11,9 +11,60 @@
 
 #include "drop_model.h"
 #include "container.h"
+#include "slot.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
+
+namespace snowdesktop::drag_target
+{
+struct SlotFeedbackKey
+{
+    SlotFeedbackRole role = SlotFeedbackRole::None;
+    RECT bounds{};
+    RECT scopeBounds{};
+    std::size_t index = 0;
+    std::uint64_t revision = 0;
+    std::uint32_t variant = 0;
+    bool hasItem = false;
+
+    static std::optional<SlotFeedbackKey> From(Slot* slot)
+    {
+        if (!slot) return std::nullopt;
+        const auto& identity = slot->GetFeedbackIdentity();
+        if (identity.role == SlotFeedbackRole::None)
+            return std::nullopt;
+        return SlotFeedbackKey{
+            identity.role,
+            slot->GetBounds(),
+            identity.scopeBounds,
+            slot->GetIndex(),
+            identity.revision,
+            identity.variant,
+            slot->GetItem() != nullptr,
+        };
+    }
+
+    bool operator==(const SlotFeedbackKey& other) const
+    {
+        return role == other.role &&
+            bounds.left == other.bounds.left &&
+            bounds.top == other.bounds.top &&
+            bounds.right == other.bounds.right &&
+            bounds.bottom == other.bounds.bottom &&
+            scopeBounds.left == other.scopeBounds.left &&
+            scopeBounds.top == other.scopeBounds.top &&
+            scopeBounds.right == other.scopeBounds.right &&
+            scopeBounds.bottom == other.scopeBounds.bottom &&
+            index == other.index &&
+            revision == other.revision &&
+            variant == other.variant &&
+            hasItem == other.hasItem;
+    }
+};
+}
 
 /**
  * @class DragSession
@@ -28,6 +79,12 @@ class DragSession
 public:
     /** @brief 判断当前是否处于拖拽激活状态 */
     bool IsActive() const { return active_; }
+
+    /** @brief 自绘拖拽虚影当前是否应当显示。 */
+    bool IsVisualVisible() const
+    {
+        return active_ && visualVisible_;
+    }
 
     /** @brief 拖拽是否仍保留可供释放提交使用的坐标上下文。 */
     bool HasContext() const { return hasContext_; }
@@ -81,6 +138,12 @@ public:
     /** @brief 获取当前静态场景修订版本号，用于缓存一致性判断 */
     std::uint64_t StaticSceneRevision() const { return staticSceneRevision_; }
 
+    /** @brief 获取放置反馈修订号；纯指针位移不会改变此值。 */
+    std::uint64_t PresentationRevision() const
+    {
+        return presentationRevision_;
+    }
+
     /**
      * @brief 开始一次新的拖拽会话
      * @param source      拖拽源容器指针
@@ -95,6 +158,7 @@ public:
         POINT mouseDown, POINT current)
     {
         active_ = true;
+        visualVisible_ = true;
         hasContext_ = true;
         source_ = source;
         items_ = std::move(items);
@@ -103,11 +167,17 @@ public:
         visualMouseDownPoint_ = mouseDown;
         currentPoint_ = current;
         visualItemBounds_.clear();
+        pointerAnchored_ = false;
+        visualBoundsOffset_ = {};
         action_ = DropAction::Move;
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         InvalidateStaticScene();
     }
 
@@ -120,10 +190,42 @@ public:
         currentPoint_ = current;
     }
 
+    /**
+     * @brief 切换应用自绘虚影的可见性。
+     *
+     * 自拖拽进入其他应用后由 OLE 接管反馈，此时会话仍需保留源数据和
+     * 坐标上下文，但 SnowDesktop 的虚影必须隐藏，直到重新 DragEnter。
+     */
+    bool SetVisualVisible(bool visible)
+    {
+        if (!active_ || visualVisible_ == visible)
+            return false;
+        visualVisible_ = visible;
+        return true;
+    }
+
     /** @brief 设置由应用层在真实渲染项上采集的拖拽视觉边界。 */
     void SetVisualItemBounds(std::vector<RECT> bounds)
     {
         visualItemBounds_ = std::move(bounds);
+    }
+
+    /**
+     * @brief 将拖拽逻辑落点重定向到指针，并把指定视觉热点吸附到指针。
+     * @param visualAnchor 拖拽开始时视觉热点的客户端坐标。
+     *
+     * 列表项的命中矩形包含整行文字，但拖拽态通常只绘制左侧图标。若继续
+     * 保留按下点相对整行左上角的偏移，从文字区起拖时图标虚影与桌面落点
+     * 都会固定偏离鼠标。该模式将逻辑落点改为真实指针，同时整体平移视觉
+     * 快照，使主项目的图标热点始终位于指针处。
+     */
+    void AnchorToPointer(POINT visualAnchor)
+    {
+        pointerAnchored_ = true;
+        visualBoundsOffset_ = {
+            mouseDownPoint_.x - visualAnchor.x,
+            mouseDownPoint_.y - visualAnchor.y
+        };
     }
 
     /**
@@ -158,6 +260,8 @@ public:
      */
     POINT ResolveTargetPoint(POINT groupOrigin, POINT current) const
     {
+        if (pointerAnchored_)
+            return current;
         return {
             groupOrigin.x + current.x - mouseDownPoint_.x,
             groupOrigin.y + current.y - mouseDownPoint_.y
@@ -185,10 +289,10 @@ public:
         const LONG dx = current.x - visualMouseDownPoint_.x;
         const LONG dy = current.y - visualMouseDownPoint_.y;
         return {
-            base.left + dx,
-            base.top + dy,
-            base.right + dx,
-            base.bottom + dy
+            base.left + visualBoundsOffset_.x + dx,
+            base.top + visualBoundsOffset_.y + dy,
+            base.right + visualBoundsOffset_.x + dx,
+            base.bottom + visualBoundsOffset_.y + dy
         };
     }
 
@@ -215,15 +319,70 @@ public:
      * @param targetSlot      目标插槽指针
      * @param targetRegion    命中区域类型
      */
-    void UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
+    bool UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
     {
-        targetContainer_ = targetContainer;
-        targetSlot_ = targetSlot;
-        targetSlotGeneration_ =
-            targetContainer && targetSlot
+        const bool nextGenerationTracked =
+            targetContainer && targetSlot &&
+            !targetSlot->IsTransientDragTarget();
+        const std::uint64_t nextGeneration =
+            nextGenerationTracked
                 ? targetContainer->GetSlotGeneration()
                 : 0;
+        const auto nextFeedbackKey =
+            snowdesktop::drag_target::SlotFeedbackKey::From(targetSlot);
+        const bool slotChanged =
+            targetSlotFeedbackKey_ || nextFeedbackKey
+                ? targetSlotFeedbackKey_ != nextFeedbackKey
+                : targetSlot_ != targetSlot ||
+                    targetSlotGeneration_ != nextGeneration ||
+                    targetSlotGenerationTracked_ != nextGenerationTracked;
+        const bool presentationChanged =
+            targetContainer_ != targetContainer ||
+            slotChanged ||
+            targetRegion_ != targetRegion;
+        targetContainer_ = targetContainer;
+        targetSlot_ = targetSlot;
+        targetSlotGeneration_ = nextGeneration;
+        targetSlotGenerationTracked_ = nextGenerationTracked;
+        targetSlotFeedbackKey_ = nextFeedbackKey;
         targetRegion_ = targetRegion;
+        if (presentationChanged)
+            InvalidatePresentation();
+        return presentationChanged;
+    }
+
+    /**
+     * @brief 更新桌面放置反馈使用的请求网格。
+     *
+     * 鼠标命中槽使用指针位置，而桌面放置还会应用拖拽组热点偏移。
+     * 两者可在不同时间跨格；请求网格必须独立进入呈现键，避免命中槽
+     * 尚未变化时继续显示上一格的落点。
+     */
+    bool UpdatePresentationAnchor(const GridCell& cell)
+    {
+        if (cell.pageId.empty())
+            return ClearPresentationAnchor();
+        const bool changed =
+            !presentationAnchorValid_ ||
+            presentationAnchorCell_.pageId != cell.pageId ||
+            presentationAnchorCell_.column != cell.column ||
+            presentationAnchorCell_.row != cell.row;
+        presentationAnchorValid_ = true;
+        presentationAnchorCell_ = cell;
+        if (changed)
+            InvalidatePresentation();
+        return changed;
+    }
+
+    /** @brief 清除非桌面目标不再使用的请求网格呈现键。 */
+    bool ClearPresentationAnchor()
+    {
+        if (!presentationAnchorValid_)
+            return false;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
+        InvalidatePresentation();
+        return true;
     }
 
     /**
@@ -267,7 +426,11 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         InvalidateStaticScene();
     }
 
@@ -289,7 +452,11 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         InvalidateStaticScene();
     }
 
@@ -304,6 +471,7 @@ public:
     {
         if (!active_) return;
         active_ = false;
+        visualVisible_ = false;
         InvalidateStaticScene();
     }
 
@@ -317,6 +485,7 @@ public:
         ++staticSceneRevision_;
         if (staticSceneRevision_ == 0)
             staticSceneRevision_ = 1;
+        InvalidatePresentation();
     }
 
     /**
@@ -327,6 +496,7 @@ public:
     void End()
     {
         active_ = false;
+        visualVisible_ = false;
         hasContext_ = false;
         source_ = nullptr;
         items_.clear();
@@ -335,18 +505,33 @@ public:
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
+        targetSlotGenerationTracked_ = false;
+        targetSlotFeedbackKey_ = {};
         targetRegion_ = HitRegion::None;
+        presentationAnchorValid_ = false;
+        presentationAnchorCell_ = {};
         action_ = DropAction::Move;
         mouseDownPoint_ = {};
         visualMouseDownPoint_ = {};
         currentPoint_ = {};
+        pointerAnchored_ = false;
+        visualBoundsOffset_ = {};
         InvalidateStaticScene();
     }
 
 private:
+    void InvalidatePresentation()
+    {
+        ++presentationRevision_;
+        if (presentationRevision_ == 0)
+            presentationRevision_ = 1;
+    }
+
     bool TargetSlotGenerationIsCurrent() const
     {
         if (!targetSlot_)
+            return true;
+        if (!targetSlotGenerationTracked_)
             return true;
         return targetContainer_ &&
             targetContainer_->GetSlotGeneration() ==
@@ -354,6 +539,7 @@ private:
     }
 
     bool active_ = false;                    /**< 拖拽会话是否处于激活状态 */
+    bool visualVisible_ = false;             /**< 应用自绘拖拽虚影是否可见 */
     bool hasContext_ = false;                /**< 是否保留释放提交所需的拖拽上下文 */
     Container* source_ = nullptr;            /**< 拖拽源容器指针 */
     std::vector<Item*> items_;              /**< 被拖拽的 Item 指针列表 */
@@ -362,10 +548,17 @@ private:
     POINT visualMouseDownPoint_{};           /**< 虚影固定使用的原始按下坐标 */
     POINT currentPoint_{};                   /**< 鼠标当前的屏幕坐标 */
     std::vector<RECT> visualItemBounds_;     /**< 拖拽开始时的虚影边界快照 */
+    bool pointerAnchored_ = false;           /**< 逻辑落点是否直接跟随真实指针 */
+    POINT visualBoundsOffset_{};             /**< 将主视觉热点吸附到指针的快照平移量 */
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
+    bool targetSlotGenerationTracked_ = false; /**< 是否由 Container 缓存代次约束 */
+    std::optional<snowdesktop::drag_target::SlotFeedbackKey> targetSlotFeedbackKey_; /**< 显式角色的值语义反馈键 */
     HitRegion targetRegion_ = HitRegion::None; /**< 目标命中区域类型 */
+    bool presentationAnchorValid_ = false;     /**< 桌面请求网格是否参与当前呈现键 */
+    GridCell presentationAnchorCell_;          /**< 应用拖拽热点偏移后的桌面请求网格 */
     std::uint64_t staticSceneRevision_ = 1;  /**< 静态场景修订版本号，用于拖拽缓存一致性判断 */
+    std::uint64_t presentationRevision_ = 1; /**< 放置反馈修订号，不随纯指针移动递增 */
 };

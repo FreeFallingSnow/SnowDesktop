@@ -14,8 +14,11 @@
 #include "collection_group_rules.h"
 #include "drop_model.h"
 #include "search_match.h"
+#include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
 #include "../menu_fluent_glyphs.h"
+#include "../item_render_layer_rules.h"
+#include "../widget_item_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -23,7 +26,8 @@
 #include "../l10n.h"
 
 static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex);
-static int  FileCategoryCellHeight(FileCategories* widget);
+static snowdesktop::widget_item_layout::Layout FileCategoryLocalLayout(
+    FileCategories* widget);
 
 /**
  * @brief 获取桌面项目文件扩展名的大写形式。
@@ -131,13 +135,12 @@ static int DayDiff(const SYSTEMTIME& st1, const SYSTEMTIME& st2)
  */
 static std::wstring FileCategoryIdForItemByDate(const DesktopItem& item)
 {
-    WIN32_FILE_ATTRIBUTE_DATA attr{};
-    if (!GetFileAttributesExW(item.parsingName.c_str(), GetFileExInfoStandard, &attr))
+    if (!item.modifiedTime)
         return L"older";
 
     SYSTEMTIME fileTime{}, nowTime{};
     FILETIME localFileTime{};
-    if (!FileTimeToLocalFileTime(&attr.ftLastWriteTime, &localFileTime) ||
+    if (!FileTimeToLocalFileTime(&*item.modifiedTime, &localFileTime) ||
         !FileTimeToSystemTime(&localFileTime, &fileTime))
         return L"older";
 
@@ -260,7 +263,23 @@ void FileCategories::EnsureCategorySnapshot() const
         for (auto& pair : categorySnapshot_.keysByCategory)
         {
             std::vector<std::wstring>& keys = pair.second;
-            std::sort(keys.begin(), keys.end(),
+            if (data_->contentSortColumn ==
+                snowdesktop::list_detail_rules::Column::None)
+            {
+                std::stable_sort(keys.begin(), keys.end(),
+                    [this](const std::wstring& a,
+                           const std::wstring& b) {
+                        const size_t ia = app_->FindItemIndexByKey(a);
+                        const size_t ib = app_->FindItemIndexByKey(b);
+                        if (ia >= app_->GetDesktopItems().size() ||
+                            ib >= app_->GetDesktopItems().size())
+                            return _wcsicmp(a.c_str(), b.c_str()) < 0;
+                        return _wcsicmp(
+                            app_->GetDesktopItems()[ia].name.c_str(),
+                            app_->GetDesktopItems()[ib].name.c_str()) < 0;
+                    });
+            }
+            std::stable_sort(keys.begin(), keys.end(),
                 [this](const std::wstring& a, const std::wstring& b) -> bool
                 {
                     size_t ia = app_->FindItemIndexByKey(a);
@@ -275,29 +294,16 @@ void FileCategories::EnsureCategorySnapshot() const
                     auto posA = std::find(dateOrder.begin(), dateOrder.end(), groupA);
                     auto posB = std::find(dateOrder.begin(), dateOrder.end(), groupB);
                     if (posA != posB)
-                        return posA < posB;
-                    return _wcsicmp(itemA.name.c_str(), itemB.name.c_str()) < 0;
+                    {
+                        const bool reverseGroups =
+                            data_->contentSortColumn ==
+                                snowdesktop::list_detail_rules::Column::Modified &&
+                            data_->contentSortAscending;
+                        return reverseGroups ? posA > posB : posA < posB;
+                    }
+                    return false;
                 });
         }
-
-        std::stable_sort(data_->itemKeys.begin(), data_->itemKeys.end(),
-            [this](const std::wstring& a, const std::wstring& b) -> bool
-            {
-                size_t ia = app_->FindItemIndexByKey(a);
-                size_t ib = app_->FindItemIndexByKey(b);
-                if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1))
-                    return _wcsicmp(a.c_str(), b.c_str()) < 0;
-                const DesktopItem& itemA = app_->GetDesktopItems()[ia];
-                const DesktopItem& itemB = app_->GetDesktopItems()[ib];
-                std::wstring groupA = FileCategoryIdForItemByDate(itemA);
-                std::wstring groupB = FileCategoryIdForItemByDate(itemB);
-                const auto& dateOrder = FileCategoryOrderByDate();
-                auto posA = std::find(dateOrder.begin(), dateOrder.end(), groupA);
-                auto posB = std::find(dateOrder.begin(), dateOrder.end(), groupB);
-                if (posA != posB)
-                    return posA < posB;
-                return _wcsicmp(itemA.name.c_str(), itemB.name.c_str()) < 0;
-            });
     }
 
     const auto order = GetCategoryOrder(app_->GetCategorySettings());
@@ -311,6 +317,7 @@ void FileCategories::EnsureCategorySnapshot() const
     layoutCache_.clear();
     layoutCacheCategory_.clear();
     layoutCacheListMode_ = false;
+    layoutCacheItemHeight_ = 0;
 }
 
 void FileCategories::InvalidateCategorySnapshot() const
@@ -319,6 +326,7 @@ void FileCategories::InvalidateCategorySnapshot() const
     layoutCache_.clear();
     layoutCacheCategory_.clear();
     layoutCacheListMode_ = false;
+    layoutCacheItemHeight_ = 0;
 }
 
 void FileCategories::InvalidateCategoryCache()
@@ -365,19 +373,25 @@ void FileCategories::EnsureLayout() const
 {
     if (!data_ || !data_->dateHeaders) { layoutCache_.clear(); return; }
     std::wstring activeId = CachedActiveCategoryId();
-    if (activeId == layoutCacheCategory_ && data_->listMode == layoutCacheListMode_ && !layoutCache_.empty()) return;
+    const auto itemLayout = FileCategoryLocalLayout(
+        const_cast<FileCategories*>(this));
+    const int currentItemHeight = itemLayout.vertical.cell +
+        itemLayout.vertical.gap;
+    if (activeId == layoutCacheCategory_ &&
+        data_->listMode == layoutCacheListMode_ &&
+        currentItemHeight == layoutCacheItemHeight_ &&
+        !layoutCache_.empty())
+        return;
 
     layoutCache_.clear();
     layoutCacheCategory_ = activeId;
     layoutCacheListMode_ = data_->listMode;
+    layoutCacheItemHeight_ = currentItemHeight;
 
     const auto& keys = CachedCategoryKeys(activeId);
     if (keys.empty()) return;
 
     int headerH = data_->listMode ? Cu(28) : Cu(36);
-    int itemH   = data_->listMode ? Cu(38) : FileCategoryCellHeight(const_cast<FileCategories*>(this));
-    int columns = data_->listMode ? 1 : std::max(1, data_->gridSpan.columns);
-
     LONG y = 0;
     size_t groupStart = 0;
     std::wstring prevGroup;
@@ -425,10 +439,9 @@ void FileCategories::EnsureLayout() const
                 items.firstItemIndex = groupStart;
                 items.itemCount = groupCount;
                 items.y = y;
-                if (data_->listMode)
-                    items.height = static_cast<LONG>(groupCount) * itemH;
-                else
-                    items.height = static_cast<LONG>(((groupCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns))) * itemH;
+                items.height = static_cast<LONG>(
+                    snowdesktop::widget_item_layout::ContentHeight(
+                        itemLayout, groupCount));
                 layoutCache_.push_back(items);
                 y += items.height;
             }
@@ -581,17 +594,20 @@ static RECT FileCategoryContentRect(FileCategories* widget)
                 tabs.bottom,
                 !IsRectEmptyRect(search), search.bottom,
                 widget->GetCategorizedTabRowOffset(),
-                widget->Cu(38.0f),
+                widget->Cu(widget->GetCategorizedTabRowPitch()),
                 widget->Cu(8.0f),
                 widget->Cu(4.0f)));
-    return body;
+    return widget->ApplyDetailsHeaderToViewport(body);
 }
 
 static std::wstring FileCategoryTabDisplayText(FileCategories* widget, const std::wstring& categoryId)
 {
     if (!widget || !widget->GetApp()) return categoryId;
-    return widget->GetCategoryDisplayLabel(categoryId) + L" " +
-        std::to_wstring(widget->CachedCategoryKeys(categoryId).size());
+    std::wstring label = widget->GetCategoryDisplayLabel(categoryId);
+    if (widget->ShowCategoryTabItemCounts())
+        label += L" " + std::to_wstring(
+            widget->CachedCategoryKeys(categoryId).size());
+    return label;
 }
 
 static std::vector<int> FileCategoryTabWidths(FileCategories* widget, int availableWidth)
@@ -654,7 +670,8 @@ void FileCategories::ApplyMarqueeSelection(const RECT& contentRect)
  * @param index 标签页索引（从 0 开始）。
  * @return 标签页矩形，如果索引超出范围或组件无效则返回空矩形。
  */
-static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
+static RECT FileCategoryTabLayoutRect(
+    FileCategories* widget, size_t index)
 {
     if (!widget) return {};
     DesktopWidget* data = widget->GetWidgetData();
@@ -678,6 +695,15 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
         startX + tabLeftOffset + widths[index],
         tabsRect.bottom);
     InflateRect(&rect, -widget->Cu(2.0f), -widget->Cu(2.0f));
+    return rect;
+}
+
+static RECT FileCategoryTabRect(
+    FileCategories* widget, size_t index)
+{
+    RECT rect = FileCategoryTabLayoutRect(widget, index);
+    if (IsRectEmptyRect(rect)) return {};
+    RECT tabsRect = FileCategoryTabsRect(widget);
     const auto clipped =
         snowdesktop::collection_group_rules::
             ClipToViewport(
@@ -701,15 +727,24 @@ static RECT FileCategoryTabRect(FileCategories* widget, size_t index)
  * @param widget FileCategories 组件指针。
  * @return 单元格高度（像素），默认 kMinCellHeight。
  */
-static int FileCategoryCellHeight(FileCategories* widget)
+static snowdesktop::widget_item_layout::Layout FileCategoryLocalLayout(
+    FileCategories* widget)
 {
-    if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
-        return kMinCellHeight;
+    if (!widget || !widget->GetApp() || !widget->GetWidgetData())
+        return {};
     DesktopWidget* data = widget->GetWidgetData();
-    for (const auto& page : widget->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return kMinCellHeight;
+    const RECT content = FileCategoryContentRect(widget);
+    const auto metrics = widget->GetItemVisualMetrics();
+    const float spacing = widget->GetLayoutSpacingScale();
+    if (data->listMode)
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(widget->GetListRowHeight(),
+                metrics.minimumListHeight), spacing);
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), 0,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 /**
@@ -730,11 +765,8 @@ static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
         if (!segs.empty())
             return static_cast<int>(segs.back().y + segs.back().height);
     }
-    if (data->listMode)
-        return static_cast<int>(itemCount) * widget->Cu(38.0f);
-    int columns = std::max(1, data->gridSpan.columns);
-    int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-    return rows * FileCategoryCellHeight(widget);
+    return snowdesktop::widget_item_layout::ContentHeight(
+        FileCategoryLocalLayout(widget), itemCount);
 }
 
 /**
@@ -765,6 +797,7 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data) return {};
     RECT content = FileCategoryContentRect(widget);
+    const auto layout = FileCategoryLocalLayout(widget);
     int scroll = std::clamp(data->scrollOffset, 0, FileCategoryMaxScrollOffset(widget));
 
     if (data->dateHeaders &&
@@ -778,54 +811,18 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
             if (linearIndex >= seg.firstItemIndex && linearIndex < seg.firstItemIndex + seg.itemCount)
             {
                 size_t relIdx = linearIndex - seg.firstItemIndex;
-                if (data->listMode)
-                {
-                    const int itemHeight = widget->Cu(38.0f);
-                    LONG y = seg.y + static_cast<LONG>(relIdx) * itemHeight;
-                    RECT rect = MakeRect(content.left,
-                        content.top + y - scroll,
-                        content.right,
-                        content.top + y + itemHeight - scroll);
-                    InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
-                    return rect;
-                }
-                int columns = std::max(1, data->gridSpan.columns);
-                int row = static_cast<int>(relIdx / static_cast<size_t>(columns));
-                int col = static_cast<int>(relIdx % static_cast<size_t>(columns));
-                int itemW = std::max<int>(1, (content.right - content.left) / columns);
-                int cellH = FileCategoryCellHeight(widget);
-                LONG y = seg.y + static_cast<LONG>(row) * cellH;
-                return MakeRect(
-                    content.left + col * itemW,
-                    content.top + y - scroll,
-                    col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-                    content.top + y + cellH - scroll);
+                RECT rect = snowdesktop::widget_item_layout::ItemRect(
+                    layout, relIdx, scroll);
+                OffsetRect(&rect, 0, seg.y);
+                return rect;
             }
         }
         return {};
     }
 
-    if (data->listMode)
-    {
-        const int itemHeight = widget->Cu(38.0f);
-        RECT rect = MakeRect(content.left,
-            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
-            content.right,
-            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
-        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
-        return rect;
-    }
-
-    int columns = std::max(1, data->gridSpan.columns);
-    int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
-    int itemW = std::max<int>(1, (content.right - content.left) / columns);
-    int cellH = FileCategoryCellHeight(widget);
-    return MakeRect(
-        content.left + col * itemW,
-        content.top + row * cellH - scroll,
-        col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-        content.top + (row + 1) * cellH - scroll);
+    (void)content;
+    return snowdesktop::widget_item_layout::ItemRect(
+        layout, linearIndex, scroll);
 }
 
 /**
@@ -858,7 +855,7 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
     const float bs = widget->GetBarScale();
     const int btnSize = widget->Cu(14.0f * bs);
     const int gap = widget->Cu(4.0f * bs);
-    const int gapBetween = widget->Cu(7.0f * bs);
+    const int gapBetween = widget->Cu(4.0f * bs);
     const int resizeReserve = widget->Cu(20.0f * bs);
     const int right = handle.right - resizeReserve - gap - btnSize - gapBetween;
     const int h = handle.bottom - handle.top;
@@ -915,9 +912,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
         const auto& segs = GetLayoutCache();
         LONG visTop = scroll;
         LONG visBottom = scroll + visibleHeight;
-        int columns = data_->listMode ? 1 : std::max(1, data_->gridSpan.columns);
-        size_t totalItems = keys.size();
-
+        const auto localLayout = FileCategoryLocalLayout(this);
         for (const auto& seg : segs)
         {
             if (seg.isHeader) continue;
@@ -925,29 +920,11 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
             LONG segBottom = seg.y + seg.height;
             if (segBottom <= visTop || segTop >= visBottom) continue;
 
-            size_t firstInSeg, lastInSeg;
-            if (data_->listMode)
-            {
-                const int itemH = Cu(38);
-                firstInSeg = seg.firstItemIndex + static_cast<size_t>(std::max<LONG>(0, (visTop - segTop) / itemH));
-                lastInSeg = seg.firstItemIndex + std::min(seg.itemCount,
-                    static_cast<size_t>(std::max<LONG>(1, (visBottom - segTop + itemH - 1) / itemH)));
-            }
-            else
-            {
-                int cellH = std::max(1, FileCategoryCellHeight(this));
-                size_t firstRow = static_cast<size_t>(std::max<LONG>(0, (visTop - segTop) / cellH));
-                size_t lastRow = std::min(
-                    (seg.itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns),
-                    static_cast<size_t>(std::max<LONG>(1, (visBottom - segTop + cellH - 1) / cellH)));
-                firstInSeg = seg.firstItemIndex + std::min(seg.itemCount, firstRow * static_cast<size_t>(columns));
-                lastInSeg = seg.firstItemIndex + std::min(seg.itemCount, lastRow * static_cast<size_t>(columns));
-            }
-
-            if (firstInSeg > 0) --firstInSeg;
-            if (lastInSeg < totalItems) ++lastInSeg;
-            firstInSeg = std::max(firstInSeg, seg.firstItemIndex);
-            lastInSeg = std::min(lastInSeg, seg.firstItemIndex + seg.itemCount);
+            const auto localRange = snowdesktop::widget_item_layout::
+                VisibleRange(localLayout, seg.itemCount,
+                    scroll - static_cast<int>(seg.y), visibleHeight);
+            const size_t firstInSeg = seg.firstItemIndex + localRange.first;
+            const size_t lastInSeg = seg.firstItemIndex + localRange.second;
 
             for (size_t idx = firstInSeg; idx < lastInSeg; ++idx)
             {
@@ -963,26 +940,10 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
         return slots;
     }
 
-    size_t firstIndex = 0;
-    size_t lastIndex = keys.size();
-
-    if (data_->listMode)
-    {
-        const int itemHeight = Cu(38.0f);
-        const int firstRow = std::max(0, scroll / itemHeight - 1);
-        const int lastRow = (scroll + visibleHeight + itemHeight - 1) / itemHeight + 1;
-        firstIndex = static_cast<size_t>(firstRow);
-        lastIndex = std::min(keys.size(), static_cast<size_t>(std::max(firstRow, lastRow)));
-    }
-    else
-    {
-        const int columns = std::max(1, data_->gridSpan.columns);
-        const int cellHeight = std::max(1, FileCategoryCellHeight(this));
-        const int firstRow = std::max(0, scroll / cellHeight - 1);
-        const int lastRow = (scroll + visibleHeight + cellHeight - 1) / cellHeight + 1;
-        firstIndex = std::min(keys.size(), static_cast<size_t>(firstRow * columns));
-        lastIndex = std::min(keys.size(), static_cast<size_t>(std::max(firstRow, lastRow) * columns));
-    }
+    const auto range = snowdesktop::widget_item_layout::VisibleRange(
+        FileCategoryLocalLayout(this), keys.size(), scroll, visibleHeight);
+    const size_t firstIndex = range.first;
+    const size_t lastIndex = range.second;
 
     slots.reserve(lastIndex - firstIndex);
     for (size_t idx = firstIndex; idx < lastIndex; ++idx)
@@ -1120,10 +1081,8 @@ size_t FileCategories::GetSlotCount() const
  */
 int FileCategories::GetItemHeight() const
 {
-    if (!data_) return Cu(38.0f);
-    return data_->listMode
-        ? Cu(38.0f)
-        : FileCategoryCellHeight(const_cast<FileCategories*>(this));
+    return FileCategoryLocalLayout(
+        const_cast<FileCategories*>(this)).vertical.cell;
 }
 
 /**
@@ -1132,9 +1091,8 @@ int FileCategories::GetItemHeight() const
  */
 int FileCategories::GetItemWidth() const
 {
-    if (!data_ || data_->listMode) return WidgetContainer::GetItemWidth();
-    RECT content = FileCategoryContentRect(const_cast<FileCategories*>(this));
-    return std::max<int>(1, (content.right - content.left) / std::max(1, data_->gridSpan.columns));
+    return FileCategoryLocalLayout(
+        const_cast<FileCategories*>(this)).horizontal.cell;
 }
 
 /**
@@ -1238,6 +1196,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         const auto& keys = GetSearchResultKeys();
         RECT content = GetContentViewportRect();
         if (IsRectEmptyRect(content)) return;
+        DrawDetailsHeader(context, content);
 
         const auto& slots = GetSlots();
         if (keys.empty())
@@ -1254,6 +1213,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
 
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        std::vector<std::pair<Item*, RECT>>
+            foregroundTitles;
         for (size_t i = 0; i < slots.size(); ++i)
         {
             size_t idx = slots[i]->GetIndex();
@@ -1274,17 +1235,29 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 {
                     RECT bodyRect = GetBodyRect();
                     bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                    const auto titleLayers =
+                        snowdesktop::item_render_layer_rules::
+                            ResolveTitleLayerPlan(di.selected);
                     icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                        app_->IsLightContentTheme());
+                        lt, titleLayers.drawWithItem);
+                    if (titleLayers.drawInForeground)
+                        foregroundTitles.emplace_back(
+                            icon, itemRect);
                 }
                 continue;
             }
             if (privacyActive)
                 DrawPrivacyPlaceholder(context, itemRect, di.name, false);
             else
-                DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
-                    di.name, di.selected);
+                DrawListItem(context, itemRect, di.iconBitmap,
+                    di.sysIconIndex, di.name, di.selected,
+                    di.iconIsMediaThumbnail, {}, nullptr,
+                    { di.typeName, di.modifiedTime,
+                      di.fileSize, false });
         }
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, lt);
         context->PopAxisAlignedClip();
         return;
     }
@@ -1309,16 +1282,26 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         context->PushAxisAlignedClip(app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         for (size_t i = 0; i < categoryIds.size(); ++i)
         {
-            RECT tab = FileCategoryTabRect(this, i);
-            if (IsRectEmptyRect(tab)) continue;
+            RECT layoutTab = FileCategoryTabLayoutRect(this, i);
+            RECT hitTab = FileCategoryTabRect(this, i);
+            if (IsRectEmptyRect(layoutTab) ||
+                IsRectEmptyRect(hitTab))
+                continue;
 
             bool active = categoryIds[i] == activeCategory;
             bool hovered = !IsPreviewRendering() &&
-                PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
-                context, tab, label,
-                active, hovered);
+                context, hitTab, layoutTab, label,
+                active, hovered,
+                snowdesktop::widget_chrome_rules::
+                    UsesCategorizedControlAccentOutline(
+                        app_->keyboardNavVisualFocus_,
+                        app_->keyboardNavFileGroupCategoryTabs_ &&
+                            app_->keyboardNavMemberIndex_ ==
+                                static_cast<int>(i) &&
+                            app_->OwnsWidgetKeyboardNavigation(this)));
         }
         context->PopAxisAlignedClip();
     }
@@ -1326,9 +1309,12 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     const auto& keys = CachedCategoryKeys(activeCategory);
     RECT content = FileCategoryContentRect(this);
     if (IsRectEmptyRect(content)) return;
+    DrawDetailsHeader(context, content);
 
     const auto& slots = GetSlots();
     context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    std::vector<std::pair<Item*, RECT>>
+        foregroundTitles;
 
     if (data_->dateHeaders && !searching)
     {
@@ -1375,8 +1361,14 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 RECT bodyRect = GetBodyRect();
                 bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                const auto titleLayers =
+                    snowdesktop::item_render_layer_rules::
+                        ResolveTitleLayerPlan(di.selected);
                 icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    app_->IsLightContentTheme());
+                    lt, titleLayers.drawWithItem);
+                if (titleLayers.drawInForeground)
+                    foregroundTitles.emplace_back(
+                        icon, itemRect);
             }
             continue;
         }
@@ -1384,10 +1376,22 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (privacyActive)
             DrawPrivacyPlaceholder(context, itemRect, di.name, false);
         else
-            DrawListItem(context, itemRect, di.iconBitmap, di.sysIconIndex,
-                di.name, di.selected);
+            DrawListItem(context, itemRect, di.iconBitmap,
+                di.sysIconIndex, di.name, di.selected,
+                di.iconIsMediaThumbnail, {}, nullptr,
+                { di.typeName, di.modifiedTime,
+                  di.fileSize, false });
     }
+    for (const auto& [item, bounds] : foregroundTitles)
+        item->DrawTitle(
+            context, bounds, true, 1.0f, lt);
     context->PopAxisAlignedClip();
+}
+
+RECT FileCategories::GetMemberLayoutRect(size_t index) const
+{
+    return FileCategoryItemRect(
+        const_cast<FileCategories*>(this), index);
 }
 
 /**
@@ -1454,6 +1458,10 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
     if (!IsRectEmptyRect(searchRect) && PtInRect(&searchRect, pt))
         return WidgetHit::SearchBox;
 
+    const WidgetHit details = HitTestDetailsHeader(
+        pt, GetContentViewportRect());
+    if (details != WidgetHit::None) return details;
+
     if (base == WidgetHit::MoveHandle)
     {
         RECT dateToggle = FileCategoryDateToggleRect(const_cast<FileCategories*>(this));
@@ -1519,6 +1527,35 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
 
     data_->tabScrollOffset = std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
     return true;
+}
+
+void FileCategories::EnsureCategoryTabVisible(
+    size_t index)
+{
+    if (!data_ || !data_->showFileCategories)
+        return;
+    RECT tabs = FileCategoryTabsRect(this);
+    const auto& categories = CachedVisibleCategoryIds();
+    if (IsRectEmptyRect(tabs) ||
+        index >= categories.size())
+        return;
+    const int viewport = tabs.right - tabs.left;
+    const auto widths =
+        FileCategoryTabWidths(this, viewport);
+    LONG rawLeft = tabs.left;
+    for (size_t i = 0; i < index; ++i)
+        rawLeft += widths[i];
+    const LONG rawRight = rawLeft + widths[index];
+    if (rawLeft - data_->tabScrollOffset < tabs.left)
+        data_->tabScrollOffset =
+            std::max<int>(0, rawLeft - tabs.left);
+    else if (rawRight - data_->tabScrollOffset > tabs.right)
+        data_->tabScrollOffset =
+            std::max<int>(0, rawRight - tabs.right);
+    data_->tabScrollOffset = std::clamp(
+        data_->tabScrollOffset, 0,
+        std::max(0,
+            FileCategoryTabTotalWidth(widths) - viewport));
 }
 
 /**

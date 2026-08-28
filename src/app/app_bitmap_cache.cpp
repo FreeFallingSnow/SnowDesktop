@@ -978,22 +978,20 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
 
     if (beautify)
     {
-        IconBackgroundPaint backgroundPaint{};
-        backgroundPaint.start = IconColorFromFloats(
-            iconBeautifyBgStartR_, iconBeautifyBgStartG_, iconBeautifyBgStartB_);
-        backgroundPaint.end = IconColorFromFloats(
-            iconBeautifyBgEndR_, iconBeautifyBgEndG_, iconBeautifyBgEndB_);
-        backgroundPaint.border = AutoIconBorderColor(backgroundPaint.start, backgroundPaint.end);
-        backgroundPaint.opacity = std::clamp(
-            static_cast<int>(std::round(iconBeautifyBgOpacity_ * 255.0f)), 0, 255);
-        backgroundPaint.gradient = iconBeautifyGradientEnabled_;
-        backgroundPaint.gradientDirection = iconBeautifyGradientDirection_;
-        if (!backgroundPaint.gradient)
-            backgroundPaint.end = backgroundPaint.start;
-        buffer.pixels = BeautifyIconPixels(
-            buffer.pixels, buffer.width, buffer.height, backgroundPaint,
-            GetBeautifiedIconCornerRadius(buffer.width, buffer.height),
-            iconBeautifyMode_ == 0);
+        std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
+        if (iconBeautifySettings_.mode == 0)
+        {
+            IconBackgroundColor detected{};
+            if (DetectSolidEdgeBackground(
+                    buffer.pixels, buffer.width, buffer.height, detected))
+            {
+                edgeFill = snowdesktop::icon_beautify::EdgeColor{
+                    detected.r, detected.g, detected.b };
+            }
+        }
+        buffer.pixels = snowdesktop::icon_beautify::Render(
+            buffer.pixels, buffer.width, buffer.height,
+            iconBeautifySettings_, edgeFill);
     }
 
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -1021,7 +1019,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
  */
 ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm)
 {
-    return GetOrCreateD2DBitmap(hbm, iconBeautifyEnabled_);
+    return GetOrCreateD2DBitmap(hbm, iconBeautifySettings_.enabled);
 }
 
 ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify)
@@ -1040,7 +1038,8 @@ ID2D1Bitmap1* DesktopApp::GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify)
     return result;
 }
 
-ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP hbm)
+ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(
+    ID2D1RenderTarget* target, HBITMAP hbm, bool beautify)
 {
     if (!target || !hbm) return nullptr;
 
@@ -1049,5 +1048,41 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(ID2D1RenderTarget* target, HBITMAP
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (FAILED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext)
         return nullptr;
-    return GetOrCreateD2DBitmap(hbm);
+    return GetOrCreateD2DBitmap(hbm, beautify);
+}
+
+void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
+    ID2D1Bitmap* bitmap, RECT destination, float opacity)
+{
+    if (!target || !bitmap || IsRectEmptyRect(destination))
+        return;
+
+    const D2D1_SIZE_U source = bitmap->GetPixelSize();
+    const auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
+        static_cast<int>(source.width), static_cast<int>(source.height),
+        destination.right - destination.left,
+        destination.bottom - destination.top);
+    if (fitted.width <= 0 || fitted.height <= 0)
+        return;
+
+    const int left = destination.left +
+        (destination.right - destination.left - fitted.width) / 2;
+    const int top = destination.top +
+        (destination.bottom - destination.top - fitted.height) / 2;
+    const D2D1_RECT_F dst = D2D1::RectF(
+        static_cast<float>(left), static_cast<float>(top),
+        static_cast<float>(left + fitted.width),
+        static_cast<float>(top + fitted.height));
+
+    ComPtr<ID2D1DeviceContext> deviceContext;
+    if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) &&
+        deviceContext)
+    {
+        deviceContext->DrawBitmap(bitmap, &dst, opacity,
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            nullptr, nullptr);
+        return;
+    }
+    target->DrawBitmap(bitmap, dst, opacity,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }

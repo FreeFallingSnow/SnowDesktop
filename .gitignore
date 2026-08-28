@@ -32,3 +32,5 @@ steam_api64.lib
 steam_api64.dll
 steam_appid.txt
 CMakeUserPresets.json
+SnowDesktop_SteamAssets/
+assets/icon/concepts/

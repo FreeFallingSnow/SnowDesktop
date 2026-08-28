@@ -17,7 +17,9 @@ void Expect(bool condition, const char* message)
 int main()
 {
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
+    using snowdesktop::http_security::IsAllowedPublicHttpsUrl;
     using snowdesktop::http_security::IsAllowedUrlForDomains;
+    using snowdesktop::http_security::HaveSameOrigin;
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");
@@ -127,6 +129,50 @@ int main()
     Expect(!IsAllowedUrlForDomains(
             L"not a URL", {}, true),
         "widget HTTP mode rejects malformed URLs");
+
+    Expect(IsAllowedUrlForDomains(
+            L"https://hnrss.org/frontpage", {}, false, true),
+        "v2 public HTTPS mode accepts an arbitrary public HTTPS host");
+    Expect(IsAllowedUrlForDomains(
+            L"https://feeds.example.net/rss", {"unrelated.example"},
+            false, true),
+        "v2 public HTTPS mode is independent of optional domain narrowing");
+    Expect(!IsAllowedUrlForDomains(
+            L"http://hnrss.org/frontpage", {}, false, true),
+        "v2 public HTTPS mode rejects plaintext HTTP");
+    Expect(!IsAllowedUrlForDomains(
+            L"https://localhost/feed", {}, false, true) &&
+            !IsAllowedUrlForDomains(
+                L"https://192.168.1.10/feed", {}, false, true) &&
+            !IsAllowedUrlForDomains(
+                L"https://[fc00::1]/feed", {}, false, true),
+        "v2 public HTTPS mode rejects local and private targets");
+    Expect(!IsAllowedUrlForDomains(
+            L"https://user@example.com/feed", {}, false, true),
+        "v2 public HTTPS mode rejects embedded credentials");
+
+    Expect(IsAllowedPublicHttpsUrl(L"https://example.com/article?id=1"),
+        "shell HTTPS policy accepts a public URL");
+    Expect(!IsAllowedPublicHttpsUrl(L"http://example.com/article"),
+        "shell HTTPS policy rejects plaintext HTTP");
+    Expect(!IsAllowedPublicHttpsUrl(L"https://user@example.com/article"),
+        "shell HTTPS policy rejects embedded credentials");
+    Expect(!IsAllowedPublicHttpsUrl(L"https://localhost/article") &&
+            !IsAllowedPublicHttpsUrl(L"https://192.168.1.2/article"),
+        "shell HTTPS policy rejects local targets");
+
+    Expect(HaveSameOrigin(L"https://Example.com/path",
+            L"https://example.com/other?q=1") &&
+        HaveSameOrigin(L"https://example.com./path",
+            L"https://EXAMPLE.COM/other"),
+        "same-origin comparison normalizes hostname case and trailing dots");
+    Expect(!HaveSameOrigin(L"https://example.com/path",
+            L"https://other.example/path") &&
+        !HaveSameOrigin(L"https://example.com/path",
+            L"https://example.com:8443/path") &&
+        !HaveSameOrigin(L"https://example.com/path",
+            L"http://example.com/path"),
+        "credential redirect origin comparison binds scheme, host, and port");
 
     if (failures == 0)
         std::cout << "HTTP security tests passed\n";

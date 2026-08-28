@@ -7,11 +7,13 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -104,17 +106,25 @@ void MakePackage(const std::filesystem::path& root, std::string version,
     std::string id = "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
     std::string permissions = "\"ui.input\"",
     std::string networkDomains = "",
-    std::string entry = "main.lua")
+    std::string entry = "main.lua",
+    std::string optionalPermissions = "",
+    int schemaVersion = 2,
+    int apiVersion = 2,
+    std::string requiredFeatures = "",
+    std::string optionalFeatures = "",
+    std::string resources = "",
+    std::string slots = "")
 {
-    Write(root / std::filesystem::path(entry), "function render() end\n");
+    Write(root / std::filesystem::path(entry),
+        "return widget.define({render=function() end})\n");
     Write(root / L"assets" / L"label.txt", "asset");
     Write(root / L"widget.json",
         "{\n"
-        "  \"schemaVersion\": 1,\n"
+        "  \"schemaVersion\": " + std::to_string(schemaVersion) + ",\n"
         "  \"id\": \"" + id + "\",\n"
         "  \"slug\": \"package-test\",\n"
         "  \"version\": \"" + version + "\",\n"
-        "  \"apiVersion\": 1,\n"
+        "  \"apiVersion\": " + std::to_string(apiVersion) + ",\n"
         "  \"dataVersion\": 1,\n"
         "  \"entry\": \"" + entry + "\",\n"
         "  \"minHostVersion\": \"1.0.1.0\",\n"
@@ -123,9 +133,14 @@ void MakePackage(const std::filesystem::path& root, std::string version,
         "  \"locales\": {\"zh-CN\": {\"preview.intro\": \"多尺寸介绍\", \"preview.message\": \"预览消息\", \"preview.compact\": \"紧凑模式\", \"preview.compact_hint\": \"紧凑说明\", \"preview.compact_mode\": \"紧凑数据\"}},\n"
         "  \"author\": \"SnowDesktop\",\n"
         "  \"license\": \"GPL-3.0-only\",\n"
+        "  \"resources\": {" + resources + "},\n"
+        "  \"slots\": {" + slots + "},\n"
         "  \"previewData\": {\"introduction\": \"Multiple sizes\", \"introductionKey\": \"preview.intro\", \"storage\": {\"message\": \"Preview\", \"count\": 3}, \"storageKeys\": {\"message\": \"preview.message\"}, \"variants\": [{\"id\": \"compact\", \"title\": \"Compact\", \"titleKey\": \"preview.compact\", \"description\": \"Compact hint\", \"descriptionKey\": \"preview.compact_hint\", \"size\": {\"columns\": 1, \"rows\": 1}, \"storage\": {\"mode\": \"compact\"}, \"storageKeys\": {\"mode\": \"preview.compact_mode\"}}, {\"id\": \"wide\", \"title\": \"Wide\", \"description\": \"Wide hint\", \"size\": {\"columns\": 2, \"rows\": 1}}]},\n"
         "  \"permissions\": [" + permissions + "],\n"
-        "  \"networkDomains\": [" + networkDomains + "]\n"
+        "  \"optionalPermissions\": [" + optionalPermissions + "],\n"
+        "  \"networkDomains\": [" + networkDomains + "],\n"
+        "  \"requiredFeatures\": [" + requiredFeatures + "],\n"
+        "  \"optionalFeatures\": [" + optionalFeatures + "]\n"
         "}\n");
 }
 
@@ -214,6 +229,52 @@ int main()
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
 
+    const auto hashInput = root / L"sha256-input.bin";
+    Write(hashInput, "abc");
+    Expect(WidgetPackageManager::Sha256File(hashInput) ==
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "package fingerprinting hashes a complete disk file");
+
+    const std::wstring brokenPipeName =
+        L"\\\\.\\pipe\\SnowDesktop-Sha256ReadError-" +
+        std::to_wstring(GetCurrentProcessId());
+    HANDLE brokenPipe = CreateNamedPipeW(brokenPipeName.c_str(),
+        PIPE_ACCESS_OUTBOUND,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1, 4096, 4096, 0, nullptr);
+    Expect(brokenPipe != INVALID_HANDLE_VALUE,
+        "read-error fingerprint test creates its named pipe");
+    if (brokenPipe != INVALID_HANDLE_VALUE)
+    {
+        std::atomic_bool pipeConnected{false};
+        std::atomic_bool pipeWrote{false};
+        std::jthread writer([brokenPipe, &pipeConnected, &pipeWrote] {
+            const bool connected = ConnectNamedPipe(brokenPipe, nullptr) ||
+                GetLastError() == ERROR_PIPE_CONNECTED;
+            pipeConnected.store(connected);
+            if (connected)
+            {
+                static constexpr char partial[] = "partial package";
+                DWORD written = 0;
+                pipeWrote.store(WriteFile(brokenPipe, partial,
+                    static_cast<DWORD>(sizeof(partial) - 1), &written,
+                    nullptr) && written == sizeof(partial) - 1);
+                if (pipeWrote.load())
+                    (void)FlushFileBuffers(brokenPipe);
+                (void)DisconnectNamedPipe(brokenPipe);
+            }
+        });
+        const std::string brokenDigest =
+            WidgetPackageManager::Sha256File(brokenPipeName);
+        (void)CancelIoEx(brokenPipe, nullptr);
+        writer.join();
+        CloseHandle(brokenPipe);
+        Expect(pipeConnected.load() && pipeWrote.load(),
+            "read-error fingerprint test reaches an opened partial stream");
+        Expect(brokenDigest.empty(),
+            "package fingerprinting rejects a read error instead of hashing a prefix");
+    }
+
     const auto layoutPath =
         root / L"layout-storage" / L"SnowDesktop.layout.json";
     const std::string firstLayout =
@@ -254,8 +315,19 @@ int main()
             "dockEnabled" },
         { "top-level number type", "{\"itemFontSize\":\"16\"}",
             "itemFontSize" },
+        { "list font size type", "{\"listItemFontSize\":\"15\"}",
+            "listItemFontSize" },
+        { "cu title font size type", "{\"itemFontSizeCu\":\"16\"}",
+            "itemFontSizeCu" },
+        { "cu list font size type", "{\"listItemFontSizeCu\":\"15\"}",
+            "listItemFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
+        { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
+            "iconSizeScale" },
+        { "collection titleless mode type",
+            "{\"collectionLargeFolderTitleless\":\"yes\"}",
+            "collectionLargeFolderTitleless" },
         { "integer exactness", "{\"shortcutArrowMode\":1.5}",
             "shortcutArrowMode" },
         { "page required field", "{\"pages\":[{\"columns\":4}]}",
@@ -270,6 +342,34 @@ int main()
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"showTitle\":\"yes\"}]}",
             "widgets[0].showTitle" },
+        { "widget details type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"showDetails\":\"yes\"}]}",
+            "widgets[0].showDetails" },
+        { "widget large-folder titleless type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"largeFolderTitleless\":\"yes\"}]}",
+            "widgets[0].largeFolderTitleless" },
+        { "widget detail column type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"detailShowModified\":\"yes\"}]}",
+            "widgets[0].detailShowModified" },
+        { "widget detail width type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"detailModifiedWidth\":\"160\"}]}",
+            "widgets[0].detailModifiedWidth" },
+        { "widget detail position type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"detailModifiedPosition\":\"0.25\"}]}",
+            "widgets[0].detailModifiedPosition" },
+        { "widget content sort type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"contentSortColumn\":2}]}",
+            "widgets[0].contentSortColumn" },
+        { "widget package source URL type",
+            "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
+            "\"y\":0,\"packageSourceUrl\":7}]}",
+            "widgets[0].packageSourceUrl" },
         { "nested string-array type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"items\":[\"a\",2]}]}",
@@ -277,8 +377,43 @@ int main()
         { "dock required field",
             "{\"dockEntries\":[{\"type\":\"item\"}]}",
             "dockEntries[0].ref" },
+        { "dock popup list mode type",
+            "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"a\","
+            "\"listMode\":\"yes\"}]}",
+            "dockEntries[0].listMode" },
+        { "dock popup detail position type",
+            "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"a\","
+            "\"detailModifiedPosition\":\"0.25\"}]}",
+            "dockEntries[0].detailModifiedPosition" },
         { "navigation array type", "{\"navTabOrder\":[\"w\",false]}",
             "navTabOrder[1]" },
+        { "icon beautify shape type",
+            "{\"iconBeautifyShape\":\"circle\"}",
+            "iconBeautifyShape" },
+        { "icon beautify preset type",
+            "{\"iconBeautifyPreset\":\"classic\"}",
+            "iconBeautifyPreset" },
+        { "icon beautify finish type",
+            "{\"iconBeautifyFinish\":true}",
+            "iconBeautifyFinish" },
+        { "icon beautify texture type",
+            "{\"iconBeautifyTextureHighlightStrength\":\"strong\"}",
+            "iconBeautifyTextureHighlightStrength" },
+        { "icon beautify filter enabled type",
+            "{\"iconBeautifyFilterEnabled\":1}",
+            "iconBeautifyFilterEnabled" },
+        { "icon beautify filter strength type",
+            "{\"iconBeautifyFilterStrength\":\"full\"}",
+            "iconBeautifyFilterStrength" },
+        { "icon beautify content scale type",
+            "{\"iconBeautifyContentScale\":\"large\"}",
+            "iconBeautifyContentScale" },
+        { "icon beautify outline enabled type",
+            "{\"iconBeautifyOutlineEnabled\":1}",
+            "iconBeautifyOutlineEnabled" },
+        { "icon beautify outline color type",
+            "{\"iconBeautifyOutlineR\":[]}",
+            "iconBeautifyOutlineR" },
     };
     for (const auto& invalid : invalidLayoutCases)
     {
@@ -305,10 +440,197 @@ int main()
         "legacy schema and reordered fields decode into one typed document");
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
-            "{\"componentSpacing\":1.5}", spacingLayout, &layoutError) &&
+            "{\"componentSpacing\":1.5,\"iconSizeScale\":1.1,"
+            "\"collectionLargeFolderTitleless\":true}",
+            spacingLayout, &layoutError) &&
             spacingLayout.componentSpacing.has_value() &&
-            *spacingLayout.componentSpacing == 1.5f,
-        "component spacing is decoded as an optional layout setting");
+            *spacingLayout.componentSpacing == 1.5f &&
+            spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f &&
+            spacingLayout.collectionLargeFolderTitleless.value_or(false),
+        "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
+    snowdesktop::layout_storage::Document legacyFontLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"itemFontSize\":18,\"listItemFontSize\":16}",
+            legacyFontLayout, &layoutError) &&
+            legacyFontLayout.itemFontSize.value_or(0.0f) == 18.0f &&
+            legacyFontLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
+            !legacyFontLayout.itemFontSizeCu.has_value() &&
+            !legacyFontLayout.listItemFontSizeCu.has_value(),
+        "legacy point font fields remain available as migration inputs");
+    const std::string detailsLayoutText =
+        "{\"layoutSchemaVersion\":1,"
+        "\"widgetContentOptionsSchemaVersion\":4,"
+        "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,"
+        "\"iconSizeScale\":1.2,"
+        "\"collectionLargeFolderTitleless\":false,"
+        "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
+        "\"x\":0,\"y\":0,\"type\":\"folderMapping\","
+        "\"showDetails\":true,\"detailShowModified\":true,"
+        "\"detailShowType\":false,\"detailShowSize\":true,"
+        "\"detailModifiedPosition\":0.22,"
+        "\"detailTypePosition\":0.61,"
+        "\"detailSizePosition\":0.84,\"contentSortColumn\":\"size\","
+        "\"contentSortAscending\":false,"
+        "\"largeFolderTitleless\":true}]}";
+    snowdesktop::layout_storage::Document detailsLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            detailsLayoutText, detailsLayout, &layoutError) &&
+            detailsLayout.widgetContentOptionsSchemaVersion.value_or(0) == 4 &&
+            detailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
+            detailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            detailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
+            detailsLayout.collectionLargeFolderTitleless.has_value() &&
+            !*detailsLayout.collectionLargeFolderTitleless &&
+            detailsLayout.widgets.size() == 1 &&
+            detailsLayout.widgets[0].showDetails &&
+            detailsLayout.widgets[0].detailShowModified &&
+            !detailsLayout.widgets[0].detailShowType &&
+            detailsLayout.widgets[0].detailShowSize &&
+            detailsLayout.widgets[0].detailModifiedPosition.value_or(0.0f) ==
+                0.22f &&
+            detailsLayout.widgets[0].detailTypePosition.value_or(0.0f) ==
+                0.61f &&
+            detailsLayout.widgets[0].detailSizePosition.value_or(0.0f) ==
+                0.84f &&
+            detailsLayout.widgets[0].contentSortColumn == "size" &&
+            !detailsLayout.widgets[0].contentSortAscending &&
+            detailsLayout.widgets[0].largeFolderTitleless,
+        "list font and detail view state decode into the typed layout model");
+    const auto detailsLayoutPath =
+        root / L"layout-storage" / L"details.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            detailsLayoutPath, detailsLayoutText, &layoutError),
+        "detail view layout fields save through the validated storage path");
+    snowdesktop::layout_storage::Document loadedDetailsLayout;
+    const auto detailsLayoutLoad =
+        snowdesktop::layout_storage::LoadDocument(
+            detailsLayoutPath, loadedDetailsLayout);
+    Expect(detailsLayoutLoad.status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            loadedDetailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
+            loadedDetailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            loadedDetailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
+            loadedDetailsLayout.collectionLargeFolderTitleless.has_value() &&
+            !*loadedDetailsLayout.collectionLargeFolderTitleless &&
+            loadedDetailsLayout.widgets.size() == 1 &&
+            loadedDetailsLayout.widgets[0].showDetails &&
+            loadedDetailsLayout.widgets[0].detailShowModified &&
+            !loadedDetailsLayout.widgets[0].detailShowType &&
+            loadedDetailsLayout.widgets[0].detailShowSize &&
+            loadedDetailsLayout.widgets[0].detailModifiedPosition.value_or(0.0f) ==
+                0.22f &&
+            loadedDetailsLayout.widgets[0].detailSizePosition.value_or(0.0f) ==
+                0.84f &&
+            loadedDetailsLayout.widgets[0].contentSortColumn == "size" &&
+            loadedDetailsLayout.widgets[0].largeFolderTitleless,
+        "list font and detail view fields round-trip through layout storage");
+    snowdesktop::layout_storage::Document dockPopupLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"folder-a\","
+            "\"listMode\":true,\"detailShowModified\":true,"
+            "\"detailShowType\":false,\"detailShowSize\":true,"
+            "\"detailModifiedPosition\":0.24,"
+            "\"detailTypePosition\":0.58,"
+            "\"detailSizePosition\":0.82}]}",
+            dockPopupLayout, &layoutError) &&
+            dockPopupLayout.dockEntries.size() == 1 &&
+            dockPopupLayout.dockEntries[0].listMode &&
+            dockPopupLayout.dockEntries[0].detailShowModified &&
+            !dockPopupLayout.dockEntries[0].detailShowType &&
+            dockPopupLayout.dockEntries[0].detailShowSize &&
+            dockPopupLayout.dockEntries[0].
+                detailModifiedPosition.value_or(0.0f) == 0.24f &&
+            dockPopupLayout.dockEntries[0].
+                detailTypePosition.value_or(0.0f) == 0.58f &&
+            dockPopupLayout.dockEntries[0].
+                detailSizePosition.value_or(0.0f) == 0.82f,
+        "direct Dock folders retain their popup list and detail view settings");
+    snowdesktop::layout_storage::Document legacyBeautifyLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",
+            legacyBeautifyLayout, &layoutError) &&
+            legacyBeautifyLayout.iconBeautifyEnabled.value_or(false) &&
+            !legacyBeautifyLayout.iconBeautifyPreset.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyShape.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyFinish.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyTextureHighlightStrength.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyFilterEnabled.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyFilterStrength.has_value() &&
+            !legacyBeautifyLayout.iconBeautifyContentScale.has_value(),
+        "legacy icon beautify layouts keep new fields optional");
+    snowdesktop::layout_storage::Document iconBeautifyLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"iconBeautifyPreset\":5,"
+            "\"iconBeautifyShape\":10,"
+            "\"iconBeautifyContentScale\":0.73,"
+            "\"iconBeautifyFinish\":2,"
+            "\"iconBeautifyTextureHighlightStrength\":0.4,"
+            "\"iconBeautifyTextureHighlightSize\":0.6,"
+            "\"iconBeautifyTextureHighlightAngle\":-0.3,"
+            "\"iconBeautifyTextureShadeStrength\":0.2,"
+            "\"iconBeautifyTextureEdgeHighlight\":0.5,"
+            "\"iconBeautifyFilterEnabled\":true,"
+            "\"iconBeautifyFilterStrength\":0.85,"
+            "\"iconBeautifyFilterTintR\":0.7,"
+            "\"iconBeautifyFilterTintG\":0.8,"
+            "\"iconBeautifyFilterTintB\":0.9,"
+            "\"iconBeautifyOutlineEnabled\":true,"
+            "\"iconBeautifyOutlineWidth\":2.5,"
+            "\"iconBeautifyOutlineOpacity\":0.6,"
+            "\"iconBeautifyOutlineR\":0.1,"
+            "\"iconBeautifyOutlineG\":0.2,"
+            "\"iconBeautifyOutlineB\":0.3,"
+            "\"iconBeautifyShadowStrength\":0.42}",
+            iconBeautifyLayout, &layoutError) &&
+            iconBeautifyLayout.iconBeautifyPreset.value_or(-1) == 5 &&
+            iconBeautifyLayout.iconBeautifyShape.value_or(-1) == 10 &&
+            iconBeautifyLayout.iconBeautifyContentScale.value_or(0.0f) == 0.73f &&
+            iconBeautifyLayout.iconBeautifyFinish.value_or(-1) == 2 &&
+            iconBeautifyLayout.iconBeautifyTextureHighlightStrength.value_or(0.0f) == 0.4f &&
+            iconBeautifyLayout.iconBeautifyTextureHighlightSize.value_or(0.0f) == 0.6f &&
+            iconBeautifyLayout.iconBeautifyTextureHighlightAngle.value_or(0.0f) == -0.3f &&
+            iconBeautifyLayout.iconBeautifyTextureShadeStrength.value_or(0.0f) == 0.2f &&
+            iconBeautifyLayout.iconBeautifyTextureEdgeHighlight.value_or(0.0f) == 0.5f &&
+            iconBeautifyLayout.iconBeautifyFilterEnabled.value_or(false) &&
+            iconBeautifyLayout.iconBeautifyFilterStrength.value_or(0.0f) == 0.85f &&
+            iconBeautifyLayout.iconBeautifyFilterTintR.value_or(0.0f) == 0.7f &&
+            iconBeautifyLayout.iconBeautifyFilterTintG.value_or(0.0f) == 0.8f &&
+            iconBeautifyLayout.iconBeautifyFilterTintB.value_or(0.0f) == 0.9f &&
+            iconBeautifyLayout.iconBeautifyOutlineEnabled.value_or(false) &&
+            !iconBeautifyLayout.iconBeautifyOutlineMode.has_value() &&
+            iconBeautifyLayout.iconBeautifyOutlineWidth.value_or(0.0f) == 2.5f &&
+            iconBeautifyLayout.iconBeautifyOutlineOpacity.value_or(0.0f) == 0.6f &&
+            iconBeautifyLayout.iconBeautifyOutlineR.value_or(0.0f) == 0.1f &&
+            iconBeautifyLayout.iconBeautifyOutlineG.value_or(0.0f) == 0.2f &&
+            iconBeautifyLayout.iconBeautifyOutlineB.value_or(0.0f) == 0.3f &&
+            iconBeautifyLayout.iconBeautifyShadowStrength.value_or(0.0f) == 0.42f,
+        "all icon beautify fields decode into the typed layout model");
+    snowdesktop::layout_storage::Document legacyOutlineLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"iconBeautifyOutlineMode\":2}",
+            legacyOutlineLayout, &layoutError) &&
+            !legacyOutlineLayout.iconBeautifyOutlineEnabled.has_value() &&
+            legacyOutlineLayout.iconBeautifyOutlineMode.value_or(-1) == 2,
+        "legacy outline mode remains available for bool migration");
+    snowdesktop::layout_storage::Document packageSourceLayout;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"widgets\":[{\"id\":\"workshop-widget\","
+            "\"page\":\"page-a\",\"x\":1,\"y\":2,"
+            "\"type\":\"lua\",\"packageId\":\"package-a\","
+            "\"packageSourceProvider\":\"steam-workshop\","
+            "\"packageSourceExternalItemId\":\"3780926790@42\","
+            "\"packageSourceUrl\":\"https://steamcommunity.com/"
+            "sharedfiles/filedetails/?id=3780926790\"}]}",
+            packageSourceLayout, &layoutError) &&
+            packageSourceLayout.widgets.size() == 1 &&
+            packageSourceLayout.widgets[0].packageSourceProvider ==
+                "steam-workshop" &&
+            packageSourceLayout.widgets[0].packageSourceExternalItemId ==
+                "3780926790@42" &&
+            packageSourceLayout.widgets[0].packageSourceUrl ==
+                "https://steamcommunity.com/sharedfiles/filedetails/"
+                "?id=3780926790",
+        "layout preserves a Workshop source address for missing widgets");
     Expect(snowdesktop::layout_storage::SaveDocument(
             layoutPath, firstLayout, &layoutError),
         "first layout document is written atomically");
@@ -390,14 +712,16 @@ int main()
             "the shared instance lock is released when the owner exits");
     }
 
-    const auto sourceV1 = root / L"source-v1";
-    MakePackage(sourceV1, "1.0.0",
+    const auto sourcePackage = root / L"source-package";
+    MakePackage(sourcePackage, "1.0.0",
         "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
         "\"ui.input\", \"network.http\"", "\"api.example.com\"");
     WidgetPackageValidator validator;
     PackageManifest manifest;
-    auto report = validator.ValidateDirectory(sourceV1, &manifest);
+    auto report = validator.ValidateDirectory(sourcePackage, &manifest);
     Expect(report.Ok(), "valid folder package is accepted");
+    Expect(IsExecutablePackageContract(manifest),
+        "validated schema/API v2 packages can enter the runtime");
     Expect(manifest.entry == "main.lua", "entry is parsed");
     Expect(manifest.previewStorage["message"] == "Preview" &&
             manifest.previewStorage["count"] == "3" &&
@@ -442,6 +766,146 @@ int main()
     Expect(LocalizePackageManifest(manifest, "fr-FR").name == manifest.name,
         "unknown package locale keeps the English manifest fallback");
 
+    const auto contractV2Package = root / L"contract-v2";
+    MakePackage(contractV2Package, "2.0.0",
+        "ecffdc71-2600-44c2-b0f5-9941a583dc81", "", "", "main.lua",
+        "", 2, 2,
+        "\"draw.immediate\", \"interaction.contextMenu\"",
+        "\"data.app.indexStatus\", \"view.tree\"");
+    PackageManifest manifestV2;
+    report = validator.ValidateDirectory(contractV2Package, &manifestV2);
+    Expect(report.Ok() && manifestV2.schemaVersion == 2 &&
+            manifestV2.apiVersion == 2 &&
+            IsExecutablePackageContract(manifestV2) &&
+            manifestV2.requiredFeatures ==
+                std::vector<std::string>{ "draw.immediate",
+                    "interaction.contextMenu" } &&
+            manifestV2.optionalFeatures ==
+                std::vector<std::string>{ "data.app.indexStatus",
+                    "view.tree" },
+        "schema/API v2 lower-camel feature segments are parsed and accepted");
+    PackageManifest mixedContract = manifestV2;
+    mixedContract.apiVersion = 1;
+    Expect(!IsExecutablePackageContract(mixedContract),
+        "mixed schema/API contracts cannot enter the runtime");
+
+    const auto logicalSlotPackage = root / L"logical-slot-package";
+    MakePackage(logicalSlotPackage, "2.0.0",
+        "689ce096-bb57-4ccc-8cf5-7d75ba1987b8", "", "", "main.lua",
+        "", 2, 2, "\"slots.model\", \"view.logicalSlots\"", "",
+        "",
+        "\"primaryApp\": {\"kind\": \"binding\", "
+        "\"accepts\": [\"app.reference\"], "
+        "\"operation\": \"reference\", \"replacePolicy\": \"allow\", "
+        "\"allowClear\": true}, "
+        "\"favorites\": {\"kind\": \"collection\", "
+        "\"accepts\": [\"desktop.item\", \"filesystem.reference\"], "
+        "\"operation\": \"reference\", \"capacity\": 32}");
+    PackageManifest logicalSlotManifest;
+    report = validator.ValidateDirectory(logicalSlotPackage,
+        &logicalSlotManifest);
+    Expect(report.Ok() && logicalSlotManifest.logicalSlots.size() == 2 &&
+            logicalSlotManifest.logicalSlots.at("primaryApp").kind ==
+                snowdesktop::widget_runtime::LogicalSlotKind::Binding &&
+            logicalSlotManifest.logicalSlots.at("favorites").capacity == 32,
+        "v2 package binding and collection logical slots are validated and parsed");
+
+    const auto invalidLogicalSlotPackage = root / L"logical-slot-invalid";
+    MakePackage(invalidLogicalSlotPackage, "2.0.0",
+        "7ef66c66-f87c-4976-923b-073e07901196", "", "", "main.lua",
+        "", 2, 2, "", "", "",
+        "\"favorites\": {\"kind\": \"collection\", "
+        "\"accepts\": [\"widget\"], \"operation\": \"move\", "
+        "\"capacity\": 65}");
+    Expect(!validator.ValidateDirectory(invalidLogicalSlotPackage).Ok(),
+        "logical slots reject unknown payload kinds, destructive operations, and excessive capacity");
+
+    const auto unsupportedV1Package = root / L"unsupported-v1";
+    MakePackage(unsupportedV1Package, "1.0.0",
+        "243f1469-cba6-43b3-a471-d18d9162dcb0", "", "", "main.lua",
+        "", 1, 1);
+    Expect(!validator.ValidateDirectory(unsupportedV1Package).Ok(),
+        "schema/API v1 packages are rejected by v2-only validation");
+
+    const auto resourcePackage = root / L"resource-package";
+    MakePackage(resourcePackage, "2.0.0",
+        "1d1bfbc3-e777-4b59-8124-6e53f188ae5b", "", "", "main.lua",
+        "", 2, 2, "\"resource.package\"", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"assets/logo.png\"}, "
+        "\"body\": {\"type\": \"font\", \"path\": "
+        "\"assets/body.ttf\", \"license\": \"OFL-1.1\"}");
+    std::string pngHeader(24, '\0');
+    const std::string pngSignature("\x89PNG\r\n\x1a\n", 8);
+    pngHeader.replace(0, pngSignature.size(), pngSignature);
+    pngHeader.replace(12, 4, "IHDR");
+    pngHeader[19] = 1;
+    pngHeader[23] = 1;
+    Write(resourcePackage / L"assets" / L"logo.png", pngHeader);
+    Write(resourcePackage / L"assets" / L"body.ttf",
+        std::string("\0\1\0\0", 4));
+    PackageManifest resourceManifest;
+    report = validator.ValidateDirectory(resourcePackage, &resourceManifest);
+    Expect(report.Ok() && resourceManifest.resources.size() == 2 &&
+            resourceManifest.resources.at("logo").type == "image" &&
+            resourceManifest.resources.at("body").license == "OFL-1.1",
+        "v2 package image and private font resources are validated and parsed");
+
+    const auto traversalResourcePackage = root / L"resource-traversal";
+    MakePackage(traversalResourcePackage, "2.0.0",
+        "0c237b9b-7e14-44c8-9891-cd378f7b6ce6", "", "", "main.lua",
+        "", 2, 2, "", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"../logo.png\"}");
+    Expect(!validator.ValidateDirectory(traversalResourcePackage).Ok(),
+        "v2 package resource paths cannot escape the package root");
+
+    const auto badResourceContentPackage = root / L"resource-content";
+    MakePackage(badResourceContentPackage, "2.0.0",
+        "4d399123-9ed4-4288-bbd0-4ea67dbb7aec", "", "", "main.lua",
+        "", 2, 2, "", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"assets/logo.png\"}");
+    Write(badResourceContentPackage / L"assets" / L"logo.png",
+        "not a png");
+    Expect(!validator.ValidateDirectory(badResourceContentPackage).Ok(),
+        "declared image resources must match their signature and dimensions");
+
+    const auto unlicensedFontPackage = root / L"resource-font-license";
+    MakePackage(unlicensedFontPackage, "2.0.0",
+        "35bb0546-cd57-428d-be84-74682600d08f", "", "", "main.lua",
+        "", 2, 2, "", "",
+        "\"body\": {\"type\": \"font\", \"path\": "
+        "\"assets/body.ttf\"}");
+    Write(unlicensedFontPackage / L"assets" / L"body.ttf",
+        std::string("\0\1\0\0", 4));
+    Expect(!validator.ValidateDirectory(unlicensedFontPackage).Ok(),
+        "private font resources must declare their package license");
+
+    const auto legacyResourcePackage = root / L"legacy-resource";
+    MakePackage(legacyResourcePackage, "1.0.0",
+        "68a2ddbb-44dd-461d-9619-7114636338de", "", "", "main.lua",
+        "", 1, 1, "", "",
+        "\"logo\": {\"type\": \"image\", \"path\": "
+        "\"assets/logo.png\"}");
+    Write(legacyResourcePackage / L"assets" / L"logo.png", pngHeader);
+    Expect(!validator.ValidateDirectory(legacyResourcePackage).Ok(),
+        "legacy API packages cannot declare v2 resource handles");
+
+    const auto mismatchedContract = root / L"mismatched-contract";
+    MakePackage(mismatchedContract, "2.0.0",
+        "24dc465a-33e7-4189-bc1e-2cb9005de950", "", "", "main.lua",
+        "", 2, 1);
+    Expect(!validator.ValidateDirectory(mismatchedContract).Ok(),
+        "schema and API versions must move to v2 together");
+
+    const auto invalidFeature = root / L"invalid-feature";
+    MakePackage(invalidFeature, "2.0.0",
+        "f9312831-8944-41c3-a6fb-d3f6a0918fc2", "", "", "main.lua",
+        "", 2, 2, "\"View.Tree\"");
+    Expect(!validator.ValidateDirectory(invalidFeature).Ok(),
+        "feature identifier segments must start with a lowercase letter");
+
     const auto badSource = root / L"bad";
     MakePackage(badSource, "1.0.0",
         "not-a-uuid");
@@ -454,12 +918,124 @@ int main()
         "\"network.http\"", "\"*.example.com\"");
     Expect(!validator.ValidateDirectory(badNetwork).Ok(),
         "wildcard network domains are rejected");
+    const auto v2Network = root / L"v2-network";
+    MakePackage(v2Network, "1.0.0",
+        "6c22cbe5-055b-42db-8198-915297034d5e",
+        "\"network.internet\"", "\"feeds.example.net\"",
+        "main.lua", "", 2, 2);
+    Write(v2Network / L"main.lua",
+        "return widget.define({render=function() end})\n");
+    Expect(validator.ValidateDirectory(v2Network).Ok(),
+        "v2 public network permission accepts explicit domains");
     const auto calendarPackage = root / L"calendar-package";
     MakePackage(calendarPackage, "1.0.0",
         "fd084e05-bb0f-43d7-977d-426ae39c1ab9",
         "\"calendar.read\", \"calendar.write\"");
     Expect(validator.ValidateDirectory(calendarPackage).Ok(),
         "calendar permissions are accepted");
+    const auto splitSystemPackage = root / L"split-system-permissions";
+    MakePackage(splitSystemPackage, "1.0.0",
+        "aed3b5fb-c90d-49d0-9f05-f59a5cdab519",
+        "\"system.performance.read\", \"system.power.read\", \"system.network.read\"");
+    Expect(validator.ValidateDirectory(splitSystemPackage).Ok(),
+        "fine-grained system snapshot permissions are accepted");
+    const auto v2PermissionVocabularyPackage =
+        root / L"v2-permission-vocabulary";
+    MakePackage(v2PermissionVocabularyPackage, "1.0.0",
+        "403e9f91-33dd-4c20-9b11-c476074e3a3a",
+        "\"system.storage.read\", \"system.display.read\", "
+        "\"audio.output.read\", \"audio.output.analyze\", "
+        "\"audio.output.control\", \"app.discovery\", \"app.launch\", "
+        "\"shell.launch\", \"network.internet\", \"network.local\", "
+        "\"notification.post\", \"clipboard.read\", "
+        "\"clipboard.write\", \"process.summary.read\", "
+        "\"filesystem.userSelected.read\", "
+        "\"filesystem.userSelected.write\", "
+        "\"filesystem.userSelected.watch\"");
+    Expect(validator.ValidateDirectory(v2PermissionVocabularyPackage).Ok(),
+        "the complete M2 permission vocabulary is accepted by package validation");
+    const auto wildcardSystemPackage = root / L"wildcard-system-permission";
+    MakePackage(wildcardSystemPackage, "1.0.0",
+        "68be1e3c-c07f-4ad6-a787-91de0d60725d",
+        "\"system.read\"");
+    Expect(!validator.ValidateDirectory(wildcardSystemPackage).Ok(),
+        "the legacy system.read wildcard is rejected");
+    const auto invalidScanPaths = TestPaths(root / L"invalid-package-scan");
+    const std::string invalidScanId =
+        "68be1e3c-c07f-4ad6-a787-91de0d60725d";
+    MakePackage(invalidScanPaths.installed /
+            std::filesystem::path(invalidScanId) / L"1.0.0", "1.0.0",
+        invalidScanId, "\"system.read\"");
+    MakePackage(invalidScanPaths.development / L"invalid-development",
+        "1.0.0", invalidScanId, "\"system.performance.read\"");
+    MakePackage(invalidScanPaths.development /
+            L"invalid-development-only", "1.0.0",
+        "df67af31-e68e-4c8c-a079-1d65451f93f0", "\"system.read\"");
+    Write(invalidScanPaths.registry,
+        "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
+        "    {\"packageId\":\"" + invalidScanId +
+        "\",\"activeVersion\":\"1.0.0\","
+        "\"providerId\":\"steam-workshop\","
+        "\"externalItemId\":\"invalid-test\","
+        "\"permissionState\":\"granted\",\"enabled\":true,"
+        "\"grantedPermissions\":[\"system.read\"],"
+        "\"grantedNetworkDomains\":[]}\n  ]\n}\n");
+    WidgetPackageManager invalidScanManager(invalidScanPaths);
+    std::string invalidScanError;
+    Expect(invalidScanManager.Initialize(invalidScanError),
+        "package manager initializes while invalid packages are present");
+    const auto invalidScanned = invalidScanManager.ListInvalidPackages();
+    const auto validScanned = invalidScanManager.ListPackages();
+    Expect(invalidScanned.size() == 2 &&
+            validScanned.size() == 1,
+        "invalid packages remain visible while a valid development copy of the same component remains loadable");
+    const auto invalidInstalled = std::find_if(invalidScanned.begin(),
+        invalidScanned.end(), [](const auto& package)
+        {
+            return !package.builtin && !package.development;
+        });
+    Expect(invalidInstalled != invalidScanned.end() &&
+            invalidInstalled->manifest.id == invalidScanId &&
+            invalidInstalled->packageId == invalidScanId &&
+            invalidInstalled->selected &&
+            invalidInstalled->source.providerId == "steam-workshop" &&
+            !invalidInstalled->report.Ok(),
+        "an invalid active installed package retains its identity, source, and validation report");
+    Expect(!validScanned.empty() && invalidInstalled != invalidScanned.end() &&
+            validScanned.front().development &&
+            validScanned.front().manifest.id == invalidInstalled->packageId,
+        "valid and invalid source copies expose the same package identity for one management-list entry");
+    const auto optionalPermissionPackage =
+        root / L"optional-permission-package";
+    MakePackage(optionalPermissionPackage, "1.0.0",
+        "266ad7e7-cb68-4a17-ae2d-90c5bed9ccdb",
+        "\"desktop.read\"", "", "main.lua",
+        "\"calendar.read\", \"ui.input\"");
+    PackageManifest optionalPermissionManifest;
+    Expect(validator.ValidateDirectory(optionalPermissionPackage,
+            &optionalPermissionManifest).Ok() &&
+            optionalPermissionManifest.permissions ==
+                std::vector<std::string>{ "desktop.read" } &&
+            optionalPermissionManifest.optionalPermissions ==
+                std::vector<std::string>({
+                    "calendar.read", "ui.input" }),
+        "required and optional permissions are parsed separately");
+    const auto duplicateOptionalPackage =
+        root / L"duplicate-optional-permission";
+    MakePackage(duplicateOptionalPackage, "1.0.0",
+        "d93d3424-452e-455c-bd86-ec7df5e99bbd",
+        "\"desktop.read\"", "", "main.lua",
+        "\"desktop.read\"");
+    Expect(!validator.ValidateDirectory(duplicateOptionalPackage).Ok(),
+        "a permission cannot be both required and optional");
+    const auto unknownOptionalPackage =
+        root / L"unknown-optional-permission";
+    MakePackage(unknownOptionalPackage, "1.0.0",
+        "d70b2447-8f2d-4e87-93ec-6a7f86fac70f",
+        "\"ui.input\"", "", "main.lua",
+        "\"future.unregistered\"");
+    Expect(!validator.ValidateDirectory(unknownOptionalPackage).Ok(),
+        "unknown optional permissions are rejected");
 
     std::string error;
     const auto nestedSource = root / L"nested-entry";
@@ -470,7 +1046,9 @@ int main()
     Expect(validator.ValidateDirectory(
             nestedSource, &nestedManifest).Ok(),
         "a package-relative nested Lua entry validates");
-    WidgetPackageManager nestedManager(TestPaths(root / L"nested-manager"));
+    const auto nestedManagerPaths =
+        TestPaths(root / L"nested-manager");
+    WidgetPackageManager nestedManager(nestedManagerPaths);
     Expect(nestedManager.Initialize(error),
         "nested-entry package manager initializes");
     InstalledPackage nestedInstalled;
@@ -478,6 +1056,49 @@ int main()
             { "local", "nested-entry" }, false,
             nestedInstalled, report, error),
         "nested-entry package installs");
+    Expect(nestedInstalled.permissionState ==
+            PermissionDecisionState::Granted,
+        "new package records an explicit granted permission state");
+    const std::string explicitEmptyRegistry =
+        "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
+        "    {\"packageId\":\"" + nestedManifest.id +
+        "\",\"activeVersion\":\"" + nestedManifest.version +
+        "\",\"providerId\":\"local\","
+        "\"externalItemId\":\"nested-entry\","
+        "\"permissionState\":\"granted\",\"enabled\":true,"
+        "\"grantedPermissions\":[],"
+        "\"grantedNetworkDomains\":[]}\n  ]\n}\n";
+    Write(nestedManagerPaths.registry, explicitEmptyRegistry);
+    WidgetPackageManager explicitEmptyManager(nestedManagerPaths);
+    Expect(explicitEmptyManager.Initialize(error),
+        "package manager reloads an explicit empty permission grant");
+    const auto explicitEmpty =
+        explicitEmptyManager.Resolve(nestedManifest.id);
+    Expect(explicitEmpty &&
+            explicitEmpty->permissionState ==
+                PermissionDecisionState::Granted &&
+            explicitEmpty->grantedPermissions.empty(),
+        "explicit empty grants do not fall back to manifest permissions");
+
+    const std::string legacyEmptyRegistry =
+        "{\n  \"schemaVersion\": 1,\n  \"packages\": [\n"
+        "    {\"packageId\":\"" + nestedManifest.id +
+        "\",\"activeVersion\":\"" + nestedManifest.version +
+        "\",\"providerId\":\"local\","
+        "\"externalItemId\":\"nested-entry\",\"enabled\":true,"
+        "\"grantedPermissions\":[],"
+        "\"grantedNetworkDomains\":[]}\n  ]\n}\n";
+    Write(nestedManagerPaths.registry, legacyEmptyRegistry);
+    WidgetPackageManager legacyEmptyManager(nestedManagerPaths);
+    Expect(legacyEmptyManager.Initialize(error),
+        "package manager reloads a legacy permission record");
+    const auto legacyEmpty = legacyEmptyManager.Resolve(nestedManifest.id);
+    Expect(legacyEmpty &&
+            legacyEmpty->permissionState ==
+                PermissionDecisionState::LegacyImplicit &&
+            legacyEmpty->grantedPermissions ==
+                nestedManifest.permissions,
+        "legacy empty grants retain compatibility until migration");
     const auto nestedEntry =
         nestedManager.ResolveEntry(nestedManifest.id);
     const auto nestedResolved = nestedEntry
@@ -490,25 +1111,198 @@ int main()
 
     const auto managerPaths = TestPaths(root / L"manager");
     std::filesystem::create_directories(managerPaths.builtin);
-    std::filesystem::copy(sourceV1, managerPaths.builtin / L"package-test",
+    std::filesystem::copy(sourcePackage, managerPaths.builtin / L"package-test",
+        std::filesystem::copy_options::recursive, ec);
+    std::filesystem::create_directories(managerPaths.development);
+    std::filesystem::copy(sourcePackage,
+        managerPaths.development / L"package-test",
         std::filesystem::copy_options::recursive, ec);
     WidgetPackageManager manager(managerPaths);
     Expect(manager.Initialize(error), "package manager initializes");
-    Expect(manager.Resolve(manifest.id)->builtin,
-        "built-in package is the initial active source");
+    Expect(manager.Resolve(manifest.id)->builtin &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::LegacyImplicit,
+        "a discovered development package is inactive by default");
+    Expect(manager.SetPermissionDecision(manifest.id,
+            PermissionDecisionState::Granted, manifest.permissions,
+            manifest.networkDomains, error) &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "an explicit built-in permission grant applies before activation");
+    WidgetPackageManager builtInGrantReloaded(managerPaths);
+    Expect(builtInGrantReloaded.Initialize(error) &&
+            builtInGrantReloaded.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "a source-bound built-in grant survives a manager restart");
+    const auto initialPackages = manager.ListPackages();
+    const auto initialDevelopment = std::find_if(
+        initialPackages.begin(), initialPackages.end(),
+        [&](const auto& package)
+        {
+            return package.development && package.manifest.id == manifest.id;
+        });
+    Expect(initialDevelopment != initialPackages.end() &&
+        !initialDevelopment->active,
+        "inactive development candidates remain visible to management UI");
+    Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
+            manager.Resolve(manifest.id)->development &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "sensitive development source activation requires explicit consent");
+    Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
+            manager.Resolve(manifest.id)->builtin &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "deactivating development restores the source-bound built-in grant");
     InstalledPackage installed;
     report = {};
-    Expect(manager.InstallDirectory(sourceV1, { "local", "package-test" },
+    Expect(manager.InstallDirectory(sourcePackage, { "local", "package-test" },
         false, installed, report, error), "folder package installs");
-    Expect(manager.Resolve(manifest.id).has_value(), "installed package resolves");
+    Expect(manager.Resolve(manifest.id).has_value() &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "new sensitive package installs without receiving runtime permission");
+    Expect(manager.SetDevelopmentOverride(manifest.id, true, error) &&
+        manager.Resolve(manifest.id)->development,
+        "an explicitly activated development package overrides an install");
+    const auto shadowedPackages = manager.ListPackages();
+    const auto shadowedInstalled = std::find_if(
+        shadowedPackages.begin(), shadowedPackages.end(),
+        [&](const auto& package)
+        {
+            return package.manifest.id == manifest.id &&
+                !package.builtin && !package.development && package.selected;
+        });
+    Expect(shadowedInstalled != shadowedPackages.end() &&
+        !shadowedInstalled->active,
+        "an active development override keeps the selected install manageable");
+    WidgetPackageManager reloadedManager(managerPaths);
+    Expect(reloadedManager.Initialize(error) &&
+        reloadedManager.Resolve(manifest.id)->development,
+        "explicit development activation persists across manager restarts");
+    Expect(reloadedManager.SetDevelopmentOverride(
+            manifest.id, false, error) &&
+        !reloadedManager.Resolve(manifest.id)->development,
+        "deactivating development restores the installed version");
+    Expect(manager.SetDevelopmentOverride(manifest.id, false, error) &&
+        !manager.Resolve(manifest.id)->development,
+        "the primary manager continues with the installed source");
+    Expect(manager.SetPermissionDecision(manifest.id,
+            PermissionDecisionState::Granted, manifest.permissions,
+            manifest.networkDomains, error) &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "an installed package becomes runnable only after explicit consent");
+    WidgetPackageManager installedGrantReloaded(managerPaths);
+    Expect(installedGrantReloaded.Initialize(error) &&
+            installedGrantReloaded.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Granted,
+        "an installed package grant survives a manager restart");
+
+    const auto optionalManagerPaths =
+        TestPaths(root / L"optional-permission-manager");
+    WidgetPackageManager optionalManager(optionalManagerPaths);
+    error.clear();
+    Expect(optionalManager.Initialize(error),
+        "optional-permission package manager initializes");
+    InstalledPackage optionalInstalled;
+    report = {};
+    Expect(optionalManager.InstallDirectory(optionalPermissionPackage,
+            { "local", "optional-permission-package" }, false,
+            optionalInstalled, report, error) &&
+            optionalInstalled.permissionState ==
+                PermissionDecisionState::Pending,
+        "a package with sensitive optional access starts pending consent");
+    const std::vector<std::string> requiredOnlyGrant = {
+        "desktop.read", "ui.input"
+    };
+    Expect(optionalManager.SetPermissionDecision(
+            optionalPermissionManifest.id,
+            PermissionDecisionState::Granted, requiredOnlyGrant, {},
+            error),
+        "required access can be granted while sensitive optional access is omitted");
+    WidgetPackageManager optionalGrantReloaded(optionalManagerPaths);
+    const auto optionalReloaded = optionalGrantReloaded.Initialize(error)
+        ? optionalGrantReloaded.Resolve(optionalPermissionManifest.id)
+        : std::nullopt;
+    Expect(optionalReloaded &&
+            optionalReloaded->permissionState ==
+                PermissionDecisionState::Granted &&
+            optionalReloaded->manifest.optionalPermissions ==
+                optionalPermissionManifest.optionalPermissions &&
+            optionalReloaded->grantedPermissions == requiredOnlyGrant,
+        "required-only grants and optional declarations survive a manager restart");
+    Expect(Read(optionalManagerPaths.registry).find(
+            "\"requestedOptionalPermissions\"") != std::string::npos,
+        "source-bound permission decisions persist optional scope metadata");
+
+    const auto changedBuiltinPaths =
+        TestPaths(root / L"changed-builtin-scope-manager");
+    const auto changedBuiltinRoot =
+        changedBuiltinPaths.builtin / L"changed-scope";
+    const std::string changedBuiltinId =
+        "65440c4d-d6e9-42f2-92e7-bacdd6390069";
+    MakePackage(changedBuiltinRoot, "1.0.0", changedBuiltinId,
+        "\"desktop.read\"");
+    WidgetPackageManager changedBuiltinManager(changedBuiltinPaths);
+    error.clear();
+    Expect(changedBuiltinManager.Initialize(error) &&
+            changedBuiltinManager.SetPermissionDecision(changedBuiltinId,
+                PermissionDecisionState::Granted,
+                { "desktop.read" }, {}, error),
+        "a source-bound built-in decision is stored before a scope change");
+    MakePackage(changedBuiltinRoot, "1.0.0", changedBuiltinId,
+        "\"desktop.read\", \"calendar.read\"");
+    WidgetPackageManager changedBuiltinReloaded(changedBuiltinPaths);
+    const auto changedBuiltin = changedBuiltinReloaded.Initialize(error)
+        ? changedBuiltinReloaded.Resolve(changedBuiltinId)
+        : std::nullopt;
+    Expect(changedBuiltin && changedBuiltin->permissionState ==
+            PermissionDecisionState::Pending &&
+            changedBuiltin->grantedPermissions.empty(),
+        "an in-place built-in scope change cannot fall back to implicit permission");
+    MakePackage(changedBuiltinRoot, "1.0.0", changedBuiltinId, "");
+    WidgetPackageManager permissionFreeBuiltinReloaded(changedBuiltinPaths);
+    const auto permissionFreeBuiltin =
+        permissionFreeBuiltinReloaded.Initialize(error)
+        ? permissionFreeBuiltinReloaded.Resolve(changedBuiltinId)
+        : std::nullopt;
+    Expect(permissionFreeBuiltin && permissionFreeBuiltin->permissionState ==
+            PermissionDecisionState::Granted &&
+            permissionFreeBuiltin->grantedPermissions.empty(),
+        "removing every permission clears a stale built-in consent block");
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),
         "installed package can be disabled");
     Expect(!manager.Resolve(manifest.id).has_value(),
         "disabled package does not silently fall back to a built-in source");
-    Expect(manager.SetEnabled(manifest.id, true, error),
-        "installed package can be re-enabled");
+    Expect(manager.ContainsPackage(manifest.id),
+        "a disabled package remains physically installed for recovery UI");
+    error.clear();
+    Expect(manager.SetPermissionDecision(manifest.id,
+            PermissionDecisionState::Denied, {}, {}, error),
+        "permissions remain manageable while an installed package is disabled");
+    Expect(manager.UpdateSteamSubscriptionHistory(
+            "111", { "100", "200" }, error),
+        "Steam subscription history is persisted per account");
+    const auto subscriptionHistory = manager.SteamSubscriptionHistory();
+    Expect(subscriptionHistory.contains("111") &&
+        subscriptionHistory.at("111") ==
+            std::vector<std::string>({ "100", "200" }),
+        "Steam subscription history is normalized for reconciliation");
+    WidgetPackageManager historyReloadedManager(managerPaths);
+    error.clear();
+    Expect(historyReloadedManager.Initialize(error) &&
+        historyReloadedManager.SteamSubscriptionHistory() ==
+            subscriptionHistory,
+        "Steam subscription history survives a manager restart");
+    Expect(manager.SetEnabled(manifest.id, true, error) &&
+            manager.Resolve(manifest.id)->permissionState ==
+                PermissionDecisionState::Denied,
+        "a disabled package can be re-enabled without losing its permission decision");
 
     const auto sourceV2 = root / L"source-v2";
     MakePackage(sourceV2, "1.1.0",
@@ -519,16 +1313,26 @@ int main()
         false, installed, report, error) == false,
         "silent cross-provider update is rejected");
     error.clear();
-    Expect(manager.InstallDirectory(sourceV2, { "local", "package-test" },
+    Expect(!manager.InstallDirectory(sourceV2, { "local", "package-test" },
         false, installed, report, error),
-        "domain metadata changes do not require permission expansion");
+        "network origin expansion requires confirmation");
+    error.clear();
+    Expect(manager.InstallDirectory(sourceV2, { "local", "package-test" },
+        false, installed, report, error, true),
+        "confirmed network origin expansion installs pending consent");
     Expect(manager.Resolve(manifest.id)->manifest.version == "1.1.0",
         "new version becomes active");
+    Expect(manager.Resolve(manifest.id)->permissionState ==
+            PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "a changed permission scope invalidates the previous grant");
 
     const auto sourceV3 = root / L"source-v3";
     MakePackage(sourceV3, "1.2.0",
         "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
-        "\"ui.input\", \"ui.notify\"");
+        "\"ui.input\", \"network.http\", \"ui.notify\", \"calendar.write\"",
+        "\"feeds.example.net\", \"api.example.net\"", "main.lua",
+        "\"calendar.read\"");
     LocalDirectorySource localSource(root);
     PackageQuery page;
     page.offset = 1;
@@ -539,12 +1343,22 @@ int main()
     Expect(!manager.InstallDirectory(sourceV3, { "local", "package-test" },
         false, installed, report, error),
         "permission expansion requires confirmation");
+    Expect(error.find("new required permission: ui.notify") !=
+            std::string::npos &&
+            error.find("new required permission: calendar.write") !=
+                std::string::npos &&
+            error.find("new optional permission: calendar.read") !=
+                std::string::npos &&
+            error.find("new network domain: api.example.net") !=
+                std::string::npos,
+        "permission expansion reports every newly requested scope together");
     error.clear();
     Expect(manager.InstallDirectory(sourceV3, { "local", "package-test" },
         false, installed, report, error, true),
         "confirmed permission expansion installs");
-    Expect(installed.grantedPermissions.size() == 2,
-        "permission snapshot is persisted");
+    Expect(installed.permissionState == PermissionDecisionState::Pending &&
+            installed.grantedPermissions.empty(),
+        "install confirmation does not substitute for runtime consent");
     error.clear();
     Expect(manager.Rollback(manifest.id, "1.0.0", error),
         "known-good version can be restored");
@@ -557,29 +1371,58 @@ int main()
     Expect(manager.ExportArchive(manifest.id, archive, artifact, report, error),
         "folder package exports to .snowwidget");
     Expect(!artifact.sha256.empty(), "export records SHA-256");
-    Expect(manager.ValidateArchive(archive).Ok(),
+    PackageManifest archiveManifest;
+    Expect(manager.ValidateArchive(archive, &archiveManifest).Ok(),
         "archive validation securely extracts and validates the package");
+    Expect(archiveManifest.id == manifest.id &&
+        archiveManifest.version == "1.0.0",
+        "full archive validation returns the package identity and version");
+    const auto linkedArchive =
+        root / L"exports" / L"linked-package.snowwidget";
+    ec.clear();
+    std::filesystem::create_symlink(archive, linkedArchive, ec);
+    if (!ec)
+    {
+        const auto linkedReport = manager.ValidateArchive(linkedArchive);
+        Expect(!linkedReport.Ok() &&
+                std::any_of(linkedReport.issues.begin(),
+                    linkedReport.issues.end(), [](const auto& issue)
+                    {
+                        return issue.code == "archive.reparse";
+                    }),
+            "an archive file reparse point is rejected");
+    }
+    else
+    {
+        std::cout << "SKIPPED: archive file reparse-point validation ("
+                  << ec.message() << ")\n";
+    }
+    const auto linkedExports = root / L"linked-exports";
+    ec.clear();
+    std::filesystem::create_directory_symlink(
+        archive.parent_path(), linkedExports, ec);
+    if (!ec)
+    {
+        const auto linkedPathReport = manager.ValidateArchive(
+            linkedExports / archive.filename());
+        Expect(!linkedPathReport.Ok() &&
+                std::any_of(linkedPathReport.issues.begin(),
+                    linkedPathReport.issues.end(), [](const auto& issue)
+                    {
+                        return issue.code == "archive.reparse";
+                    }),
+            "an archive parent-path reparse point is rejected");
+    }
+    else
+    {
+        std::cout << "SKIPPED: archive parent reparse-point validation ("
+                  << ec.message() << ")\n";
+    }
     const auto corruptArchive = root / L"exports" / L"corrupt.snowwidget";
     std::filesystem::copy_file(archive, corruptArchive,
         std::filesystem::copy_options::overwrite_existing, ec);
-    {
-        std::fstream corrupt(corruptArchive,
-            std::ios::binary | std::ios::in | std::ios::out);
-        std::vector<char> bytes((std::istreambuf_iterator<char>(corrupt)),
-            std::istreambuf_iterator<char>());
-        const std::string needle = "function render";
-        const auto found = std::search(bytes.begin(), bytes.end(),
-            needle.begin(), needle.end());
-        if (found != bytes.end())
-        {
-            const auto position = std::distance(bytes.begin(), found);
-            bytes[static_cast<std::size_t>(position)] ^= 0x01;
-            corrupt.clear();
-            corrupt.seekp(0);
-            corrupt.write(bytes.data(),
-                static_cast<std::streamsize>(bytes.size()));
-        }
-    }
+    Expect(CorruptArchivePayload(corruptArchive, "return widget.define"),
+        "widget archive corruption test modifies an archive payload");
     Expect(!manager.ValidateArchive(corruptArchive).Ok(),
         "archive CRC corruption is rejected");
     const auto traversalArchive =
@@ -602,8 +1445,50 @@ int main()
         "exported archive installs through staging");
     Expect(imported.manifest.id == manifest.id, "archive identity is preserved");
 
+    const auto developmentCopyPaths = TestPaths(root / L"development-copy");
+    WidgetPackageManager developmentCopyManager(developmentCopyPaths);
+    error.clear();
+    Expect(developmentCopyManager.Initialize(error),
+        "development-copy manager initializes");
+    InstalledPackage workshopInstalled;
+    Expect(developmentCopyManager.InstallDirectory(sourcePackage,
+            { "steam-workshop", "5080330:123456789" }, false,
+            workshopInstalled, report, error),
+        "Workshop component installs before creating a development version");
+    std::filesystem::path developmentProject;
+    error.clear();
+    Expect(developmentCopyManager.CreateDevelopmentProject(
+            manifest.id, developmentProject, error),
+        "an installed Workshop component creates a development project");
+    Expect(developmentProject.parent_path() ==
+            developmentCopyPaths.development &&
+            std::filesystem::is_regular_file(
+                developmentProject / L"widget.json") &&
+            std::filesystem::is_regular_file(
+                developmentProject / L"main.lua"),
+        "the development project is a complete editable package directory");
+    const auto developmentPackages = developmentCopyManager.ListPackages();
+    const auto copiedDevelopment = std::find_if(
+        developmentPackages.begin(), developmentPackages.end(),
+        [&](const auto& package)
+        {
+            return package.development && package.manifest.id == manifest.id;
+        });
+    Expect(copiedDevelopment != developmentPackages.end() &&
+            !copiedDevelopment->active &&
+            developmentCopyManager.Resolve(manifest.id) &&
+            !developmentCopyManager.Resolve(manifest.id)->development,
+        "creating a development project keeps the installed version active");
+    std::filesystem::path duplicateDevelopmentProject;
+    error.clear();
+    Expect(!developmentCopyManager.CreateDevelopmentProject(
+            manifest.id, duplicateDevelopmentProject, error) &&
+            duplicateDevelopmentProject.empty(),
+        "a second development project cannot silently replace the first");
+
     WidgetPackageManager sourceTrustManager(
         TestPaths(root / L"source-trust"));
+    error.clear();
     Expect(sourceTrustManager.Initialize(error),
         "source trust test manager initializes");
     PackageDetails spoofedIdentity{
@@ -700,45 +1585,6 @@ int main()
     Expect(catalogInstalled.manifest.version == "1.2.0",
         "source installation activates the requested version");
 
-    const auto portableWidgets = root / L"portable-widget-import" / L"widgets";
-    Write(portableWidgets / L"my_legacy.lua",
-        "function render() end\n");
-    Write(portableWidgets / L"my_legacy.widget.json",
-        "{ \"name\": \"My Legacy Widget\", \"version\": \"1.0.0\" }\n");
-    Write(portableWidgets / L"orphan.lua",
-        "function render() end\n");
-    MakePackage(portableWidgets / L"folder-package", "1.0.0");
-    Write(portableWidgets / L"snowdesktop-lua-widget" / L"SKILL.md",
-        "# Authoring tool\n");
-    Write(portableWidgets / L"README.txt", "not component data\n");
-    const auto importedPortableWidgets =
-        root / L"portable-widget-import" / L"staging-data" / L"widgets";
-    const auto portableImport = ImportLegacyLooseWidgetPairs(
-        portableWidgets, importedPortableWidgets);
-    Expect(portableImport.ok && portableImport.copiedPairs == 1,
-        "portable migration imports only complete legacy loose pairs");
-    Expect(std::filesystem::is_regular_file(
-        importedPortableWidgets / L"my_legacy.lua") &&
-        std::filesystem::is_regular_file(
-            importedPortableWidgets / L"my_legacy.widget.json"),
-        "portable migration preserves the user-authored legacy pair");
-    Expect(!std::filesystem::exists(
-        importedPortableWidgets / L"orphan.lua"),
-        "portable migration ignores orphaned Lua files");
-    Expect(!std::filesystem::exists(
-        importedPortableWidgets / L"folder-package") &&
-        !std::filesystem::exists(
-            importedPortableWidgets / L"snowdesktop-lua-widget") &&
-        !std::filesystem::exists(
-            importedPortableWidgets / L"README.txt"),
-        "portable migration does not copy folder packages or authoring files");
-    const auto missingPortableImport = ImportLegacyLooseWidgetPairs(
-        root / L"portable-widget-import" / L"missing",
-        importedPortableWidgets);
-    Expect(missingPortableImport.ok &&
-        missingPortableImport.copiedPairs == 0,
-        "portable migration accepts a missing legacy widgets directory");
-
     const auto longPathSource =
         root / L"portable-long-path-source";
     std::filesystem::path longRelative;
@@ -767,6 +1613,18 @@ int main()
     Expect(GetFileAttributesW(extendedLongCopiedFile.c_str()) !=
             INVALID_FILE_ATTRIBUTES,
         "portable migration creates the long destination file");
+
+    std::stop_source cancelledCopySource;
+    cancelledCopySource.request_stop();
+    const auto cancelledCopyDestination =
+        root / L"portable-cancelled-copy-destination";
+    const auto cancelledCopy =
+        snowdesktop::migration::CopyDataTree(
+            longPathSource, cancelledCopyDestination,
+            { cancelledCopySource.get_token(), {} });
+    Expect(!cancelledCopy.ok && cancelledCopy.cancelled &&
+            !std::filesystem::exists(cancelledCopyDestination),
+        "portable migration cancellation leaves no staging destination");
 
     const auto portableState =
         root / L"restart-safe-portable-migration";
@@ -829,18 +1687,25 @@ int main()
         "{ \"source\": \"complete-backup-modified\" }\n";
     const std::string originalCalendar =
         "{ \"schemaVersion\": 1, \"events\": [] }\n";
+    const std::string originalNotificationSchedules =
+        "{ \"schemaVersion\": 1, \"entries\": [] }\n";
     Write(fullBackupData / L"SnowDesktop.layout.json",
         originalLayout);
     Write(fullBackupData / L"SnowDesktop.general.json",
         "{ \"language\": \"zh-CN\" }\n");
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         originalCalendar);
+    Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
+        originalNotificationSchedules);
     Write(fullBackupData / L"widgets" / L"installed" /
         L"package-id" / L"1.0.0" / L"main.lua",
         "function render() end\n");
     Write(fullBackupData / L"widgets" / L"storage" /
         L"package-id" / L"instance-id.json",
         "{ \"counter\": 27 }\n");
+    Write(fullBackupState / L"PrivateState" /
+        L"SnowDesktop.widget-secrets.bin",
+        "encrypted-private-state-must-not-be-exported");
     Write(fullBackupData / L"SnowDesktop_crash.log",
         "excluded log\n");
     Write(fullBackupData / L"SnowDesktop.log",
@@ -865,6 +1730,32 @@ int main()
 
     snowdesktop::backup::FullDataBackupManager fullBackupManager(
         fullBackupState, fullBackupData, "1.0.1.0", "portable");
+
+    int rejectedCreateGateCalls = 0;
+    const auto rejectedFullBackup = fullBackupManager.Create(
+        { {}, [&]() {
+            ++rejectedCreateGateCalls;
+            return false;
+        } });
+    Expect(!rejectedFullBackup.ok &&
+            rejectedFullBackup.cancelled &&
+            rejectedCreateGateCalls == 1 &&
+            fullBackupManager.List().empty(),
+        "a rejected backup commit gate publishes no backup destination");
+    bool rejectedCreateLeftStaging = false;
+    ec.clear();
+    for (std::filesystem::directory_iterator entry(
+            fullBackupManager.BackupRoot(), ec), end;
+        !ec && entry != end; entry.increment(ec))
+    {
+        rejectedCreateLeftStaging =
+            entry->path().filename().wstring().starts_with(L".staging-");
+        if (rejectedCreateLeftStaging)
+            break;
+    }
+    Expect(!rejectedCreateLeftStaging,
+        "a rejected backup commit gate removes its staging directory");
+
     const auto createdFullBackup = fullBackupManager.Create();
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
@@ -877,8 +1768,11 @@ int main()
             createdFullBackup.backup.data / L"widgets" / L"storage" /
                 L"package-id" / L"instance-id.json") &&
         Read(createdFullBackup.backup.data /
-            L"SnowDesktop.calendar.json") == originalCalendar,
-        "complete backup preserves layout, settings, calendar, packages, and storage");
+            L"SnowDesktop.calendar.json") == originalCalendar &&
+        Read(createdFullBackup.backup.data /
+            L"SnowDesktop.widget-notifications.json") ==
+                originalNotificationSchedules,
+        "complete backup preserves layout, settings, calendar, widget notifications, packages, and storage");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.data /
                 L"SnowDesktop_crash.log") &&
@@ -893,6 +1787,12 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"widgets" / L"quarantine"),
         "complete backup excludes logs, dumps, staging, and quarantine");
+    Expect(!std::filesystem::exists(
+            createdFullBackup.backup.root / L"PrivateState") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data /
+                L"SnowDesktop.widget-secrets.bin"),
+        "complete backup excludes the sibling widget secret store");
     const auto longBackupFile = std::filesystem::absolute(
         createdFullBackup.backup.data / longBackupRelative);
     const std::wstring extendedLongBackupFile =
@@ -918,14 +1818,67 @@ int main()
         std::filesystem::is_regular_file(exportedBackup),
         "complete backup exports as a standard snowbackup archive");
 
+    const auto rejectedExportPath =
+        root / L"exports" / L"complete-rejected.snowbackup";
+    int rejectedExportGateCalls = 0;
+    const auto rejectedExport = fullBackupManager.Export(
+        createdFullBackup.backup, rejectedExportPath,
+        { {}, [&]() {
+            ++rejectedExportGateCalls;
+            return false;
+        } });
+    Expect(!rejectedExport.ok && rejectedExport.cancelled &&
+            rejectedExportGateCalls == 1 &&
+            !std::filesystem::exists(rejectedExportPath) &&
+            !std::filesystem::exists(
+                rejectedExportPath.wstring() + L".tmp"),
+        "a rejected archive commit gate removes the temporary archive");
+
+    int rejectedRestoreGateCalls = 0;
+    const auto rejectedRestore = fullBackupManager.QueueRestore(
+        createdFullBackup.backup,
+        { {}, [&]() {
+            ++rejectedRestoreGateCalls;
+            return false;
+        } });
+    const auto fullBackupMigrationRoot = fullBackupState /
+        L"TempState" / L"PortableMigration";
+    bool rejectedRestoreLeftStaging = false;
+    ec.clear();
+    for (std::filesystem::directory_iterator entry(
+            fullBackupMigrationRoot, ec), end;
+        !ec && entry != end; entry.increment(ec))
+    {
+        rejectedRestoreLeftStaging =
+            entry->path().filename().wstring().starts_with(L"staging-");
+        if (rejectedRestoreLeftStaging)
+            break;
+    }
+    Expect(!rejectedRestore.ok && rejectedRestore.cancelled &&
+            rejectedRestoreGateCalls == 1 &&
+            !std::filesystem::exists(
+                fullBackupMigrationRoot / L"pending.txt") &&
+            !rejectedRestoreLeftStaging,
+        "a rejected restore commit gate publishes no marker or staging tree");
+
     Write(fullBackupData / L"SnowDesktop.layout.json",
         modifiedLayout);
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         "{ \"schemaVersion\": 1, \"events\": [1] }\n");
-    const auto queuedRestore =
-        fullBackupManager.QueueRestore(createdFullBackup.backup);
-    Expect(queuedRestore.ok,
-        "complete backup restore is queued without touching active data");
+    Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
+        "{ \"schemaVersion\": 1, \"entries\": [1] }\n");
+    std::stop_source committedRestoreStop;
+    int committedRestoreGateCalls = 0;
+    const auto queuedRestore = fullBackupManager.QueueRestore(
+        createdFullBackup.backup,
+        { committedRestoreStop.get_token(), [&]() {
+            ++committedRestoreGateCalls;
+            committedRestoreStop.request_stop();
+            return true;
+        } });
+    Expect(queuedRestore.ok && !queuedRestore.cancelled &&
+            committedRestoreGateCalls == 1,
+        "restore publication completes after entering its commit gate");
     Expect(Read(fullBackupData / L"SnowDesktop.layout.json") ==
             modifiedLayout,
         "queued complete backup restore leaves active data unchanged");
@@ -935,8 +1888,10 @@ int main()
         Read(fullBackupData / L"SnowDesktop.layout.json") ==
             originalLayout &&
         Read(fullBackupData / L"SnowDesktop.calendar.json") ==
-            originalCalendar,
-        "complete backup atomically restores layout and calendar on the next startup");
+            originalCalendar &&
+        Read(fullBackupData / L"SnowDesktop.widget-notifications.json") ==
+            originalNotificationSchedules,
+        "complete backup atomically restores layout, calendar, and widget notification schedules on the next startup");
     Expect(Read(appliedRestore.backup /
             L"SnowDesktop.layout.json") == modifiedLayout,
         "pre-restore active data is retained as a rollback backup");
@@ -971,6 +1926,41 @@ int main()
     snowdesktop::backup::FullDataBackupManager importBackupManager(
         importedBackupState, importedBackupData,
         "1.0.1.0", "installed");
+
+    int rejectedImportGateCalls = 0;
+    const auto rejectedImport = importBackupManager.ImportAndQueue(
+        exportedBackup,
+        { {}, [&]() {
+            ++rejectedImportGateCalls;
+            return false;
+        } });
+    const auto importMigrationRoot = importedBackupState /
+        L"TempState" / L"PortableMigration";
+    const auto importExtractionRoot = importedBackupState /
+        L"TempState" / L"BackupImport";
+    bool rejectedImportLeftStaging = false;
+    ec.clear();
+    for (std::filesystem::directory_iterator entry(
+            importMigrationRoot, ec), end;
+        !ec && entry != end; entry.increment(ec))
+    {
+        rejectedImportLeftStaging =
+            entry->path().filename().wstring().starts_with(L"staging-");
+        if (rejectedImportLeftStaging)
+            break;
+    }
+    ec.clear();
+    const bool rejectedImportLeftExtraction =
+        std::filesystem::exists(importExtractionRoot, ec) &&
+        !std::filesystem::is_empty(importExtractionRoot, ec);
+    Expect(!rejectedImport.ok && rejectedImport.cancelled &&
+            rejectedImportGateCalls == 1 &&
+            !std::filesystem::exists(
+                importMigrationRoot / L"pending.txt") &&
+            !rejectedImportLeftStaging &&
+            !rejectedImportLeftExtraction,
+        "a rejected imported restore removes extraction and staging before publishing a marker");
+
     const auto importResult =
         importBackupManager.ImportAndQueue(exportedBackup);
     if (!importResult.ok)
@@ -1011,135 +2001,24 @@ int main()
             importedBackupState / L"escape.txt"),
         "backup archive path traversal is rejected");
 
+    int rejectedDeleteGateCalls = 0;
+    const auto rejectedDelete = fullBackupManager.Delete(
+        createdFullBackup.backup,
+        { {}, [&]() {
+            ++rejectedDeleteGateCalls;
+            return false;
+        } });
+    Expect(!rejectedDelete.ok && rejectedDelete.cancelled &&
+            rejectedDeleteGateCalls == 1 &&
+            std::filesystem::is_directory(
+                createdFullBackup.backup.root),
+        "a rejected delete commit gate preserves the managed backup");
+
     const auto deletedBackup =
         fullBackupManager.Delete(createdFullBackup.backup);
     Expect(deletedBackup.ok &&
         !std::filesystem::exists(createdFullBackup.backup.root),
         "complete backup can be deleted from managed storage");
-
-    const auto automaticPaths = TestPaths(root / L"automatic-migration");
-    constexpr const char* analogPackageId =
-        "64107f41-197a-426a-8f86-6eeb020f56b0";
-    MakePackage(automaticPaths.builtin / L"analog-clock", "1.0.0",
-        analogPackageId);
-    Write(automaticPaths.builtin / L"analog_clock.lua",
-        "-- deliberately different from the replacement\n"
-        "function render() error('old shipped component') end\n");
-    Write(automaticPaths.builtin / L"analog_clock.widget.json",
-        "{\n"
-        "  \"name\": \"Analog Clock\",\n"
-        "  \"nameKey\": \"lua_widget.analog_clock.name\",\n"
-        "  \"version\": \"0.9.0\",\n"
-        "  \"permissions\": [\"ui.input\"]\n"
-        "}\n");
-    const auto customLegacyRoot = automaticPaths.installed.parent_path();
-    Write(customLegacyRoot / L"my_widget.lua",
-        "function render() end\n");
-    Write(customLegacyRoot / L"my_widget.widget.json",
-        "{\n"
-        "  \"name\": \"My Widget\",\n"
-        "  \"version\": \"1.0.0\",\n"
-        "  \"permissions\": []\n"
-        "}\n");
-    const auto legacyStorage =
-        automaticPaths.registry.parent_path().parent_path() /
-            L"SnowDesktop.storage.json";
-    const std::string legacyStorageText =
-        "{\n  \"widget-instance.text\": \"keep me\"\n}\n";
-    Write(legacyStorage, legacyStorageText);
-
-    WidgetPackageManager automaticManager(automaticPaths);
-    error.clear();
-    Expect(automaticManager.Initialize(error),
-        "manager initializes while replacing shipped loose components");
-    const auto& automaticMigrations =
-        automaticManager.AutomaticLegacyMigrationResults();
-    Expect(automaticMigrations.size() == 1 &&
-        automaticMigrations.front().ok,
-        "shipped loose component is replaced without user interaction");
-    Expect(!std::filesystem::exists(
-        automaticPaths.builtin / L"analog_clock.lua") &&
-        !std::filesystem::exists(
-            automaticPaths.builtin / L"analog_clock.widget.json"),
-        "replaced shipped loose files are deleted");
-    Expect(automaticManager.ResolveLegacyPackageId(
-        L"analog_clock.lua").value_or("") == analogPackageId,
-        "legacy layout name resolves to the immutable built-in package id");
-    Expect(automaticMigrations.front().backupDirectory.empty(),
-        "shipped component files do not create a permanent migration backup");
-    Expect(std::filesystem::is_empty(automaticPaths.migrations),
-        "migrations directory remains reserved for user-authored components");
-    const auto pendingStorage =
-        automaticManager.PendingLegacyStoragePath();
-    std::ifstream pendingStorageFile(pendingStorage, std::ios::binary);
-    const std::string pendingStorageText(
-        (std::istreambuf_iterator<char>(pendingStorageFile)),
-        std::istreambuf_iterator<char>());
-    Expect(pendingStorageText == legacyStorageText,
-        "legacy instance storage is transactionally staged for engine import");
-
-    const auto userLegacy = automaticManager.FindLegacyPackages();
-    Expect(userLegacy.size() == 1 &&
-        userLegacy.front().legacyName == L"my_widget.lua",
-        "only user-authored loose components are offered in the migration UI");
-    Expect(std::filesystem::exists(customLegacyRoot / L"my_widget.lua"),
-        "user-authored loose component is not changed automatically");
-    const auto userMigration =
-        automaticManager.MigrateLegacy(userLegacy.front());
-    Expect(userMigration.ok,
-        "user-authored loose component migrates after explicit action");
-    Expect(!userMigration.backupDirectory.empty() &&
-        std::filesystem::exists(userMigration.backupDirectory),
-        "explicit user migration retains its recovery backup");
-    Expect(!std::filesystem::exists(customLegacyRoot / L"my_widget.lua"),
-        "explicit user migration removes the loose source after backup");
-
-    // MSIX replaces the read-only application directory as one unit. The old
-    // official loose files therefore no longer exist when the upgraded
-    // process first reads a legacy layout.
-    const auto packagedUpgradePaths =
-        TestPaths(root / L"packaged-folder-only-upgrade");
-    MakePackage(packagedUpgradePaths.builtin / L"analog-clock", "1.0.0",
-        analogPackageId);
-    WidgetPackageManager packagedUpgradeManager(packagedUpgradePaths);
-    error.clear();
-    Expect(packagedUpgradeManager.Initialize(error),
-        "manager initializes for an MSIX folder-only upgrade");
-    Expect(packagedUpgradeManager.AutomaticLegacyMigrationResults().empty(),
-        "folder-only MSIX upgrade does not require retired install files");
-    Expect(packagedUpgradeManager.ResolveLegacyPackageId(
-        L"analog_clock.lua").value_or("") == analogPackageId,
-        "MSIX legacy layout maps to the built-in folder package without loose files");
-
-    // A user may have created a component that happens to use an old official
-    // filename. Its writable loose pair must remain eligible for the migration
-    // wizard instead of being silently rebound to SnowDesktop's package.
-    const auto packagedCollisionPaths =
-        TestPaths(root / L"packaged-custom-name-collision");
-    MakePackage(packagedCollisionPaths.builtin / L"analog-clock", "1.0.0",
-        analogPackageId);
-    const auto collisionRoot =
-        packagedCollisionPaths.installed.parent_path();
-    Write(collisionRoot / L"analog_clock.lua",
-        "function render() end\n");
-    Write(collisionRoot / L"analog_clock.widget.json",
-        "{\n"
-        "  \"name\": \"My Analog Clock\",\n"
-        "  \"version\": \"1.0.0\",\n"
-        "  \"permissions\": []\n"
-        "}\n");
-    WidgetPackageManager packagedCollisionManager(packagedCollisionPaths);
-    error.clear();
-    Expect(packagedCollisionManager.Initialize(error),
-        "manager initializes with a custom legacy filename collision");
-    Expect(!packagedCollisionManager.ResolveLegacyPackageId(
-        L"analog_clock.lua").has_value(),
-        "custom loose component is not mistaken for an MSIX built-in");
-    const auto packagedCollisionLegacy =
-        packagedCollisionManager.FindLegacyPackages();
-    Expect(packagedCollisionLegacy.size() == 1 &&
-        packagedCollisionLegacy.front().legacyName == L"analog_clock.lua",
-        "custom filename collision remains visible to the migration wizard");
 
     std::filesystem::remove_all(root, ec);
     if (failures)

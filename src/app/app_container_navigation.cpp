@@ -21,17 +21,23 @@ void DesktopApp::EnterWidget()
     keyboardNavInsideWidget_ = true;
     keyboardNavWidgetIndex_ = static_cast<size_t>(foundIdx);
     keyboardNavMemberIndex_ = 0;
+    keyboardNavVisualFocus_ = true;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 
     if (widget.type == DesktopWidgetType::FolderMapping)
     {
         size_t entryIndex = static_cast<size_t>(-1);
+        FolderMapping* mapping = nullptr;
         for (auto& c : containers_)
         {
-            auto* mapping = dynamic_cast<FolderMapping*>(c.get());
-            if (mapping && mapping->GetWidgetData() == &widget)
+            auto* candidate =
+                dynamic_cast<FolderMapping*>(c.get());
+            if (candidate &&
+                candidate->GetWidgetData() == &widget)
             {
+                mapping = candidate;
                 const auto& visibleEntries =
                     mapping->GetVisibleEntryIndices();
                 if (!visibleEntries.empty())
@@ -47,6 +53,15 @@ void DesktopApp::EnterWidget()
         }
         else
         {
+            if (mapping &&
+                !IsRectEmptyRect(
+                    mapping->GetSearchBoxRect()))
+            {
+                keyboardNavMemberIndex_ = -1;
+                keyboardNavSearchBox_ = true;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             keyboardNavInsideWidget_ = false;
             keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
@@ -309,6 +324,8 @@ void DesktopApp::ExitWidget()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavVisualFocus_ = false;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 
@@ -325,7 +342,7 @@ void DesktopApp::ExitWidget()
 /**
  * @brief 打开当前选中的桌面项
  *
- * 遍历 items_ 查找选中的项，通过 ShellExecuteW 以 "open" 动词启动。
+ * 遍历 items_ 查找选中的项，通过后台 Shell 启动队列执行 "open" 动词。
  */
 void DesktopApp::OpenSelectedDesktopItem()
 {
@@ -345,7 +362,7 @@ void DesktopApp::OpenSelectedDesktopItem()
  * @param widgetIndex 组件索引
  * @param memberIndex 成员索引（-1 表示无成员选中）
  *
- * 根据组件类型，通过 ShellExecuteW 打开对应的文件或桌面项。
+ * 根据组件类型，通过后台 Shell 启动队列打开对应的文件或桌面项。
  */
 void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
 {
@@ -400,11 +417,8 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
                 }
                 else if (item &&
                          !item->GetPath().empty())
-                    ShellExecuteW(
-                        nullptr, L"open",
-                        item->GetPath().c_str(),
-                        nullptr, nullptr,
-                        SW_SHOWNORMAL);
+                    shellLaunchWorker_.Enqueue(
+                        hwnd_, item->GetPath());
                 break;
             }
             const auto keys =
@@ -441,10 +455,8 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
                         activeData->
                             folderEntries[entryIndex];
                     if (!entry.fullPath.empty())
-                        ShellExecuteW(nullptr, L"open",
-                            entry.fullPath.c_str(),
-                            nullptr, nullptr,
-                            SW_SHOWNORMAL);
+                        shellLaunchWorker_.Enqueue(
+                            hwnd_, entry.fullPath);
                 }
             }
             break;
@@ -456,8 +468,8 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
         {
             const auto& entry = widget.folderEntries[static_cast<size_t>(memberIndex)];
             if (!entry.fullPath.empty())
-                ShellExecuteW(nullptr, L"open", entry.fullPath.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL);
+                shellLaunchWorker_.Enqueue(
+                    hwnd_, entry.fullPath);
         }
     }
     else if (!widget.itemKeys.empty() &&

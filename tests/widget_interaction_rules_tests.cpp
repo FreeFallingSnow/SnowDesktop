@@ -1,14 +1,22 @@
 #include "widgets/collection_group_rules.h"
 #include "desktop_hover_rules.h"
+#include "drag_input_rules.h"
+#include "drag_hint_rules.h"
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/guide_widget_rules.h"
+#include "pending_drop_rules.h"
+#include "list_detail_rules.h"
+#include "popup_icon_load_rules.h"
 
 #include <algorithm>
+#include <deque>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -18,6 +26,10 @@ namespace visibilityRules =
     snowdesktop::widget_visibility_rules;
 namespace hoverRules =
     snowdesktop::desktop_hover_rules;
+namespace dragInputRules =
+    snowdesktop::drag_input_rules;
+namespace dragHintRules =
+    snowdesktop::drag_hint_rules;
 namespace chromeRules =
     snowdesktop::widget_chrome_rules;
 namespace guideRules =
@@ -229,6 +241,62 @@ void TestStableReorder()
     }
 }
 
+void TestPendingFilePlacementReconciliation()
+{
+    namespace pendingRules =
+        snowdesktop::pending_drop_rules;
+
+    std::vector<std::string> folderEntries{
+        "old-a", "new-b", "old-b", "new-a"
+    };
+    std::vector<std::string> inserted =
+        pendingRules::ExtractMatching(
+            folderEntries,
+            [](const std::string& value) {
+                return value.starts_with("new-");
+            });
+    Check(
+        folderEntries == std::vector<std::string>({
+            "old-a", "old-b"
+        }) &&
+        inserted == std::vector<std::string>({
+            "new-b", "new-a"
+        }),
+        "folder reconciliation must isolate newly enumerated members");
+    pendingRules::InsertAt(
+        folderEntries, 1, std::move(inserted));
+    Check(
+        folderEntries == std::vector<std::string>({
+            "old-a", "new-b", "new-a", "old-b"
+        }),
+        "new folder members must be restored at the preview boundary");
+
+    std::vector<std::string> autoCollected{
+        "old-a", "old-b", "new-a", "new-b"
+    };
+    std::vector<std::string> first =
+        pendingRules::ExtractMatching(
+            autoCollected,
+            [](const std::string& value) {
+                return value == "new-a";
+            });
+    pendingRules::InsertAt(
+        autoCollected, 1, std::move(first));
+    std::vector<std::string> second =
+        pendingRules::ExtractMatching(
+            autoCollected,
+            [](const std::string& value) {
+                return value == "new-b";
+            });
+    pendingRules::InsertAt(
+        autoCollected, 2, std::move(second));
+    Check(
+        autoCollected == std::vector<std::string>({
+            "old-a", "new-a", "new-b", "old-b"
+        }),
+        "multiple pending members must preserve their landing order");
+}
+
 void TestBottomBarWidthFollowsCornerAndHeight()
 {
     Check(
@@ -246,6 +314,12 @@ void TestBottomBarWidthFollowsCornerAndHeight()
     Check(
         chromeRules::BottomBarSideInset(56, 32, 8, 4) == 26,
         "bottom-bar side insets must scale with widget cell size");
+    Check(
+        chromeRules::BottomBarTitleTrailingReserve(
+            0, 14, 4, 4, 20, 2) == 26 &&
+        chromeRules::BottomBarTitleTrailingReserve(
+            3, 14, 4, 4, 20, 2) == 76,
+        "bottom-bar titles must reserve only the controls that are actually visible");
 }
 
 void TestGuidePlaceholderLifecycle()
@@ -515,36 +589,164 @@ void TestHoverOnlyWidgetVisibility()
 {
     Check(
         visibilityRules::ShouldRenderWidget(
-            false, false, false, false, false, false, false),
+            false, false, false, false, false, false, false,
+            false),
         "regular widget remains visible while idle");
     Check(
         !visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, false, false),
+            true, false, false, false, false, false, false,
+            false),
         "hover-only widget remains hidden while idle");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, true, false, false, false, false, false),
+            true, true, false, false, false, false, false,
+            false),
         "item drag reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, true, false, false, false),
+            true, false, false, true, false, false, false,
+            false),
         "widget move reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, true, false, false),
+            true, false, false, false, true, false, false,
+            false),
         "selected hover-only widget remains visible");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, true, false),
+            true, false, false, false, false, true, false,
+            false),
+        "hover-only widget with selected files remains visible");
+    Check(
+        visibilityRules::ShouldRenderWidget(
+            true, false, false, false, false, false, true,
+            false),
         "retained inner rename reveals hover-only widget");
     Check(
         visibilityRules::ShouldRenderWidget(
-            true, false, false, false, false, false, true),
+            true, false, false, false, false, false, false,
+            true),
         "pointer hover reveals hover-only widget");
+    Check(
+        visibilityRules::ShouldRetainForKeyboardNavigation(
+            true, true, 3, 3) &&
+            !visibilityRules::ShouldRetainForKeyboardNavigation(
+                false, true, 3, 3) &&
+            !visibilityRules::ShouldRetainForKeyboardNavigation(
+                true, false, 3, 3) &&
+            !visibilityRules::ShouldRetainForKeyboardNavigation(
+                true, true, 3, 4),
+        "only keyboard-driven inner navigation retains its owning widget");
+}
+
+void TestWidgetDesktopSurfaceVisibility()
+{
+    Check(
+        visibilityRules::IsDesktopSurfaceVisible(
+            false, false, true, true),
+        "visible desktop widget remains runtime-visible independently of repaint frequency");
+    Check(
+        !visibilityRules::IsDesktopSurfaceVisible(
+            true, false, true, true),
+        "hidden desktop pauses an ordinary widget");
+    Check(
+        visibilityRules::IsDesktopSurfaceVisible(
+            true, true, true, true),
+        "keep-when-hidden preserves widget runtime visibility");
+    Check(
+        !visibilityRules::IsDesktopSurfaceVisible(
+            false, false, false, true),
+        "dock-exclusive widget has no visible desktop surface");
+    Check(
+        !visibilityRules::IsDesktopSurfaceVisible(
+            false, false, true, false),
+        "interaction-hidden widget pauses its desktop surface");
+    Check(
+        visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+            false, false, true, true),
+        "a page removed by the display topology keeps its runtime active while its surface is hidden");
+    Check(
+        !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+            true, false, true, true) &&
+            !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+                false, true, true, true) &&
+            !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+                false, false, false, true) &&
+            !visibilityRules::ShouldKeepTopologyHiddenPageRuntimeActive(
+                false, false, true, false),
+        "desktop hiding, visible surfaces, virtual pages, and ordinary hidden surfaces do not keep runtimes active");
+}
+
+void TestWidgetPreviewSourceVisibility()
+{
+    Check(
+        visibilityRules::ShouldHideWidgetPreviewSource(
+            true, false, true),
+        "moving a widget must hide independent content owned by the preview source");
+    Check(
+        visibilityRules::ShouldHideWidgetPreviewSource(
+            false, true, true),
+        "resizing a widget must hide independent content owned by the preview source");
+    Check(
+        !visibilityRules::ShouldHideWidgetPreviewSource(
+            false, false, true) &&
+            !visibilityRules::ShouldHideWidgetPreviewSource(
+                true, false, false) &&
+            !visibilityRules::ShouldHideWidgetPreviewSource(
+                false, true, false),
+        "idle widgets and independent content from other widgets must remain visible");
 }
 
 void TestDesktopHoverDeactivation()
 {
+    using hoverRules::ReconcileMode;
+    Check(
+        hoverRules::ShellPopupCloseReconcileMode() ==
+            ReconcileMode::DeactivateOnly,
+        "closing a Shell popup must not reactivate hover from the menu's last cursor position");
+    Check(
+        hoverRules::ShouldRetainHoverAcrossMouseLeave(
+            true, false) &&
+            hoverRules::ShouldRetainHoverAcrossMouseLeave(
+                false, true) &&
+            !hoverRules::ShouldRetainHoverAcrossMouseLeave(
+                false, false),
+        "content and paired backdrop windows must form one logical hover surface");
+    Check(
+        hoverRules::ShouldResamplePassiveMouseMove(
+            false, false, false) &&
+            !hoverRules::ShouldResamplePassiveMouseMove(
+                true, false, false) &&
+            !hoverRules::ShouldResamplePassiveMouseMove(
+                false, true, false) &&
+            !hoverRules::ShouldResamplePassiveMouseMove(
+                false, false, true),
+        "only passive mouse moves may replace queued message coordinates with the live cursor");
+    Check(
+        hoverRules::ShouldPresentRetainedMouseLeave(
+            true, true) &&
+            !hoverRules::ShouldPresentRetainedMouseLeave(
+                true, false) &&
+            !hoverRules::ShouldPresentRetainedMouseLeave(
+                false, true),
+        "retained leaves must present exactly one changed passive pointer sample");
+    Check(
+        hoverRules::ShouldReconcileFromSurfaceSample(
+            false, false, false) &&
+            hoverRules::ShouldReconcileFromSurfaceSample(
+                false, true, true) &&
+            !hoverRules::ShouldReconcileFromSurfaceSample(
+                true, true, true) &&
+            !hoverRules::ShouldReconcileFromSurfaceSample(
+                false, true, false),
+        "native Shell popup layers and disabled dialog owners must suspend sampled hover reconciliation");
+    Check(
+        hoverRules::HasForegroundSettled(false, 0) &&
+            !hoverRules::HasForegroundSettled(
+                true, hoverRules::kActivationSettleMs - 1) &&
+            hoverRules::HasForegroundSettled(
+                true, hoverRules::kActivationSettleMs),
+        "foreground settling must allow startup and enforce the activation delay boundary");
     Check(
         !hoverRules::OwnsInteractionCapture(0, 1, 0),
         "two null window handles must not imply owned capture");
@@ -586,6 +788,263 @@ void TestDesktopHoverDeactivation()
         !hoverRules::ShouldPresentSynchronously(
             false, false),
         "unchanged passive hover must not force an extra desktop frame");
+    Check(
+        !hoverRules::ShouldActivateFromSurfaceSample(
+            true, true, ReconcileMode::DeactivateOnly, true),
+        "a transient desktop hit after a foreground change must not reactivate hover");
+    Check(
+        hoverRules::ShouldActivateFromSurfaceSample(
+            true, true, ReconcileMode::AllowImmediateActivation, false),
+        "an explicit desktop restoration may activate hover without waiting for foreground settling");
+    Check(
+        !hoverRules::ShouldActivateFromSurfaceSample(
+            true, true,
+            ReconcileMode::AllowActivationAfterForegroundSettle, false) &&
+            hoverRules::ShouldActivateFromSurfaceSample(
+                true, true,
+                ReconcileMode::AllowActivationAfterForegroundSettle, true),
+        "a periodic desktop sample may activate hover only after the foreground transition settles");
+    Check(
+        !hoverRules::ShouldActivateFromSurfaceSample(
+            false, true, ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldActivateFromSurfaceSample(
+                true, false, ReconcileMode::AllowImmediateActivation, true),
+        "hover restoration requires both a desktop surface and a cleared state");
+    Check(
+        hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+            true, false, true, true,
+            ReconcileMode::AllowImmediateActivation, false) &&
+            hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, true,
+                ReconcileMode::AllowActivationAfterForegroundSettle, true),
+        "an active hover may follow a changed base-desktop sample after activation is allowed");
+    Check(
+        !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+            false, false, true, true,
+            ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, true, true, true,
+                ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, false, true,
+                ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, false,
+                ReconcileMode::AllowImmediateActivation, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, true,
+                ReconcileMode::DeactivateOnly, true) &&
+            !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
+                true, false, true, true,
+                ReconcileMode::AllowActivationAfterForegroundSettle, false),
+        "active-hover fallback must reject bridges, cleared state, unchanged points, gestures, and unsettled samples");
+}
+
+void TestDragInputSampling()
+{
+    Check(
+        dragInputRules::IsNativeDragActive(true, false) &&
+            !dragInputRules::IsNativeDragActive(false, false) &&
+            !dragInputRules::IsNativeDragActive(true, true),
+        "only drag sessions outside OLE transport may use native pointer routing");
+    Check(
+        !dragInputRules::ShouldDeferModelReload(false, false) &&
+            dragInputRules::ShouldDeferModelReload(true, false) &&
+            dragInputRules::ShouldDeferModelReload(false, true) &&
+            dragInputRules::ShouldDeferModelReload(true, true),
+        "desktop model reloads must wait for retained drop context and OLE transport to end");
+    Check(
+        dragInputRules::ShouldSampleLivePointer(true, true) &&
+            !dragInputRules::ShouldSampleLivePointer(false, true) &&
+            !dragInputRules::ShouldSampleLivePointer(true, false),
+        "live drag sampling must stop after the physical primary button is released");
+    Check(
+        dragInputRules::ShouldSampleFloatingWindowPointer(true, true) &&
+            !dragInputRules::ShouldSampleFloatingWindowPointer(true, false) &&
+            dragInputRules::ShouldSampleFloatingWindowPointer(false, true) &&
+            dragInputRules::ShouldSampleFloatingWindowPointer(false, false),
+        "floating windows must keep ordinary live hover sampling but preserve a queued native-drag release point");
+    Check(
+        dragInputRules::IsNativeDragMessageSurface(
+            true, false, false) &&
+        dragInputRules::IsNativeDragMessageSurface(
+            false, true, false) &&
+        dragInputRules::IsNativeDragMessageSurface(
+            false, false, true) &&
+        !dragInputRules::IsNativeDragMessageSurface(
+            false, false, false),
+        "native drag message coalescing must cover the desktop, floating Dock, and floating popup windows");
+    Check(
+        dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            true, true, true) &&
+        !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            false, true, true) &&
+        !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            true, false, true) &&
+        !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
+            true, true, false),
+        "native drag coalescing must start only for a move on an eligible input surface");
+    Check(
+        dragInputRules::ShouldCoalesceQueuedMouseMove(
+            true, true, true) &&
+            !dragInputRules::ShouldCoalesceQueuedMouseMove(
+                false, true, true) &&
+            !dragInputRules::ShouldCoalesceQueuedMouseMove(
+                true, false, true) &&
+            !dragInputRules::ShouldCoalesceQueuedMouseMove(
+                true, true, false),
+        "native drag coalescing must stop at another window or message kind");
+}
+
+void TestPopupIconLoadCancellationRules()
+{
+    struct Task
+    {
+        bool popup = false;
+        std::wstring requestKey;
+    };
+
+    std::deque<Task> queue;
+    std::unordered_set<std::wstring> pendingKeys;
+    const auto append = [&](bool popup, std::wstring key)
+    {
+        pendingKeys.insert(key);
+        queue.push_back(Task{popup, std::move(key)});
+    };
+    append(false, L"ordinary-before");
+    for (int index = 0; index < 10000; ++index)
+        append(true, L"popup-queued-" + std::to_wstring(index));
+    append(false, L"ordinary-after");
+    pendingKeys.insert(L"popup-in-flight");
+    pendingKeys.insert(L"popup-posted");
+
+    const std::size_t removed =
+        snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
+            queue, pendingKeys,
+            [](const Task& task) { return task.popup; });
+    Check(removed == 10000 && queue.size() == 2 &&
+            queue[0].requestKey == L"ordinary-before" &&
+            queue[1].requestKey == L"ordinary-after",
+        "popup cancellation must remove 10000 queued tasks without reordering other icon work");
+    Check(pendingKeys.size() == 4 &&
+            pendingKeys.contains(L"ordinary-before") &&
+            pendingKeys.contains(L"ordinary-after") &&
+            pendingKeys.contains(L"popup-in-flight") &&
+            pendingKeys.contains(L"popup-posted"),
+        "popup cancellation must erase only exact queued keys and retain in-flight or posted keys");
+
+    namespace popupRules =
+        snowdesktop::popup_icon_load_rules;
+    const std::uint64_t currentGeneration = 43;
+    Check(popupRules::NextGeneration(42) == currentGeneration &&
+            popupRules::NextGeneration(
+                std::numeric_limits<std::uint64_t>::max()) == 1,
+        "popup generations must advance and skip the reserved zero epoch after wraparound");
+    Check(popupRules::ShouldRejectResult(
+                true, 42, currentGeneration) &&
+            !popupRules::ShouldRejectResult(
+                true, currentGeneration, currentGeneration) &&
+            !popupRules::ShouldRejectResult(
+                false, 42, currentGeneration),
+        "only stale popup results must be rejected by the popup epoch gate");
+}
+
+void TestDragHintRasterRules()
+{
+    bool valid = false;
+    unsigned cachedDpi = 0;
+    int renderCount = 0;
+    for (int i = 0; i < 1000; ++i)
+    {
+        const bool sameText = i != 0;
+        if (!dragHintRules::ShouldReuseRaster(
+                valid, sameText, cachedDpi, 96))
+        {
+            ++renderCount;
+            valid = true;
+            cachedDpi = 96;
+        }
+    }
+    Check(renderCount == 1,
+        "repeated OLE drag hints with the same text and DPI must render once");
+    Check(
+        !dragHintRules::ShouldReuseRaster(true, false, 96, 96) &&
+            !dragHintRules::ShouldReuseRaster(true, true, 96, 144) &&
+            !dragHintRules::ShouldReuseRaster(false, true, 96, 96),
+        "text, DPI, and raster validity changes must invalidate the drag hint cache");
+
+    const auto bottomRight = dragHintRules::ResolveWindowPosition(
+        {1910, 1070}, {200, 40}, {0, 0, 1920, 1080},
+        48, 22, 8);
+    Check(bottomRight.x == 1712 && bottomRight.y == 1032,
+        "drag hints must remain inside the monitor work-area margins");
+    const auto negativeMonitor = dragHintRules::ResolveWindowPosition(
+        {-1910, -1070}, {200, 40}, {-1920, -1080, 0, 0},
+        48, 22, 8);
+    Check(negativeMonitor.x >= -1912 && negativeMonitor.y >= -1072,
+        "drag hint placement must preserve negative virtual-screen coordinates");
+    const auto tinyWorkArea = dragHintRules::ResolveWindowPosition(
+        {90, 10}, {200, 40}, {0, 0, 100, 20},
+        48, 22, 8);
+    Check(tinyWorkArea.x == -50 && tinyWorkArea.y == -10,
+        "undersized work areas must center overflow without invalid clamp bounds");
+}
+
+void TestBottomBarContentReservation()
+{
+    Check(
+        chromeRules::ReservedBottomBarHeight(true, false, 36) == 36,
+        "a persistent titled bottom bar must reserve content height");
+    Check(
+        chromeRules::ReservedBottomBarHeight(false, false, 36) == 0,
+        "a titleless widget must not reserve a nonexistent bottom bar");
+    Check(
+        chromeRules::ReservedBottomBarHeight(true, true, 36) == 0,
+        "a hover bottom bar must not permanently shrink content");
+    Check(
+        chromeRules::ReservedBottomBarHeight(false, true, -1) == 0,
+        "the reserved bottom bar height must remain non-negative");
+    Check(
+        !chromeRules::HasBottomBar(false) &&
+            chromeRules::HasBottomBar(true),
+        "only titled Lua widgets expose the host move bar");
+    Check(
+        !chromeRules::ShowsBottomBar(false, false, true) &&
+            !chromeRules::ShowsBottomBar(true, true, false) &&
+            chromeRules::ShowsBottomBar(true, true, true) &&
+            chromeRules::ShowsBottomBar(true, false, false),
+        "bottom-bar drawing must respect both ownership and hover mode");
+    Check(
+        !chromeRules::ShowsResizeHandle(false, false, false) &&
+            chromeRules::ShowsResizeHandle(false, false, true) &&
+            chromeRules::ShowsResizeHandle(true, true, true) &&
+            chromeRules::ShowsResizeHandle(true, false, false),
+        "resize-handle drawing must preserve titleless hover access");
+    Check(
+        !chromeRules::ShowsCompactMoveHandle(false, false) &&
+            chromeRules::ShowsCompactMoveHandle(false, true) &&
+            !chromeRules::ShowsCompactMoveHandle(true, true),
+        "only hovered titleless widgets expose a compact move handle");
+    Check(
+        chromeRules::CompactEdgeHandleWidth(120, 24) == 24 &&
+            chromeRules::CompactEdgeHandleWidth(30, 24) == 15 &&
+            chromeRules::CompactEdgeHandleWidth(-1, 24) == 0,
+        "compact edge handles must remain disjoint on narrow widgets");
+    Check(
+        chromeRules::HostActionContentBottom(
+            false, 0, 110, 80, 5) == 110,
+        "a compact titleless host placeholder may use the full frame height");
+    Check(
+        chromeRules::HostActionContentBottom(
+            true, 0, 110, 80, 5) == 75,
+        "a titled host placeholder must stay clear of its move bar");
+    Check(
+        chromeRules::UsesCategorizedControlAccentOutline(true, true) &&
+            !chromeRules::UsesCategorizedControlAccentOutline(false, true) &&
+            !chromeRules::UsesCategorizedControlAccentOutline(true, false) &&
+            chromeRules::CategorizedControlOutlineWidth(true) == 2.0f &&
+            chromeRules::CategorizedControlOutlineWidth(false) == 1.0f,
+        "only keyboard-selected search boxes and tabs use the emphasized accent outline");
 }
 
 void TestNestedWidgetScrolling()
@@ -595,23 +1054,202 @@ void TestNestedWidgetScrolling()
     const auto innerBoundary =
         ApplyWheelDelta(0, 0, 120);
     Check(!innerBoundary.moved &&
-            innerBoundary.offset == 0,
+            !innerBoundary.reachedEnd && innerBoundary.offset == 0,
         "wheel at a nested scroll boundary can bubble");
     const auto outerScroll =
         ApplyWheelDelta(48, 240, 120);
     Check(outerScroll.moved &&
-            outerScroll.offset == 0,
+            !outerScroll.reachedEnd && outerScroll.offset == 0,
         "wheel moves the first enclosing scroll area that can move");
     const auto lowerBoundary =
         ApplyWheelDelta(240, 240, -120);
     Check(!lowerBoundary.moved &&
-            lowerBoundary.offset == 240,
+            !lowerBoundary.reachedEnd && lowerBoundary.offset == 240,
         "wheel at the lower boundary can bubble");
     const auto precisionWheel =
         ApplyWheelDelta(20, 240, 15);
     Check(precisionWheel.moved &&
             precisionWheel.offset < 20,
         "precision touchpad wheel deltas still scroll");
+    const auto reachesEnd = ApplyWheelDelta(220, 240, -120);
+    Check(reachesEnd.moved && reachesEnd.offset == 240 &&
+            reachesEnd.reachedEnd,
+        "a wheel movement reports the transition that first reaches the end");
+    Check(!snowdesktop::widget_scroll_rules::ReachedScrollEnd(
+            240, 240, 240) &&
+            snowdesktop::widget_scroll_rules::ReachedScrollEnd(
+                120, 240, 240),
+        "scroll-end transitions do not repeat while already at the boundary");
+}
+
+void TestScrollbarThumbDragging()
+{
+    namespace scroll = snowdesktop::widget_scroll_rules;
+    const auto geometry = scroll::ResolveScrollbarAxisGeometry(
+        100, 300, 800, 200, 300, 1.0f);
+    Check(geometry.maximum == 600 &&
+            geometry.trackStart == 104 && geometry.trackEnd == 296 &&
+            geometry.thumbStart > geometry.trackStart &&
+            geometry.thumbEnd < geometry.trackEnd,
+        "scrollbar geometry stays inside the actual content viewport");
+    Check(scroll::ScrollbarThumbHit(
+            geometry, geometry.thumbStart, 397, 400, 1.0f) &&
+            !scroll::ScrollbarThumbHit(
+                geometry, geometry.thumbStart, 380, 400, 1.0f),
+        "scrollbar dragging uses a forgiving target only at the viewport edge");
+    Check(scroll::ApplyScrollbarThumbDrag(
+            300, geometry.ThumbTravel(), geometry) == 600 &&
+            scroll::ApplyScrollbarThumbDrag(
+                300, -geometry.ThumbTravel(), geometry) == 0,
+        "thumb movement maps to the complete scroll range and clamps at both ends");
+
+    const auto compact = scroll::ResolveScrollbarAxisGeometry(
+        10, 24, 1000, 14, 0, 2.0f);
+    Check(compact.TrackExtent() > 0 &&
+            compact.ThumbExtent() <= compact.TrackExtent(),
+        "compact scrollbars keep their thumb inside the available track");
+}
+
+void TestListDetailRules()
+{
+    namespace details = snowdesktop::list_detail_rules;
+    Check(details::ResolveFontSize(std::nullopt, 18.0f) == 18.0f,
+        "legacy layouts inherit the saved icon title font size");
+    Check(details::ResolveFontSize(15.0f, 18.0f) == 15.0f,
+        "new layouts retain their independent list font size");
+    Check(details::RowHeight(36, 38, 10.0f, 15.0f) == 36,
+        "10 cu list text preserves the minimum compatible row height");
+    Check(details::RowHeight(36, 38, 15.0f, 15.0f) == 38,
+        "15 cu list text preserves the legacy row height");
+    Check(details::RowHeight(36, 38, 24.0f, 15.0f) == 49,
+        "24 cu list text expands rows by the scaled line-height delta");
+    Check(details::RowHeight(54, 57, 36.0f,
+            22.5f) == 73,
+        "row height applies the same formula at component scale");
+
+    constexpr auto defaultControls =
+        rules::ResolveCategorizedControlMetrics(34.0f);
+    constexpr auto largeControls =
+        rules::ResolveCategorizedControlMetrics(48.0f);
+    Check(defaultControls.fontSizeCu == 15.0f &&
+            defaultControls.searchBoxHeightCu == 30.0f &&
+            defaultControls.detailsHeaderHeightCu ==
+                defaultControls.searchBoxHeightCu,
+        "detail headers share the default categorized font and search-box height");
+    Check(largeControls.fontSizeCu >
+                defaultControls.fontSizeCu &&
+            largeControls.detailsHeaderHeightCu == 44.0f &&
+            largeControls.detailsHeaderHeightCu ==
+                largeControls.searchBoxHeightCu,
+        "detail header font and height scale with categorized tabs and search boxes");
+
+    const auto nameOnly = details::BuildColumns(
+        299, false, false, false,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(nameOnly.nameWidth == 299 &&
+            !nameOnly.showModified && !nameOnly.showType &&
+            !nameOnly.showSize &&
+            !details::HasMetadataColumns(false, false, false),
+        "name-only list mode uses the full width without a detail header");
+    const auto modified = details::BuildColumns(
+        300, true, false, false,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(modified.nameWidth == 82 &&
+            modified.modifiedWidth == 218 &&
+            modified.showModified && !modified.showType &&
+            !modified.showSize,
+        "a lone detail divider keeps its percentage position");
+    const auto sizeOnly = details::BuildColumns(
+        230, false, false, true,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(sizeOnly.nameWidth == 189 && sizeOnly.sizeWidth == 41 &&
+            !sizeOnly.showModified && !sizeOnly.showType &&
+            sizeOnly.showSize,
+        "individually selected columns use their own divider percentage");
+    const auto all = details::BuildColumns(
+        510, true, true, true,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(all.nameWidth == 140 && all.showModified &&
+            all.showType && all.showSize,
+        "all selected detail columns fit at their baseline widths");
+    Check(details::HitColumn(all, 20) == details::Column::Name &&
+            details::HitColumn(all, 200) == details::Column::Modified &&
+            details::HitColumn(all, 330) == details::Column::Type &&
+            details::HitColumn(all, 460) == details::Column::Size,
+        "fixed detail headers route clicks to the visible column");
+    Check(details::HitDivider(all, 140, 3) ==
+                details::Column::Modified &&
+            details::HitDivider(all, 300, 3) ==
+                details::Column::Type &&
+            details::HitDivider(all, 420, 3) ==
+                details::Column::Size &&
+            details::HitDivider(all, 250, 3) ==
+                details::Column::None,
+        "detail header dividers take priority within their resize tolerance");
+    const auto custom = details::BuildColumns(
+        600, true, true, true, 0.25f, 0.55f, 0.80f);
+    Check(custom.nameWidth == 150 && custom.modifiedWidth == 180 &&
+            custom.typeWidth == 150 && custom.sizeWidth == 120,
+        "custom divider percentages scale directly with component width");
+    const auto constrained = details::BuildColumns(
+        300, true, true, true,
+        details::kDefaultModifiedPosition,
+        details::kDefaultTypePosition,
+        details::kDefaultSizePosition);
+    Check(constrained.nameWidth == 82 &&
+            constrained.modifiedWidth == 94 &&
+            constrained.typeWidth == 71 &&
+            constrained.sizeWidth == 53,
+        "narrow components preserve divider percentages without auto-sizing");
+    const details::DividerPositions defaults;
+    const float movedType = details::ClampDraggedPosition(
+        details::Column::Type, 0.70f,
+        true, true, true, defaults);
+    const auto moved = details::BuildColumns(
+        1000, true, true, true,
+        defaults.modified, movedType, defaults.size);
+    Check(moved.nameWidth == 275 && moved.modifiedWidth == 425 &&
+            moved.typeWidth == 124 && moved.sizeWidth == 176,
+        "dragging one divider leaves every other divider percentage fixed");
+    Check(details::ClampDraggedPosition(
+                details::Column::Modified, 0.90f,
+                true, true, true, defaults) ==
+            defaults.type - details::kMinimumDividerGap &&
+            details::ClampDraggedPosition(
+                details::Column::Type, 0.10f,
+                true, true, true, defaults) ==
+            defaults.modified + details::kMinimumDividerGap &&
+            details::ClampDraggedPosition(
+                details::Column::Size, 0.10f,
+                true, true, true, defaults) ==
+            defaults.type + details::kMinimumDividerGap,
+        "dragged dividers stop at adjacent visible dividers without moving them");
+    const auto legacyPositions = details::LegacyWidthsToPositions(
+        160.0f, 120.0f, 90.0f);
+    Check(std::abs(legacyPositions.modified -
+                details::kDefaultModifiedPosition) < 0.0001f &&
+            std::abs(legacyPositions.type -
+                details::kDefaultTypePosition) < 0.0001f &&
+            std::abs(legacyPositions.size -
+                details::kDefaultSizePosition) < 0.0001f,
+        "legacy saved widths migrate to the equivalent baseline percentages");
+    Check(details::DefaultAscending(details::Column::Name) &&
+            details::DefaultAscending(details::Column::Type) &&
+            !details::DefaultAscending(details::Column::Modified) &&
+            !details::DefaultAscending(details::Column::Size),
+        "detail columns use Explorer-style initial directions");
+    Check(details::FromLegacyFolderSortMode(2) ==
+            details::Column::Modified &&
+            details::FromLegacyFolderSortMode(3) == details::Column::Size,
+        "legacy folder sorting migrates to detail column state");
 }
 }
 
@@ -622,13 +1260,22 @@ int main()
     TestActiveItemFallback();
     TestTabWidthDistribution();
     TestBottomBarWidthFollowsCornerAndHeight();
+    TestBottomBarContentReservation();
     TestGuidePlaceholderLifecycle();
     TestStableReorder();
+    TestPendingFilePlacementReconciliation();
     TestFileGroupRules();
     TestGridPlacementInvariants();
     TestHoverOnlyWidgetVisibility();
+    TestWidgetDesktopSurfaceVisibility();
+    TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
+    TestDragInputSampling();
+    TestPopupIconLoadCancellationRules();
+    TestDragHintRasterRules();
     TestNestedWidgetScrolling();
+    TestScrollbarThumbDragging();
+    TestListDetailRules();
     if (failures != 0)
     {
         std::cerr << failures

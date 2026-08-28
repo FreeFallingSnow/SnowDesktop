@@ -210,7 +210,8 @@ AsyncHttpService::~AsyncHttpService()
 bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const std::wstring& url,
     const std::vector<std::string>& domains,
-    bool allowAnyHttpOrHttpsUrl)
+    bool allowAnyHttpOrHttpsUrl,
+    bool allowAnyPublicHttpsUrl)
 {
     URL_COMPONENTS components{ sizeof(components) };
     wchar_t host[256]{};
@@ -221,6 +222,8 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const bool isHttps = components.nScheme == INTERNET_SCHEME_HTTPS;
     if (allowAnyHttpOrHttpsUrl)
         return (isHttp || isHttps) && components.dwHostNameLength > 0;
+    if (allowAnyPublicHttpsUrl)
+        return IsAllowedPublicHttpsUrl(url);
     if (!isHttps) return false;
     std::wstring actual = NormalizeHostname(
         std::wstring(host, components.dwHostNameLength));
@@ -265,12 +268,72 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     return false;
 }
 
+bool snowdesktop::http_security::HaveSameOrigin(
+    const std::wstring& left, const std::wstring& right)
+{
+    const auto readOrigin = [](const std::wstring& url,
+        INTERNET_SCHEME& scheme, INTERNET_PORT& port,
+        std::wstring& host) {
+        URL_COMPONENTS components{ sizeof(components) };
+        wchar_t hostBuffer[256]{};
+        components.lpszHostName = hostBuffer;
+        components.dwHostNameLength =
+            static_cast<DWORD>(std::size(hostBuffer));
+        if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components) ||
+            components.dwHostNameLength == 0)
+            return false;
+        scheme = components.nScheme;
+        port = components.nPort;
+        host = NormalizeHostname(std::wstring(
+            hostBuffer, components.dwHostNameLength));
+        return !host.empty();
+    };
+    INTERNET_SCHEME leftScheme = static_cast<INTERNET_SCHEME>(0);
+    INTERNET_SCHEME rightScheme = static_cast<INTERNET_SCHEME>(0);
+    INTERNET_PORT leftPort = 0;
+    INTERNET_PORT rightPort = 0;
+    std::wstring leftHost;
+    std::wstring rightHost;
+    return readOrigin(left, leftScheme, leftPort, leftHost) &&
+        readOrigin(right, rightScheme, rightPort, rightHost) &&
+        leftScheme == rightScheme && leftPort == rightPort &&
+        leftHost == rightHost;
+}
+
+bool snowdesktop::http_security::IsAllowedPublicHttpsUrl(
+    const std::wstring& url)
+{
+    URL_COMPONENTS components{ sizeof(components) };
+    wchar_t host[256]{};
+    wchar_t user[2]{};
+    wchar_t password[2]{};
+    components.lpszHostName = host;
+    components.dwHostNameLength = static_cast<DWORD>(std::size(host));
+    components.lpszUserName = user;
+    components.dwUserNameLength = static_cast<DWORD>(std::size(user));
+    components.lpszPassword = password;
+    components.dwPasswordLength = static_cast<DWORD>(std::size(password));
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components) ||
+        components.nScheme != INTERNET_SCHEME_HTTPS ||
+        components.dwHostNameLength == 0 ||
+        components.dwUserNameLength != 0 ||
+        components.dwPasswordLength != 0)
+        return false;
+    const std::wstring normalized = NormalizeHostname(
+        std::wstring(host, components.dwHostNameLength));
+    if (normalized.empty()) return false;
+    const std::string domain = WideToUtf8Http(normalized);
+    return !domain.empty() &&
+        IsAllowedUrlForDomains(url, { domain }, false);
+}
+
 int AsyncHttpService::Submit(HttpRequestOptions options)
 {
     if (!snowdesktop::http_security::
             IsAllowedUrlForDomains(
                 options.url, options.allowedDomains,
-                options.allowAnyHttpOrHttpsUrl))
+                options.allowAnyHttpOrHttpsUrl,
+                options.allowAnyPublicHttpsUrl))
         return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
@@ -287,7 +350,8 @@ int AsyncHttpService::Submit(HttpRequestOptions options)
     }
     const bool cacheable = options.cacheSeconds > 0 && Lower(options.method) == L"get";
     const std::wstring cacheKey = options.widgetId + L"\n" + options.method + L"\n" +
-        options.url + L"\n" + options.headers;
+        options.url + L"\n" + options.headers + L"\n" +
+        std::to_wstring(options.maximumResponseBytes);
     auto cached = cache_.find(cacheKey);
     if (cacheable && cached != cache_.end() &&
         std::chrono::steady_clock::now() < cached->second.expires)
@@ -400,10 +464,18 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     std::wstring currentUrl = options.url;
     for (int redirectCount = 0; redirectCount <= 3 && !token.stop_requested(); ++redirectCount)
     {
+        if (options.sameOriginRedirectsOnly &&
+            !snowdesktop::http_security::HaveSameOrigin(
+                options.url, currentUrl))
+        {
+            response.error = "Redirect changed origin for credential-bearing request";
+            break;
+        }
         if (!snowdesktop::http_security::
                 IsAllowedUrlForDomains(
                     currentUrl, options.allowedDomains,
-                    options.allowAnyHttpOrHttpsUrl))
+                    options.allowAnyHttpOrHttpsUrl,
+                    options.allowAnyPublicHttpsUrl))
         {
             response.error = "Redirect URL is not allowed";
             break;
@@ -545,11 +617,15 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             continue;
         }
 
-        while (!token.stop_requested() && response.body.size() <= kMaxResponseBytes)
+        const DWORD maximumResponseBytes = std::clamp<DWORD>(
+            options.maximumResponseBytes, 4096, kMaxResponseBytes);
+        while (!token.stop_requested() &&
+            response.body.size() <= maximumResponseBytes)
         {
             DWORD available = 0;
             if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
-            DWORD remaining = kMaxResponseBytes + 1 - static_cast<DWORD>(response.body.size());
+            DWORD remaining = maximumResponseBytes + 1 -
+                static_cast<DWORD>(response.body.size());
             available = std::min(available, remaining);
             std::string chunk(available, '\0');
             DWORD read = 0;
@@ -557,9 +633,9 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             response.body.append(chunk.data(), read);
         }
         if (token.stop_requested()) response.error = "Cancelled";
-        else if (response.body.size() > kMaxResponseBytes)
+        else if (response.body.size() > maximumResponseBytes)
         {
-            response.body.resize(kMaxResponseBytes);
+            response.body.resize(maximumResponseBytes);
             response.error = "Response too large";
         }
         WinHttpCloseHandle(request);

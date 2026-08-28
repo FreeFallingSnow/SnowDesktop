@@ -10,7 +10,10 @@
 
 #include "constants.h"
 #include "folder_sort_rules.h"
+#include "list_detail_rules.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -71,6 +74,10 @@ struct GridPage
     std::wstring monitorId;
     RECT bounds{};
     RECT workArea{};
+    // System work area before SnowDesktop reserves space for its Dock.
+    // Page visual metrics use this stable area so changing layout spacing
+    // cannot resize icons when the floating Dock margin changes.
+    RECT visualWorkArea{};
     bool isPrimary = false;
     UINT dpiX = 96;
     UINT dpiY = 96;
@@ -78,6 +85,10 @@ struct GridPage
     int rows = 1;
     int cellWidth = kCellWidth;
     int cellHeight = kMinCellHeight;
+    // Stable center-to-center pitch before the configurable gap is applied.
+    // Item visual metrics use this pitch so spacing cannot resize icons.
+    int itemPitchWidth = kCellWidth;
+    int itemPitchHeight = kMinCellHeight;
     int gapX = 0;
     int gapY = 0;
     int marginX = kGridMarginX;
@@ -173,6 +184,8 @@ struct DesktopItem
     std::wstring layoutKey;
     std::wstring desktopIconClsid;
     std::wstring typeName;
+    std::optional<FILETIME> modifiedTime;
+    std::optional<std::uint64_t> fileSize;
     Pidl absolutePidl;
     Pidl childPidl;
     HBITMAP iconBitmap = nullptr;
@@ -186,6 +199,7 @@ struct DesktopItem
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    bool iconIsMediaThumbnail = false;
     bool isCut = false;
     IconState iconState = IconState::Loading;
 
@@ -197,6 +211,8 @@ struct DesktopItem
           layoutKey(std::move(other.layoutKey)),
           desktopIconClsid(std::move(other.desktopIconClsid)),
           typeName(std::move(other.typeName)),
+          modifiedTime(other.modifiedTime),
+          fileSize(other.fileSize),
           absolutePidl(std::move(other.absolutePidl)),
           childPidl(std::move(other.childPidl)),
           iconBitmap(other.iconBitmap),
@@ -210,6 +226,7 @@ struct DesktopItem
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          iconIsMediaThumbnail(other.iconIsMediaThumbnail),
           isCut(other.isCut),
           iconState(other.iconState)
     {
@@ -231,6 +248,8 @@ struct DesktopItem
             layoutKey = std::move(other.layoutKey);
             desktopIconClsid = std::move(other.desktopIconClsid);
             typeName = std::move(other.typeName);
+            modifiedTime = other.modifiedTime;
+            fileSize = other.fileSize;
             absolutePidl = std::move(other.absolutePidl);
             childPidl = std::move(other.childPidl);
             iconBitmap = other.iconBitmap;
@@ -244,6 +263,7 @@ struct DesktopItem
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            iconIsMediaThumbnail = other.iconIsMediaThumbnail;
             isCut = other.isCut;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
@@ -271,8 +291,10 @@ struct FolderEntry
 {
     std::wstring name;
     std::wstring fullPath;
+    std::wstring typeName;
     bool isDirectory = false;
     FILETIME lastWriteTime{};
+    std::optional<std::uint64_t> fileSize;
     int sysIconIndex = -1;
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};
@@ -281,6 +303,7 @@ struct FolderEntry
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    bool iconIsMediaThumbnail = false;
     IconState iconState = IconState::Loading;
 
     FolderEntry() = default;
@@ -288,8 +311,10 @@ struct FolderEntry
     FolderEntry(const FolderEntry& other)
         : name(other.name),
           fullPath(other.fullPath),
+          typeName(other.typeName),
           isDirectory(other.isDirectory),
           lastWriteTime(other.lastWriteTime),
+          fileSize(other.fileSize),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(nullptr),
           iconBitmapSize(other.iconBitmapSize),
@@ -298,6 +323,7 @@ struct FolderEntry
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          iconIsMediaThumbnail(other.iconIsMediaThumbnail),
           iconState(other.iconState)
     {
         if (other.iconBitmap != nullptr)
@@ -318,8 +344,10 @@ struct FolderEntry
             }
             name = other.name;
             fullPath = other.fullPath;
+            typeName = other.typeName;
             isDirectory = other.isDirectory;
             lastWriteTime = other.lastWriteTime;
+            fileSize = other.fileSize;
             sysIconIndex = other.sysIconIndex;
             iconBitmapSize = other.iconBitmapSize;
             selected = other.selected;
@@ -327,6 +355,7 @@ struct FolderEntry
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            iconIsMediaThumbnail = other.iconIsMediaThumbnail;
             iconState = other.iconState;
             if (other.iconBitmap != nullptr)
             {
@@ -371,8 +400,10 @@ public:
     FolderEntry(FolderEntry&& other) noexcept
         : name(std::move(other.name)),
           fullPath(std::move(other.fullPath)),
+          typeName(std::move(other.typeName)),
           isDirectory(other.isDirectory),
           lastWriteTime(other.lastWriteTime),
+          fileSize(other.fileSize),
           sysIconIndex(other.sysIconIndex),
           iconBitmap(other.iconBitmap),
           iconBitmapSize(other.iconBitmapSize),
@@ -381,6 +412,7 @@ public:
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          iconIsMediaThumbnail(other.iconIsMediaThumbnail),
           iconState(other.iconState)
     {
         other.iconBitmap = nullptr;
@@ -397,8 +429,10 @@ public:
             }
             name = std::move(other.name);
             fullPath = std::move(other.fullPath);
+            typeName = std::move(other.typeName);
             isDirectory = other.isDirectory;
             lastWriteTime = other.lastWriteTime;
+            fileSize = other.fileSize;
             sysIconIndex = other.sysIconIndex;
             iconBitmap = other.iconBitmap;
             iconBitmapSize = other.iconBitmapSize;
@@ -407,6 +441,7 @@ public:
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            iconIsMediaThumbnail = other.iconIsMediaThumbnail;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
             other.iconBitmapSize = {};
@@ -427,6 +462,8 @@ struct DesktopWidget
     std::wstring title;
     std::wstring customTitle;
     std::wstring scriptTitle;
+    // Empty means Demo Mode infers a category from the collection contents.
+    std::wstring demoIconCategory;
     std::wstring sourceFolderPath;
     GridCell gridCell;
     GridSpan gridSpan;
@@ -437,6 +474,19 @@ struct DesktopWidget
     bool selected = false;
     bool autoCollect = false;
     bool listMode = false;
+    bool showDetails = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    float detailModifiedPosition =
+        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
+    float detailTypePosition =
+        snowdesktop::list_detail_rules::kDefaultTypePosition;
+    float detailSizePosition =
+        snowdesktop::list_detail_rules::kDefaultSizePosition;
+    snowdesktop::list_detail_rules::Column contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
+    bool contentSortAscending = true;
     bool showTitle = false;
     bool bottomBarHover = true;
     int scrollOffset = 0;
@@ -447,11 +497,14 @@ struct DesktopWidget
     bool folderSortAscending = true;
     std::wstring activeCategoryId;
     std::wstring packageId;        ///< Lua package UUID used by layouts/runtime
-    std::wstring legacyScriptPath; ///< Pending loose-script migration only
+    std::wstring packageSourceProvider; ///< Package provider captured for recovery
+    std::wstring packageSourceExternalItemId; ///< Provider item identity captured for recovery
+    std::wstring packageSourceUrl; ///< Human-facing package source page
     bool showOnHoverOnly = false;
     bool keepWhenDesktopHidden = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    bool largeFolderTitleless = false;
     bool userRenamed = false; // Compatibility mirror of !customTitle.empty().
     bool dateHeaders = false;
     bool showFileCategories = false;
@@ -487,6 +540,19 @@ struct DockEntry
         snowdesktop::folder_sort_rules::kName;
     bool folderSortAscending = true;
     std::vector<std::wstring> folderItemKeys;
+    // Direct folder items have no source widget. Persist the popup display
+    // options on the Dock entry so they can use the same list/detail view as
+    // widget-backed folder popups.
+    bool listMode = false;
+    bool detailShowModified = false;
+    bool detailShowType = false;
+    bool detailShowSize = false;
+    float detailModifiedPosition =
+        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
+    float detailTypePosition =
+        snowdesktop::list_detail_rules::kDefaultTypePosition;
+    float detailSizePosition =
+        snowdesktop::list_detail_rules::kDefaultSizePosition;
 };
 
 struct DockUsageRecord

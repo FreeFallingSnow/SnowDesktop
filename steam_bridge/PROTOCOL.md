@@ -1,8 +1,13 @@
 # SnowDesktop Steam Bridge protocol v1
 
 The bridge is a one-shot command-line process. It does not host an always-on
-server, accept arbitrary executable paths, subscribe users automatically, or
-load component code.
+server, accept arbitrary executable paths, change subscriptions without an
+explicit command, or load component code.
+
+`configuration` is the only command that never initializes Steam. It reports
+the compiled version, expected App ID (`5080330`), Windows depot ID (`5080331`),
+protocol version, and whether the binary was built with Steamworks. Packaging
+and local-development scripts use it to reject stale or placeholder binaries.
 
 ## Transport
 
@@ -13,6 +18,9 @@ load component code.
   followed by one final object containing `"ok": true`.
 - All Steam identifiers are JSON strings so JavaScript consumers do not lose
   64-bit integer precision.
+- `status` reports both expected and runtime App IDs. Every runtime command
+  rejects a Steam context whose actual App ID differs before accessing
+  Workshop content.
 
 Exit codes:
 
@@ -46,14 +54,20 @@ The SnowDesktop process must:
 6. bind `(providerId, PublishedFileId, ownerSteamId)` to the package UUID;
 7. require confirmation for source, permission, or network-domain expansion.
 
-The host treats Steam subscription state as authoritative only after a complete,
-successful query. A newly subscribed package is copied, validated, and installed
+The resident host obtains subscription state from Steam's local
+`appworkshop_<AppId>.acf` cache instead of periodically launching this Bridge.
+It treats that state as authoritative only after a complete parse with the
+expected App ID. A newly subscribed package is copied, validated, and installed
 automatically; a changed package is updated automatically unless permissions or
-network domains expand; an unsubscribed package is removed from the managed
-package store automatically. Unsubscription unloads live instances but must not
-delete their layout records or per-instance storage, so subscribing again can
-restore them. Failed, offline, partial, or in-progress download queries must
-never trigger removal.
+network domains expand. The host persists the last authoritative subscription
+set separately for each Steam `ActiveUser`. An item missing from the same known
+account's next complete snapshot is an unsubscription, unless another remembered
+account still subscribes to it. A newly observed account only establishes its
+baseline and cannot remove packages installed by another account. Unsubscription
+unloads live instances but must not delete their layout records or per-instance
+storage, so subscribing again can restore them. Missing, partially written, or
+in-progress cache states must never trigger removal. Bridge commands remain the
+authoritative boundary for explicit Steam operations and creator verification.
 
 ## Progress objects
 

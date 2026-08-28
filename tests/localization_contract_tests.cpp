@@ -347,6 +347,57 @@ void TestCatalogMatrix(
         "en-US must exist as the runtime fallback catalog");
     if (english == catalogs.end()) return;
 
+    const auto desktopPageNavigationTitle =
+        english->second.find("settings.general.pageNavigation");
+    Check(desktopPageNavigationTitle != english->second.end() &&
+            desktopPageNavigationTitle->second ==
+                "Desktop page navigation",
+        "desktop page-navigation settings must not be labeled as settings-page navigation");
+    const auto simplifiedChinese = catalogs.find("zh-CN");
+    Check(simplifiedChinese != catalogs.end() &&
+            simplifiedChinese->second.contains(
+                "settings.general.pageNavigation") &&
+            simplifiedChinese->second.at(
+                "settings.general.pageNavigation") == "桌面翻页",
+        "the simplified-Chinese title must identify desktop page switching");
+
+    for (const std::string_view obsoleteKey : {
+             "app.settings.auto_start_manual_required",
+             "app.settings.auto_start_policy_disabled",
+             "app.settings.auto_start_switch_to_installed",
+             "app.settings.auto_start_disable_other_version",
+             "app.settings.auto_start_disable_other_confirm",
+             "app.settings.auto_start_switch_confirm",
+             "app.settings.auto_start_disable_all_confirm",
+             "app.settings.auto_start_other_remove_failed",
+             "app.settings.auto_start_policy_enabled",
+             "app.settings.auto_start_open_windows_settings",
+             "app.settings.auto_start_installed_conflict",
+             "app.settings.auto_start_portable_conflict"})
+    {
+        Check(!english->second.contains(std::string(obsoleteKey)),
+            std::string(obsoleteKey) +
+                ": obsolete Windows-managed startup guidance must be removed");
+    }
+    Check(english->second.at(
+              "app.settings.auto_start_other_version").find(
+                  "Turn on this switch") != std::string::npos &&
+            english->second.at(
+              "app.settings.auto_start_installed_version_active").find(
+                  "Turn on this switch") != std::string::npos,
+        "startup ownership notices must explain the direct in-app switch");
+    Check(english->second.at(
+              "app.settings.data_migration_description").find(
+                  "portable") == std::string::npos &&
+            simplifiedChinese != catalogs.end() &&
+            simplifiedChinese->second.at(
+              "app.settings.data_migration_description").find(
+                  "携带版") == std::string::npos &&
+            simplifiedChinese->second.at(
+              "app.settings.auto_start_installed_version_active").find(
+                  "携带版") == std::string::npos,
+        "user-visible deployment wording must not label Steam-compatible builds as portable");
+
     for (const auto& [language, catalog] : catalogs)
     {
         Check(catalog.size() ==
@@ -409,7 +460,7 @@ References CollectReferences(
 {
     const std::regex pattern(lua
         ? R"KEY(\bl10n\.tr\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY"
-        : R"KEY(\b(?:_L(?:FW|F|W)?|L10N_KEY)\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY");
+        : R"KEY(\b(?:_L(?:FW|F|W)?|L10N_KEY|L)\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY");
     References references;
     for (const fs::path& path : files)
     {
@@ -1194,9 +1245,21 @@ void TestRuntimeCatalogMatrix(
     Check(koreanLanguageName == "韩语",
         "language names must be localized in the active language: got " +
             koreanLanguageName);
+    const std::string koreanSelectionLabel =
+        locale.GetLanguageSelectionLabel("ko-KR");
+    Check(koreanSelectionLabel == "韩语 (한국어)",
+        "language selection labels must add the native language name: got " +
+            koreanSelectionLabel);
     Check(locale.GetAvailableLanguages().empty() ||
             locale.GetAvailableLanguages().at(4).displayName == "한국어",
         "Korean must use a stable native language name");
+
+    locale.SetLanguage("ko-KR");
+    const std::string nativeKoreanSelectionLabel =
+        locale.GetLanguageSelectionLabel("ko-KR");
+    Check(nativeKoreanSelectionLabel == "한국어",
+        "language selection labels must not repeat identical localized and native names: got " +
+            nativeKoreanSelectionLabel);
 
     constexpr const char* arguments[]{
         "ARG0", "ARG1", "ARG2",
@@ -1299,8 +1362,13 @@ int wmain(int argc, wchar_t* argv[])
         SortedFiles(
             widgetDirectory,
             [](const fs::path& path) {
-                return LowerAscii(
-                    path.extension().string()) == ".lua";
+                if (LowerAscii(path.extension().string()) != ".lua")
+                    return false;
+                const std::string normalized = LowerAscii(
+                    path.lexically_normal().generic_string());
+                return normalized.find(
+                    "/snowdesktop-lua-widget/library/") ==
+                    std::string::npos;
             });
     const std::vector<fs::path> manifestFiles =
         SortedFiles(

@@ -4,7 +4,8 @@
  *
  * 实现固定大小的缩略图网格控件，支持分类标签页和"全部"拼贴按钮。
  * Collection 是桌面上的一类特殊容器控件，以网格形式展示其子项缩略图，
- * 提供紧凑模式（2x2 网格）和标准模式（与桌面网格对齐）两种布局。
+ * 提供紧凑模式（2x2 网格）和大文件夹模式；无字大文件夹会在
+ * 图标缩放下限内解析容量最大的固定网格。
  * 当子项数量超过内联容量时，最后一个槽位变为"全部"拼贴按钮，
  * 以 2x2 缩略图形式展示剩余项目。
  */
@@ -16,6 +17,9 @@
 #include "app.h"
 #include "drop_model.h"
 #include "widget_preview_scene.h"
+#include "../item_render_layer_rules.h"
+#include "../collection_titleless_rules.h"
+#include "../widget_item_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -23,6 +27,23 @@
 
 
 static RECT CollectionItemRect(Collection* widget, size_t linearIndex);
+
+static size_t CollectionItemCount(Collection* widget)
+{
+    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+    return data ? data->itemKeys.size() : 0;
+}
+
+static bool CollectionItemIsDirectory(Item* item)
+{
+    if (!item) return false;
+    const std::wstring path = item->GetPath();
+    const DWORD attributes = path.empty()
+        ? INVALID_FILE_ATTRIBUTES
+        : GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
 
 // ── Scroll container helpers (shared with draw/slot code) ─────
 
@@ -34,44 +55,75 @@ static RECT CollectionScrollContentRect(Collection* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
-    return body;
+    return widget->ApplyDetailsHeaderToViewport(body);
 }
 
-/**
- * @brief 获取集合所在的网格页面 cellHeight
- */
-static int CollectionCellHeight(Collection* widget)
+static snowdesktop::PageItemVisualMetrics CollectionVisualMetrics(
+    Collection* widget)
 {
-    if (!widget || !widget->GetApp() || !widget->GetApp()->GetDesktopGrid())
-        return kMinCellHeight;
-    DesktopWidget* data = widget->GetWidgetData();
-    for (const auto& page : widget->GetApp()->GetDesktopGrid()->GetPages())
-        if (data && page.id == data->gridCell.pageId)
-            return page.cellHeight;
-    return kMinCellHeight;
+    if (!widget || !widget->GetApp())
+        return snowdesktop::ResolvePageItemVisualMetrics(
+            kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
+    return widget->GetItemVisualMetrics();
 }
 
-/**
- * @brief 计算滚动容器图标模式的纵向间距
- */
-static int CollectionAdaptiveGapY(Collection* widget)
+static bool CollectionTitlelessActive(const Collection* widget)
 {
-    if (!widget) return 0;
+    const DesktopWidget* data = widget
+        ? widget->GetWidgetData() : nullptr;
+    return data &&
+        snowdesktop::collection_titleless_rules::IsActive(
+            data->largeFolderTitleless,
+            data->scrollContainerMode,
+            data->gridSpan.columns,
+            data->gridSpan.rows);
+}
+
+static snowdesktop::collection_titleless_rules::DenseLayout
+CollectionDenseLayout(Collection* widget)
+{
+    if (!widget || !widget->GetWidgetData()) return {};
     DesktopWidget* data = widget->GetWidgetData();
-    if (!data || data->listMode) return 0;
-    RECT content = CollectionScrollContentRect(widget);
-    int visibleHeight = content.bottom - content.top;
-    if (visibleHeight <= 0) return 0;
-    int cellH = CollectionCellHeight(widget);
-    if (cellH <= 0 || visibleHeight <= cellH) return 0;
-    int visibleRows = visibleHeight / cellH;
-    if (visibleRows <= 1) return 0;
-    int extraSpace = visibleHeight - visibleRows * cellH;
-    int gapY = extraSpace / (visibleRows - 1);
-    if (gapY < 0) return 0;
-    int maxGap = std::max(1, static_cast<int>(cellH * kGapPercentY));
-    if (gapY > maxGap) return 0;
-    return gapY;
+    const auto metrics = CollectionVisualMetrics(widget);
+    return snowdesktop::collection_titleless_rules::ResolveDenseLayout(
+        widget->GetFrameRect(),
+        data->gridSpan.columns, data->gridSpan.rows,
+        metrics.iconSize, metrics.sideInset, metrics.topInset,
+        widget->GetLayoutSpacingScale());
+}
+
+static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
+    Collection* widget, int fixedRows = 0)
+{
+    if (!widget || !widget->GetWidgetData()) return {};
+    DesktopWidget* data = widget->GetWidgetData();
+    RECT content{};
+    if (data->scrollContainerMode)
+        content = CollectionScrollContentRect(widget);
+    else if (snowdesktop::widget_item_layout::CollectionUsesFullFrame(
+            data->scrollContainerMode,
+            data->gridSpan.columns, data->gridSpan.rows))
+        // The large-folder action bar floats over the frame on hover. It does
+        // not own layout space, so fixed rows use the complete widget height.
+        content = widget->GetFrameRect();
+    else
+        content = widget->GetBodyRect();
+    const auto metrics = CollectionVisualMetrics(widget);
+    const float spacing = widget->GetLayoutSpacingScale();
+    if (data->scrollContainerMode && data->listMode)
+    {
+        return snowdesktop::widget_item_layout::ResolveList(
+            content,
+            std::max(widget->GetListRowHeight(),
+                metrics.minimumListHeight),
+            spacing);
+    }
+    if (CollectionTitlelessActive(widget))
+        return CollectionDenseLayout(widget).geometry;
+    return snowdesktop::widget_item_layout::ResolveGrid(
+        content, std::max(1, data->gridSpan.columns), fixedRows,
+        metrics.minimumGridWidth, metrics.minimumGridHeight,
+        spacing);
 }
 
 /**
@@ -81,14 +133,8 @@ static int CollectionScrollContentHeight(Collection* widget, size_t itemCount)
 {
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data || !data->scrollContainerMode) return 0;
-    if (data->listMode)
-        return static_cast<int>(itemCount) * widget->Cu(38.0f);
-    int columns = std::max(1, data->gridSpan.columns);
-    int rows = static_cast<int>((itemCount + static_cast<size_t>(columns) - 1) / static_cast<size_t>(columns));
-    if (rows <= 0) return 0;
-    int cellH = CollectionCellHeight(widget);
-    int gapY = CollectionAdaptiveGapY(widget);
-    return rows * cellH + (rows - 1) * gapY;
+    return snowdesktop::widget_item_layout::ContentHeight(
+        CollectionLocalLayout(widget), itemCount);
 }
 
 /**
@@ -100,7 +146,8 @@ static int CollectionScrollMaxOffset(Collection* widget)
     if (!data || !data->scrollContainerMode) return 0;
     RECT content = CollectionScrollContentRect(widget);
     int visibleHeight = std::max<int>(1, content.bottom - content.top);
-    return std::max(0, CollectionScrollContentHeight(widget, data->itemKeys.size()) -
+    return std::max(0, CollectionScrollContentHeight(widget,
+        CollectionItemCount(widget)) -
         visibleHeight + widget->Cu(kMinCellHeight / 2.0f));
 }
 
@@ -113,28 +160,9 @@ static RECT CollectionItemRect(Collection* widget, size_t linearIndex)
     if (!data || !data->scrollContainerMode) return {};
     RECT content = CollectionScrollContentRect(widget);
     int scroll = std::clamp(data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
-    if (data->listMode)
-    {
-        const int itemHeight = widget->Cu(38.0f);
-        RECT rect = MakeRect(content.left,
-            content.top + static_cast<LONG>(linearIndex * itemHeight) - scroll,
-            content.right,
-            content.top + static_cast<LONG>((linearIndex + 1) * itemHeight) - scroll);
-        InflateRect(&rect, -widget->Cu(4.0f), -widget->Cu(2.0f));
-        return rect;
-    }
-    int columns = std::max(1, data->gridSpan.columns);
-    int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
-    int itemW = std::max<int>(1, (content.right - content.left) / columns);
-    int cellH = CollectionCellHeight(widget);
-    int gapY = CollectionAdaptiveGapY(widget);
-    int rowStep = cellH + gapY;
-    return MakeRect(
-        content.left + col * itemW,
-        content.top + row * rowStep - scroll,
-        col + 1 == columns ? content.right : content.left + (col + 1) * itemW,
-        content.top + row * rowStep + cellH - scroll);
+    (void)content;
+    return snowdesktop::widget_item_layout::ItemRect(
+        CollectionLocalLayout(widget), linearIndex, scroll);
 }
 
 static std::pair<size_t, size_t> CollectionVisibleIndexRange(
@@ -150,37 +178,9 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
     const int scroll = std::clamp(
         data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
 
-    if (data->listMode)
-    {
-        const int itemHeight = std::max(1, widget->Cu(38.0f));
-        const int firstRow = std::max(
-            0, scroll / itemHeight - 1);
-        const int lastRow =
-            (scroll + visibleHeight + itemHeight - 1) /
-                itemHeight + 1;
-        return {
-            std::min(itemCount, static_cast<size_t>(firstRow)),
-            std::min(itemCount, static_cast<size_t>(
-                std::max(firstRow, lastRow)))
-        };
-    }
-
-    const int columns = std::max(1, data->gridSpan.columns);
-    const int rowStep = std::max(
-        1, CollectionCellHeight(widget) +
-            CollectionAdaptiveGapY(widget));
-    const int firstRow = std::max(
-        0, scroll / rowStep - 1);
-    const int lastRow =
-        (scroll + visibleHeight + rowStep - 1) /
-            rowStep + 1;
-    return {
-        std::min(itemCount, static_cast<size_t>(
-            firstRow) * static_cast<size_t>(columns)),
-        std::min(itemCount, static_cast<size_t>(
-            std::max(firstRow, lastRow)) *
-                static_cast<size_t>(columns))
-    };
+    return snowdesktop::widget_item_layout::VisibleRange(
+        CollectionLocalLayout(widget), itemCount,
+        scroll, visibleHeight);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -193,29 +193,47 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
  * @brief 获取集合的内联容量（直接显示的缩略图数量）
  *
  * 紧凑模式（单行单列）下返回 4（2x2 网格），
- * 非紧凑模式下返回 (列数 x 行数 - 1)，预留最后一个位置给"全部"按钮。
- * @param widget  桌面控件描述符
+ * 非紧凑模式下使用当前解析网格的槽位数减一，预留最后一个位置给
+ * "全部"按钮；无字模式的解析网格可能比组件跨度更密集。
+ * @param collection 集合组件
  * @return 内联可显示的缩略图数量
  */
-static size_t GetCollectionInlineCapacity(const DesktopWidget& widget)
+static size_t GetCollectionInlineCapacity(const Collection* collection)
 {
-    if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1) return 4;
-    return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
+    const DesktopWidget* widget = collection
+        ? collection->GetWidgetData() : nullptr;
+    if (!widget) return 0;
+    if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+            widget->gridSpan.columns, widget->gridSpan.rows)) return 4;
+    int columns = std::max(1, widget->gridSpan.columns);
+    int rows = std::max(1, widget->gridSpan.rows);
+    if (CollectionTitlelessActive(collection))
+    {
+        const auto dense = CollectionDenseLayout(
+            const_cast<Collection*>(collection));
+        columns = dense.columns;
+        rows = dense.rows;
+    }
+    return static_cast<size_t>(columns * rows - 1);
 }
 
 /**
  * @brief 获取"全部"拼贴按钮的槽位索引
  *
  * 紧凑模式下无"全部"按钮，返回 (size_t)-1。
- * 非紧凑模式下返回最后一个槽位的索引（= 总网格数 - 1）。
- * @param widget  桌面控件描述符
+ * 非紧凑模式下返回当前解析网格的最后一个槽位索引。
+ * @param collection 集合组件
  * @return 槽位索引，若不存在"全部"按钮则返回 (size_t)-1
  */
-static size_t GetCollectionAllButtonSlot(const DesktopWidget& widget)
+static size_t GetCollectionAllButtonSlot(const Collection* collection)
 {
-    if (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1)
+    const DesktopWidget* widget = collection
+        ? collection->GetWidgetData() : nullptr;
+    if (!widget) return static_cast<size_t>(-1);
+    if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+            widget->gridSpan.columns, widget->gridSpan.rows))
         return static_cast<size_t>(-1);
-    return static_cast<size_t>(std::max(1, widget.gridSpan.columns) * std::max(1, widget.gridSpan.rows) - 1);
+    return GetCollectionInlineCapacity(collection);
 }
 
 static RECT GetCollectionCompactSlotRect(
@@ -268,37 +286,17 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
     DesktopApp* app = collection->GetApp();
     if (!data || !app) return {};
 
-    bool compact = data->gridSpan.columns <= 1 && data->gridSpan.rows <= 1;
+    bool compact = snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+        data->gridSpan.columns, data->gridSpan.rows);
     if (compact)
         return GetCollectionCompactSlotRect(collection, slot, body,
             collection->Cu(6.0f));
 
-    // Non-compact: grid-aligned slots matching desktop cell size
-    InflateRect(&body, -collection->Cu(4.0f), -collection->Cu(4.0f));
-    const auto& pages = app->GetDesktopGrid()->GetPages();
-    const GridPage* page = nullptr;
-    for (const auto& p : pages)
-        if (p.id == data->gridCell.pageId) { page = &p; break; }
-    int cellH = page ? page->cellHeight : 96;
-    int gapY = page ? page->gapY : 0;
-    int columns = std::max(1, data->gridSpan.columns);
     int rows = std::max(1, data->gridSpan.rows);
-    int col = (int)(slot % (size_t)columns);
-    int rowIdx = (int)(slot / (size_t)columns);
-    if (rowIdx >= rows) return {};
-    int width = std::max<int>(
-        1, (int)(body.right - body.left) / columns);
-
-    int startY = body.top + gapY / 2 - collection->Cu(8.0f);
-    int rowStep = cellH + gapY;
-    const int rowOffset = snowdesktop::widget_spacing_rules::
-        CollectionRowOffsetForComponentSpacing(
-            rowIdx, rows, gapY, collection->GetCellScale(),
-            collection->GetComponentSpacingScale());
-    const int rowTop = startY + rowIdx * rowStep + rowOffset;
-    return { body.left + col * width, rowTop,
-             col + 1 == columns ? body.right : body.left + (col + 1) * width,
-             rowTop + cellH };
+    (void)body;
+    return snowdesktop::widget_item_layout::ItemRect(
+        CollectionLocalLayout(const_cast<Collection*>(collection), rows),
+        slot);
 }
 
 /// @}
@@ -340,15 +338,29 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         std::max(1, std::min(width, height)));
     const int iconX = rect.left + (width - iconSize) / 2;
     const int iconY = rect.top + (height - iconSize) / 2;
+    const RECT iconRect = {
+        iconX, iconY, iconX + iconSize, iconY + iconSize
+    };
+    const bool useDemoIdentity =
+        app_->ShouldUseDemoCollectionIdentity(data_);
+    const std::wstring_view demoIdentity = item.layoutKey.empty()
+        ? std::wstring_view(item.parsingName)
+        : std::wstring_view(item.layoutKey);
 
-    if (item.iconState == IconState::Loading)
+    if (useDemoIdentity)
     {
-        RECT placeholderRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
-        app_->DrawPlaceholderIcon(context, item.sysIconIndex, placeholderRect, 1.0f);
+        app_->DrawDemoCollectionIdentityIcon(
+            context, *data_, demoIdentity, iconRect, 1.0f);
+    }
+    else if (item.iconState == IconState::Loading)
+    {
+        app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
     }
     else
     {
-        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(item.iconBitmap);
+        ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
+            item.iconBitmap,
+            app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
         if (bmp)
         {
             D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconX), static_cast<float>(iconY),
@@ -357,17 +369,87 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         }
         else
         {
-            RECT placeholderRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
-            app_->DrawPlaceholderIcon(context, item.sysIconIndex, placeholderRect, 1.0f);
+            app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
         }
     }
 
-    if (app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+    if (!useDemoIdentity &&
+        app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
         item.iconState != IconState::Loading)
     {
-        RECT arrowRect = { iconX, iconY, iconX + iconSize, iconY + iconSize };
-        app_->DrawShortcutArrowOverlay(context, arrowRect, 1.0f);
+        app_->DrawShortcutArrowOverlay(context, iconRect, 1.0f);
     }
+}
+
+void Collection::DrawTitlelessTooltip(
+    ID2D1DeviceContext* context,
+    const std::wstring& title, RECT anchor) const
+{
+    if (!app_ || !context || title.empty() ||
+        IsRectEmptyRect(anchor))
+        return;
+
+    RECT frame = GetFrameRect();
+    const int frameInset = Cu(4.0f);
+    const int horizontalPadding = Cu(10.0f);
+    const int verticalPadding = Cu(5.0f);
+    const int maximumTextWidth = std::max(1,
+        std::min(Cu(280.0f),
+            static_cast<int>(frame.right - frame.left) -
+                frameInset * 2 - horizontalPadding * 2));
+    IDWriteTextFormat* format = GetCuTextFormatWeight(
+        app_->itemFontSizeCu_,
+        app_->IsLightContentTheme()
+            ? DWRITE_FONT_WEIGHT_LIGHT
+            : app_->itemFontWeight_, true);
+    if (!format || !app_->dwriteFactory_) return;
+
+    ComPtr<IDWriteTextLayout> layout;
+    const int measureHeight = std::max(Cu(22.0f),
+        static_cast<int>(std::ceil(
+            GetItemVisualMetrics().fontSize * 1.5f)));
+    if (FAILED(app_->dwriteFactory_->CreateTextLayout(
+            title.c_str(), static_cast<UINT32>(title.size()),
+            format, static_cast<float>(maximumTextWidth),
+            static_cast<float>(measureHeight), &layout)) || !layout)
+        return;
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    DWRITE_TEXT_METRICS textMetrics{};
+    if (FAILED(layout->GetMetrics(&textMetrics))) return;
+
+    const int textWidth = std::max(1, std::min(
+        maximumTextWidth,
+        static_cast<int>(std::ceil(
+            textMetrics.widthIncludingTrailingWhitespace))));
+    const int tooltipWidth = textWidth + horizontalPadding * 2;
+    const int tooltipHeight = std::max(
+        Cu(28.0f),
+        static_cast<int>(std::ceil(textMetrics.height)) +
+            verticalPadding * 2);
+    const RECT tooltip =
+        snowdesktop::collection_titleless_rules::
+            ResolveTooltipBounds(anchor, frame,
+                tooltipWidth, tooltipHeight,
+                Cu(2.0f), frameInset);
+    const bool light = app_->IsLightContentTheme();
+    app_->DrawD2DRoundedRectangle(context, tooltip,
+        static_cast<float>(Cu(7.0f)),
+        light
+            ? D2D1::ColorF(0.94f, 0.95f, 0.97f, 0.96f)
+            : D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.96f),
+        light
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+    RECT textRect = tooltip;
+    textRect.left += horizontalPadding;
+    textRect.right -= horizontalPadding;
+    app_->DrawD2DTextEllipsis(context, title, textRect,
+        format,
+        light
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
+        DWRITE_TEXT_ALIGNMENT_CENTER,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true);
 }
 
 /**
@@ -383,7 +465,12 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
 void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
     if (!data_ || !app_) return;
-    if (data_->itemKeys.empty()) return;
+    if (data_->itemKeys.empty())
+    {
+        if (data_->scrollContainerMode)
+            DrawDetailsHeader(context, GetContentViewportRect());
+        return;
+    }
     const bool preview = IsPreviewRendering();
     auto resolveItem = [&](const std::wstring& key) -> DesktopItem* {
         if (auto* scene = GetPreviewScene())
@@ -403,9 +490,12 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (data_->scrollContainerMode)
     {
         RECT content = GetContentViewportRect();
+        DrawDetailsHeader(context, content);
         context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         auto& slots = GetSlots();
+        std::vector<std::pair<Item*, RECT>>
+            foregroundTitles;
         for (const auto& slot : slots)
         {
             if (!slot) continue;
@@ -426,8 +516,13 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                 {
                     bool hovered = !preview && !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
+                    const auto titleLayers =
+                        snowdesktop::item_render_layer_rules::
+                            ResolveTitleLayerPlan(di.selected);
                     icon->Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
-                        app_->IsLightContentTheme());
+                        lt, titleLayers.drawWithItem, false, data_);
+                    if (titleLayers.drawInForeground)
+                        foregroundTitles.emplace_back(icon, cell);
                 }
             }
             else
@@ -435,17 +530,57 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 if (privacyActive)
                     DrawPrivacyPlaceholder(context, cell, di.name, false);
                 else
-                    DrawListItem(context, cell, di.iconBitmap, di.sysIconIndex, di.name, di.selected);
+                {
+                    const bool useDemoIdentity =
+                        app_->ShouldUseDemoCollectionIdentity(data_);
+                    const std::wstring_view demoIdentity =
+                        !useDemoIdentity ? std::wstring_view{} :
+                        (di.layoutKey.empty()
+                            ? std::wstring_view(di.parsingName)
+                            : std::wstring_view(di.layoutKey));
+                    DrawListItem(context, cell, di.iconBitmap,
+                        di.sysIconIndex, di.name, di.selected,
+                        di.iconIsMediaThumbnail, demoIdentity, data_,
+                        { di.typeName, di.modifiedTime,
+                          di.fileSize, false });
+                }
             }
         }
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, lt, data_);
         context->PopAxisAlignedClip();
         return;
     }
 
     // ── Original: large folder / compact grid mode ────────────
-    bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
+    bool compact = snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+        data_->gridSpan.columns, data_->gridSpan.rows);
+    const bool titlelessLargeFolder =
+        CollectionTitlelessActive(this);
+    const int titlelessIconSize = titlelessLargeFolder
+        ? CollectionDenseLayout(this).iconSize : 0;
     auto& slots = GetSlots();
-    size_t inlineCapacity = std::min(GetCollectionInlineCapacity(*data_), data_->itemKeys.size());
+    const size_t displayItemCount = CollectionItemCount(this);
+    size_t inlineCapacity = std::min(
+        GetCollectionInlineCapacity(this), displayItemCount);
+    std::vector<std::pair<Item*, RECT>>
+        foregroundTitles;
+    std::wstring hoveredTooltipTitle;
+    RECT hoveredTooltipAnchor{};
+    const bool canShowTitlelessTooltip =
+        titlelessLargeFolder && !preview && !privacyActive &&
+        !app_->dragSession_.IsActive() &&
+        !app_->dragDropController_.IsExternalDragActive();
+    const auto finishTitleLayers = [&]() {
+        for (const auto& [item, bounds] : foregroundTitles)
+            item->DrawTitle(
+                context, bounds, true, 1.0f, lt, data_);
+        if (canShowTitlelessTooltip &&
+            !hoveredTooltipTitle.empty())
+            DrawTitlelessTooltip(context,
+                hoveredTooltipTitle, hoveredTooltipAnchor);
+    };
 
     for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
     {
@@ -468,20 +603,64 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         else
         {
             if (privacyActive)
-                DrawPrivacyPlaceholder(context, slotRect, di.name, false);
+                DrawPrivacyPlaceholder(context, slotRect,
+                    di.name, false, !titlelessLargeFolder,
+                    titlelessLargeFolder, titlelessIconSize);
             else
             {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && PtInRect(&slotRect, app_->lastMousePoint_) != FALSE && !di.selected && PtInRect(&bodyRect, app_->lastMousePoint_);
-                icon->Draw(context, slotRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    app_->IsLightContentTheme());
+                // Fixed large-folder tracks occupy the complete frame; the
+                // action bar floats above them and must not shorten hover.
+                RECT bodyRect = GetFrameRect();
+                const bool pointerOver = !preview &&
+                    PtInRect(&slotRect,
+                        app_->lastMousePoint_) != FALSE &&
+                    PtInRect(&bodyRect,
+                        app_->lastMousePoint_) != FALSE;
+                if (titlelessLargeFolder)
+                {
+                    icon->Draw(context, slotRect,
+                        di.selected ? 2 : (pointerOver ? 1 : 0),
+                        lt, false, false, data_, true, true,
+                        titlelessIconSize);
+                    if (canShowTitlelessTooltip && pointerOver)
+                    {
+                        const std::wstring_view identity =
+                            di.layoutKey.empty()
+                                ? std::wstring_view(di.parsingName)
+                                : std::wstring_view(di.layoutKey);
+                        hoveredTooltipTitle =
+                            app_->ShouldUseDemoCollectionIdentity(data_)
+                                ? app_->GetDemoCollectionIdentityTitle(
+                                    *data_, identity)
+                                : di.name;
+                        hoveredTooltipAnchor =
+                            snowdesktop::ResolveCenteredIconRect(
+                                slotRect, titlelessIconSize);
+                    }
+                }
+                else
+                {
+                    const bool hovered =
+                        pointerOver && !di.selected;
+                    const auto titleLayers =
+                        snowdesktop::item_render_layer_rules::
+                            ResolveTitleLayerPlan(di.selected);
+                    icon->Draw(context, slotRect,
+                        di.selected ? 2 : (hovered ? 1 : 0),
+                        lt, titleLayers.drawWithItem,
+                        false, data_);
+                    if (titleLayers.drawInForeground)
+                        foregroundTitles.emplace_back(
+                            icon, slotRect);
+                }
             }
         }
     }
 
     // "All" button: 2×2 mosaic of remaining items
-    size_t allSlot = GetCollectionAllButtonSlot(*data_);
-    if (allSlot != static_cast<size_t>(-1) && !compact)
+    size_t allSlot = GetCollectionAllButtonSlot(this);
+    if (allSlot != static_cast<size_t>(-1) && !compact &&
+        displayItemCount > inlineCapacity)
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
@@ -490,7 +669,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             for (size_t j = 0; j < 4; ++j)
             {
                 size_t keyIdx = inlineCapacity + j;
-                if (keyIdx < data_->itemKeys.size() &&
+                if (keyIdx < displayItemCount &&
                     resolveItem(data_->itemKeys[keyIdx]) != nullptr)
                 {
                     hasRemainingIcon = true;
@@ -498,23 +677,33 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 }
             }
             if (!hasRemainingIcon && !PtInRect(&allRect, app_->lastMousePoint_))
+            {
+                finishTitleLayers();
                 return;
+            }
 
-            const RECT mosaicRect = app_->GetItemIconRect(allRect);
+            RECT mosaicRect = app_->GetItemIconRect(allRect);
+            if (titlelessLargeFolder)
+                mosaicRect =
+                    snowdesktop::ResolveCenteredIconRect(
+                        allRect, titlelessIconSize);
             for (int j = 0; j < 4; ++j)
             {
                 RECT tile = GetCollectionCompactSlotRect(this,
                     static_cast<size_t>(j), mosaicRect, 0);
 
                 size_t keyIdx = inlineCapacity + (size_t)j;
-                if (keyIdx < data_->itemKeys.size())
+                if (keyIdx < displayItemCount)
                 {
                     if (DesktopItem* item =
                             resolveItem(data_->itemKeys[keyIdx]))
                     {
                         const DesktopItem& di = *item;
                         if (privacyActive)
-                            DrawPrivacyPlaceholder(context, tile, di.name, false);
+                            DrawPrivacyPlaceholder(context, tile,
+                                di.name, false,
+                                !titlelessLargeFolder,
+                                titlelessLargeFolder);
                         else
                             DrawThumbnail(context, di, tile, di.selected);
                     }
@@ -531,12 +720,27 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 }
             }
 
-            const std::wstring collectionTitle = data_->title.empty()
-                ? _LW("widget.collection") : data_->title;
-            app_->DrawItemText(context, allRect, collectionTitle, false, 1.0f,
-                app_->IsLightContentTheme());
+            const std::wstring collectionTitle =
+                app_->ShouldUseDemoCollectionIdentity(data_)
+                ? app_->GetDemoCollectionCategoryTitle(*data_)
+                : (data_->title.empty()
+                    ? _LW("widget.collection") : data_->title);
+            if (!titlelessLargeFolder)
+            {
+                app_->DrawItemText(context, allRect,
+                    collectionTitle, false, 1.0f,
+                    app_->IsLightContentTheme());
+            }
+            else if (canShowTitlelessTooltip &&
+                PtInRect(&allRect,
+                    app_->lastMousePoint_) != FALSE)
+            {
+                hoveredTooltipTitle = collectionTitle;
+                hoveredTooltipAnchor = mosaicRect;
+            }
         }
     }
+    finishTitleLayers();
 }
 
 /// @}
@@ -566,7 +770,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     {
         const auto [firstIndex, lastIndex] =
             CollectionVisibleIndexRange(
-                this, data_->itemKeys.size());
+                this, CollectionItemCount(this));
         slots.reserve(lastIndex - firstIndex);
         for (size_t idx = firstIndex; idx < lastIndex; ++idx)
         {
@@ -582,8 +786,9 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     }
 
     // ── Original: large folder mode ─────────────────────────
-    size_t inlineCap = GetCollectionInlineCapacity(*data_);
-    size_t visible = std::min(inlineCap, data_->itemKeys.size());
+    size_t inlineCap = GetCollectionInlineCapacity(this);
+    size_t visible = std::min(
+        inlineCap, CollectionItemCount(this));
     RECT body = GetBodyRect();
     for (size_t idx = 0; idx < visible; ++idx)
     {
@@ -611,10 +816,12 @@ size_t Collection::GetSlotCount() const
     if (data_->itemKeys.empty()) return 0;
 
     if (data_->scrollContainerMode)
-        return data_->itemKeys.size();
+        return CollectionItemCount(
+            const_cast<Collection*>(this));
 
-    size_t inlineCap = GetCollectionInlineCapacity(*data_);
-    size_t visible = std::min(inlineCap, data_->itemKeys.size());
+    size_t inlineCap = GetCollectionInlineCapacity(this);
+    size_t visible = std::min(inlineCap,
+        CollectionItemCount(const_cast<Collection*>(this)));
 
     return visible;
 }
@@ -629,8 +836,11 @@ size_t Collection::GetSlotCount() const
  */
 Item* Collection::GetSlotItem(size_t idx) const
 {
-    if (!data_ || idx >= data_->itemKeys.size() || !app_) return nullptr;
-    if (!data_->scrollContainerMode && idx >= GetCollectionInlineCapacity(*data_)) return nullptr;
+    if (!data_ || !app_ ||
+        idx >= CollectionItemCount(const_cast<Collection*>(this)))
+        return nullptr;
+    if (!data_->scrollContainerMode &&
+        idx >= GetCollectionInlineCapacity(this)) return nullptr;
     if (auto* scene = GetPreviewScene())
     {
         DesktopItem* sample = scene->FindDesktopItem(data_->itemKeys[idx]);
@@ -723,6 +933,10 @@ void Collection::ReorderMembers(const std::vector<size_t>& indices, size_t inser
     if (adjusted > data_->itemKeys.size()) adjusted = data_->itemKeys.size();
     for (auto it = moving.rbegin(); it != moving.rend(); ++it)
         data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(adjusted++), *it);
+    data_->contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
+    if (app_)
+        app_->demoCollectionIdentityCache_.erase(data_->id);
     InvalidateSlots();
 }
 
@@ -782,8 +996,11 @@ RECT Collection::GetAllButtonRect() const
         InflateRect(&body, -Cu(6.0f), -Cu(6.0f));
         return body;
     }
-    size_t allSlot = GetCollectionAllButtonSlot(*data_);
+    size_t allSlot = GetCollectionAllButtonSlot(this);
     if (allSlot == static_cast<size_t>(-1)) return {};
+    if (CollectionItemCount(const_cast<Collection*>(this)) <=
+        GetCollectionInlineCapacity(this))
+        return {};
     return GetCollectionSlotRect(this, allSlot, body);
 }
 
@@ -807,6 +1024,9 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
     if (data_->scrollContainerMode)
     {
+        const WidgetHit details = HitTestDetailsHeader(
+            pt, GetContentViewportRect());
+        if (details != WidgetHit::None) return details;
         if (base == WidgetHit::MoveHandle)
         {
             RECT handle = GetMoveHandleRect();
@@ -831,8 +1051,10 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
     if (compact)
         return base == WidgetHit::Content ? WidgetHit::CollectionOpenBtn : base;
 
-    size_t allSlot = GetCollectionAllButtonSlot(*data_);
-    if (allSlot != static_cast<size_t>(-1))
+    size_t allSlot = GetCollectionAllButtonSlot(this);
+    if (allSlot != static_cast<size_t>(-1) &&
+        CollectionItemCount(const_cast<Collection*>(this)) >
+            GetCollectionInlineCapacity(this))
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, GetBodyRect());
         if (PtInRect(&allRect, pt)) return WidgetHit::CollectionOpenBtn;
@@ -842,16 +1064,112 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
+    const auto insertionRegion = [pt](Slot* slot) {
+        if (!slot) return HitRegion::SortAfter;
+        const RECT bounds = slot->GetBounds();
+        return pt.y < bounds.top +
+                (bounds.bottom - bounds.top) / 2
+            ? HitRegion::SortBefore
+            : HitRegion::SortAfter;
+    };
+
+    // Dense icon-only cells do not share Slot::GetIconRect's ordinary
+    // icon-and-title geometry. Resolve the physical cell and the actual icon
+    // first, like DockContainer, so generic insertion canonicalization cannot
+    // redirect the dwell to the following slot before the icon is tested.
+    if (data_ && app_ && CollectionTitlelessActive(this))
+    {
+        const int iconSize = CollectionDenseLayout(this).iconSize;
+        for (const auto& candidate : GetSlots())
+        {
+            if (!candidate) continue;
+            const RECT bounds = candidate->GetBounds();
+            if (!PtInRect(&bounds, pt)) continue;
+
+            Item* targetItem = candidate->GetItem();
+            if (!targetItem || targetItem->IsSelected())
+                break;
+
+            RECT handoffRect = snowdesktop::ResolveCenteredIconRect(
+                bounds, iconSize);
+            InflateRect(&handoffRect, Cu(4.0f), Cu(4.0f));
+            if (!PtInRect(&handoffRect, pt))
+                break;
+
+            outSlot = candidate.get();
+            if (CollectionItemIsDirectory(targetItem))
+            {
+                app_->ResetCompactCollectionHandoffDwell();
+                return HitRegion::Handoff;
+            }
+
+            const size_t index = outSlot->GetIndex();
+            const DWORD now = GetTickCount();
+            if (app_->compactCollectionHandoffWidgetId_ != data_->id ||
+                app_->compactCollectionHandoffIndex_ != index)
+            {
+                app_->ResetCompactCollectionHandoffDwell();
+                app_->compactCollectionHandoffWidgetId_ = data_->id;
+                app_->compactCollectionHandoffIndex_ = index;
+                app_->compactCollectionHandoffStartTick_ = now;
+                app_->compactCollectionHandoffReady_ = false;
+                if (app_->hwnd_)
+                {
+                    SetTimer(app_->hwnd_,
+                        kCompactCollectionHandoffDwellTimerId,
+                        kCompactCollectionHandoffDwellIntervalMs,
+                        nullptr);
+                }
+            }
+
+            if (snowdesktop::collection_titleless_rules::
+                    IsHandoffDwellReady(
+                        true,
+                        app_->compactCollectionHandoffReady_,
+                        now - app_->compactCollectionHandoffStartTick_,
+                        kCompactCollectionHandoffDwellDelayMs))
+            {
+                app_->compactCollectionHandoffReady_ = true;
+                if (app_->hwnd_)
+                    KillTimer(app_->hwnd_,
+                        kCompactCollectionHandoffDwellTimerId);
+                return HitRegion::Handoff;
+            }
+            return insertionRegion(outSlot);
+        }
+    }
+
     HitRegion result = WidgetContainer::HitTestDrag(pt, outSlot);
-    if (!data_ || result != HitRegion::Handoff) return result;
-    bool compact = data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
-    if (!compact) return result;
-    if (!outSlot) return HitRegion::SortAfter;
-    RECT bounds = outSlot->GetBounds();
-    int cellH = bounds.bottom - bounds.top;
-    return (pt.y < bounds.top + cellH / 2)
-        ? HitRegion::SortBefore
-        : HitRegion::SortAfter;
+    if (app_ && data_ &&
+        snowdesktop::collection_titleless_rules::
+            CollectionOwnsHandoffDwell(
+                app_->compactCollectionHandoffWidgetId_,
+                data_->id))
+    {
+        app_->ResetCompactCollectionHandoffDwell();
+    }
+    return CollectionTitlelessActive(this) &&
+            result == HitRegion::Handoff
+        ? insertionRegion(outSlot) : result;
+}
+
+std::wstring Collection::GetDragHint(Slot* slot, HitRegion region,
+    const std::vector<Item*>& sourceItems, Container* origin,
+    int mods) const
+{
+    if (CollectionTitlelessActive(this) &&
+        region == HitRegion::Handoff && slot && slot->GetItem())
+    {
+        Item* target = slot->GetItem();
+        if (CollectionItemIsDirectory(target))
+        {
+            return _LFW("core.drag.release_drop_into",
+                target->GetTitle());
+        }
+        return _LFW("core.drag.open_with", target->GetTitle());
+    }
+    return WidgetContainer::GetDragHint(
+        slot, region, sourceItems, origin, mods);
 }
 
 /**
@@ -905,7 +1223,8 @@ int Collection::GetMaxScrollOffset() const
 int Collection::GetTotalContentHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return 0;
-    return CollectionScrollContentHeight(const_cast<Collection*>(this), data_->itemKeys.size());
+    return CollectionScrollContentHeight(const_cast<Collection*>(this),
+        CollectionItemCount(const_cast<Collection*>(this)));
 }
 
 int Collection::GetVisibleContentHeight() const
@@ -929,20 +1248,25 @@ BarStyle Collection::GetInsertionStyle() const
 int Collection::GetItemHeight() const
 {
     if (!data_ || !data_->scrollContainerMode) return Cu(136.0f);
-    return data_->listMode ? Cu(38.0f) : CollectionCellHeight(const_cast<Collection*>(this));
+    return CollectionLocalLayout(const_cast<Collection*>(this)).vertical.cell;
+}
+
+RECT Collection::GetMemberLayoutRect(size_t index) const
+{
+    return CollectionItemRect(
+        const_cast<Collection*>(this), index);
 }
 
 int Collection::GetItemWidth() const
 {
     if (!data_ || !data_->scrollContainerMode) return Cu(92.0f);
-    RECT content = CollectionScrollContentRect(const_cast<Collection*>(this));
-    if (data_->listMode)
-    {
-        int w = (int)(content.right - content.left);
-        return std::max(1, w - Cu(8.0f));
-    }
-    int columns = std::max(1, data_->gridSpan.columns);
-    return std::max<int>(1, (content.right - content.left) / columns);
+    return CollectionLocalLayout(
+        const_cast<Collection*>(this)).horizontal.cell;
+}
+
+int Collection::GetBottomBarButtonCount() const
+{
+    return data_ && data_->scrollContainerMode ? 1 : 0;
 }
 
 void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)

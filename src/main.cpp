@@ -13,14 +13,21 @@
 
 #include "app.h"
 #include "crashlog.h"
+#include "application_crash_watchdog.h"
+#include "application_restart_policy.h"
 #include "data_paths.h"
 #include "general_settings.h"
 #include "l10n.h"
 #include "single_instance.h"
+#include "widget_author_preview.h"
 
 #include <commctrl.h>
 
 #include <filesystem>
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <vector>
 
 #define SNOWDESKTOP_WIDEN_INNER(value) L##value
 #define SNOWDESKTOP_WIDEN(value) SNOWDESKTOP_WIDEN_INNER(value)
@@ -219,6 +226,7 @@ static constexpr DWORD kCrashWindowSeconds = 60;
 static constexpr int kMaxCrashesInWindow = 3;
 static constexpr wchar_t kRegSubKey[] = L"Software\\SnowDesktop";
 static constexpr wchar_t kRegValueName[] = L"CrashTicks";
+static std::atomic_bool g_crashWatchdogStarted = false;
 
 static bool ShouldPreventAutoRestart()
 {
@@ -263,19 +271,44 @@ static bool ShouldPreventAutoRestart()
     return false;
 }
 
+static std::wstring GetCurrentExecutablePath()
+{
+    std::vector<wchar_t> buffer(MAX_PATH);
+    for (;;)
+    {
+        const DWORD length = GetModuleFileNameW(
+            nullptr, buffer.data(),
+            static_cast<DWORD>(buffer.size()));
+        if (length == 0)
+            return {};
+        if (length < buffer.size() - 1)
+            return std::wstring(buffer.data(), length);
+        if (buffer.size() >= 32768)
+            return {};
+        buffer.resize(std::min<size_t>(buffer.size() * 2, 32768));
+    }
+}
+
+static bool LaunchRestartAfterProcess(DWORD processId)
+{
+    const std::wstring selfPath = GetCurrentExecutablePath();
+    if (selfPath.empty())
+        return false;
+    wchar_t parameters[64]{};
+    swprintf_s(parameters, L"--wait-for-pid=%lu", processId);
+    return reinterpret_cast<INT_PTR>(ShellExecuteW(
+        nullptr, L"open", selfPath.c_str(), parameters,
+        nullptr, SW_SHOWNORMAL)) > 32;
+}
+
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
 {
     CrashHandler(info); // write stack trace to log
 
-    if (!ShouldPreventAutoRestart())
+    if (!g_crashWatchdogStarted.load(std::memory_order_acquire) &&
+        !ShouldPreventAutoRestart())
     {
-        wchar_t selfPath[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
-        wchar_t parameters[64]{};
-        swprintf_s(parameters, L"--wait-for-pid=%lu",
-            GetCurrentProcessId());
-        ShellExecuteW(nullptr, L"open", selfPath, parameters,
-            nullptr, SW_SHOWNORMAL);
+        LaunchRestartAfterProcess(GetCurrentProcessId());
     }
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -289,6 +322,29 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (snowdesktop::deployment::TryHandlePackagedAutoStartQueryCommand())
+        return 0;
+
+    bool previewCommandHandled = false;
+    const int previewCommandResult = snowdesktop::widget_authoring::
+        TryRunWidgetAuthorPreviewHostCommand(previewCommandHandled);
+    if (previewCommandHandled)
+        return previewCommandResult;
+
+    const std::uintptr_t watchedProcessHandle =
+        snowdesktop::application_restart_policy::
+            ParseWatchProcessHandle(
+                commandLine ? commandLine : L"");
+    if (watchedProcessHandle != 0)
+    {
+        const auto result =
+            snowdesktop::application_crash_watchdog::WatchProcess(
+                reinterpret_cast<HANDLE>(watchedProcessHandle),
+                ShouldPreventAutoRestart,
+                LaunchRestartAfterProcess);
+        return static_cast<int>(result.error);
+    }
+
     /* 处理特殊命令行开关：仅恢复资源管理器图标后立即退出 */
     if (commandLine != nullptr && wcsstr(commandLine, L"--restore-explorer-icons") != nullptr)
     {
@@ -394,8 +450,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     SetUnhandledExceptionFilter(UnhandledFilter);
     InstallCrashHandler();
 
-    /* 注册应用程序崩溃后自动重启（不含 HANG，避免无响应时系统反复拉起） */
-    RegisterApplicationRestart(nullptr, RESTART_NO_CRASH);
+    // This out-of-process watcher observes fail-fast exits that bypass every
+    // in-process exception filter. UnhandledFilter remains as startup fallback.
+    const bool watchdogStarted =
+        snowdesktop::application_crash_watchdog::
+            StartForCurrentProcess(GetCurrentExecutablePath());
+    g_crashWatchdogStarted.store(
+        watchdogStarted, std::memory_order_release);
+    if (!watchdogStarted)
+        OutputDebugStringW(
+            L"SnowDesktop: failed to start crash watchdog.\n");
+
+    /* 注册系统恢复作为补充；排除 HANG，避免无响应时系统反复拉起 */
+    RegisterApplicationRestart(
+        nullptr, snowdesktop::application_restart_policy::kFlags);
 
     /* 创建主应用实例并进入消息循环 */
     DesktopApp app;

@@ -9,6 +9,7 @@
  */
 
 #include "widget.h"
+#include "widget_chrome_rules.h"
 #include "types.h"
 #include "app.h"
 #include "widget_preview_scene.h"
@@ -70,16 +71,17 @@ bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scr
     int columns, int rows)
 {
     if (!engine) return false;
+    bool rendered = false;
     __try
     {
         engine->RenderWidget(id, scriptPath, context, frame, columns, rows);
-        return true;
+        rendered = true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         OutputDebugStringA("SnowDesktop: LuaScript::Draw RenderWidget crash\n");
-        return false;
     }
+    return rendered;
 }
 
 bool LuaScript::SafeReadFlags(WidgetEngine* engine,
@@ -111,10 +113,10 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   5. 绘制圆角矩形背景与选中边框；
  *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
  *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
- *   8. 若不总是显示底部栏，则在非悬停时提前返回；
- *   9. 绘制底部渐变条（无自定义样式时）；
+ *   8. 按组件底栏与悬停状态决定是否绘制底栏、移动和缩放手柄；
+ *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
- *  11. 绘制右下角的缩放手柄（圆角小方块）。
+ *  11. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
  *
  * @param context  Direct2D 设备上下文，用于所有绘制调用
  * @param rect     控件的原始矩形区域（未使用，实际采用 GetStandaloneWidgetFrameRect）
@@ -123,7 +125,16 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
 void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     DrawInternal(context, rect, state,
-        app_ ? app_->widgetEngine_.get() : nullptr, false);
+        app_ ? app_->widgetEngine_.get() : nullptr, false, true);
+}
+
+void LuaScript::DrawCompositionSurface(
+    ID2D1DeviceContext* context, RECT rect, int state,
+    bool registerBackdrop)
+{
+    DrawInternal(context, rect, state,
+        app_ ? app_->widgetEngine_.get() : nullptr,
+        false, registerBackdrop);
 }
 
 void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
@@ -131,12 +142,13 @@ void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
 {
     const auto* previous = renderOptions_;
     renderOptions_ = &options;
-    DrawInternal(context, frame, 0, options.luaEngine, true);
+    DrawInternal(context, frame, 0, options.luaEngine, true, false);
     renderOptions_ = previous;
 }
 
 void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
-    int state, WidgetEngine* engine, bool preview)
+    int state, WidgetEngine* engine, bool preview,
+    bool registerBackdrop)
 {
     if (!context || !data_ || !app_) return;
 
@@ -148,25 +160,21 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         ? GetRenderPointer() : app_->lastMousePoint_;
     const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
-    int globalContentTheme = 0;
-    if (app_->settingsWindow_)
-        globalContentTheme = app_->settingsWindow_->GetPersonalization().contentTheme;
+    const int globalContentTheme =
+        app_->CurrentPersonalization().contentTheme;
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
     float cornerRadiusCu = 12.0f;
-    PersonalizationSettings effectSettings = PersonalizationSettings::DarkPreset();
-    if (app_->settingsWindow_)
-    {
-        effectSettings = app_->settingsWindow_->GetPersonalization();
-        fillColor = D2D1::ColorF(effectSettings.widgetBgR, effectSettings.widgetBgG,
-            effectSettings.widgetBgB, effectSettings.widgetAlpha);
-        borderColor = D2D1::ColorF(effectSettings.widgetBorderR, effectSettings.widgetBorderG,
-            effectSettings.widgetBorderB, effectSettings.widgetBorderAlpha);
-        gradientEndA = effectSettings.gradientEndA;
-        cornerRadiusCu = effectSettings.cornerRadius;
-    }
+    PersonalizationSettings effectSettings =
+        app_->CurrentPersonalization();
+    fillColor = D2D1::ColorF(effectSettings.widgetBgR, effectSettings.widgetBgG,
+        effectSettings.widgetBgB, effectSettings.widgetAlpha);
+    borderColor = D2D1::ColorF(effectSettings.widgetBorderR, effectSettings.widgetBorderG,
+        effectSettings.widgetBorderB, effectSettings.widgetBorderAlpha);
+    gradientEndA = effectSettings.gradientEndA;
+    cornerRadiusCu = effectSettings.cornerRadius;
 
     bool customStyle = false;
     bool widgetOk = false;
@@ -208,7 +216,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         // 所有面板共享原生模糊半径；Lua 仅保留实例级毛玻璃开关。
         // 自定义风格组件保留文字颜色设置：优先组件级存储，其次使用全局值
-        if (customStyle && app_->settingsWindow_)
+        if (customStyle)
         {
             int ct = globalContentTheme;
             std::string stored = engine->RuntimeGetStorageValue(data_->id, "__contentTheme");
@@ -216,11 +224,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 ct = std::clamp(std::stoi(stored), 0, 1);
             effectSettings.contentTheme = ct;
         }
-        if (app_->settingsWindow_)
-        {
-            const auto& global = app_->settingsWindow_->GetPersonalization();
-            effectSettings.glassBlurRadius = global.glassBlurRadius;
-        }
+        effectSettings.glassBlurRadius =
+            app_->CurrentPersonalization().glassBlurRadius;
 
         if (widgetOk)
         {
@@ -245,7 +250,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
     app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
         fillColor, borderColor, selected, selected ? 1.6f : 1.0f,
-        customStyle ? &effectSettings : nullptr, !preview);
+        customStyle ? &effectSettings : nullptr,
+        !preview && registerBackdrop);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
@@ -256,25 +262,29 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         {
             realPage = FindGridPage(
                 app_->gridPages_, data_->gridCell.pageId);
+            int cellWidth = 0;
+            int cellHeight = 0;
+            int gapY = 0;
             if (realPage)
             {
-                engine->SetGridCellSize(
-                    realPage->cellWidth, realPage->cellHeight);
-                engine->SetGridCellGap(realPage->gapY);
+                cellWidth = realPage->cellWidth;
+                cellHeight = realPage->cellHeight;
+                gapY = realPage->gapY;
             }
             else
             {
-                engine->SetGridCellSize(
+                cellWidth =
                     std::max(1, static_cast<int>(frame.right - frame.left) /
-                        std::max(1, data_->gridSpan.columns)),
+                        std::max(1, data_->gridSpan.columns));
+                cellHeight =
                     std::max(1, static_cast<int>(frame.bottom - frame.top) /
-                        std::max(1, data_->gridSpan.rows)));
-                engine->SetGridCellGap(Cu(8.0f));
+                        std::max(1, data_->gridSpan.rows));
+                gapY = Cu(8.0f);
             }
-            engine->SetBarHeight(static_cast<int>(GetBarHeight()));
-            engine->SetItemFontWeight(app_->GetItemFontWeight());
-            engine->SetItemFontSizeScale(
-                app_->itemFontSize_ / kItemFontSize);
+            engine->SetWidgetLayoutMetrics(data_->id,
+                cellWidth, cellHeight, gapY,
+                static_cast<int>(GetBarHeight()),
+                app_->GetItemFontWeight());
         }
         else
         {
@@ -286,11 +296,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
             if (realPage)
             {
-                engine->SetGridCellSize(realPage->cellWidth, realPage->cellHeight);
-                engine->SetGridCellGap(realPage->gapY);
-                engine->SetBarHeight(static_cast<int>(GetBarHeight()));
-                engine->SetItemFontWeight(app_->GetItemFontWeight());
-                engine->SetItemFontSizeScale(app_->itemFontSize_ / kItemFontSize);
+                engine->SetWidgetLayoutMetrics(data_->id,
+                    realPage->cellWidth, realPage->cellHeight,
+                    realPage->gapY,
+                    static_cast<int>(GetBarHeight()),
+                    app_->GetItemFontWeight());
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;
@@ -306,8 +316,187 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 }
             }
         }
-        SafeRenderWidget(data_->id, data_->packageId, engine, context, frame,
+        LuaWidgetSurfaceContext surfaceContext;
+        if (preview)
+        {
+            const UINT previewDpi = renderOptions_
+                ? renderOptions_->dpi : USER_DEFAULT_SCREEN_DPI;
+            surfaceContext.dpiX = previewDpi;
+            surfaceContext.dpiY = previewDpi;
+            surfaceContext.monitorBounds = frame;
+            surfaceContext.workArea = frame;
+        }
+        else if (realPage)
+        {
+            surfaceContext.dpiX = realPage->dpiX;
+            surfaceContext.dpiY = realPage->dpiY;
+            surfaceContext.monitorBounds = realPage->bounds;
+            surfaceContext.workArea = realPage->workArea;
+            surfaceContext.monitorAvailable = true;
+            surfaceContext.primaryMonitor = realPage->isPrimary;
+        }
+        engine->SetWidgetSurfaceContext(data_->id, surfaceContext);
+        widgetOk = SafeRenderWidget(
+            data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
+        if (widgetOk)
+        {
+            widgetOk = engine->GetWidgetHostState(
+                data_->id, data_->packageId).kind ==
+                snowdesktop::widget_runtime::WidgetHostStateKind::Ready;
+        }
+    }
+    if (!preview && !widgetOk &&
+        !WidgetEngine::IsWidgetPackageInstalled(data_->packageId))
+    {
+        const std::string publishedFileId =
+            data_->packageSourceProvider == L"steam-workshop"
+            ? snowdesktop::widget::SteamPublishedFileId(
+                WideToUtf8(data_->packageSourceExternalItemId))
+            : std::string{};
+        const bool canRecoverFromWorkshop = !publishedFileId.empty();
+        const int centerY = frame.top +
+            (frame.bottom - frame.top) / 2;
+        const int horizontalPadding = Cu(14.0f);
+        RECT titleRect{
+            frame.left + horizontalPadding,
+            centerY - Cu(36.0f),
+            frame.right - horizontalPadding,
+            centerY - Cu(7.0f),
+        };
+        const std::wstring title = data_->title.empty()
+            ? _LW("app.widget.missing_component")
+            : data_->title;
+        app_->DrawD2DText(context, title, titleRect,
+            GetCuTextFormatWeight(16.0f,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD, true),
+            lightTheme
+                ? D2D1::ColorF(0.09f, 0.12f, 0.17f, 0.92f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.94f));
+
+        const RECT actionRect =
+            app_->GetLuaWidgetHostActionRect(*data_);
+        const bool actionHovered =
+            PtInRect(&actionRect, renderPointer) != FALSE;
+        if (canRecoverFromWorkshop)
+        {
+            app_->DrawD2DRoundedRectangle(context, actionRect,
+                static_cast<float>(Cu(8.0f)),
+                actionHovered
+                    ? D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.28f)
+                    : D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.16f),
+                D2D1::ColorF(0.30f, 0.58f, 1.0f,
+                    actionHovered ? 0.72f : 0.46f));
+        }
+        app_->DrawD2DText(context,
+            canRecoverFromWorkshop
+                ? _LW("app.widget.missing_workshop_action")
+                : _LW("app.widget.missing_local_hint"),
+            actionRect,
+            GetCuTextFormatWeight(12.5f,
+                canRecoverFromWorkshop
+                    ? DWRITE_FONT_WEIGHT_SEMI_BOLD
+                    : DWRITE_FONT_WEIGHT_NORMAL,
+                true),
+            canRecoverFromWorkshop
+                ? (lightTheme
+                    ? D2D1::ColorF(0.08f, 0.31f, 0.72f, 0.98f)
+                    : D2D1::ColorF(0.63f, 0.79f, 1.0f, 0.98f))
+                : (lightTheme
+                    ? D2D1::ColorF(0.20f, 0.23f, 0.29f, 0.68f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.64f)),
+            DWRITE_WORD_WRAPPING_WRAP);
+    }
+    else if (!preview && !widgetOk)
+    {
+        using snowdesktop::widget_runtime::WidgetHostStateKind;
+        const auto hostState = engine
+            ? engine->GetWidgetHostState(data_->id, data_->packageId)
+            : snowdesktop::widget_runtime::WidgetHostState{
+                WidgetHostStateKind::LoadFailed, {} };
+        std::wstring title;
+        std::wstring body;
+        std::wstring action;
+        switch (hostState.kind)
+        {
+        case WidgetHostStateKind::PermissionPending:
+            title = _LW("app.widget.placeholder.permission_title");
+            body = _LW("app.widget.placeholder.permission_pending");
+            action = _LW("app.widget.placeholder.reauthorize");
+            break;
+        case WidgetHostStateKind::PermissionDenied:
+            title = _LW("app.widget.placeholder.permission_title");
+            body = _LW("app.widget.placeholder.permission_denied");
+            action = _LW("app.widget.placeholder.reauthorize");
+            break;
+        case WidgetHostStateKind::QuotaExceeded:
+            title = _LW("app.widget.placeholder.quota_title");
+            body = _LW("app.widget.placeholder.quota_body");
+            action = _LW("app.widget.placeholder.reload");
+            break;
+        case WidgetHostStateKind::RuntimeSuspended:
+            title = _LW("app.widget.placeholder.runtime_title");
+            body = _LW("app.widget.placeholder.runtime_suspended");
+            action = _LW("app.widget.placeholder.reload");
+            break;
+        case WidgetHostStateKind::LoadFailed:
+        default:
+            title = _LW("app.widget.placeholder.runtime_title");
+            body = _LW("app.widget.placeholder.load_failed");
+            action = _LW("app.widget.placeholder.reload");
+            break;
+        }
+
+        const int horizontalPadding = Cu(14.0f);
+        const RECT actionRect =
+            app_->GetLuaWidgetHostActionRect(*data_);
+        const bool actionHovered =
+            PtInRect(&actionRect, renderPointer) != FALSE;
+        RECT titleRect{
+            frame.left + horizontalPadding,
+            frame.top + Cu(13.0f),
+            frame.right - horizontalPadding,
+            std::min<LONG>(actionRect.top - Cu(4.0f),
+                frame.top + Cu(39.0f)),
+        };
+        RECT bodyRect{
+            titleRect.left,
+            titleRect.bottom + Cu(2.0f),
+            titleRect.right,
+            actionRect.top - Cu(7.0f),
+        };
+        if (titleRect.bottom > titleRect.top)
+        {
+            app_->DrawD2DText(context, title, titleRect,
+                GetCuTextFormatWeight(16.0f,
+                    DWRITE_FONT_WEIGHT_SEMI_BOLD, false),
+                lightTheme
+                    ? D2D1::ColorF(0.09f, 0.12f, 0.17f, 0.94f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f));
+        }
+        if (bodyRect.bottom > bodyRect.top)
+        {
+            app_->DrawD2DText(context, body, bodyRect,
+                GetCuTextFormatWeight(12.0f,
+                    DWRITE_FONT_WEIGHT_NORMAL, false),
+                lightTheme
+                    ? D2D1::ColorF(0.20f, 0.23f, 0.29f, 0.72f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.68f),
+                DWRITE_WORD_WRAPPING_WRAP);
+        }
+        app_->DrawD2DRoundedRectangle(context, actionRect,
+            static_cast<float>(Cu(8.0f)),
+            actionHovered
+                ? D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.28f)
+                : D2D1::ColorF(0.22f, 0.50f, 0.96f, 0.16f),
+            D2D1::ColorF(0.30f, 0.58f, 1.0f,
+                actionHovered ? 0.72f : 0.46f));
+        app_->DrawD2DText(context, action, actionRect,
+            GetCuTextFormatWeight(12.5f,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD, true),
+            lightTheme
+                ? D2D1::ColorF(0.08f, 0.31f, 0.72f, 0.98f)
+                : D2D1::ColorF(0.63f, 0.79f, 1.0f, 0.98f));
     }
     context->PopAxisAlignedClip();
 
@@ -320,94 +509,154 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         auto scrollControls = engine->GetScrollControls(data_->id);
         for (const auto& ctrl : scrollControls)
         {
-            if (ctrl.contentHeight <= ctrl.viewportHeight)
-                continue;
-            const LONG sbWidth = Cu(6.0f);
-            RECT sbRect = {
-                frame.right - sbWidth - Cu(2.0f),
+            const int contentExtent = ctrl.horizontal
+                ? ctrl.contentWidth : ctrl.contentHeight;
+            const int viewportExtent = ctrl.horizontal
+                ? ctrl.viewportWidth : ctrl.viewportHeight;
+            if (contentExtent <= viewportExtent) continue;
+            const RECT viewport = {
+                frame.left + ctrl.rect.left,
                 frame.top + ctrl.rect.top,
-                frame.right - Cu(2.0f),
+                frame.left + ctrl.rect.right,
                 frame.top + ctrl.rect.bottom
             };
-            int scrollOff = engine->RuntimeGetScrollOffset(data_->id, ctrl.id);
-            bool showScrollbar = hovered || !data_->bottomBarHover;
-            DrawScrollbarAt(context, sbRect, ctrl.contentHeight, ctrl.viewportHeight,
-                scrollOff, showScrollbar, app_->IsLightContentTheme(), GetCellScale());
+            const int scrollOff = engine->RuntimeGetScrollOffset(
+                data_->id, ctrl.id);
+            const bool showScrollbar = hovered ||
+                !data_->bottomBarHover ||
+                engine->IsHostScrollbarDragging(data_->id);
+            if (ctrl.horizontal)
+                DrawHorizontalScrollbarAt(context, viewport,
+                    ctrl.contentWidth, ctrl.viewportWidth, scrollOff,
+                    showScrollbar, app_->IsLightContentTheme(),
+                    GetCellScale());
+            else
+                DrawScrollbarAt(context, viewport,
+                    ctrl.contentHeight, ctrl.viewportHeight, scrollOff,
+                    showScrollbar, app_->IsLightContentTheme(),
+                    GetCellScale());
         }
     }
 
-    bool showHandle = data_->bottomBarHover ? hovered : true;
-    if (!showHandle) return;
+    const bool showBottomBar = snowdesktop::widget_chrome_rules::ShowsBottomBar(
+        data_->showTitle, data_->bottomBarHover, hovered);
+    const bool showResizeHandle =
+        snowdesktop::widget_chrome_rules::ShowsResizeHandle(
+            data_->showTitle, data_->bottomBarHover, hovered);
+    const bool showCompactMoveHandle =
+        snowdesktop::widget_chrome_rules::ShowsCompactMoveHandle(
+            data_->showTitle, hovered);
+    if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 
-    RECT handle = app_->GetStandaloneWidgetMoveHandleRect(*data_);
-    RECT gradientRect = { frame.left, std::max<LONG>(frame.top, frame.bottom - Cu(36.0f)),
-                          frame.right, frame.bottom };
-    if (!customStyle && gradientRect.bottom > gradientRect.top)
+    if (showBottomBar)
     {
-        Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stops;
-        D2D1_GRADIENT_STOP sd[] = {
-            { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
-            { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, gradientEndA) },
-        };
-        if (SUCCEEDED(context->CreateGradientStopCollection(sd, 2,
-            D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
+        RECT handle = app_->GetStandaloneWidgetMoveHandleRect(*data_);
+        RECT gradientRect = { frame.left, std::max<LONG>(frame.top, frame.bottom - Cu(36.0f)),
+                              frame.right, frame.bottom };
+        if (!customStyle && gradientRect.bottom > gradientRect.top)
         {
-            Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush;
-            if (SUCCEEDED(context->CreateLinearGradientBrush(
-                D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
-                    D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
-                stops.Get(), &brush)) && brush)
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stops;
+            D2D1_GRADIENT_STOP sd[] = {
+                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
+                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, gradientEndA) },
+            };
+            if (SUCCEEDED(context->CreateGradientStopCollection(sd, 2,
+                D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
             {
-                auto* factory = app_->GetD2DFactory();
-                const float radius = static_cast<float>(Cu(12.0f));
-                ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
-                bool pushed = false;
-                if (clipGeo)
+                Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush;
+                if (SUCCEEDED(context->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(
+                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.top)),
+                        D2D1::Point2F(0.0f, static_cast<float>(gradientRect.bottom))),
+                    stops.Get(), &brush)) && brush)
                 {
-                    context->PushLayer(D2D1::LayerParameters(
-                        D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-                            static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
-                        clipGeo), nullptr);
-                    pushed = true;
+                    auto* factory = app_->GetD2DFactory();
+                    const float radius = static_cast<float>(Cu(12.0f));
+                    ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+                    bool pushed = false;
+                    if (clipGeo)
+                    {
+                        context->PushLayer(D2D1::LayerParameters(
+                            D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                                static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
+                            clipGeo), nullptr);
+                        pushed = true;
+                    }
+                    context->FillRectangle(app_->ToD2DRect(gradientRect), brush.Get());
+                    if (pushed)
+                        context->PopLayer();
                 }
-                context->FillRectangle(app_->ToD2DRect(gradientRect), brush.Get());
-                if (pushed)
-                    context->PopLayer();
+            }
+        }
+
+        if (!data_->title.empty())
+        {
+            const float bh = GetBarHeight();
+            RECT titleRect = {
+                handle.left + Cu(4.0f),
+                handle.top + Cu(bh * 0.083f),
+                std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
+                handle.bottom - Cu(bh * 0.083f)
+            };
+            auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
+                std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+            IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
+            app_->DrawD2DText(context, data_->title, titleRect,
+                titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
+                lightTheme
+                    ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
+        }
+    }
+
+    const D2D1_COLOR_F handleFill = selected
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
+        : (lightTheme
+            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f));
+    const D2D1_COLOR_F handleStroke = lightTheme
+        ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
+
+    if (showCompactMoveHandle)
+    {
+        RECT move = app_->GetStandaloneWidgetCompactMoveHandleRect(*data_);
+        const int dotSize = std::max(2, Cu(GetBarHeight() * 0.125f));
+        const int dotGap = std::max(1, Cu(GetBarHeight() * 0.10f));
+        const int gripWidth = dotSize * 3 + dotGap * 2;
+        const int gripHeight = dotSize * 2 + dotGap;
+        const int cx = move.left + (move.right - move.left) / 2;
+        const int cy = move.top + (move.bottom - move.top) / 2;
+        const int gripLeft = cx - gripWidth / 2;
+        const int gripTop = cy - gripHeight / 2;
+        const D2D1_COLOR_F gripFill = selected
+            ? handleFill : handleStroke;
+        const D2D1_COLOR_F noStroke = D2D1::ColorF(
+            0.0f, 0.0f, 0.0f, 0.0f);
+        for (int row = 0; row < 2; ++row)
+        {
+            for (int column = 0; column < 3; ++column)
+            {
+                const int left = gripLeft + column * (dotSize + dotGap);
+                const int top = gripTop + row * (dotSize + dotGap);
+                const RECT dotRect = {
+                    left, top, left + dotSize, top + dotSize
+                };
+                app_->DrawD2DRoundedRectangle(
+                    context, dotRect,
+                    static_cast<float>(dotSize) / 2.0f,
+                    gripFill, noStroke);
             }
         }
     }
 
-    if (data_->showTitle && !data_->title.empty())
-    {
-        const float bh = GetBarHeight();
-        RECT titleRect = {
-            handle.left + Cu(4.0f),
-            handle.top + Cu(bh * 0.083f),
-            std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
-            handle.bottom - Cu(bh * 0.083f)
-        };
-        auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-            std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
-        IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
-        app_->DrawD2DText(context, data_->title, titleRect,
-            titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-            lightTheme
-                ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
-                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
-    }
-
+    if (!showResizeHandle) return;
     RECT resize = app_->GetStandaloneWidgetResizeHandleRect(*data_);
     const int dot = Cu(GetBarHeight() * 0.333f);
     int cx = resize.left + (resize.right - resize.left) / 2;
     int cy = resize.top + (resize.bottom - resize.top) / 2;
     RECT dotRect = { cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2 };
-    app_->DrawD2DRoundedRectangle(context, dotRect, static_cast<float>(Cu(4.0f * GetBarScale())),
-        selected ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-                 : (lightTheme
-                    ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
-                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f)),
-        lightTheme
-            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f));
+    app_->DrawD2DRoundedRectangle(
+        context, dotRect, static_cast<float>(Cu(4.0f * GetBarScale())),
+        handleFill, handleStroke);
 }

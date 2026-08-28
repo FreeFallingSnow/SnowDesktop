@@ -1,13 +1,19 @@
+#include "authoring_toolchain.h"
 #include "bridge_json.h"
 #include "manager_localization.h"
 #include "package_tool.h"
 #include "publish_lifecycle.h"
+#include "steam_app_identity.h"
+#include "steam_child_environment.h"
+#include "steam_workshop_cache.h"
 #include "steam_workshop_sync.h"
 #include "workshop_project.h"
 
 #include <windows.h>
 #include <shellapi.h>
 
+#include <array>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -64,6 +70,50 @@ void TestJson()
         "large identifiers are not accepted as lossy JSON numbers");
 }
 
+void TestSteamIdentity()
+{
+    Check(kSteamAppId == 5080330u,
+        "the compiled Steam identity uses the production App ID");
+    Check(kSteamWindowsDepotId == 5080331u,
+        "the compiled Steam identity uses the production Windows depot");
+    Check(IsExpectedSteamAppId(5080330u) &&
+        !IsExpectedSteamAppId(480u),
+        "Steam runtime identity rejects placeholder App IDs");
+    Check(SteamWorkshopHomeUrl() ==
+        "https://steamcommunity.com/app/5080330/workshop/",
+        "Workshop links target the SnowDesktop application hub");
+    Check(SteamWorkshopClientUrl() ==
+        "steam://openurl/https://steamcommunity.com/app/5080330/workshop/",
+        "Workshop home links prefer the Steam client");
+    Check(SteamCommunityItemClientUrl(1234567890) ==
+        "steam://url/CommunityFilePage/1234567890",
+        "Workshop item links use Valve's Steam client protocol");
+    const std::string mismatch = SteamAppIdMismatchMessage(480u);
+    Check(mismatch.find("5080330") != std::string::npos &&
+        mismatch.find("480") != std::string::npos,
+        "App ID mismatch diagnostics identify expected and actual values");
+}
+
+void TestSteamChildEnvironment()
+{
+    const std::vector<wchar_t> block =
+        snowdesktop::BuildSnowDesktopSteamChildEnvironment();
+    Check(block.size() >= 2 && block[block.size() - 1] == L'\0' &&
+        block[block.size() - 2] == L'\0',
+        "Steam child environment is a double-null-terminated Unicode block");
+    std::size_t appIdEntries = 0;
+    std::size_t gameIdEntries = 0;
+    for (const wchar_t* current = block.data(); *current != L'\0';
+         current += std::wcslen(current) + 1)
+    {
+        const std::wstring_view entry(current);
+        if (entry == L"SteamAppId=5080330") ++appIdEntries;
+        if (entry == L"SteamGameId=5080330") ++gameIdEntries;
+    }
+    Check(appIdEntries == 1 && gameIdEntries == 1,
+        "Steam child environment carries exactly one production App ID context");
+}
+
 void TestManagerLocalization()
 {
     TemporaryDirectory temporary;
@@ -72,23 +122,23 @@ void TestManagerLocalization()
     std::ofstream(languages / L"en-US.json", std::ios::binary) <<
         R"({"workshop_manager.open":"Open Workshop","unrelated":"same"})";
     std::ofstream(languages / L"zh-CN.json", std::ios::binary) <<
-        R"({"workshop_manager.open":"打开网页工坊","unrelated":"不同"})";
+        R"({"workshop_manager.open":"打开创意工坊","unrelated":"不同"})";
     ManagerLocalization localization;
     std::string error;
     Check(localization.Load(languages, "zh-Hans-CN", error),
         "manager localization loads the shared flat JSON catalogs");
     Check(std::string(localization.Translate("Open Workshop", "内置中文")) ==
-        "打开网页工坊",
+        "打开创意工坊",
         "manager localization resolves a compatible requested language");
     Check(std::string(localization.Translate("same", "内置中文")) ==
         "内置中文",
         "manager localization only consumes its own key namespace");
     std::ofstream(languages / L"zh-TW.json", std::ios::binary) <<
-        R"({"workshop_manager.open":"開啟網頁工坊","unrelated":"不同"})";
+        R"({"workshop_manager.open":"開啟創意工坊","unrelated":"不同"})";
     Check(localization.Load(languages, "zh-HK", error),
         "manager localization reloads after adding regional catalogs");
     Check(std::string(localization.Translate("Open Workshop", "內置中文")) ==
-        "開啟網頁工坊",
+        "開啟創意工坊",
         "manager localization prefers traditional Chinese for Hong Kong");
     localization.SelectLanguage("en-US");
     Check(std::string(localization.Translate("Open Workshop", "内置中文")) ==
@@ -124,6 +174,28 @@ void TestSteamSubscriptionSyncPlan()
     snapshot.subscribedPublishedFileIds = { "100" };
     snapshot.installable.push_back(
         WorkshopDetails("package-a", "1.0.0", "100"));
+    auto associations =
+        BuildSteamWorkshopPackageAssociations(snapshot);
+    Check(associations.size() == 1 &&
+        associations["package-a"] == "100@42",
+        "a subscribed Workshop item is associated with its package UUID");
+    auto duplicate = WorkshopDetails("package-a", "1.0.0", "200");
+    snapshot.installable.push_back(duplicate);
+    associations = BuildSteamWorkshopPackageAssociations(snapshot);
+    Check(!associations.contains("package-a"),
+        "duplicate subscribed package UUIDs are never associated arbitrarily");
+    snapshot.installable.pop_back();
+    SteamWorkshopSubscriptionSnapshot failedSnapshot;
+    failedSnapshot.authoritative = true;
+    PackageManifest failedManifest;
+    failedManifest.id = "package-failed";
+    failedManifest.name = "Failed package";
+    failedSnapshot.discoveryFailures.push_back({ "package-failed",
+        "300@42", std::move(failedManifest), "validation failed" });
+    associations = BuildSteamWorkshopPackageAssociations(failedSnapshot);
+    Check(associations.size() == 1 &&
+        associations["package-failed"] == "300@42",
+        "a discovered invalid Workshop package retains its item association");
     auto plan = BuildSteamWorkshopSyncPlan({}, snapshot);
     Check(plan.actions.size() == 1 && plan.actions[0].kind ==
         SteamWorkshopSyncActionKind::Install,
@@ -131,6 +203,14 @@ void TestSteamSubscriptionSyncPlan()
 
     auto current = Installed("package-a", "1.0.0",
         "steam-workshop", "100@42");
+    auto development = Installed("package-a", "1.0.0",
+        "local-directory", "package-a-dev");
+    development.development = true;
+    plan = BuildSteamWorkshopSyncPlan({ development }, snapshot);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind ==
+        SteamWorkshopSyncActionKind::Install && plan.conflicts.empty(),
+        "a development candidate does not block Workshop installation");
+
     SteamWorkshopSubscriptionSnapshot downloading;
     downloading.authoritative = true;
     downloading.subscribedPublishedFileIds = { "100" };
@@ -140,6 +220,12 @@ void TestSteamSubscriptionSyncPlan()
 
     SteamWorkshopSubscriptionSnapshot unsubscribed;
     unsubscribed.authoritative = true;
+    unsubscribed.activeSteamAccountId = "111";
+    const SteamWorkshopSubscriptionHistory subscriptionHistory{
+        { "111", { "100" } },
+    };
+    ResolveSteamWorkshopSubscriptionRemovals(
+        unsubscribed, subscriptionHistory);
     auto shadowed = current;
     shadowed.active = false;
     plan = BuildSteamWorkshopSyncPlan({ shadowed }, unsubscribed);
@@ -148,10 +234,12 @@ void TestSteamSubscriptionSyncPlan()
         "unsubscription removes a Workshop package hidden by a development copy");
 
     snapshot.installable[0].manifest.version = "1.1.0";
+    snapshot.installable[0].source.externalItemId = "100";
     plan = BuildSteamWorkshopSyncPlan({ shadowed }, snapshot);
     Check(plan.actions.size() == 1 && plan.actions[0].kind ==
-        SteamWorkshopSyncActionKind::Update,
-        "a shadowed Workshop component still follows the published version");
+        SteamWorkshopSyncActionKind::Update &&
+        plan.actions[0].externalItemId == "100@42",
+        "a cached Workshop update preserves the verified creator binding");
 
     plan = BuildSteamWorkshopSyncPlan({ current }, unsubscribed);
     Check(plan.actions.size() == 1 && plan.actions[0].kind ==
@@ -164,6 +252,22 @@ void TestSteamSubscriptionSyncPlan()
         { current, previousVersion }, unsubscribed);
     Check(plan.actions.size() == 1,
         "unsubscription schedules one removal for all retained versions");
+
+    SteamWorkshopSubscriptionSnapshot switchedAccount;
+    switchedAccount.authoritative = true;
+    switchedAccount.activeSteamAccountId = "222";
+    ResolveSteamWorkshopSubscriptionRemovals(
+        switchedAccount, subscriptionHistory);
+    plan = BuildSteamWorkshopSyncPlan({ current }, switchedAccount);
+    Check(plan.actions.empty(),
+        "an empty cache after switching Steam accounts preserves local components");
+
+    SteamWorkshopSubscriptionSnapshot sharedAcrossAccounts = unsubscribed;
+    ResolveSteamWorkshopSubscriptionRemovals(sharedAcrossAccounts,
+        { { "111", { "100" } }, { "222", { "100" } } });
+    plan = BuildSteamWorkshopSyncPlan({ current }, sharedAcrossAccounts);
+    Check(plan.actions.empty(),
+        "another account's remembered subscription preserves the local component");
 
     unsubscribed.authoritative = false;
     plan = BuildSteamWorkshopSyncPlan({ current }, unsubscribed);
@@ -223,6 +327,20 @@ void TestProjectStore()
     std::size_t discovered = 0;
     Check(loaded.Discover(temporary.path, discovered, error) && discovered == 1,
         "development-root discovery adds immediate component children");
+    const auto bundledRoot = temporary.path / L"bundled";
+    const auto bundledComponent = bundledRoot / L"clock";
+    std::filesystem::create_directories(
+        bundledRoot / L"snowdesktop-lua-widget");
+    std::filesystem::create_directories(bundledComponent);
+    std::ofstream(bundledRoot / L"snowdesktop-lua-widget" / L"SKILL.md")
+        << "bundled marker";
+    std::ofstream(bundledComponent / L"widget.json") << "{}";
+    WorkshopProject* bundledProject = nullptr;
+    Check(!loaded.AddDirectory(bundledComponent, bundledProject, error),
+        "bundled components cannot be added as creator projects");
+    discovered = 0;
+    Check(loaded.Discover(bundledRoot, discovered, error) && discovered == 0,
+        "bundled component roots are not discovered by the creator manager");
     Check(loaded.Remove(loaded.Projects()[0].localId, error) &&
         std::filesystem::is_directory(source),
         "removing a record does not delete source content");
@@ -341,10 +459,140 @@ void TestPublishLifecycle()
         "publish cannot cancel after SubmitItemUpdate starts");
 }
 
+void TestSteamWorkshopLocalCache()
+{
+    TemporaryDirectory temporary;
+    const auto workshop = temporary.path / L"steamapps" / L"workshop";
+    const auto content = workshop / L"content" / L"5080330";
+    std::filesystem::create_directories(content / L"100");
+    std::filesystem::create_directories(content / L"300");
+    std::filesystem::create_directories(content / L"400");
+    std::ofstream(workshop / L"appworkshop_5080330.acf",
+        std::ios::binary) << R"VDF(
+"AppWorkshop"
+{
+    "appid" "5080330"
+    "NeedsUpdate" "0"
+    "NeedsDownload" "1"
+    "WorkshopItemsInstalled"
+    {
+        "100" { "manifest" "11" }
+        "300" { "manifest" "30" }
+        "400" { "manifest" "40" }
+    }
+    "WorkshopItemDetails"
+    {
+        "100" { "latest_manifest" "11" }
+        "200" { "latest_manifest" "20" "subscribedby" "123" }
+        "300" { "latest_manifest" "31" "subscribedby" "123" }
+        "400" { "latest_manifest" "40" "subscribedby" "0" }
+    }
+}
+)VDF";
+
+    auto cache = ReadSteamWorkshopLocalCache(
+        { temporary.path }, 5080330u);
+    Check(cache.authoritative &&
+        cache.subscribedPublishedFileIds ==
+            std::vector<std::string>({ "100", "200", "300" }),
+        "local Workshop cache is an authoritative subscription snapshot");
+    Check(cache.readyItems.size() == 1 &&
+        cache.readyItems[0].publishedFileId == "100" &&
+        cache.readyItems[0].contentDirectory == content / L"100",
+        "local Workshop cache keeps current subscribed items ready while another item downloads and ignores stale unsubscribed details");
+
+    std::ofstream(workshop / L"appworkshop_5080330.acf",
+        std::ios::binary | std::ios::trunc) <<
+        "\"AppWorkshop\" { \"appid\" \"5080330\"";
+    cache = ReadSteamWorkshopLocalCache({ temporary.path }, 5080330u);
+    Check(!cache.authoritative && !cache.error.empty(),
+        "a partially written Workshop cache never authorizes removals");
+}
+
+void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
+    const std::filesystem::path& snowwidget)
+{
+    TemporaryDirectory temporary;
+    const auto bundled = repositoryRoot / L"widgets" /
+        L"snowdesktop-lua-widget";
+    const std::array kinds = {
+        AgentSkillTargetKind::Shared,
+        AgentSkillTargetKind::Codex,
+        AgentSkillTargetKind::ClaudeCode,
+        AgentSkillTargetKind::Cursor,
+        AgentSkillTargetKind::GitHubCopilot,
+        AgentSkillTargetKind::GeminiCli,
+    };
+    for (std::size_t index = 0; index < kinds.size(); ++index)
+    {
+        AgentSkillTarget target;
+        target.kind = kinds[index];
+        target.id = "test-agent-" + std::to_string(index);
+        target.skillsRoot = temporary.path /
+            std::filesystem::path(target.id) / L"skills";
+        std::string error;
+        auto status = InspectAgentSkill(
+            bundled, snowwidget, target, error);
+        Check(status.state == SkillInstallState::NotInstalled &&
+            status.bundledRevision == 5,
+            "each supported agent reports a clean not-installed state");
+        Check(InstallOrUpdateAgentSkill(status, error),
+            "Agent Skill installs transactionally into every selected root");
+        status = InspectAgentSkill(bundled, snowwidget, target, error);
+        Check(status.state == SkillInstallState::Current &&
+            status.installedRevision == status.bundledRevision &&
+            std::filesystem::is_regular_file(status.target / L"SKILL.md") &&
+            std::filesystem::is_regular_file(
+                status.target / L"bin" / L"snowwidget.exe"),
+            "installed Agent Skill is current and contains its CLI");
+        Check(UninstallAgentSkill(status, error),
+            "an unselected Agent Skill target is removed safely");
+        status = InspectAgentSkill(bundled, snowwidget, target, error);
+        Check(status.state == SkillInstallState::NotInstalled &&
+            !std::filesystem::exists(status.target),
+            "an uninstalled Agent Skill target returns to not-installed");
+    }
+}
+
 void TestRealPackageTool(const std::filesystem::path& executable,
     const std::filesystem::path& repositoryRoot)
 {
     PackageTool tool(executable);
+    const std::wstring capabilitiesCommand = L"\"" + executable.wstring() +
+        L"\" capabilities";
+    FILE* capabilitiesPipe = _wpopen(capabilitiesCommand.c_str(), L"rt");
+    Check(capabilitiesPipe != nullptr,
+        "snowwidget capabilities can be launched by AI tooling");
+    if (capabilitiesPipe)
+    {
+        std::string capabilitiesText;
+        std::array<char, 1024> capabilitiesBuffer{};
+        while (std::fgets(capabilitiesBuffer.data(),
+                static_cast<int>(capabilitiesBuffer.size()), capabilitiesPipe))
+            capabilitiesText += capabilitiesBuffer.data();
+        const int capabilitiesExit = _pclose(capabilitiesPipe);
+        JsonValue capabilities;
+        std::string capabilitiesError;
+        Check(capabilitiesExit == 0 &&
+            ParseJson(capabilitiesText, capabilities, capabilitiesError) &&
+            JsonUnsigned(capabilities, "protocolVersion") == 2u &&
+            JsonUnsigned(capabilities, "recommendedSchemaVersion") == 2u &&
+            JsonUnsigned(capabilities, "recommendedApiVersion") == 2u &&
+            capabilities.Find("executableSchemaVersions") &&
+            capabilities.Find("executableSchemaVersions")->IsArray() &&
+            capabilities.Find("executableSchemaVersions")->array.size() == 1 &&
+            capabilities.Find("executableSchemaVersions")->array[0].number == 2 &&
+            capabilities.Find("executableApiVersions") &&
+            capabilities.Find("executableApiVersions")->IsArray() &&
+            capabilities.Find("executableApiVersions")->array.size() == 1 &&
+            capabilities.Find("executableApiVersions")->array[0].number == 2 &&
+            !capabilities.Find("migrationInputSchemaVersions") &&
+            !capabilities.Find("migrationInputApiVersions") &&
+            !capabilities.Find("supportedSchemaVersions") &&
+            !capabilities.Find("supportedApiVersions") &&
+            JsonString(capabilities, "format") == "snowdesktop-widget",
+            "snowwidget capabilities publishes a v2-only package contract");
+    }
     WidgetInspection inspection;
     PackagedWidget package;
     std::string error;
@@ -368,13 +616,20 @@ void TestRealPackageTool(const std::filesystem::path& executable,
 int wmain(int argc, wchar_t** argv)
 {
     TestJson();
+    TestSteamIdentity();
+    TestSteamChildEnvironment();
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
+    TestSteamWorkshopLocalCache();
     TestProjectStore();
     TestMetadataBinding();
     TestCommandLineQuoting();
     TestPublishLifecycle();
-    if (argc == 3) TestRealPackageTool(argv[1], argv[2]);
+    if (argc == 3)
+    {
+        TestAuthoringToolchain(argv[2], argv[1]);
+        TestRealPackageTool(argv[1], argv[2]);
+    }
     else Check(false, "test requires snowwidget.exe and repository root arguments");
     if (failures == 0)
         std::cout << "Steam Workshop manager tests passed\n";

@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../drag_visual_rules.h"
+#include "../page_navigation_rules.h"
 #include "../widget_visibility_rules.h"
 
 // Drag-scene invalidation, presentation and session teardown.
@@ -43,6 +45,7 @@ void DesktopApp::InvalidateDragStaticScene()
 void DesktopApp::PresentDesktopPointerUpdate()
 {
     if (handlingFloatingDockInput_ ||
+        handlingFloatingPopupInput_ ||
         !hwnd_ || !IsWindow(hwnd_))
         return;
     if (!compositionPaintInProgress_)
@@ -60,8 +63,7 @@ void DesktopApp::PresentDesktopPointerUpdate()
 
 void DesktopApp::PresentOleDragInteractionFrame()
 {
-    OnPaint();
-    InvalidateFloatingDockWindow(true);
+    PresentPointerInteractionFrame();
 
     // A self drag reaches these callbacks from DoDragDrop's nested message
     // loop. The outer application pump therefore cannot perform its normal
@@ -71,24 +73,184 @@ void DesktopApp::PresentOleDragInteractionFrame()
     FlushPendingCompositionCommit();
 }
 
-void DesktopApp::PresentPointerInteractionFrame()
+void DesktopApp::PresentPointerInteractionFrame(
+    bool dragPreviewAlreadySynced)
 {
+    // Move the cached compact drag surface before any desktop or Dock paint.
+    // This keeps the ghost attached to the input message even when the
+    // larger feedback surfaces need more time to redraw.
+    if (snowdesktop::drag_visual_rules::
+            ShouldSyncPreviewBeforePresentation(
+                dragPreviewAlreadySynced))
+        SyncDragPreviewWindow();
+    RefreshDragPresentationAnchor();
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize;
+    const bool itemDragActive = dragSession_.IsActive();
+    const bool pageNavDragActive =
+        widgetAction_ == WidgetAction::Move ||
+        itemDragActive ||
+        dragDropController_.IsTransportActive();
+    const int pageNavDragHintSide =
+        pageNavDragActive && navHotEdgeHover_ &&
+            (navHoverSide_ == -1 || navHoverSide_ == 1)
+        ? navHoverSide_
+        : 0;
+    RECT pageNavDragHintBounds{};
+    if (pageNavDragHintSide != 0)
+    {
+        pageNavDragHintBounds = GetPageNavHotEdgeHintBounds(
+            pageNavDragHintSide, lastMousePoint_);
+    }
+    const bool pageNavDragHintChanged =
+        snowdesktop::page_navigation_rules::NeedsDragHintPresent(
+            pageNavDragActive,
+            pageNavDragHintSide,
+            pageNavDragHintBounds,
+            presentedDragNavHintSide_,
+            presentedDragNavHintBounds_);
+    const std::uint64_t feedbackRevision =
+        itemDragActive
+            ? dragSession_.PresentationRevision()
+            : 0;
+    const bool itemDragFeedbackChanged =
+        itemDragActive &&
+        (feedbackRevision !=
+             presentedDragFeedbackRevision_ ||
+         navHoverSide_ !=
+             presentedDragNavHoverSide_);
+    if (itemDragActive)
+    {
+        presentedDragFeedbackRevision_ =
+            feedbackRevision;
+        presentedDragNavHoverSide_ = navHoverSide_;
+    }
+    else
+    {
+        presentedDragFeedbackRevision_ = 0;
+        presentedDragNavHoverSide_ = 0;
+    }
+    snowdesktop::widget_composition_layer_rules::
+        WidgetDragFeedbackState widgetDragFeedback{};
+    widgetDragFeedback.active = widgetPreviewActive;
+    widgetDragFeedback.resize =
+        widgetAction_ == WidgetAction::Resize;
+    widgetDragFeedback.pageId = widgetPreviewCell_.pageId;
+    widgetDragFeedback.column = widgetPreviewCell_.column;
+    widgetDragFeedback.row = widgetPreviewCell_.row;
+    widgetDragFeedback.columns = widgetPreviewSpan_.columns;
+    widgetDragFeedback.rows = widgetPreviewSpan_.rows;
+    widgetDragFeedback.dockTarget = widgetDockTarget_;
+    widgetDragFeedback.dockOwner = reinterpret_cast<std::uintptr_t>(
+        widgetDockTargetContainer_);
+    widgetDragFeedback.dockInsertIndex = widgetDockInsertIndex_;
+    widgetDragFeedback.groupTargetIndex =
+        widgetCollectionGroupTargetIndex_;
+    widgetDragFeedback.groupInsertIndex =
+        widgetCollectionGroupInsertIndex_;
+    widgetDragFeedback.navigationSide = navHoverSide_;
+    const bool widgetDragFeedbackChanged =
+        snowdesktop::widget_composition_layer_rules::
+            NeedsWidgetDragFeedbackPresent(
+                presentedWidgetDragFeedback_,
+                widgetDragFeedback);
+    if (!widgetPreviewActive)
+        presentedWidgetDragFeedback_ = {};
     const bool immediateDesktopPresent =
         snowdesktop::floating_dock_rules::
             NeedsImmediatePointerPresent(
-                dragSession_.IsActive(),
+                itemDragFeedbackChanged,
                 widgetPreviewActive,
                 marqueeActive_);
+    bool widgetInteractionPresented = false;
+    if (widgetPreviewActive && hwnd_ && IsWindow(hwnd_))
+    {
+        if (widgetDragFeedbackChanged)
+        {
+            // Grid, Dock and group feedback lives on the shared foreground
+            // surface. Redraw it only when the logical target changes; plain
+            // pointer movement inside one target has no visual work.
+            RECT client{};
+            GetClientRect(hwnd_, &client);
+            widgetInteractionPresented =
+                PresentDesktopForegroundComposition(client);
+        }
+        else
+        {
+            widgetInteractionPresented = true;
+        }
+    }
+    bool desktopFallbackPresented = false;
     if (immediateDesktopPresent &&
+        (!widgetPreviewActive || !widgetInteractionPresented) &&
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
+        desktopFallbackPresented = true;
     }
-    if (floatingDockVisible_)
+    bool pageNavDragHintPresented =
+        pageNavDragHintChanged &&
+        ((widgetPreviewActive && widgetDragFeedbackChanged &&
+             widgetInteractionPresented) ||
+            desktopFallbackPresented);
+    if (pageNavDragHintChanged &&
+        !pageNavDragHintPresented &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        RECT dirty{};
+        bool hasDirty = false;
+        const auto addDirty = [&](const RECT& bounds) {
+            if (IsRectEmptyRect(bounds))
+                return;
+            if (!hasDirty)
+            {
+                dirty = bounds;
+                hasDirty = true;
+            }
+            else
+            {
+                RECT merged{};
+                UnionRect(&merged, &dirty, &bounds);
+                dirty = merged;
+            }
+        };
+        addDirty(presentedDragNavHintBounds_);
+        addDirty(pageNavDragHintBounds);
+        if (hasDirty)
+        {
+            InflateRect(&dirty, 4, 4);
+            pageNavDragHintPresented =
+                PresentDesktopForegroundComposition(dirty);
+            if (!pageNavDragHintPresented)
+            {
+                InvalidateRect(hwnd_, &dirty, FALSE);
+                PresentDesktopPointerUpdate();
+                pageNavDragHintPresented = true;
+                desktopFallbackPresented = true;
+            }
+        }
+        else
+        {
+            pageNavDragHintPresented = true;
+        }
+    }
+    if (pageNavDragHintChanged && pageNavDragHintPresented)
+    {
+        presentedDragNavHintSide_ = pageNavDragHintSide;
+        presentedDragNavHintBounds_ = pageNavDragHintBounds;
+    }
+    if (widgetPreviewActive && widgetDragFeedbackChanged &&
+        (widgetInteractionPresented || desktopFallbackPresented))
+    {
+        presentedWidgetDragFeedback_ =
+            std::move(widgetDragFeedback);
+    }
+    const bool immediateFloatingDockPresent =
+        immediateDesktopPresent &&
+        (!widgetPreviewActive || widgetDragFeedbackChanged);
+    if (floatingDockHostActive_)
     {
         const void* hoverOwner = nullptr;
         size_t hoverIndex = 0;
@@ -138,7 +300,7 @@ void DesktopApp::PresentPointerInteractionFrame()
                 ShouldPresentPointerFrame(
                     now,
                     floatingDockLastPointerPresentTick_,
-                    immediateDesktopPresent ||
+                    immediateFloatingDockPresent ||
                         hoverTargetChanged);
         if (presentNow)
         {
@@ -166,8 +328,7 @@ void DesktopApp::PresentPointerInteractionFrame()
                         if (floatingDockHoverTailToken_ != token)
                             return;
                         floatingDockHoverTailToken_ = 0;
-                        if (!floatingDockVisible_ ||
-                            floatingDockClosePending_ ||
+                        if (!floatingDockHostActive_ ||
                             !floatingDockHwnd_ ||
                             !IsWindow(floatingDockHwnd_))
                             return;
@@ -177,6 +338,61 @@ void DesktopApp::PresentPointerInteractionFrame()
                     });
         }
     }
+    if (ShouldShowFloatingPopupWindow() &&
+        (!itemDragActive ||
+         itemDragFeedbackChanged) &&
+        (!widgetPreviewActive ||
+         widgetDragFeedbackChanged))
+        InvalidateFloatingPopupWindow(true);
+}
+
+/**
+ * @brief 停止 Dock 驻留计时并清空当前驻留目标。
+ */
+void DesktopApp::ResetDockHandoffDwell()
+{
+    if (snowdesktop::dock_drop_rules::IsDockHandoffDwellIdle(
+            dockHandoffDwellIndex_,
+            dockHandoffDwellStartTick_,
+            dockHandoffDwellReady_))
+        return;
+    if (hwnd_)
+        KillTimer(hwnd_, kDockHandoffDwellTimerId);
+    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
+    dockHandoffDwellStartTick_ = 0;
+    dockHandoffDwellReady_ = false;
+}
+
+void DesktopApp::ResetCompactCollectionHandoffDwell()
+{
+    if (compactCollectionHandoffWidgetId_.empty() &&
+        compactCollectionHandoffIndex_ == static_cast<size_t>(-1) &&
+        compactCollectionHandoffStartTick_ == 0 &&
+        !compactCollectionHandoffReady_)
+        return;
+    if (hwnd_)
+        KillTimer(hwnd_, kCompactCollectionHandoffDwellTimerId);
+    compactCollectionHandoffWidgetId_.clear();
+    compactCollectionHandoffIndex_ = static_cast<size_t>(-1);
+    compactCollectionHandoffStartTick_ = 0;
+    compactCollectionHandoffReady_ = false;
+}
+
+/**
+ * @brief 解除会话对弹窗临时目标的引用并释放其成员包装对象。
+ *
+ * DeactivateForDrop 会保留目标用于同步提交，因此这里不能只检查活动态。
+ */
+void DesktopApp::ClearPopupDragTarget()
+{
+    Slot* popupTarget = popupDragTarget_.Get();
+    if (popupTarget &&
+        dragSession_.TargetSlot() == popupTarget)
+    {
+        dragSession_.UpdateTarget(
+            nullptr, nullptr, HitRegion::None);
+    }
+    popupDragTarget_.Reset();
 }
 
 /**
@@ -184,20 +400,15 @@ void DesktopApp::PresentPointerInteractionFrame()
  */
 void DesktopApp::EndDragSession()
 {
-    if (hwnd_)
-    {
-        KillTimer(hwnd_, kDockHandoffDwellTimerId);
-        KillTimer(
-            hwnd_, kCollectionGroupTabDwellTimerId);
-    }
-    dockHandoffDwellIndex_ = static_cast<size_t>(-1);
-    dockHandoffDwellStartTick_ = 0;
-    dockHandoffDwellReady_ = false;
-    collectionGroupTabDwellWidgetIndex_ =
-        static_cast<size_t>(-1);
-    collectionGroupTabDwellId_.clear();
-    collectionGroupTabDwellTick_ = 0;
+    ResetDockHandoffDwell();
+    ResetCompactCollectionHandoffDwell();
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     dragSession_.End();
+    ClearPopupDragTarget();
+    presentedDragFeedbackRevision_ = 0;
+    presentedDragNavHoverSide_ = 0;
+    HideDragPreviewWindow();
     ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存
@@ -209,19 +420,175 @@ void DesktopApp::EndDragSession()
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void DesktopApp::ClearDockPressedState()
+{
+    dockPressedEntry_ = static_cast<size_t>(-1);
+    dockPressedFrequentItem_ = static_cast<size_t>(-1);
+    dockPressedRunningAppKey_.clear();
+    dockPressedWindowAction_ =
+        snowdesktop::dock_window_rules::DockClickAction::None;
+    dockPressedTargetWindow_ = nullptr;
+    dockPressedContainer_ = nullptr;
+    dockPressedClosedCollectionPopup_ = false;
+}
+
+bool DesktopApp::HasCancelablePointerPressState() const
+{
+    return mouseDown_ || mouseDownHit_ != nullptr ||
+        dragSession_.IsActive() ||
+        dockPressedEntry_ != static_cast<size_t>(-1) ||
+        dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
+        !dockPressedRunningAppKey_.empty() ||
+        dockPressedWindowAction_ !=
+            snowdesktop::dock_window_rules::DockClickAction::None ||
+        dockPressedTargetWindow_ != nullptr ||
+        dockPressedContainer_ != nullptr ||
+        dockPressedClosedCollectionPopup_ ||
+        pendingGuideAction_ != WidgetHit::None ||
+        marqueeActive_ ||
+        widgetAction_ != WidgetAction::None ||
+        middleButtonWidgetMove_ ||
+        detailColumnResizeActive_ ||
+        widgetScrollbarDragging_ ||
+        popupScrollbarDragging_ ||
+        luaWidgetPanelMouseDown_ ||
+        popupMouseDownItem_ != nullptr;
+}
+
+bool DesktopApp::IsOwnedPointerCaptureWindow(HWND window) const
+{
+    return window &&
+        (window == hwnd_ ||
+         IsPersistentDockHostWindow(window) ||
+         window == floatingPopupHwnd_);
+}
+
+bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
+{
+    const bool retainedDropCommit =
+        dragSession_.HasContext() &&
+        !dragSession_.IsActive();
+    return expectedCaptureReleaseDepth_ == 0 &&
+        !dragDropController_.IsTransportActive() &&
+        !retainedDropCommit &&
+        HasCancelablePointerPressState();
+}
+
+void DesktopApp::CancelPointerPressWithoutCaptureRelease()
+{
+    const bool layoutNeedsSave =
+        widgetScrollbarDragging_ ||
+        detailColumnResizeActive_;
+    const bool commitDockFolderPopupResize =
+        detailColumnResizeActive_ &&
+        detailColumnResizePopup_ &&
+        dockFolderPopupOpen_;
+    const bool dockItemPressed = dockPressedContainer_ &&
+        (dockPressedEntry_ != static_cast<size_t>(-1) ||
+         dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
+         !dockPressedRunningAppKey_.empty());
+    Item* const pressedDockItem =
+        dockItemPressed ? mouseDownHit_ : nullptr;
+    HideDragHintWindow();
+    SetPageNavHotEdgeHover(0);
+    navAutoFlipDir_ = 0;
+    navAutoFlipTick_ = 0;
+    ResetDockHandoffDwell();
+    ResetCompactCollectionHandoffDwell();
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
+    mouseDown_ = false;
+    mouseDownHit_ = nullptr;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    pendingCtrlToggleDesktopIndex_ =
+        static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetIndex_ =
+        static_cast<size_t>(-1);
+    pendingCtrlToggleWidgetItem_ = nullptr;
+    pendingGuideAction_ = WidgetHit::None;
+    if (pressedDockItem)
+        pressedDockItem->SetSelected(false);
+    ClearDockPressedState();
+    marqueeActive_ = false;
+    marqueeWidgetIndex_ = static_cast<size_t>(-1);
+    marqueeDockFolderPopup_ = false;
+    for (auto& container : containers_)
+    {
+        if (auto* searchable =
+                dynamic_cast<ScrollingItemWidget*>(container.get());
+            searchable && searchable->IsSearchPointerSelecting())
+        {
+            searchable->EndSearchPointerSelection();
+        }
+    }
+    widgetAction_ = WidgetAction::None;
+    middleButtonWidgetMove_ = false;
+    detailColumnResizeActive_ = false;
+    detailColumnResizePopup_ = false;
+    detailColumnResizeColumn_ =
+        snowdesktop::list_detail_rules::Column::None;
+    detailColumnResizeHeaderLeft_ = 0;
+    detailColumnResizeHeaderWidth_ = 1;
+    widgetScrollbarDragging_ = false;
+    widgetScrollbarDragContainer_ = nullptr;
+    popupScrollbarDragging_ = false;
+    luaWidgetPanelMouseDown_ = false;
+    widgetDockTarget_ = false;
+    widgetDockTargetContainer_ = nullptr;
+    widgetDockInsertIndex_ = 0;
+    widgetCollectionGroupTargetIndex_ =
+        static_cast<size_t>(-1);
+    widgetCollectionGroupInsertIndex_ =
+        static_cast<size_t>(-1);
+    if (dragSession_.IsActive())
+        EndDragSession();
+    // End the session before destroying popup-owned Item/Slot wrappers that
+    // may still be referenced by its source or target lists.
+    ClearPopupMouseDownItem();
+    dockFolderPopupDragItems_.clear();
+    dockFolderPopupMarqueeInitialSelection_.clear();
+    if (widgetEngine_)
+        widgetEngine_->CancelInteractionPointerPress();
+    if (commitDockFolderPopupResize)
+        CommitDockFolderPopupStateToSource();
+    else if (layoutNeedsSave)
+        SaveLayoutSlots();
+    InvalidateDragStaticScene();
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateFloatingDockWindow();
+    InvalidateFloatingPopupWindow();
+}
+
+void DesktopApp::ReleaseCapturePreservingPointerState()
+{
+    ++expectedCaptureReleaseDepth_;
+    ReleaseCapture();
+    --expectedCaptureReleaseDepth_;
+}
+
+void DesktopApp::CancelActiveItemDrag()
+{
+    CancelPointerPressWithoutCaptureRelease();
+    ReleaseCapture();
+}
+
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
+    HideDragPreviewWindow();
     dragRenderCache_.Reset();
     PresentPassiveHoverVisualChange();
     // The ordinary hover path must never wait for DWM. Shell operations are a
-    // real presentation boundary, though: submit the batched DComp work first
-    // and only then wait for the drag-end frame to reach the compositor.
+    // presentation boundary, but asynchronous handlers only need the batched
+    // DComp work submitted before they are queued. Synchronous compatibility
+    // fallbacks perform their own DwmFlush immediately before entering Shell.
     FlushPendingCompositionCommit();
-    DwmFlush();
 }
 
 void DesktopApp::PresentPassiveHoverVisualChange()
 {
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::PassivePresent);
     // Content and backdrop are collected from the same full render pass. The
     // backdrop compositor constrains its helper HWND to the resulting panel
     // set, so stale blur pixels cannot outlive the content frame even if the
@@ -234,6 +601,7 @@ void DesktopApp::PresentPassiveHoverVisualChange()
             UpdateWindow(hwnd_);
     }
     InvalidateFloatingDockWindow(true);
+    InvalidateFloatingPopupWindow(true);
 }
 
 /**

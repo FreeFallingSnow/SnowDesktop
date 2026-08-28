@@ -312,6 +312,27 @@ inline bool InitialNameLess(
     return normalized(lhs) < normalized(rhs);
 }
 
+/**
+ * Build the stable identity used by the application-icon bitmap cache.
+ * Shell system-image-list indexes are deliberately excluded: Explorer may
+ * replace or reuse those process-external slots after an app was indexed.
+ */
+inline std::wstring ApplicationIconCacheIdentity(
+    std::wstring_view parsingName,
+    std::wstring_view displayName)
+{
+    const std::wstring_view source = parsingName.empty()
+        ? displayName
+        : parsingName;
+    std::wstring identity(source);
+    std::transform(
+        identity.begin(), identity.end(), identity.begin(),
+        [](wchar_t ch) {
+            return static_cast<wchar_t>(std::towupper(ch));
+        });
+    return identity;
+}
+
 inline int TabStripMaxScrollOffset(
     int contentWidth, int scrollLeft,
     int clipRight)

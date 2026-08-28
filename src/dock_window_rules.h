@@ -159,6 +159,34 @@ constexpr bool ShouldSuppressDockClickRelease(
 }
 
 /**
+ * @brief 判断两次释放是否属于同一个 Dock 项的双击。
+ *
+ * 固定 Dock 与悬浮 Dock 使用不同 HWND。两次点击跨越这两个表面时，Windows
+ * 不一定生成 WM_LBUTTONDBLCLK，因此释放阶段还需要按稳定条目身份和系统双击
+ * 时间补做判定。哨兵值不能彼此匹配，否则两个“无条目”会被误判为双击。
+ */
+constexpr bool IsMatchingPendingDockDoubleClickRelease(
+    std::size_t pressedEntryIndex,
+    std::size_t pressedFrequentItemIndex,
+    std::size_t pendingEntryIndex,
+    std::size_t pendingFrequentItemIndex,
+    unsigned long elapsed,
+    unsigned long doubleClickTime) noexcept
+{
+    constexpr std::size_t noItem =
+        static_cast<std::size_t>(-1);
+    const bool sameEntry =
+        pressedEntryIndex != noItem &&
+        pressedEntryIndex == pendingEntryIndex;
+    const bool sameFrequentItem =
+        pressedFrequentItemIndex != noItem &&
+        pressedFrequentItemIndex ==
+            pendingFrequentItemIndex;
+    return elapsed <= doubleClickTime &&
+        (sameEntry || sameFrequentItem);
+}
+
+/**
  * @brief 未执行专用双击动作时，把 WM_LBUTTONDBLCLK 重放为第二次按下。
  *
  * Windows 会用 WM_LBUTTONDBLCLK 替代第二个 WM_LBUTTONDOWN。若正在运行
@@ -194,16 +222,40 @@ constexpr bool NeedsDockCloseSystemCommandFallback(
 }
 
 /**
- * @brief 判断异步恢复请求失败后是否需要窗口切换器回退。
+ * @brief 判断异步恢复请求失败后是否需要系统命令回退。
  *
- * 此回退只负责发起一次恢复；真实窗口退出最小化后再执行置前，
- * 避免对从最大化状态最小化的窗口连续发送恢复命令。
+ * 高完整性窗口会通过 UIPI 拒绝普通进程的 ShowWindowAsync。
+ * 调用方应通过默认窗口过程执行一次 SC_RESTORE，真实窗口
+ * 退出最小化后再执行置前，避免重复恢复改变最大化状态。
  */
 constexpr bool NeedsDockRestoreRequestFallback(
     bool wasMinimized,
     bool showWindowAccepted) noexcept
 {
     return wasMinimized && !showWindowAccepted;
+}
+
+/**
+ * @brief 执行一次可验证的高完整性窗口恢复回退。
+ *
+ * 先通过默认窗口过程执行 SC_RESTORE；只有窗口仍处于最小化
+ * 状态时才调用窗口切换器，避免重复恢复改变原有最大化状态。
+ * 可调用对象由平台层注入，使调用顺序和系统命令可以直接回归测试。
+ */
+template <typename ExecuteSystemCommand,
+    typename IsWindowStillIconic,
+    typename ExecuteWindowSwitch>
+void ApplyDockRestoreRequestFallback(
+    bool fallbackRequired,
+    ExecuteSystemCommand&& executeSystemCommand,
+    IsWindowStillIconic&& isWindowStillIconic,
+    ExecuteWindowSwitch&& executeWindowSwitch)
+{
+    if (!fallbackRequired)
+        return;
+    executeSystemCommand(static_cast<WPARAM>(SC_RESTORE));
+    if (isWindowStillIconic())
+        executeWindowSwitch();
 }
 
 /**
@@ -240,6 +292,34 @@ constexpr bool ShouldRetryDockWindowForegroundActivation(
     bool synchronousActivationSafe) noexcept
 {
     return !foregroundMatched && synchronousActivationSafe;
+}
+
+/**
+ * @brief 以前台请求优先、附加输入队列重试为后备激活一个 Dock 窗口。
+ *
+ * 两个请求都必须只操作最终激活窗口。普通路径不得先调用任务切换器或
+ * BringWindowToTop；否则根窗口、最后活动弹窗和目标窗口会连续进入前台，
+ * 改写无关应用之间的 Z-order。重试回调由平台层负责临时附加输入队列。
+ */
+template <typename IsForeground,
+    typename RequestForeground,
+    typename RetryForeground>
+bool ApplyDockWindowForegroundActivation(
+    bool synchronousActivationSafe,
+    IsForeground&& isForeground,
+    RequestForeground&& requestForeground,
+    RetryForeground&& retryForeground)
+{
+    if (isForeground())
+        return true;
+    requestForeground();
+    if (isForeground())
+        return true;
+    if (!ShouldRetryDockWindowForegroundActivation(
+            false, synchronousActivationSafe))
+        return false;
+    retryForeground();
+    return isForeground();
 }
 
 /**
@@ -340,6 +420,86 @@ constexpr bool IsTaskWindowStyleEligible(
         return true;
     return (extendedStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) == 0 &&
         !hasOwner;
+}
+
+/**
+ * @brief 判断顶层窗口当前是否仍应显示在任务栏/Dock。
+ *
+ * 普通最小化窗口仍保留 WS_VISIBLE，因此可以继续显示。部分托盘应用会在
+ * 处理 WM_CLOSE 时先最小化再隐藏窗口，此时 IsIconic 仍可能为真；隐藏状态
+ * 必须优先，不能因为窗口仍处于最小化态就把它重新加入 Dock。
+ */
+constexpr bool IsTaskWindowPresentationEligible(
+    bool visible, bool /*iconic*/) noexcept
+{
+    return visible;
+}
+
+/**
+ * @brief Decide whether a task-style window belongs in Dock discovery.
+ *
+ * SnowDesktop normally excludes its own process because desktop, Dock, and
+ * popup hosts are implementation surfaces. The settings host is deliberately
+ * an application-level window and must follow ordinary task-window behavior.
+ */
+constexpr bool IsTaskWindowProcessEligible(
+    bool ownedByCurrentProcess,
+    bool applicationLevelWindow) noexcept
+{
+    return !ownedByCurrentProcess || applicationLevelWindow;
+}
+
+/**
+ * @brief 判断隐藏顶层窗口是否具备任务栏文档代理的候选结构。
+ *
+ * MDI/TDI 应用通常用带标题的隐藏弹出窗口向任务栏注册文档缩略图。
+ * 单个窗口的结构仍可能与框架辅助窗重合，因此这里只产生候选；调用方
+ * 还必须按进程、类名和完整样式成组验证，不能直接放宽普通任务窗口规则。
+ */
+constexpr bool IsTaskbarDocumentProxyCandidateEligible(
+    bool topLevel,
+    bool visible,
+    bool hasOwner,
+    bool hasTitle,
+    LONG_PTR windowStyle,
+    LONG_PTR extendedStyle) noexcept
+{
+    constexpr LONG_PTR requiredWindowStyles =
+        WS_POPUP | WS_CAPTION;
+    constexpr LONG_PTR requiredExtendedStyles =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_WINDOWEDGE;
+    constexpr LONG_PTR rejectedExtendedStyles =
+        WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT;
+    return topLevel && !visible && !hasOwner && hasTitle &&
+        (windowStyle & requiredWindowStyles) == requiredWindowStyles &&
+        (extendedStyle & requiredExtendedStyles) ==
+            requiredExtendedStyles &&
+        (extendedStyle & rejectedExtendedStyles) == 0;
+}
+
+/**
+ * @brief 判断同签名候选组是否足以代表多文档任务栏代理。
+ *
+ * 单文档状态继续使用可见主窗口；只有至少两个不同标题的同组候选才
+ * 证明存在用户可切换的多文档集合，并能排除常见的单个监控/托盘窗口。
+ */
+constexpr bool IsTaskbarDocumentProxyCohortEligible(
+    std::size_t proxyItemCount,
+    std::size_t distinctTitleCount) noexcept
+{
+    return proxyItemCount >= 2 && distinctTitleCount >= 2;
+}
+
+/**
+ * @brief 仅在发现唯一可信候选组时用其替换主框架预览。
+ *
+ * 多个候选组意味着应用内部结构存在歧义；此时保留普通主窗口比误把
+ * 辅助窗口暴露为缩略图更安全。
+ */
+constexpr bool ShouldPreferTaskbarDocumentProxyCohort(
+    std::size_t qualifyingCohortCount) noexcept
+{
+    return qualifyingCohortCount == 1;
 }
 
 /**

@@ -29,9 +29,16 @@ public:
 
     void BeginSelfDrag();
     void MarkSelfDragReturned();
+    void ClearSelfDragReturned();
+    void RequestSelfDragNativeResume();
+    HRESULT QueryContinueSelfDrag(
+        bool escapePressed,
+        bool primaryButtonDown,
+        bool pointerOnDesktopSurface);
     void EndSelfDrag();
     bool IsSelfDragActive() const;
     bool SelfDragReturned() const;
+    bool SelfDragNativeResumeRequested() const;
 
     void BeginExternalDrag(ExternalDragSummary summary);
     void ContinueExternalDrag();
@@ -61,5 +68,6 @@ private:
     DragSession& session_;
     Transport transport_ = Transport::None;
     bool selfDragReturned_ = false;
+    bool selfDragNativeResumeRequested_ = false;
     ExternalDragSummary externalSummary_;
 };

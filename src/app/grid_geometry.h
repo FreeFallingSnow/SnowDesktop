@@ -2,6 +2,8 @@
 
 #include "../types.h"
 #include "../utils.h"
+#include "../font_cu_rules.h"
+#include "../grid_spacing_rules.h"
 
 #include <algorithm>
 #include <string>
@@ -26,6 +28,27 @@ inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpa
 }
 
 /**
+ * @brief 在不改变跨度的前提下，将网格起点收回到页面范围内。
+ *
+ * 用于组件拖拽：指针命中页面右侧或下侧、剩余行列不足时移动起点，避免
+ * GetGridRect 为适配边界缩小预览区域。跨度大于整页时仍锚定到零点，由调用方
+ * 按自身规则拒绝或限制该放置。
+ */
+inline GridCell ClampGridCellToFitPage(
+    const GridPage& page, GridCell cell, GridSpan span)
+{
+    span.columns = std::max(1, span.columns);
+    span.rows = std::max(1, span.rows);
+    cell.column = std::clamp(
+        cell.column, 0,
+        std::max(0, page.columns - span.columns));
+    cell.row = std::clamp(
+        cell.row, 0,
+        std::max(0, page.rows - span.rows));
+    return cell;
+}
+
+/**
  * @brief 根据屏幕坐标查找所在的网格页面。
  * @param point 客户区坐标。
  * @return 指向对应 GridPage 的指针，未找到时返回第一个页面或 nullptr。
@@ -34,6 +57,33 @@ inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const st
 {
     for (auto& p : pages) if (p.id == pageId) return &p;
     return nullptr;
+}
+
+/**
+ * @brief 获取页面不含网格间距的标准 cu 缩放比例。
+ */
+inline float GetGridPageCuScale(const GridPage& page)
+{
+    return snowdesktop::font_cu_rules::CellScale(
+        page.itemPitchWidth, page.itemPitchHeight);
+}
+
+/**
+ * @brief 根据项目边界获取所在页面的标准 cu 缩放比例。
+ */
+inline float GetGridCuScaleForBounds(
+    const std::vector<GridPage>& pages, RECT bounds)
+{
+    const POINT center = {
+        bounds.left + (bounds.right - bounds.left) / 2,
+        bounds.top + (bounds.bottom - bounds.top) / 2
+    };
+    for (const auto& page : pages)
+    {
+        if (PtInRect(&page.bounds, center))
+            return GetGridPageCuScale(page);
+    }
+    return 1.0f;
 }
 
 /**
@@ -47,19 +97,23 @@ inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 {
     const int count = horizontal ? page.columns : page.rows;
     const int cellSize = horizontal ? page.cellWidth : page.cellHeight;
-    if (index <= 0 || count <= 1) return std::max(0, index) * cellSize;
-
     const int extent = horizontal
         ? static_cast<int>(page.workArea.right - page.workArea.left)
         : static_cast<int>(page.workArea.bottom - page.workArea.top);
     const int margin = horizontal ? page.marginX : page.marginY;
-    const int gapSpace = std::max(0, extent - margin * 2 - count * cellSize);
-    const int gapCount = count - 1;
+    const int gap = horizontal ? page.gapX : page.gapY;
+    snowdesktop::grid_spacing_rules::AxisGeometry axis;
+    axis.extent = std::max(1, extent);
+    axis.count = std::max(1, count);
+    axis.baseMargin = std::max(0, margin - gap / 2);
+    axis.margin = margin;
+    axis.cell = std::max(1, cellSize);
+    axis.gap = std::max(0, gap);
 
-    // Use a cumulative ratio so integer remainders are spread across all
-    // internal gaps instead of being absorbed by the two outer margins.
-    const int distributedGap = (index * gapSpace + gapCount / 2) / gapCount;
-    return index * cellSize + distributedGap;
+    // Track centers come only from the page pitch. Changing the requested gap
+    // shrinks the cell around the same center instead of redistributing integer
+    // remainders and making icons oscillate by one or two pixels.
+    return snowdesktop::grid_spacing_rules::CellStart(axis, index) - margin;
 }
 
 /**

@@ -19,6 +19,8 @@
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "widget_preview_scene.h"
+#include "../widget_item_layout.h"
+#include "../widget_scroll_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -107,9 +109,17 @@ float Widget::GetCellScale() const
     return data_ ? data_->cellScale : 1.0f;
 }
 
-float Widget::GetComponentSpacingScale() const
+float Widget::GetLayoutSpacingScale() const
 {
-    return app_ ? app_->GetComponentSpacingScale() : 1.0f;
+    return app_ ? app_->GetLayoutSpacingScale() : 1.0f;
+}
+
+snowdesktop::PageItemVisualMetrics Widget::GetItemVisualMetrics() const
+{
+    return app_
+        ? app_->GetItemVisualMetrics(GetBounds())
+        : snowdesktop::ResolvePageItemVisualMetrics(
+            kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
 }
 
 int Widget::Cu(float value) const
@@ -119,8 +129,8 @@ int Widget::Cu(float value) const
 
 float Widget::GetBarHeight() const
 {
-    if (app_ && app_->settingsWindow_)
-        return app_->settingsWindow_->GetPersonalization().barHeight;
+    if (app_)
+        return app_->CurrentPersonalization().barHeight;
     return 24.0f;
 }
 
@@ -312,34 +322,16 @@ RECT WidgetContainer::GetFrameRect() const
         return hostedFrame_;
     if (app_ && app_->IsGroupedWidget(*data_))
         return {};
-    RECT rect = data_->bounds;
+    return app_
+        ? app_->GetStandaloneWidgetFrameRect(*data_)
+        : data_->bounds;
+}
 
-    // Absorb half the grid gap on all four sides so widget frames have
-    // consistent visual size regardless of grid position.
-    if (app_ && app_->GetDesktopGrid())
-    {
-        const auto& pages = app_->GetDesktopGrid()->GetPages();
-        const GridCell& cell = data_->gridCell;
-        for (const auto& p : pages)
-        {
-            if (p.id == cell.pageId)
-            {
-                int halfGapX = std::max(Cu(2.0f), p.gapX / 2);
-                int halfGapY = std::max(Cu(2.0f), p.gapY / 2);
-                rect.left   -= halfGapX;
-                rect.top    -= halfGapY;
-                rect.right  += halfGapX;
-                rect.bottom += halfGapY;
-                break;
-            }
-        }
-    }
-
-    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
-        GetCellScale(), app_ ? app_->GetComponentSpacingScale() : 1.0f);
-    if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
-        InflateRect(&rect, -inset, -inset);
-    return rect;
+snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
+{
+    return app_
+        ? app_->GetItemVisualMetrics(GetFrameRect())
+        : Widget::GetItemVisualMetrics();
 }
 
 /**
@@ -362,8 +354,8 @@ RECT WidgetContainer::GetMoveHandleRect() const
 {
     RECT frame = GetFrameRect();
     const int handleHeight = Cu(GetBarHeight());
-    const float cornerRadius = app_ && app_->settingsWindow_
-        ? app_->settingsWindow_->GetPersonalization().cornerRadius
+    const float cornerRadius = app_
+        ? app_->CurrentPersonalization().cornerRadius
         : 12.0f;
     const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
         Cu(cornerRadius), handleHeight, Cu(4.0f), Cu(2.0f));
@@ -401,10 +393,18 @@ RECT WidgetContainer::GetResizeHandleRect() const
 RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
-    LONG left = handle.left + Cu(4.0f);
-    const float bh = GetBarHeight();
-    const int reserved = Cu(data_->type == DesktopWidgetType::FolderMapping ? bh * 3.4f : bh * 1.08f);
+    const float barScale = GetBarScale();
+    LONG left = handle.left + Cu(2.0f * barScale);
+    const int reserved = snowdesktop::widget_chrome_rules::
+        BottomBarTitleTrailingReserve(
+            GetBottomBarButtonCount(),
+            Cu(14.0f * barScale),
+            Cu(4.0f * barScale),
+            Cu(4.0f * barScale),
+            Cu(20.0f * barScale),
+            Cu(2.0f * barScale));
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
+    const float bh = GetBarHeight();
     return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };
 }
 
@@ -454,6 +454,8 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     if (!PtInRect(&frame, pt)) return HitRegion::None;
 
     auto& slots = GetSlots();
+    const bool verticalBar =
+        GetInsertionStyle() == BarStyle::VBar;
     for (size_t i = 0; i < slots.size(); ++i)
     {
         HitRegion region = slots[i]->HitTest(pt);
@@ -466,31 +468,43 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 if (item && item->IsSelected())
                 {
                     RECT r = outSlot->GetBounds();
-                    region = (pt.y < r.top + (r.bottom - r.top) / 2)
-                        ? HitRegion::SortBefore
-                        : HitRegion::SortAfter;
+                    region = verticalBar
+                        ? (pt.x < r.left + (r.right - r.left) / 2
+                            ? HitRegion::SortBefore
+                            : HitRegion::SortAfter)
+                        : (pt.y < r.top + (r.bottom - r.top) / 2
+                            ? HitRegion::SortBefore
+                            : HitRegion::SortAfter);
                 }
+            }
+
+            // Canonicalize the trailing half of an item to the leading half
+            // of its adjacent item. Together with the explicit gap hit below,
+            // all three pointer zones resolve to one insertion index and one
+            // indicator boundary.
+            if (region == HitRegion::SortAfter && i + 1 < slots.size() &&
+                snowdesktop::widget_item_layout::SharesInsertionBoundary(
+                    slots[i]->GetBounds(), slots[i + 1]->GetBounds(),
+                    verticalBar))
+            {
+                outSlot = slots[i + 1].get();
+                return HitRegion::SortBefore;
             }
             return region;
         }
     }
 
-    // List mode: check gaps between items
-    if (SingleColumn() && slots.size() >= 2)
+    // Gaps are first-class insertion targets. Map the complete gap to the
+    // following slot so it shares the same result as both neighboring halves.
+    if (slots.size() >= 2)
     {
-        int pad = Cu(2.0f);
         for (size_t i = 0; i + 1 < slots.size(); ++i)
         {
             RECT upper = slots[i]->GetBounds();
             RECT lower = slots[i + 1]->GetBounds();
-            if (pt.y > upper.bottom && pt.y < lower.top)
+            if (snowdesktop::widget_item_layout::PointInInsertionGap(
+                    upper, lower, pt, verticalBar))
             {
-                int mid = upper.bottom + pad;
-                if (pt.y < mid)
-                {
-                    outSlot = slots[i].get();
-                    return HitRegion::SortAfter;
-                }
                 outSlot = slots[i + 1].get();
                 return HitRegion::SortBefore;
             }
@@ -582,7 +596,29 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
     if (!slot || !ctx) return;
-    float itemPad = SingleColumn() ? static_cast<float>(Cu(2.0f)) : 0.0f;
+    const bool verticalBar =
+        GetInsertionStyle() == BarStyle::VBar;
+    float itemPad = 0.0f;
+    auto& slots = GetSlots();
+    for (size_t i = 0; i < slots.size(); ++i)
+    {
+        if (slots[i].get() != slot) continue;
+        if (region == HitRegion::SortBefore && i > 0)
+        {
+            itemPad = snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i - 1]->GetBounds(),
+                    slots[i]->GetBounds(), verticalBar);
+        }
+        else if (region == HitRegion::SortAfter && i + 1 < slots.size())
+        {
+            itemPad = snowdesktop::widget_item_layout::
+                InsertionBoundaryPad(
+                    slots[i]->GetBounds(),
+                    slots[i + 1]->GetBounds(), verticalBar);
+        }
+        break;
+    }
     slot->DrawDropIndicator(ctx, region, itemPad);
 }
 
@@ -648,7 +684,7 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
     const LONG bottom = std::min<LONG>(
-        body.bottom, body.top + Cu(30.0f));
+        body.bottom, body.top + Cu(GetCategorizedSearchBoxHeight()));
     return bottom > body.top
         ? MakeRect(
             body.left, body.top,
@@ -669,9 +705,9 @@ RECT ScrollingItemWidget::GetCategorizedTabsRect(
     LONG top = IsRectEmptyRect(search)
         ? body.top
         : search.bottom + Cu(5.0f);
-    top += categorizedTabRowOffset_ * Cu(38.0f);
+    top += categorizedTabRowOffset_ * Cu(GetCategorizedTabRowPitch());
     const LONG bottom = std::min<LONG>(
-        body.bottom, top + Cu(34.0f));
+        body.bottom, top + Cu(GetCategorizedTabHeight()));
     return bottom > top
         ? MakeRect(body.left, top, body.right, bottom)
         : RECT{};
@@ -708,11 +744,43 @@ void ScrollingItemWidget::ClearCategorizedHostOptions()
 }
 
 float ScrollingItemWidget::
-    GetCategorizedTabFontSize() const
+    GetCategorizedTabHeight() const
 {
     return app_
-        ? app_->GetCategorizedWidgetTabFontSize()
-        : 15.0f;
+        ? app_->GetCategorizedWidgetTabHeight()
+        : 34.0f;
+}
+
+float ScrollingItemWidget::
+    GetCategorizedTabFontSize() const
+{
+    return snowdesktop::collection_group_rules::
+        ResolveCategorizedControlMetrics(
+            GetCategorizedTabHeight()).fontSizeCu;
+}
+
+float ScrollingItemWidget::
+    GetCategorizedTabRowPitch() const
+{
+    return snowdesktop::collection_group_rules::
+        ResolveCategorizedControlMetrics(
+            GetCategorizedTabHeight()).rowPitchCu;
+}
+
+float ScrollingItemWidget::
+    GetCategorizedSearchBoxHeight() const
+{
+    return snowdesktop::collection_group_rules::
+        ResolveCategorizedControlMetrics(
+            GetCategorizedTabHeight()).searchBoxHeightCu;
+}
+
+bool ScrollingItemWidget::
+    ShowCategoryTabItemCounts() const
+{
+    if (app_)
+        return app_->CurrentPersonalization().showCategoryTabCounts;
+    return true;
 }
 
 std::vector<int>
@@ -769,17 +837,20 @@ ScrollingItemWidget::BuildCategorizedTabWidths(
 
 void ScrollingItemWidget::DrawCategorizedTab(
     ID2D1DeviceContext* context,
-    RECT tabRect,
+    RECT visibleTabRect,
+    RECT layoutTabRect,
     const std::wstring& label,
     bool active,
-    bool hovered) const
+    bool hovered,
+    bool keyboardSelected) const
 {
     if (!context || !app_ ||
-        IsRectEmptyRect(tabRect))
+        IsRectEmptyRect(visibleTabRect) ||
+        IsRectEmptyRect(layoutTabRect))
         return;
     const bool light = app_->IsLightContentTheme();
     app_->DrawD2DRoundedRectangle(
-        context, tabRect,
+        context, visibleTabRect,
         static_cast<float>(Cu(8.0f)),
         active
             ? (light
@@ -798,7 +869,10 @@ void ScrollingItemWidget::DrawCategorizedTab(
                         0.0f, 0.0f, 0.0f, 0.04f)
                     : D2D1::ColorF(
                         1.0f, 1.0f, 1.0f, 0.06f))),
-        active
+        keyboardSelected
+            ? D2D1::ColorF(
+                0.39f, 0.66f, 1.0f, 0.90f)
+            : active
             ? (light
                 ? D2D1::ColorF(
                     0.0f, 0.0f, 0.0f, 0.52f)
@@ -808,9 +882,15 @@ void ScrollingItemWidget::DrawCategorizedTab(
                 ? D2D1::ColorF(
                     0.0f, 0.0f, 0.0f, 0.14f)
                 : D2D1::ColorF(
-                    1.0f, 1.0f, 1.0f, 0.20f)));
+                    1.0f, 1.0f, 1.0f, 0.20f)),
+        snowdesktop::widget_chrome_rules::
+            CategorizedControlOutlineWidth(
+                keyboardSelected));
 
-    RECT textRect = tabRect;
+    // The background follows the visible segment so its remaining corners stay
+    // rounded. Text keeps the full tab geometry and is clipped by the tab strip,
+    // preventing a partially visible label from being re-centered.
+    RECT textRect = layoutTabRect;
     InflateRect(&textRect, -Cu(7.0f), 0);
     IDWriteTextFormat* tabFormat =
         GetCuTextFormat(
@@ -1280,7 +1360,7 @@ bool ScrollingItemWidget::GetSearchCaretRect(
         searchRect.right - Cu(10.0f), searchRect.bottom);
     IDWriteFactory* dwrite = app_->GetDWriteFactory();
     IDWriteTextFormat* format =
-        GetCuTextFormat(15.0f, false, false);
+        GetCuTextFormat(GetCategorizedTabFontSize(), false, false);
     if (!dwrite || !format)
         return false;
 
@@ -1334,7 +1414,7 @@ bool ScrollingItemWidget::GetSearchCaretRect(
     rect.bottom = rect.top +
         std::max<LONG>(1,
             static_cast<LONG>(std::lround(
-                std::max(metrics.height, FontCu(15.0f)))));
+                std::max(metrics.height, FontCu(GetCategorizedTabFontSize())))));
     return true;
 }
 
@@ -1350,6 +1430,12 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
     const bool light = app_->IsLightContentTheme();
     const bool hovered =
         PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
+    const bool keyboardSelected =
+        snowdesktop::widget_chrome_rules::
+            UsesCategorizedControlAccentOutline(
+                app_->keyboardNavVisualFocus_,
+                app_->keyboardNavSearchBox_ &&
+                    app_->OwnsWidgetKeyboardNavigation(this));
     const D2D1_COLOR_F foreground = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.97f);
@@ -1369,14 +1455,20 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                 : (hovered
                     ? (light ? 0.06f : 0.08f)
                     : (light ? 0.035f : 0.05f))),
-        D2D1::ColorF(
-            stateColor.r, stateColor.g, stateColor.b,
-            searchFocused_
-                ? (light ? 0.52f : 0.62f)
-                : (light ? 0.14f : 0.20f)));
+        keyboardSelected
+            ? D2D1::ColorF(
+                0.39f, 0.66f, 1.0f, 0.90f)
+            : D2D1::ColorF(
+                stateColor.r, stateColor.g, stateColor.b,
+                searchFocused_
+                    ? (light ? 0.52f : 0.62f)
+                    : (light ? 0.14f : 0.20f)),
+        snowdesktop::widget_chrome_rules::
+            CategorizedControlOutlineWidth(
+                keyboardSelected));
 
     IDWriteTextFormat* format =
-        GetCuTextFormat(15.0f, false, false);
+        GetCuTextFormat(GetCategorizedTabFontSize(), false, false);
     IDWriteFactory* dwrite = app_->GetDWriteFactory();
     if (!format || !dwrite)
         return;
@@ -1584,8 +1676,281 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
     context->PopAxisAlignedClip();
 }
 
+int ScrollingItemWidget::GetListRowHeight() const
+{
+    const float currentFont = app_
+        ? FontCu(app_->listItemFontSizeCu_)
+        : FontCu(kDefaultItemFontSizeCu);
+    const float defaultFont = FontCu(kItemFontSize);
+    const int textHeight = snowdesktop::list_detail_rules::RowHeight(
+        Cu(36.0f), Cu(38.0f), currentFont, defaultFont);
+    const int iconHeight = app_
+        ? app_->GetItemVisualMetrics(GetFrameRect()).minimumListHeight
+        : Cu(38.0f);
+    return std::max(textHeight, iconHeight);
+}
+
+int ScrollingItemWidget::GetDetailsHeaderHeight() const
+{
+    const auto metrics =
+        snowdesktop::collection_group_rules::
+            ResolveCategorizedControlMetrics(
+                GetCategorizedTabHeight());
+    return Cu(metrics.detailsHeaderHeightCu);
+}
+
+bool ScrollingItemWidget::IsDetailsVisible() const
+{
+    return data_ && data_->listMode &&
+        snowdesktop::list_detail_rules::HasMetadataColumns(
+            data_->detailShowModified,
+            data_->detailShowType,
+            data_->detailShowSize);
+}
+
+RECT ScrollingItemWidget::ApplyDetailsHeaderToViewport(
+    RECT viewport) const
+{
+    if (!IsDetailsVisible() || IsRectEmptyRect(viewport))
+        return viewport;
+    viewport.top = std::min<LONG>(
+        viewport.bottom,
+        viewport.top + GetDetailsHeaderHeight());
+    return viewport;
+}
+
+RECT ScrollingItemWidget::GetDetailsHeaderRectFromViewport(
+    RECT viewport) const
+{
+    if (!IsDetailsVisible()) return {};
+    const LONG bottom = viewport.top;
+    const LONG top = bottom - GetDetailsHeaderHeight();
+    return MakeRect(viewport.left, top, viewport.right, bottom);
+}
+
+snowdesktop::list_detail_rules::Columns
+ScrollingItemWidget::GetDetailsColumns(
+    int availableWidth) const
+{
+    return snowdesktop::list_detail_rules::BuildColumns(
+        std::max(1, availableWidth),
+        data_ && data_->detailShowModified,
+        data_ && data_->detailShowType,
+        data_ && data_->detailShowSize,
+        data_ ? data_->detailModifiedPosition :
+            snowdesktop::list_detail_rules::kDefaultModifiedPosition,
+        data_ ? data_->detailTypePosition :
+            snowdesktop::list_detail_rules::kDefaultTypePosition,
+        data_ ? data_->detailSizePosition :
+            snowdesktop::list_detail_rules::kDefaultSizePosition);
+}
+
+const DesktopWidget* ScrollingItemWidget::GetDetailsSortData() const
+{
+    return data_;
+}
+
+void ScrollingItemWidget::DrawDetailsHeader(
+    ID2D1DeviceContext* context, RECT itemViewport,
+    std::optional<bool> lightTheme) const
+{
+    if (!app_ || !context || !IsDetailsVisible()) return;
+    RECT header = GetDetailsHeaderRectFromViewport(itemViewport);
+    if (IsRectEmptyRect(header)) return;
+
+    const bool light = lightTheme.value_or(
+        app_->IsLightContentTheme());
+    RECT separator = MakeRect(
+        header.left, header.bottom - 1,
+        header.right, header.bottom);
+    app_->DrawD2DFilledRectangle(
+        context, separator,
+        light
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f)
+            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),
+        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+
+    const auto columns = GetDetailsColumns(
+        header.right - header.left);
+    LONG left = header.left;
+    RECT name = MakeRect(
+        left, header.top, left + columns.nameWidth, header.bottom);
+    left = name.right;
+    RECT modified = columns.showModified
+        ? MakeRect(left, header.top,
+            left + columns.modifiedWidth, header.bottom)
+        : RECT{};
+    left = modified.right > modified.left ? modified.right : left;
+    RECT type = columns.showType
+        ? MakeRect(left, header.top,
+            left + columns.typeWidth, header.bottom)
+        : RECT{};
+    left = type.right > type.left ? type.right : left;
+    RECT size = columns.showSize
+        ? MakeRect(left, header.top, header.right, header.bottom)
+        : RECT{};
+
+    const D2D1_COLOR_F separatorColor = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f);
+    const auto drawDivider = [&](const RECT& column) {
+        if (IsRectEmptyRect(column)) return;
+        const RECT divider = MakeRect(
+            column.left, header.top + Cu(5.0f),
+            column.left + 1, header.bottom - Cu(5.0f));
+        app_->DrawD2DFilledRectangle(
+            context, divider, separatorColor,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+    };
+    drawDivider(modified);
+    drawDivider(type);
+    drawDivider(size);
+
+    const DesktopWidget* sortData = GetDetailsSortData();
+    const auto sorted = sortData
+        ? sortData->contentSortColumn
+        : snowdesktop::list_detail_rules::Column::None;
+    const bool ascending = sortData
+        ? sortData->contentSortAscending
+        : true;
+    const auto label = [&](const char* key,
+                           snowdesktop::list_detail_rules::Column column) {
+        std::wstring value = _LW(key);
+        if (sorted == column)
+            value += ascending ? L" \u25B2" : L" \u25BC";
+        return value;
+    };
+
+    IDWriteTextFormat* format = GetCuTextFormatWeight(
+        GetCategorizedTabFontSize(),
+        DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
+    if (!format) format = app_->componentListTextFormat_.Get();
+    const D2D1_COLOR_F color = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f);
+    const int pad = Cu(7.0f);
+    name.left += pad;
+    name.right -= pad;
+    app_->DrawD2DTextEllipsis(
+        context,
+        label("widget.details.name",
+            snowdesktop::list_detail_rules::Column::Name),
+        name, format, color,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    if (!IsRectEmptyRect(modified))
+    {
+        modified.left += pad;
+        modified.right -= pad;
+        app_->DrawD2DTextEllipsis(
+            context,
+            label("widget.details.modified",
+                snowdesktop::list_detail_rules::Column::Modified),
+            modified, format, color,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
+    if (!IsRectEmptyRect(type))
+    {
+        type.left += pad;
+        type.right -= pad;
+        app_->DrawD2DTextEllipsis(
+            context,
+            label("widget.details.type",
+                snowdesktop::list_detail_rules::Column::Type),
+            type, format, color,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
+    if (!IsRectEmptyRect(size))
+    {
+        size.left += pad;
+        size.right -= pad;
+        app_->DrawD2DTextEllipsis(
+            context,
+            label("widget.details.size",
+                snowdesktop::list_detail_rules::Column::Size),
+            size, format, color,
+            DWRITE_TEXT_ALIGNMENT_TRAILING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
+}
+
+WidgetHit ScrollingItemWidget::HitTestDetailsHeader(
+    POINT point, RECT itemViewport) const
+{
+    RECT header = GetDetailsHeaderRectFromViewport(itemViewport);
+    if (!IsDetailsVisible() ||
+        IsRectEmptyRect(header) || !PtInRect(&header, point))
+        return WidgetHit::None;
+    const auto columns = GetDetailsColumns(
+        header.right - header.left);
+    switch (snowdesktop::list_detail_rules::HitDivider(
+        columns, point.x - header.left, Cu(4.0f)))
+    {
+    case snowdesktop::list_detail_rules::Column::Modified:
+        return WidgetHit::DetailsModifiedDivider;
+    case snowdesktop::list_detail_rules::Column::Type:
+        return WidgetHit::DetailsTypeDivider;
+    case snowdesktop::list_detail_rules::Column::Size:
+        return WidgetHit::DetailsSizeDivider;
+    default:
+        break;
+    }
+    switch (snowdesktop::list_detail_rules::HitColumn(
+        columns, point.x - header.left))
+    {
+    case snowdesktop::list_detail_rules::Column::Modified:
+        return WidgetHit::DetailsModifiedHeader;
+    case snowdesktop::list_detail_rules::Column::Type:
+        return WidgetHit::DetailsTypeHeader;
+    case snowdesktop::list_detail_rules::Column::Size:
+        return WidgetHit::DetailsSizeHeader;
+    default:
+        return WidgetHit::DetailsNameHeader;
+    }
+}
+
+static std::wstring FormatListModifiedTime(
+    const std::optional<FILETIME>& value)
+{
+    if (!value ||
+        (value->dwLowDateTime == 0 && value->dwHighDateTime == 0))
+        return L"";
+    FILETIME local{};
+    SYSTEMTIME time{};
+    if (!FileTimeToLocalFileTime(&*value, &local) ||
+        !FileTimeToSystemTime(&local, &time))
+        return L"";
+    wchar_t date[96]{};
+    wchar_t clock[64]{};
+    if (!GetDateFormatEx(
+            LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE,
+            &time, nullptr, date,
+            static_cast<int>(std::size(date)), nullptr) ||
+        !GetTimeFormatEx(
+            LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS,
+            &time, nullptr, clock,
+            static_cast<int>(std::size(clock))))
+        return L"";
+    return std::wstring(date) + L" " + clock;
+}
+
+static std::wstring FormatListFileSize(
+    const std::optional<std::uint64_t>& value)
+{
+    if (!value) return L"";
+    wchar_t buffer[64]{};
+    return StrFormatByteSizeW(
+        static_cast<LONGLONG>(*value),
+        buffer, static_cast<UINT>(std::size(buffer)))
+        ? std::wstring(buffer)
+        : std::to_wstring(*value);
+}
+
 void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
-    RECT cell, RECT iconRect, const std::wstring& title) const
+    RECT cell, RECT iconRect, const std::wstring& title,
+    bool lightTheme) const
 {
     if (!app_ || !context || title.empty()) return;
     RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
@@ -1596,41 +1961,51 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
         std::max<LONG>(1, textRect.right - textRect.left));
     const float height = static_cast<float>(
         std::max<LONG>(1, textRect.bottom - textRect.top));
-    const float layoutScale = app_->GetItemLayoutScale(cell);
+    const float layoutScale = GetCellScale();
+    const float fontSize = FontCu(app_->listItemFontSizeCu_);
     const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
         std::to_wstring(scaleKey);
-    auto layoutIt = app_->itemTextLayoutCache_.find(layoutKey);
-    if (layoutIt == app_->itemTextLayoutCache_.end())
+    auto layoutIt = app_->componentListTextLayoutCache_.find(layoutKey);
+    if (layoutIt == app_->componentListTextLayoutCache_.end())
     {
         ComPtr<IDWriteTextLayout> layout;
         if (SUCCEEDED(app_->dwriteFactory_->CreateTextLayout(
             title.c_str(), static_cast<UINT32>(title.size()),
-            app_->itemTextFormat_.Get(), width, height, &layout)) && layout)
+            app_->componentListTextFormat_.Get(),
+            width, height, &layout)) && layout)
         {
             const DWRITE_TEXT_RANGE fullRange{
                 0, static_cast<UINT32>(title.size())
             };
-            layout->SetFontSize(app_->itemFontSize_ * layoutScale, fullRange);
+            layout->SetFontSize(fontSize, fullRange);
             layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                app_->itemFontSize_ * 7.0f / 6.0f * layoutScale,
-                app_->itemFontSize_ * 5.0f / 6.0f * layoutScale);
-            layoutIt = app_->itemTextLayoutCache_.emplace(
+                fontSize * 7.0f / 6.0f,
+                fontSize * 5.0f / 6.0f);
+            DWRITE_TRIMMING trimming{};
+            trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+            ComPtr<IDWriteInlineObject> ellipsis;
+            if (SUCCEEDED(app_->dwriteFactory_->
+                    CreateEllipsisTrimmingSign(
+                        app_->componentListTextFormat_.Get(),
+                        &ellipsis)) && ellipsis)
+                layout->SetTrimming(&trimming, ellipsis.Get());
+            layoutIt = app_->componentListTextLayoutCache_.emplace(
                 std::move(layoutKey), std::move(layout)).first;
         }
     }
-    if (layoutIt != app_->itemTextLayoutCache_.end())
+    if (layoutIt != app_->componentListTextLayoutCache_.end())
         app_->DrawStyledItemTextLayout(context, layoutIt->second.Get(),
             layoutIt->first,
             D2D1::Point2F(static_cast<float>(textRect.left),
                 static_cast<float>(textRect.top)),
             D2D1::SizeF(width, height), layoutScale, 1.0f,
-            app_->IsLightContentTheme());
+            lightTheme, true);
 }
 
 /**
@@ -1641,33 +2016,54 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
  * @param sysIconIndex 系统图标索引，用于位图不可用时的回退绘制
  * @param name 项目名称
  * @param selected 是否选中
+ * @param iconIsMediaThumbnail 当前位图是否为应保持原样的内容型缩略图
  */
 void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     HBITMAP iconBitmap, int sysIconIndex,
-    const std::wstring& name, bool selected) const
+    const std::wstring& name, bool selected,
+    bool iconIsMediaThumbnail, std::wstring_view demoIdentity,
+    const DesktopWidget* demoCollection,
+    const ListItemDetails& details,
+    std::optional<bool> lightTheme) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
+    const bool light = lightTheme.value_or(
+        app_->IsLightContentTheme());
     bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
     if (hovered && !selected)
     {
-        const bool lt = app_->IsLightContentTheme();
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
+            light ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f),
+            light ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
     }
     if (selected)
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
             D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.30f),
             D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.48f));
 
-    int itemH = std::max<int>(1, cell.bottom - cell.top);
-    int iconSz = std::max(1, std::min(Cu(32.0f),
-        std::max(1, itemH - Cu(4.0f))));
-    RECT iconRect = MakeRect(cell.left + Cu(4.0f), cell.top + (itemH - iconSz) / 2,
-        cell.left + Cu(4.0f) + iconSz, cell.top + (itemH + iconSz) / 2);
+    RECT nameCell = cell;
+    const auto columns = GetDetailsColumns(
+        cell.right - cell.left);
+    if (IsDetailsVisible())
+        nameCell.right = std::min<LONG>(
+            cell.right, cell.left + columns.nameWidth);
 
-    if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(iconBitmap))
+    const auto visualMetrics = GetItemVisualMetrics();
+    RECT iconRect = snowdesktop::ResolveListItemIconRect(
+        nameCell, nameCell.left + Cu(4.0f), visualMetrics);
+
+    if (!demoIdentity.empty())
+    {
+        if (demoCollection)
+            app_->DrawDemoCollectionIdentityIcon(
+                context, *demoCollection, demoIdentity, iconRect);
+        else
+            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect);
+    }
+    else if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
+            iconBitmap,
+            app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))
     {
         context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
             D2D1_INTERPOLATION_MODE_LINEAR);
@@ -1677,11 +2073,75 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
     }
 
-    DrawListItemTitle(context, cell, iconRect, name);
+    const std::wstring title = demoIdentity.empty()
+        ? name
+        : (demoCollection
+            ? app_->GetDemoCollectionIdentityTitle(
+                *demoCollection, demoIdentity)
+            : app_->GetDemoIdentityTitle(demoIdentity));
+    DrawListItemTitle(
+        context, nameCell, iconRect, title, light);
+
+    if (!IsDetailsVisible() || !demoIdentity.empty()) return;
+
+    LONG left = nameCell.right;
+    RECT modified = columns.showModified
+        ? MakeRect(left, cell.top,
+            left + columns.modifiedWidth, cell.bottom)
+        : RECT{};
+    left = modified.right > modified.left ? modified.right : left;
+    RECT type = columns.showType
+        ? MakeRect(left, cell.top,
+            left + columns.typeWidth, cell.bottom)
+        : RECT{};
+    left = type.right > type.left ? type.right : left;
+    RECT size = columns.showSize
+        ? MakeRect(left, cell.top, cell.right, cell.bottom)
+        : RECT{};
+
+    IDWriteTextFormat* format = GetCuTextFormatWeight(
+        app_->listItemFontSizeCu_, app_->itemFontWeight_, false);
+    if (!format) format = app_->componentListTextFormat_.Get();
+    const D2D1_COLOR_F color = light
+        ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.66f)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f);
+    const int pad = Cu(7.0f);
+    if (!IsRectEmptyRect(modified))
+    {
+        modified.left += pad;
+        modified.right -= pad;
+        app_->DrawD2DTextEllipsis(
+            context, FormatListModifiedTime(details.modifiedTime),
+            modified, format, color,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
+    if (!IsRectEmptyRect(type))
+    {
+        type.left += pad;
+        type.right -= pad;
+        app_->DrawD2DTextEllipsis(
+            context, details.typeName,
+            type, format, color,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
+    if (!IsRectEmptyRect(size))
+    {
+        size.left += pad;
+        size.right -= pad;
+        app_->DrawD2DTextEllipsis(
+            context, details.isDirectory
+                ? L"" : FormatListFileSize(details.fileSize),
+            size, format, color,
+            DWRITE_TEXT_ALIGNMENT_TRAILING,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+    }
 }
 
 void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RECT rect,
-    const std::wstring& name, bool isDir, bool showLabel) const
+    const std::wstring& name, bool isDir, bool showLabel,
+    bool centerIconVertically, int forcedIconSize) const
 {
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
@@ -1690,17 +2150,27 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
 
-    if (width > height * 2)
+    if (forcedIconSize > 0)
     {
-        const int iconSize = std::max(1, std::min(Cu(32.0f),
-            std::max(1, height - Cu(4.0f))));
-        RECT iconRect = MakeRect(rect.left + Cu(4.0f),
-            rect.top + (height - iconSize) / 2,
-            rect.left + Cu(4.0f) + iconSize,
-            rect.top + (height + iconSize) / 2);
+        const RECT iconRect = snowdesktop::ResolveCenteredIconRect(
+            rect, forcedIconSize);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
-            DrawListItemTitle(context, rect, iconRect, label);
+            app_->DrawItemText(context, rect, label, false, 1.0f,
+                app_->IsLightContentTheme());
+        return;
+    }
+
+    if (width > height * 2)
+    {
+        const auto visualMetrics = GetItemVisualMetrics();
+        RECT iconRect = snowdesktop::ResolveListItemIconRect(
+            rect, rect.left + Cu(4.0f), visualMetrics);
+        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        if (showLabel)
+            DrawListItemTitle(
+                context, rect, iconRect, label,
+                app_->IsLightContentTheme());
         return;
     }
 
@@ -1709,7 +2179,10 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         std::round(50.0f * layoutScale));
     if (height >= regularLayoutThreshold)
     {
-        const RECT iconRect = app_->GetItemIconRect(rect);
+        RECT iconRect = app_->GetItemIconRect(rect);
+        if (centerIconVertically)
+            iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
+                rect, iconRect);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
@@ -1767,15 +2240,17 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     if (contentHeight <= visibleHeight || visibleHeight <= 0) return;
     if (!hovered) return;
 
-    int maxScroll = std::max(0, contentHeight - visibleHeight);
-    if (maxScroll <= 0) return;
+    const auto geometry = snowdesktop::widget_scroll_rules::
+        ResolveScrollbarAxisGeometry(
+            body.top, body.bottom, contentHeight,
+            visibleHeight, scrollOffset, cellScale);
+    if (geometry.maximum <= 0 || geometry.TrackExtent() <= 0) return;
 
     const int trackWidth = std::max(2, static_cast<int>(std::round(5.0f * cellScale)));
     const int trackMargin = std::max(1, static_cast<int>(std::round(2.0f * cellScale)));
     int trackLeft = body.right - trackWidth - trackMargin;
-    int trackTop = body.top + std::max(1, static_cast<int>(std::round(4.0f * cellScale)));
-    int trackBottom = body.bottom - std::max(1, static_cast<int>(std::round(4.0f * cellScale)));
-    int trackHeight = std::max(1, trackBottom - trackTop);
+    const int trackTop = geometry.trackStart;
+    const int trackBottom = geometry.trackEnd;
 
     // Track background
     RECT trackRect = MakeRect(trackLeft, trackTop, trackLeft + trackWidth, trackBottom);
@@ -1791,15 +2266,8 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
         context->FillRoundedRectangle(rr, trackBrush.Get());
     }
 
-    // Thumb
-    float ratio = std::clamp((float)visibleHeight / (float)contentHeight, 0.08f, 1.0f);
-    float scrollRatio = std::clamp((float)scrollOffset / (float)maxScroll, 0.0f, 1.0f);
-    int thumbHeight = std::max(
-        std::max(8, static_cast<int>(std::round(20.0f * cellScale))),
-        (int)(trackHeight * ratio));
-    int thumbTravel = trackHeight - thumbHeight;
-    int thumbTop = trackTop + (int)(thumbTravel * scrollRatio);
-    RECT thumbRect = MakeRect(trackLeft, thumbTop, trackLeft + trackWidth, thumbTop + thumbHeight);
+    RECT thumbRect = MakeRect(trackLeft, geometry.thumbStart,
+        trackLeft + trackWidth, geometry.thumbEnd);
 
     ComPtr<ID2D1SolidColorBrush> thumbBrush;
     context->CreateSolidColorBrush(
@@ -1814,6 +2282,59 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
     }
 }
 
+void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
+    int contentWidth, int visibleWidth, int scrollOffset, bool hovered,
+    bool lightTheme, float cellScale)
+{
+    if (contentWidth <= visibleWidth || visibleWidth <= 0 || !hovered) return;
+
+    const auto geometry = snowdesktop::widget_scroll_rules::
+        ResolveScrollbarAxisGeometry(
+            body.left, body.right, contentWidth,
+            visibleWidth, scrollOffset, cellScale);
+    if (geometry.maximum <= 0 || geometry.TrackExtent() <= 0) return;
+
+    const int trackHeight = std::max(
+        2, static_cast<int>(std::round(5.0f * cellScale)));
+    const int trackMargin = std::max(
+        1, static_cast<int>(std::round(2.0f * cellScale)));
+    const int trackLeft = geometry.trackStart;
+    const int trackRight = geometry.trackEnd;
+    const int trackTop = body.bottom - trackHeight - trackMargin;
+
+    ComPtr<ID2D1SolidColorBrush> trackBrush;
+    context->CreateSolidColorBrush(
+        lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f),
+        &trackBrush);
+    if (trackBrush)
+    {
+        const auto track = D2D1::RoundedRect(D2D1::RectF(
+            static_cast<float>(trackLeft), static_cast<float>(trackTop),
+            static_cast<float>(trackRight),
+            static_cast<float>(trackTop + trackHeight)),
+            static_cast<float>(trackHeight) * 0.5f,
+            static_cast<float>(trackHeight) * 0.5f);
+        context->FillRoundedRectangle(track, trackBrush.Get());
+    }
+
+    ComPtr<ID2D1SolidColorBrush> thumbBrush;
+    context->CreateSolidColorBrush(
+        lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.35f),
+        &thumbBrush);
+    if (thumbBrush)
+    {
+        const auto thumb = D2D1::RoundedRect(D2D1::RectF(
+            static_cast<float>(geometry.thumbStart), static_cast<float>(trackTop),
+            static_cast<float>(geometry.thumbEnd),
+            static_cast<float>(trackTop + trackHeight)),
+            static_cast<float>(trackHeight) * 0.5f,
+            static_cast<float>(trackHeight) * 0.5f);
+        context->FillRoundedRectangle(thumb, thumbBrush.Get());
+    }
+}
+
 /**
  * @brief 绘制组件滚动条（通过 DrawScrollbarAt 实现）
  * @param context D2D 设备上下文
@@ -1821,9 +2342,16 @@ void DrawScrollbarAt(ID2D1DeviceContext* context, RECT body, int contentHeight,
  */
 void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
 {
-    RECT body = GetBodyRect();
-    DrawScrollbarAt(context, body, GetTotalContentHeight(),
-        GetVisibleContentHeight(), GetScrollOffset(), hovered, app_->IsLightContentTheme(), GetCellScale());
+    const RECT viewport = GetContentViewportRect();
+    const int visible = GetVisibleContentHeight();
+    const int content = std::max(
+        GetTotalContentHeight(), visible + GetMaxScrollOffset());
+    const bool active = app_ &&
+        app_->widgetScrollbarDragging_ &&
+        app_->widgetScrollbarDragContainer_ == this;
+    DrawScrollbarAt(context, viewport, content,
+        visible, GetScrollOffset(), hovered || active,
+        app_->IsLightContentTheme(), GetCellScale());
 }
 
 // ── Cached clip geometry ─────────────────────────────────────
@@ -1899,9 +2427,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         gradientEndA = guideAppearance.gradientEndA;
         cornerRadiusCu = guideAppearance.cornerRadius;
     }
-    else if (app_->settingsWindow_)
+    else if (app_)
     {
-        const auto& p = app_->settingsWindow_->GetPersonalization();
+        const auto& p = app_->CurrentPersonalization();
         fillColor = D2D1::ColorF(p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
         borderColor = D2D1::ColorF(p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
         gradientEndA = p.gradientEndA;
@@ -2000,7 +2528,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (showHandle)
     {
         // Title text (with shadow)
-        if (!data_->title.empty() && data_->showTitle)
+        const bool demoCollectionTitle =
+            app_->ShouldUseDemoCollectionIdentity(data_);
+        const std::wstring displayTitle = demoCollectionTitle
+            ? app_->GetDemoCollectionCategoryTitle(*data_)
+            : data_->title;
+        if (!displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -2014,8 +2547,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 if (fmt)
                 {
                     ComPtr<IDWriteTextLayout> layout;
-                    dwrite->CreateTextLayout(data_->title.c_str(),
-                        static_cast<UINT32>(data_->title.size()), fmt,
+                    dwrite->CreateTextLayout(displayTitle.c_str(),
+                        static_cast<UINT32>(displayTitle.size()), fmt,
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {

@@ -45,6 +45,7 @@ namespace
 
     bool ReadStringField(const std::string& text, const char* field, char* out, size_t outSize)
     {
+        if (!out || outSize == 0) return false;
         std::string marker = "\"" + std::string(field) + "\"";
         size_t p = text.find(marker);
         if (p == std::string::npos) return false;
@@ -55,8 +56,9 @@ namespace
         size_t end = text.find('"', p + 1);
         if (end == std::string::npos) return false;
         std::string value = text.substr(p + 1, end - p - 1);
-        std::strncpy(out, value.c_str(), outSize - 1);
-        out[outSize - 1] = '\0';
+        const size_t copyLength = std::min(value.size(), outSize - 1);
+        std::memcpy(out, value.data(), copyLength);
+        out[copyLength] = '\0';
         return true;
     }
 
@@ -79,10 +81,16 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     bool val = false;
     if (ReadBoolField(text, "softwareDesktopEnabled", val))
         settings.softwareDesktopEnabled = val;
+    if (ReadBoolField(text, "demoModeEnabled", val))
+        settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
         settings.doubleClickHideDesktop = val;
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
+    if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
+        settings.pageNavigationKeyboardEnabled = val;
+    if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
+        settings.widgetDeveloperToolsEnabled = val;
     int hotkeyValue = 0;
     if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
         hotkeyValue))
@@ -98,11 +106,46 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.desktopPassthroughHotkeyVirtualKey =
             static_cast<UINT>(hotkeyValue);
     }
+    if (ReadIntField(text, "pageNavigationPreviousModifiers",
+            hotkeyValue))
+    {
+        settings.pageNavigationPreviousModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "pageNavigationPreviousVirtualKey",
+            hotkeyValue) && hotkeyValue >= 0 && hotkeyValue <= 0xFF)
+    {
+        settings.pageNavigationPreviousVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
+    if (ReadIntField(text, "pageNavigationNextModifiers",
+            hotkeyValue))
+    {
+        settings.pageNavigationNextModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "pageNavigationNextVirtualKey",
+            hotkeyValue) && hotkeyValue >= 0 && hotkeyValue <= 0xFF)
+    {
+        settings.pageNavigationNextVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
     int theme = 0;
     if (ReadIntField(text, "quickNavTheme", theme))
     {
         if (theme >= 4) theme -= 2;
         settings.quickNavTheme = std::clamp(theme, 0, 3);
+    }
+    if (ReadIntField(text, "collectionPopupTheme", theme))
+        settings.collectionPopupTheme = std::clamp(theme, 0, 3);
+    int agentSkillTargetMask = 0;
+    if (ReadIntField(text, "agentSkillTargetMask", agentSkillTargetMask) &&
+        agentSkillTargetMask >= 0 &&
+        agentSkillTargetMask <= GeneralSettings::kAllAgentSkillTargetsMask)
+    {
+        settings.agentSkillTargetMask = agentSkillTargetMask;
     }
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     return true;
@@ -115,6 +158,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "{\n";
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
+    file << "  \"demoModeEnabled\": "
+         << (settings.demoModeEnabled ? "true" : "false") << ",\n";
     file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
     file << "  \"desktopPassthroughHotkeyEnabled\": "
          << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
@@ -123,7 +168,25 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << settings.desktopPassthroughHotkeyModifiers << ",\n";
     file << "  \"desktopPassthroughHotkeyVirtualKey\": "
          << settings.desktopPassthroughHotkeyVirtualKey << ",\n";
+    file << "  \"pageNavigationKeyboardEnabled\": "
+         << (settings.pageNavigationKeyboardEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"pageNavigationPreviousModifiers\": "
+         << settings.pageNavigationPreviousModifiers << ",\n";
+    file << "  \"pageNavigationPreviousVirtualKey\": "
+         << settings.pageNavigationPreviousVirtualKey << ",\n";
+    file << "  \"pageNavigationNextModifiers\": "
+         << settings.pageNavigationNextModifiers << ",\n";
+    file << "  \"pageNavigationNextVirtualKey\": "
+         << settings.pageNavigationNextVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
+    file << "  \"collectionPopupTheme\": "
+         << settings.collectionPopupTheme << ",\n";
+    file << "  \"widgetDeveloperToolsEnabled\": "
+         << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"agentSkillTargetMask\": "
+         << settings.agentSkillTargetMask << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
     return true;

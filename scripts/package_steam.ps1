@@ -26,6 +26,16 @@ $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
 $buildOutput = Join-Path $repositoryRoot ".build\Release"
+$runtimeDirectory = "SnowDesktop.Runtime"
+Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
+$steamIdentity = Get-Content -LiteralPath `
+    (Join-Path $repositoryRoot "packaging\steam-identity.json") `
+    -Encoding UTF8 -Raw | ConvertFrom-Json
+$steamAppId = [uint32]$steamIdentity.appId
+$windowsDepotId = [uint32]$steamIdentity.windowsDepotId
+if ($steamAppId -eq 0 -or $windowsDepotId -eq 0) {
+    throw "packaging\steam-identity.json contains an invalid Steam identity."
+}
 $version = (Get-Content -LiteralPath `
     (Join-Path $repositoryRoot "version.json") -Encoding UTF8 -Raw |
     ConvertFrom-Json).version
@@ -50,9 +60,19 @@ if (-not $SkipBuild) {
     }
 }
 
+$runtimeFiles = @(
+    "SnowDesktopTaskbarHook.dll",
+    "SnowDesktopWallpaperHook.dll",
+    "SnowDesktopWallpaperHook32.dll",
+    "SnowDesktopWallpaperInjector32.exe",
+    "steam_api64.dll"
+)
 $required = @(
     "SnowDesktop.exe",
     "SnowDesktopTaskbarHook.dll",
+    "SnowDesktopWallpaperHook.dll",
+    "SnowDesktopWallpaperHook32.dll",
+    "SnowDesktopWallpaperInjector32.exe",
     "SnowDesktopWorkshopManager.exe",
     "SnowDesktopSteamBridge.exe",
     "snowwidget.exe",
@@ -61,7 +81,12 @@ $required = @(
     "SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md"
 )
 foreach ($name in $required) {
-    $path = Join-Path $buildOutput $name
+    $path = if ($runtimeFiles -contains $name) {
+        Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
+    }
+    else {
+        Join-Path $buildOutput $name
+    }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required Steam payload file is missing: $path"
     }
@@ -77,15 +102,51 @@ foreach ($name in @(
         throw "$name is an SDK-free build. Configure the external Steamworks SDK before packaging."
     }
 }
+$bundledSkillCli = Join-Path $buildOutput `
+    "widgets\snowdesktop-lua-widget\bin\snowwidget.exe"
+if (-not (Test-Path -LiteralPath $bundledSkillCli -PathType Leaf)) {
+    throw "Built Agent Skill CLI is missing: $bundledSkillCli"
+}
+if ((Get-Sha256 -Path $bundledSkillCli) -ne
+    (Get-Sha256 -Path (Join-Path $buildOutput "snowwidget.exe"))) {
+    throw "The Agent Skill CLI does not match the standalone snowwidget.exe."
+}
+
+$bridgePath = Join-Path $buildOutput "SnowDesktopSteamBridge.exe"
+$configurationText = & $bridgePath configuration
+if ($LASTEXITCODE -ne 0) {
+    throw "Steam bridge configuration query failed with exit code $LASTEXITCODE."
+}
+$configuration = $configurationText | ConvertFrom-Json
+if (-not $configuration.ok -or
+    -not $configuration.steamworksCompiled -or
+    [uint32]$configuration.expectedAppId -ne $steamAppId -or
+    [uint32]$configuration.windowsDepotId -ne $windowsDepotId) {
+    throw "Steam bridge identity does not match packaging\steam-identity.json."
+}
 
 $payload = Join-Path $OutputDirectory "SnowDesktop"
 if (Test-Path -LiteralPath $OutputDirectory) {
     Remove-Item -LiteralPath $OutputDirectory -Recurse -Force
 }
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
+$runtimeRoot = Join-Path $payload $runtimeDirectory
+New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 foreach ($name in $required) {
-    Copy-Item -LiteralPath (Join-Path $buildOutput $name) `
-        -Destination (Join-Path $payload $name) -Force
+    $destination = if ($runtimeFiles -contains $name) {
+        Join-Path $runtimeRoot $name
+    }
+    else {
+        Join-Path $payload $name
+    }
+    $source = if ($runtimeFiles -contains $name) {
+        Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
+    }
+    else {
+        Join-Path $buildOutput $name
+    }
+    Copy-Item -LiteralPath $source `
+        -Destination $destination -Force
 }
 foreach ($name in @("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md", "README.en.md")) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) `
@@ -95,6 +156,47 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "widgets") `
     -Destination (Join-Path $payload "widgets") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "lang") `
     -Destination (Join-Path $payload "lang") -Recurse -Force
+$null = Copy-SnowDesktopDeploymentPayload `
+    -BuildOutput $buildOutput `
+    -Destination $payload `
+    -RuntimeDirectory $runtimeDirectory
+Enable-SnowDesktopPrivateRuntimeAssembly `
+    -BuildOutput $buildOutput `
+    -PackageRoot $payload `
+    -Version $version `
+    -RuntimeDirectory $runtimeDirectory `
+    -AdditionalRuntimeDlls @("steam_api64.dll") `
+    -AdditionalExecutables @(
+        "SnowDesktopSteamBridge.exe",
+        "SnowDesktopWorkshopManager.exe")
+$packagedConfigurationText = & (Join-Path $payload `
+    "SnowDesktopSteamBridge.exe") configuration
+if ($LASTEXITCODE -ne 0) {
+    throw "Packaged Steam bridge could not load its private runtime (exit $LASTEXITCODE)."
+}
+$packagedConfiguration = $packagedConfigurationText | ConvertFrom-Json
+if (-not $packagedConfiguration.ok -or
+    -not $packagedConfiguration.steamworksCompiled -or
+    [uint32]$packagedConfiguration.expectedAppId -ne $steamAppId) {
+    throw "Packaged Steam bridge private runtime validation failed."
+}
+$licensesDestination = Join-Path $payload "licenses"
+Copy-SnowDesktopRepositoryLicenses `
+    -RepositoryRoot $repositoryRoot `
+    -Destination $licensesDestination
+$developerAssets = @(Get-ChildItem -LiteralPath $payload -Recurse -Force |
+    Where-Object {
+        $_.FullName.Substring($payload.Length).TrimStart('\') `
+            -match '(^|\\)developer_assets(\\|$)'
+    })
+if ($developerAssets.Count -ne 0) {
+    throw "Steam payload contains developer-only assets: $($developerAssets.FullName -join ', ')"
+}
+$payloadSkillBin = Join-Path $payload `
+    "widgets\snowdesktop-lua-widget\bin"
+New-Item -ItemType Directory -Path $payloadSkillBin -Force | Out-Null
+Copy-Item -LiteralPath $bundledSkillCli `
+    -Destination (Join-Path $payloadSkillBin "snowwidget.exe") -Force
 
 $forbidden = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
     Where-Object {
@@ -117,12 +219,21 @@ $steamDlls = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
 if ($steamDlls.Count -ne 1 -or $steamDlls[0].Name -cne "steam_api64.dll") {
     throw "The payload must contain exactly one permitted steam_api64.dll."
 }
+$payloadSkillCli = Join-Path $payload `
+    "widgets\snowdesktop-lua-widget\bin\snowwidget.exe"
+if (-not (Test-Path -LiteralPath $payloadSkillCli -PathType Leaf) -or
+    (Get-Sha256 -Path $payloadSkillCli) -ne
+        (Get-Sha256 -Path (Join-Path $payload "snowwidget.exe"))) {
+    throw "The Steam payload contains an unavailable or stale Agent Skill CLI."
+}
 
 $manifest = [ordered]@{
     schemaVersion = 1
     version = $version
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
-    steamworksRedistributable = "steam_api64.dll"
+    steamAppId = $steamAppId
+    windowsDepotId = $windowsDepotId
+    steamworksRedistributable = "$runtimeDirectory/steam_api64.dll"
     sdkMaterialsIncluded = $false
     files = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
         ForEach-Object {
@@ -143,4 +254,4 @@ $hash = Get-Sha256 -Path $zip
 "$hash  $([System.IO.Path]::GetFileName($zip))" |
     Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 Write-Host "Steam payload generated: $zip" -ForegroundColor Green
-Write-Host "Only steam_api64.dll from the Steamworks SDK is included."
+Write-Host "Only $runtimeDirectory\steam_api64.dll from the Steamworks SDK is included."

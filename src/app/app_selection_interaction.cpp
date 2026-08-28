@@ -10,8 +10,73 @@ void DesktopApp::ClearSelection()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavVisualFocus_ = false;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
+}
+
+bool DesktopApp::OwnsWidgetKeyboardNavigation(
+    const ScrollingItemWidget* widget) const
+{
+    if (!widget || widget->IsPreviewRendering() ||
+        !keyboardNavInsideWidget_ ||
+        keyboardNavWidgetIndex_ >= widgets_.size())
+        return false;
+
+    const DesktopWidget* data = widget->GetWidgetData();
+    const auto& owner = widgets_[keyboardNavWidgetIndex_];
+    if (data == &owner)
+        return true;
+    if (!widget->IsHosted() ||
+        owner.type != DesktopWidgetType::FileGroup ||
+        !data)
+        return false;
+    return std::find(
+        owner.childWidgetIds.begin(),
+        owner.childWidgetIds.end(),
+        data->id) != owner.childWidgetIds.end();
+}
+
+bool DesktopApp::HasSelectedFilesInWidget(
+    size_t widgetIndex) const
+{
+    if (widgetIndex >= widgets_.size())
+        return false;
+
+    const auto hasDirectSelection = [&](const DesktopWidget& widget) {
+        for (const auto& key : widget.itemKeys)
+        {
+            const size_t itemIndex =
+                FindItemIndexByKey(key);
+            if (itemIndex < items_.size() &&
+                items_[itemIndex].selected)
+                return true;
+        }
+        return std::any_of(
+            widget.folderEntries.begin(),
+            widget.folderEntries.end(),
+            [](const FolderEntry& entry) {
+                return entry.selected;
+            });
+    };
+
+    const auto& widget = widgets_[widgetIndex];
+    if (hasDirectSelection(widget))
+        return true;
+    if (widget.type != DesktopWidgetType::CollectionGroup &&
+        widget.type != DesktopWidgetType::FileGroup)
+        return false;
+
+    for (const auto& childId : widget.childWidgetIds)
+    {
+        const size_t childIndex =
+            FindWidgetIndexById(childId);
+        if (childIndex < widgets_.size() &&
+            hasDirectSelection(widgets_[childIndex]))
+            return true;
+    }
+    return false;
 }
 
 /**
@@ -23,6 +88,10 @@ void DesktopApp::ClearSelection()
  */
 void DesktopApp::SyncKeyboardNavFromSelection()
 {
+    // Pointer selection may seed the next arrow-key navigation position, but
+    // it must not display the keyboard-only focus outline.
+    keyboardNavVisualFocus_ = false;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
@@ -175,6 +244,7 @@ void DesktopApp::SyncKeyboardNavFromSelection()
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
+    keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 }

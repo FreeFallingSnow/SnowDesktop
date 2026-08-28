@@ -152,14 +152,17 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
     DesktopItem* occupiedBy = nullptr;
     for (auto& item : *items_)
     {
-        if (app_ && app_->collectedKeysCache_.count(ToUpperInvariant(item.layoutKey))) continue;
-        if (item.gridCell.pageId == page->id &&
-            item.gridCell.column == col && item.gridCell.row == row &&
-            item.bounds.left < item.bounds.right && item.bounds.top < item.bounds.bottom)
-        {
-            occupiedBy = &item;
-            break;
-        }
+        if (item.gridCell.pageId != page->id ||
+            item.gridCell.column != col ||
+            item.gridCell.row != row ||
+            item.bounds.left >= item.bounds.right ||
+            item.bounds.top >= item.bounds.bottom)
+            continue;
+        if (app_ && app_->collectedKeysCache_.count(
+                ToUpperInvariant(item.layoutKey)))
+            continue;
+        occupiedBy = &item;
+        break;
     }
 
     if (!occupiedBy) return HitRegion::Empty;
@@ -185,7 +188,9 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
 
     if (dynamic_cast<DockContainer*>(origin))
     {
-        GridCell target = app_->CellFromPointForDrag(app_->dragSession_.CurrentPoint());
+        GridCell target = app_->ResolveDesktopRequestCell(
+            app_->dragSession_.SourceList(),
+            app_->dragSession_.CurrentPoint());
         app_->MoveDockItemsToDesktop(sourceItems, target);
         return;
     }
@@ -304,7 +309,12 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
             ? HitRegion::None
             : HitRegion::Empty;
     }
-    if (region == HitRegion::SortBefore && app_)
+    const bool supportsShellHandoff =
+        !app_ || !app_->dragSession_.IsActive() ||
+        app_->dragSession_.SourceList().
+            SupportsDesktopShellHandoff();
+    if (region == HitRegion::SortBefore && app_ &&
+        supportsShellHandoff)
     {
         // Check for Handoff: mouse on an unselected icon
         int hit = app_->HitTestItem(pt);
@@ -330,7 +340,7 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
  * @return 提示字符串，根据拖放类型和修饰键返回不同的中文提示
  * @details 根据以下情况生成合适的拖放提示：
  *          - Handoff 模式：提示交给目标应用处理
- *          - 外部拖放（origin 为空）：根据修饰键提示创建快捷方式/移动/复制/放置
+ *          - 外部拖放（origin 为空）：根据实际落地动作提示创建快捷方式/移动/复制
  *          - 内部拖放：根据修饰键和最佳放置位置提示创建快捷方式/复制/移动
  */
 std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
@@ -343,7 +353,6 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
 
     bool ctrlDown = (mods & MK_CONTROL) != 0;
     bool altDown  = (mods & MK_ALT) != 0;
-    bool shiftDown = (mods & MK_SHIFT) != 0;
 
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
@@ -359,13 +368,21 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         }
     }
 
-    // External drag — simple hint
+    // 与 BuildDropPreviewList 的外部文件策略保持一致：默认复制，
+    // 修饰键可切换为移动或创建快捷方式，不再显示笼统的“放置”。
     if (!origin)
     {
-        if (altDown)   return _LW("core.drag.release_create_shortcut");
-        if (shiftDown) return _LW("core.drag.release_move_desktop");
-        if (ctrlDown)  return _LW("core.drag.release_copy_desktop");
-        return _LW("core.drag.release_place_desktop");
+        switch (DropActionFromMods(
+            mods, DropAction::Copy))
+        {
+        case DropAction::Link:
+            return _LW("core.drag.release_create_shortcut");
+        case DropAction::Copy:
+            return _LW("core.drag.release_copy_desktop");
+        case DropAction::Move:
+        default:
+            return _LW("core.drag.release_move_desktop");
+        }
     }
 
     const DragSourceList& sourceList =
@@ -438,19 +455,8 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     if (altDown)  return _LW("core.drag.release_shortcut_here");
     if (ctrlDown) return _LW("core.drag.release_copy_here");
 
-    auto* originWidget =
-        dynamic_cast<WidgetContainer*>(origin);
-    DesktopWidget* originData = originWidget
-        ? originWidget->GetWidgetData()
-        : nullptr;
-    const POINT targetPoint =
-        originData &&
-        originData->type ==
-            DesktopWidgetType::CollectionGroup
-            ? dragPoint
-            : app_->GetDragTargetPoint(dragPoint);
     GridCell bestCell = app_->FindBestDropCell(
-        app_->CellFromPointForDrag(targetPoint));
+        app_->ResolveDesktopRequestCell(sourceList, dragPoint));
 
     // When dragging from a widget (not from desktop itself), the selected items
     // are not in the desktop items_ — check cell occupancy directly instead.
@@ -500,7 +506,8 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         });
         if (hasWidgetEntry)
         {
-            GridCell requested = app_->CellFromPointForDrag(dragPoint);
+            GridCell requested = app_->ResolveDesktopRequestCell(
+                app_->dragSession_.SourceList(), dragPoint);
             const GridPage* targetPage = FindGridPage(app_->gridPages_, requested.pageId);
             if (!targetPage) return;
 
@@ -544,11 +551,23 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                 span.rows = std::max(1, span.rows);
 
                 GridCell landing;
-                if (!app_->TryFindFreeCell(span, usedSlots, landing,
-                    requested.pageId, startSlot))
-                    continue;
-
+                landing.pageId = requested.pageId;
+                landing.column = startSlot / std::max(1, targetPage->rows);
+                landing.row = startSlot % std::max(1, targetPage->rows);
+                landing = ClampGridCellToFitPage(
+                    *targetPage, landing, span);
                 RECT bounds = GetGridRect(app_->gridPages_, landing, span);
+                // 与桌面组件拖拽一致：边缘处收回起点并保留原跨度。命中区域
+                // 被占用（或组件大于整页）时不寻找其他位置，绘制红色禁止框。
+                if (!GridAreaFitsPage(*targetPage, landing, span) ||
+                    app_->AreGridSlotsMarked(usedSlots, landing, span))
+                {
+                    app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
+                        D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f),
+                        D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f), 2.0f);
+                    continue;
+                }
+
                 app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f),
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);

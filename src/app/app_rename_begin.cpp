@@ -185,8 +185,10 @@ void DesktopApp::BeginRenameSelected(
         }
 
         if (renameFont_) DeleteObject(renameFont_);
-        const float renameScale = GetItemLayoutScale(frame);
-        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
+        const float renameScale = GetGridCuScaleForBounds(
+            gridPages_, frame);
+        renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
+            ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -264,16 +266,31 @@ void DesktopApp::BeginRenameSelected(
         renameController_.Reset();
         return;
     }
-    RECT textRect = GetItemTextRect(itemBounds, true);
+    const bool popupListRename =
+        !dockFolderPopupOpen_ &&
+        popupWidgetIndex_ < widgets_.size() &&
+        IsCollectionPopupInteractive() &&
+        widgets_[popupWidgetIndex_].listMode;
+    RECT textRect = popupListRename
+        ? GetCollectionPopupItemTextRect(
+            itemBounds)
+        : GetItemTextRect(itemBounds, true);
     InflateRect(&textRect, 2, 2);
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
+    DWORD renameStyle =
+        WS_POPUP | WS_VISIBLE |
+        ES_AUTOVSCROLL;
+    renameStyle |= popupListRename
+        ? ES_LEFT
+        : (ES_MULTILINE | ES_CENTER |
+            ES_WANTRETURN);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT",
         items_[selectedIndex].name.c_str(),
-        WS_POPUP | WS_VISIBLE | ES_MULTILINE | ES_CENTER | ES_AUTOVSCROLL | ES_WANTRETURN,
+        renameStyle,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
@@ -285,8 +302,10 @@ void DesktopApp::BeginRenameSelected(
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemLayoutScale(itemBounds);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
+    const float renameScale = GetGridCuScaleForBounds(
+        gridPages_, itemBounds);
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
+        ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");

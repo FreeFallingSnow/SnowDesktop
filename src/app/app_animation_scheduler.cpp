@@ -37,6 +37,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                         ResetCollectionPopupAnimationCache();
                         if (hwnd_ && IsWindow(hwnd_))
                             InvalidateRect(hwnd_, &dirty, FALSE);
+                        UpdateFloatingPopupWindowBounds(true);
                     }
                     else if (UpdateCollectionPopupCompositionAnimation(
                             false))
@@ -82,6 +83,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                                 luaWidgetPanelAnimationOverlay_, dirty);
                             ResetLuaWidgetPanelAnimationCache();
                             InvalidateRect(hwnd_, &dirty, FALSE);
+                            UpdateFloatingPopupWindowBounds(true);
                         }
                         else if (
                             UpdateLuaWidgetPanelCompositionAnimation(false))
@@ -90,9 +92,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                         }
                         else
                         {
-                            RECT dirty = GetLuaWidgetPanelRect();
-                            InflateRect(&dirty, 3, 3);
-                            InvalidateRect(hwnd_, &dirty, FALSE);
+                            InvalidateFloatingPopupWindow(true);
                         }
                     }
 
@@ -106,7 +106,8 @@ void DesktopApp::EnsureUiAnimationFrame()
     }
 
     if (!quickNavigationAnimationFrameToken_ &&
-        quickNavigationAnimation_.IsAnimating())
+        quickNavigationAnimation_.IsAnimating() &&
+        !quickNavigationAnimationCompositorDriven_)
     {
         quickNavigationAnimationFrameToken_ =
             uiAnimationScheduler_.StartAnimation(
@@ -247,17 +248,18 @@ void DesktopApp::EnsureUiAnimationFrame()
                     }
 
                     if (floatingDockPointerPresentPending_ &&
-                        (!floatingDockVisible_ ||
+                        (!floatingDockHostActive_ ||
                          !floatingDockHwnd_ ||
                          !IsWindow(floatingDockHwnd_)))
                     {
                         floatingDockPointerPresentPending_ = false;
                     }
                     if (floatingDockPointerPresentPending_ &&
-                        floatingDockVisible_ &&
+                        floatingDockHostActive_ &&
                         floatingDockHwnd_ &&
                         IsWindow(floatingDockHwnd_) &&
-                        !floatingDockCompositionPaintInProgress_)
+                        floatingDockHost_ &&
+                        !floatingDockHost_->compositionPaintInProgress)
                     {
                         floatingDockPointerPresentPending_ = false;
                         RECT update{};
@@ -265,7 +267,8 @@ void DesktopApp::EnsureUiAnimationFrame()
                                 floatingDockHwnd_, &update, FALSE))
                         {
                             ValidateRect(floatingDockHwnd_, &update);
-                            if (!RenderFloatingDockCompositionFrame())
+                            if (!RenderFloatingDockCompositionFrame(
+                                    *floatingDockHost_))
                             {
                                 InvalidateRect(
                                     floatingDockHwnd_, nullptr, FALSE);

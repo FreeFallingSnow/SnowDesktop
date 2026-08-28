@@ -6,7 +6,8 @@
 void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
-    float layoutScale, float opacity, bool lightTheme)
+    float layoutScale, float opacity, bool lightTheme,
+    bool componentList)
 {
     if (!context || !layout || shadowKey.empty()) return;
     if (context != brushCacheContext_ || brushCache_.size() >= 512)
@@ -55,8 +56,11 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     // one bitmap draw per label.
     if (supportsEffects && itemTextEffectContext_ && !lightTheme)
     {
-        auto shadowIt = itemTextShadowCache_.find(shadowKey);
-        if (shadowIt == itemTextShadowCache_.end())
+        auto& shadowCache = componentList
+            ? componentListTextShadowCache_
+            : itemTextShadowCache_;
+        auto shadowIt = shadowCache.find(shadowKey);
+        if (shadowIt == shadowCache.end())
         {
             const UINT shadowPadding =
                 static_cast<UINT>(std::max(1.0f, std::ceil(6.0f * shadowScale)));
@@ -150,7 +154,7 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         itemTextEffectContext_->SetTarget(nullptr);
                         if (SUCCEEDED(shadowHr))
                         {
-                            shadowIt = itemTextShadowCache_.emplace(
+                            shadowIt = shadowCache.emplace(
                                 shadowKey, std::move(shadowBitmap)).first;
                         }
                     }
@@ -158,7 +162,7 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
             }
         }
 
-        if (shadowIt != itemTextShadowCache_.end() && shadowIt->second)
+        if (shadowIt != shadowCache.end() && shadowIt->second)
         {
             const float shadowPadding =
                 std::max(1.0f, std::ceil(6.0f * shadowScale));
@@ -204,8 +208,44 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const float layoutScale = GetItemLayoutScale(bounds);
-    const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
+    const auto visualMetrics = GetItemVisualMetrics(bounds);
+    const float fontScale = visualMetrics.fontScale;
+    const float fontSize = visualMetrics.fontSize;
+    const float lineHeight = fontSize * 7.0f / 6.0f;
+    auto createConfiguredLayout =
+        [&](const std::wstring& layoutText,
+            float maxWidth,
+            float maxHeight,
+            ComPtr<IDWriteTextLayout>& result) {
+        result.Reset();
+        if (FAILED(
+                dwriteFactory_->CreateTextLayout(
+                    layoutText.c_str(),
+                    static_cast<UINT32>(
+                        layoutText.size()),
+                    itemTextFormat_.Get(),
+                    maxWidth, maxHeight,
+                    &result)) ||
+            !result)
+        {
+            return false;
+        }
+
+        const DWRITE_TEXT_RANGE range{
+            0,
+            static_cast<UINT32>(
+                layoutText.size())
+        };
+        result->SetFontSize(
+            fontSize,
+            range);
+        result->SetLineSpacing(
+            DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            lineHeight,
+            fontSize * 5.0f / 6.0f);
+        return true;
+    };
+    const int scaleKey = static_cast<int>(std::round(fontScale * 1000.0f));
     std::wstring layoutKey = L"grid\x1f" + text + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
@@ -215,55 +255,6 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
-        auto createConfiguredLayout =
-            [&](const std::wstring& layoutText,
-                float maxWidth,
-                float maxHeight,
-                ComPtr<IDWriteTextLayout>& result) {
-            result.Reset();
-            if (FAILED(
-                    dwriteFactory_->CreateTextLayout(
-                        layoutText.c_str(),
-                        static_cast<UINT32>(
-                            layoutText.size()),
-                        itemTextFormat_.Get(),
-                        maxWidth, maxHeight,
-                        &result)) ||
-                !result)
-            {
-                return false;
-            }
-
-            const DWRITE_TEXT_RANGE range{
-                0,
-                static_cast<UINT32>(
-                    layoutText.size())
-            };
-            result->SetFontSize(
-                itemFontSize_ * layoutScale,
-                range);
-            if (lightTheme)
-            {
-                const auto weight =
-                    static_cast<
-                        DWRITE_FONT_WEIGHT>(
-                        std::max<int>(
-                            100,
-                            static_cast<int>(
-                                itemFontWeight_) -
-                                200));
-                result->SetFontWeight(
-                    weight, range);
-            }
-            result->SetLineSpacing(
-                DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                itemFontSize_ * 7.0f /
-                    6.0f * layoutScale,
-                itemFontSize_ * 5.0f /
-                    6.0f * layoutScale);
-            return true;
-        };
-
         std::wstring visibleText = text;
         if (!selected)
         {
@@ -304,9 +295,46 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             }
         }
 
+        float layoutHeight = th;
+        if (selected)
+        {
+            const int measurementHeight =
+                snowdesktop::item_layout_rules::
+                    TextHeightForLineCount(
+                        lineHeight,
+                        text.size() + 1);
+            ComPtr<IDWriteTextLayout>
+                fullMeasureLayout;
+            if (createConfiguredLayout(
+                    text, tw,
+                    static_cast<float>(
+                        measurementHeight),
+                    fullMeasureLayout))
+            {
+                DWRITE_TEXT_METRICS
+                    fullMetrics{};
+                if (SUCCEEDED(
+                        fullMeasureLayout->
+                            GetMetrics(
+                                &fullMetrics)))
+                {
+                    layoutHeight = std::max(
+                        layoutHeight,
+                        static_cast<float>(
+                            snowdesktop::
+                                item_layout_rules::
+                                    TextHeightForLineCount(
+                                        lineHeight,
+                                        fullMetrics.
+                                            lineCount)));
+                }
+            }
+        }
+
         ComPtr<IDWriteTextLayout> layout;
         if (!createConfiguredLayout(
-                visibleText, tw, th, layout))
+                visibleText, tw,
+                layoutHeight, layout))
             return;
 
         DWRITE_TEXT_METRICS metrics{};
@@ -326,7 +354,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                             text.size())
                     };
                 measureLayout->SetFontSize(
-                    itemFontSize_ * layoutScale,
+                    fontSize,
                     measureRange);
                 DWRITE_TEXT_METRICS m{};
                 measureLayout->GetMetrics(&m);
@@ -341,6 +369,19 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     float ty = static_cast<float>(textRect.top);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second->GetMetrics(&metrics);
+    if (selected)
+    {
+        th = std::max(
+            th,
+            static_cast<float>(
+                snowdesktop::
+                    item_layout_rules::
+                        TextHeightForLineCount(
+                            lineHeight,
+                            metrics.lineCount)));
+        textRect.bottom = textRect.top +
+            static_cast<LONG>(std::ceil(th));
+    }
     bool isSingleLine = (metrics.lineCount == 1);
     if (!isSingleLine)
     {
@@ -351,7 +392,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         {
             const DWRITE_TEXT_RANGE fullRange{
                 0, static_cast<UINT32>(text.size()) };
-            measureLayout->SetFontSize(itemFontSize_ * layoutScale, fullRange);
+            measureLayout->SetFontSize(fontSize, fullRange);
             DWRITE_TEXT_METRICS m{};
             measureLayout->GetMetrics(&m);
             isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
@@ -367,7 +408,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     DrawStyledItemTextLayout(
         context, layoutIt->second.Get(), layoutIt->first,
         D2D1::Point2F(static_cast<float>(textRect.left), ty),
-        D2D1::SizeF(tw, th), layoutScale, opacity, lightTheme);
+        D2D1::SizeF(tw, th), fontScale, opacity, lightTheme);
 }
 
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,

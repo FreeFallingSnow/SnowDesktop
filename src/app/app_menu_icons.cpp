@@ -1,5 +1,7 @@
 #include "app.h"
+#include "../menu_icon_render.h"
 #include "../modern_menu.h"
+#include "../widget_package_image_cache.h"
 
 // Converts the existing HMENU command model into fully custom popup windows.
 
@@ -316,12 +318,7 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     }
 
     menuIconDpi_ = dpi;
-    PersonalizationSettings appearance;
-    if (settingsWindow_)
-        appearance = settingsWindow_->GetPersonalization();
-    else
-        LoadPersonalization(
-            GetPersonalizationPath().c_str(), appearance);
+    const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
         appearance.contextMenuStyle, 0, 4);
     switch (menuAppearanceStyle_)
@@ -378,6 +375,11 @@ void DesktopApp::SetMenuItemIcon(
         }
 
         entry->glyph.clear();
+        if (entry->imageBitmap)
+        {
+            DeleteObject(entry->imageBitmap);
+            entry->imageBitmap = nullptr;
+        }
         entry->fontAwesome = font == MenuIconFont::FontAwesomeSolid;
         if (!entry->quickAction)
         {
@@ -398,6 +400,56 @@ void DesktopApp::SetMenuItemIcon(
         }
         return;
     }
+}
+
+void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
+    const snowdesktop::widget_runtime::PackageImageSource& source)
+{
+    if (!menu || source.pixels.empty()) return;
+    const snowdesktop::menu_icon::ImageSourceView sourceView{
+        source.pixels.data(), source.pixels.size(), source.width,
+        source.height, source.stride,
+    };
+    HBITMAP bitmap = snowdesktop::menu_icon::CreateImageBitmap(
+        sourceView, std::max(1, MulDiv(18,
+            static_cast<int>(menuIconDpi_), USER_DEFAULT_SCREEN_DPI)));
+    if (!bitmap) return;
+
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+
+        MenuIconEntry* entry = nullptr;
+        for (auto& existing : menuIconPool_)
+        {
+            if (existing->menu == menu &&
+                existing->position == static_cast<UINT>(i))
+            {
+                entry = existing.get();
+                break;
+            }
+        }
+        if (!entry)
+        {
+            auto created = std::make_unique<MenuIconEntry>();
+            created->menu = menu;
+            created->position = static_cast<UINT>(i);
+            entry = created.get();
+            menuIconPool_.push_back(std::move(created));
+        }
+        entry->glyph.clear();
+        if (entry->imageBitmap) DeleteObject(entry->imageBitmap);
+        entry->imageBitmap = bitmap;
+        return;
+    }
+    DeleteObject(bitmap);
 }
 
 void DesktopApp::SetMenuItemQuickAction(
@@ -566,6 +618,7 @@ UINT DesktopApp::ShowModernMenu(
                     icon->position == static_cast<UINT>(i))
                 {
                     item.glyph = icon->glyph;
+                    item.image = icon->imageBitmap;
                     item.iconFont = icon->fontAwesome
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;
@@ -600,18 +653,31 @@ UINT DesktopApp::ShowModernMenu(
     options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
     ConfigureModernMenuEventPump(options);
-    if (floatingDockVisible_ &&
+    const bool floatingPopupHostVisible =
+        ShouldShowFloatingPopupWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_) &&
+        IsWindowVisible(floatingPopupHwnd_);
+    const bool floatingDockHostVisible =
+        floatingDockHostActive_ &&
         floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
+        IsWindow(floatingDockHwnd_);
+    const HWND zOrderOwner =
+        snowdesktop::floating_popup_rules::
+            ResolveMenuZOrderOwner(
+                floatingPopupHostVisible,
+                floatingPopupHwnd_,
+                floatingDockHostVisible,
+                floatingDockHwnd_);
+    if (zOrderOwner)
     {
-        // The floating Dock lives in the topmost band for its whole visible
-        // lifetime. Joining that band is insufficient because its internal
-        // order can still leave a menu below the expanded collection popup,
-        // which is rendered inside the Dock HWND. Make the menu an owned
-        // popup of the floating host so Windows keeps it above that host,
-        // while Options::owner continues to receive focus after dismissal.
+        // The shared popup host and floating Dock live in the topmost band.
+        // Joining that band is insufficient because its internal order can
+        // still leave a menu below its source surface. Make the menu an owned
+        // popup of the active floating host so Windows keeps it above that
+        // host, while Options::owner still receives focus after dismissal.
         options.topmost = true;
-        options.zOrderOwner = floatingDockHwnd_;
+        options.zOrderOwner = zOrderOwner;
     }
     if (placeAwayFromTaskbar)
     {

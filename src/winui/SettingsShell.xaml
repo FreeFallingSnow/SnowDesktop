@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="SnowDesktop.SettingsShell"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <Style x:Key="SettingsShellCardButtonStyle" TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="20,16" />
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style x:Key="SettingsShellCardStyle" TargetType="Border">
+            <Setter Property="Padding" Value="20,16" />
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <DataTemplate x:Key="SettingsShellFluentGlyphTemplate">
+            <Border Width="38" Height="38">
+                <TextBlock Text="{Binding}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="18"
+                           FontFamily="ms-appx:///Assets/Fonts/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular" />
+            </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="SettingsShellFontAwesomeGlyphTemplate">
+            <Border Width="38" Height="38">
+                <TextBlock Text="{Binding}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="18"
+                           FontFamily="ms-appx:///Assets/Fonts/fa-solid-900.ttf#Font Awesome 6 Free" />
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid x:Name="ShellRoot"
+          Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+          KeyboardAcceleratorPlacementMode="Hidden">
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator x:Name="BackKeyboardAccelerator"
+                                 Key="Left"
+                                 Modifiers="Menu" />
+            <KeyboardAccelerator x:Name="SearchKeyboardAccelerator"
+                                 Key="F"
+                                 Modifiers="Control" />
+        </Grid.KeyboardAccelerators>
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="CompactContent">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="PageSurface.Margin" Value="20,12,20,32" />
+                        <Setter Target="PageTitle.FontSize" Value="28" />
+                        <Setter Target="PageHeaderIconHost.Width" Value="40" />
+                        <Setter Target="PageHeaderIconHost.Height" Value="40" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="WideContent">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1008" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
+                        <Setter Target="PageTitle.FontSize" Value="32" />
+                        <Setter Target="PageHeaderIconHost.Width" Value="44" />
+                        <Setter Target="PageHeaderIconHost.Height" Value="44" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="IntegratedTitleBarHost"
+              Grid.Row="0"
+              Height="32"
+              Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
+            </Grid.ColumnDefinitions>
+            <Grid x:Name="IntegratedTitleBarIdentity"
+                  Grid.Column="1"
+                  Margin="12,0"
+                  ColumnSpacing="8"
+                  IsHitTestVisible="False">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Image x:Name="IntegratedTitleBarIcon"
+                       Width="16"
+                       Height="16"
+                       VerticalAlignment="Center"
+                       Source="ms-appx:///Assets/App/SnowDesktop.png"
+                       Stretch="Uniform" />
+                <TextBlock x:Name="IntegratedTitleBarText"
+                           Grid.Column="1"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </Grid>
+
+        <NavigationView
+            x:Name="NavigationRoot"
+            Grid.Row="1"
+            Background="Transparent"
+            IsSettingsVisible="False"
+            IsBackButtonVisible="Collapsed"
+            PaneDisplayMode="Auto"
+            CompactPaneLength="48"
+            CompactModeThresholdWidth="720"
+            ExpandedModeThresholdWidth="1008"
+            OpenPaneLength="260"
+            IsPaneToggleButtonVisible="True">
+            <NavigationView.PaneHeader>
+                <AutoSuggestBox x:Name="SettingsSearchBox"
+                                Margin="0,0,8,0"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Center"
+                                QueryIcon="Find"
+                                UpdateTextOnSelect="False" />
+            </NavigationView.PaneHeader>
+            <NavigationView.PaneCustomContent>
+                <Button x:Name="CompactSearchButton"
+                        Width="48"
+                        HorizontalAlignment="Left"
+                        Visibility="Collapsed"
+                        Style="{ThemeResource NavigationViewPaneSearchButtonStyle}" />
+            </NavigationView.PaneCustomContent>
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="HomeItem"
+                                    Tag="home"
+                                    Visibility="Collapsed">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="GeneralItem" Tag="general" />
+                <NavigationViewItem x:Name="PersonalizationItem"
+                                    Tag="appearance"
+                                    IsExpanded="True"
+                                    SelectsOnInvoked="False">
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem x:Name="AppearanceThemeItem"
+                                            Tag="appearance-theme" />
+                        <NavigationViewItem x:Name="AppearanceWidgetsItem"
+                                            Tag="appearance-widgets" />
+                        <NavigationViewItem x:Name="AppearanceDesktopIconsItem"
+                                            Tag="appearance-desktop-icons" />
+                        <NavigationViewItem x:Name="AppearanceIconBeautificationItem"
+                                            Tag="appearance-icon-beautification" />
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
+                <NavigationViewItemHeader x:Name="DesktopShellHeader" />
+                <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
+                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
+                <NavigationViewItem x:Name="DockItem" Tag="dock" />
+                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
+                <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
+                <NavigationViewItemHeader x:Name="DataHeader" />
+                <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="AboutItem" Tag="about" />
+                <NavigationViewItem x:Name="DeveloperItem"
+                                    Tag="developer-tools"
+                                    Visibility="Collapsed" />
+                <NavigationViewItem x:Name="DebugItem"
+                                    Tag="debug"
+                                    Visibility="Collapsed" />
+            </NavigationView.FooterMenuItems>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <InfoBar x:Name="StatusInfoBar"
+                         Grid.Row="0"
+                         Margin="24,8,24,8"
+                         IsOpen="False"
+                         IsClosable="True" />
+
+                <Grid Grid.Row="1">
+                    <ScrollViewer x:Name="PageScrollViewer"
+                                  MaxWidth="1200"
+                                  HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <Border x:Name="PageSurface"
+                                MaxWidth="1120"
+                                Margin="40,16,40,48"
+                                HorizontalAlignment="Stretch">
+                            <StackPanel Spacing="16">
+                                <BreadcrumbBar x:Name="PageBreadcrumb" />
+                                <Grid MinHeight="52" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ContentControl x:Name="PageHeaderIconHost"
+                                                    Width="36"
+                                                    Height="36"
+                                                    IsTabStop="False"
+                                                    HorizontalContentAlignment="Stretch"
+                                                    VerticalContentAlignment="Stretch"
+                                                    VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1"
+                                                Spacing="4"
+                                                VerticalAlignment="Center">
+                                        <TextBlock x:Name="PageTitle"
+                                                   FontSize="32"
+                                                   FontWeight="SemiBold"
+                                                   AutomationProperties.HeadingLevel="Level1"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="PageSubtitle"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   FontSize="14"
+                                                   TextWrapping="Wrap"
+                                                   MaxWidth="780"
+                                                   HorizontalAlignment="Left" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel x:Name="PageCards" Spacing="8" />
+                            </StackPanel>
+                        </Border>
+                    </ScrollViewer>
+
+                    <Border x:Name="ProgressHost"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MaxWidth="460"
+                            MinWidth="280"
+                            Padding="24"
+                            CornerRadius="12"
+                            Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1">
+                        <StackPanel Spacing="12">
+                            <ProgressRing x:Name="OperationProgressRing"
+                                          Width="40"
+                                          Height="40"
+                                          HorizontalAlignment="Center"
+                                          IsActive="False"
+                                          IsIndeterminate="True" />
+                            <TextBlock x:Name="OperationProgressTitle"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="OperationProgressMessage"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                            <Button x:Name="CancelOperationButton"
+                                    HorizontalAlignment="Center"
+                                    Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </NavigationView>
+
+    </Grid>
+</UserControl>

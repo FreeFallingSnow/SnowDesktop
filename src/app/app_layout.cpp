@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../collection_titleless_rules.h"
+#include "../font_cu_rules.h"
 #include "../widgets/collection_group_rules.h"
 
 #include "../layout_storage.h"
@@ -101,6 +103,10 @@ void DesktopApp::LoadLayoutSlots()
     const bool hasTrustedWidgetTitleMode = widgetTitleSchemaVersion >= 1;
     const bool hasTrustedWidgetContentOptions =
         document.widgetContentOptionsSchemaVersion.value_or(0) >= 1;
+    const bool hasTrustedDetailColumns =
+        document.widgetContentOptionsSchemaVersion.value_or(0) >= 3;
+    const bool hasTrustedDetailPositions =
+        document.widgetContentOptionsSchemaVersion.value_or(0) >= 4;
 
     if (document.firstPageMonitor)
         firstPageMonitorId_ = Utf8ToWide(*document.firstPageMonitor);
@@ -111,10 +117,17 @@ void DesktopApp::LoadLayoutSlots()
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
 
-    if (document.itemFontSize &&
-        *document.itemFontSize >= 10.0f &&
-        *document.itemFontSize <= 24.0f)
-        itemFontSize_ = *document.itemFontSize;
+    const std::optional<float> savedItemFontSizeCu =
+        snowdesktop::font_cu_rules::ResolveStoredSize(
+            document.itemFontSizeCu, document.itemFontSize);
+    itemFontSizeCu_ = savedItemFontSizeCu.value_or(
+        kDefaultItemFontSizeCu);
+
+    const std::optional<float> savedListFontSizeCu =
+        snowdesktop::font_cu_rules::ResolveStoredSize(
+            document.listItemFontSizeCu, document.listItemFontSize);
+    listItemFontSizeCu_ = savedListFontSizeCu.value_or(
+        itemFontSizeCu_);
 
     if (document.itemFontWeight &&
         *document.itemFontWeight >= 100 &&
@@ -122,54 +135,116 @@ void DesktopApp::LoadLayoutSlots()
         itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(
             static_cast<int>(*document.itemFontWeight));
 
-    if (document.iconSpacing &&
-        *document.iconSpacing >= 0.5f &&
-        *document.iconSpacing <= 2.0f)
-        iconSpacingScale_ = *document.iconSpacing;
-
-    componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-        ClampComponentScale(
-            document.componentSpacing.value_or(1.0f),
-            snowdesktop::widget_spacing_rules::kMaximumComponentScale);
+    iconSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredScale(
+        document.iconSpacing, document.componentSpacing,
+        iconSpacingScale_);
+    itemIconSizeScale_ = std::clamp(
+        document.iconSizeScale.value_or(kDefaultItemIconSizeScale),
+        kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
 
     if (document.shortcutArrowMode)
         shortcutArrowMode_ = std::clamp(
             *document.shortcutArrowMode, 0, 2);
 
+    // Missing beautification fields are the compatibility path for old layouts.
+    iconBeautifySettings_ = snowdesktop::IconBeautifySettings{};
     if (document.iconBeautifyEnabled)
-        iconBeautifyEnabled_ = *document.iconBeautifyEnabled;
+        iconBeautifySettings_.enabled = *document.iconBeautifyEnabled;
+    if (document.iconBeautifyPreset)
+        iconBeautifySettings_.preset = static_cast<snowdesktop::IconBeautifyPreset>(
+            *document.iconBeautifyPreset);
 
     if (document.iconBeautifyMode)
-        iconBeautifyMode_ = std::clamp(
-            *document.iconBeautifyMode, 0, 1);
+        iconBeautifySettings_.mode = *document.iconBeautifyMode;
 
     if (document.iconBeautifyBgOpacity)
-        iconBeautifyBgOpacity_ = std::clamp(
-            *document.iconBeautifyBgOpacity, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundOpacity = *document.iconBeautifyBgOpacity;
     if (document.iconBeautifyGradientEnabled)
-        iconBeautifyGradientEnabled_ =
+        iconBeautifySettings_.gradientEnabled =
             *document.iconBeautifyGradientEnabled;
     if (document.iconBeautifyGradientDirection)
-        iconBeautifyGradientDirection_ = std::clamp(
-            *document.iconBeautifyGradientDirection, 0, 3);
+        iconBeautifySettings_.gradientDirection =
+            *document.iconBeautifyGradientDirection;
     if (document.iconBeautifyBgStartR)
-        iconBeautifyBgStartR_ = std::clamp(
-            *document.iconBeautifyBgStartR, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundStartR = *document.iconBeautifyBgStartR;
     if (document.iconBeautifyBgStartG)
-        iconBeautifyBgStartG_ = std::clamp(
-            *document.iconBeautifyBgStartG, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundStartG = *document.iconBeautifyBgStartG;
     if (document.iconBeautifyBgStartB)
-        iconBeautifyBgStartB_ = std::clamp(
-            *document.iconBeautifyBgStartB, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundStartB = *document.iconBeautifyBgStartB;
     if (document.iconBeautifyBgEndR)
-        iconBeautifyBgEndR_ = std::clamp(
-            *document.iconBeautifyBgEndR, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundEndR = *document.iconBeautifyBgEndR;
     if (document.iconBeautifyBgEndG)
-        iconBeautifyBgEndG_ = std::clamp(
-            *document.iconBeautifyBgEndG, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundEndG = *document.iconBeautifyBgEndG;
     if (document.iconBeautifyBgEndB)
-        iconBeautifyBgEndB_ = std::clamp(
-            *document.iconBeautifyBgEndB, 0.0f, 1.0f);
+        iconBeautifySettings_.backgroundEndB = *document.iconBeautifyBgEndB;
+    if (document.iconBeautifyShape)
+        iconBeautifySettings_.shape = static_cast<snowdesktop::IconBeautifyShape>(
+            *document.iconBeautifyShape);
+    if (document.iconBeautifyContentScale)
+        iconBeautifySettings_.contentScale = *document.iconBeautifyContentScale;
+    if (document.iconBeautifyFinish)
+        snowdesktop::icon_beautify::ApplyLegacyFinish(
+            iconBeautifySettings_, static_cast<snowdesktop::IconBeautifyFinish>(
+                *document.iconBeautifyFinish));
+    if (document.iconBeautifyTextureHighlightStrength)
+        iconBeautifySettings_.textureHighlightStrength =
+            *document.iconBeautifyTextureHighlightStrength;
+    if (document.iconBeautifyTextureHighlightSize)
+        iconBeautifySettings_.textureHighlightSize =
+            *document.iconBeautifyTextureHighlightSize;
+    if (document.iconBeautifyTextureHighlightAngle)
+        iconBeautifySettings_.textureHighlightAngle =
+            *document.iconBeautifyTextureHighlightAngle;
+    if (document.iconBeautifyTextureShadeStrength)
+        iconBeautifySettings_.textureShadeStrength =
+            *document.iconBeautifyTextureShadeStrength;
+    if (document.iconBeautifyTextureEdgeHighlight)
+        iconBeautifySettings_.textureEdgeHighlight =
+            *document.iconBeautifyTextureEdgeHighlight;
+    if (document.iconBeautifyFilterEnabled)
+        iconBeautifySettings_.filterEnabled =
+            *document.iconBeautifyFilterEnabled;
+    if (document.iconBeautifyFilterStrength)
+        iconBeautifySettings_.filterStrength =
+            *document.iconBeautifyFilterStrength;
+    if (document.iconBeautifyFilterTintR)
+        iconBeautifySettings_.filterTintR = *document.iconBeautifyFilterTintR;
+    if (document.iconBeautifyFilterTintG)
+        iconBeautifySettings_.filterTintG = *document.iconBeautifyFilterTintG;
+    if (document.iconBeautifyFilterTintB)
+        iconBeautifySettings_.filterTintB = *document.iconBeautifyFilterTintB;
+    if (document.iconBeautifyOutlineEnabled)
+        iconBeautifySettings_.outlineEnabled =
+            *document.iconBeautifyOutlineEnabled;
+    else if (document.iconBeautifyOutlineMode)
+    {
+        // Only the former custom mode represented an explicit user outline.
+        // The removed automatic mode migrates to the new disabled state.
+        iconBeautifySettings_.outlineEnabled =
+            *document.iconBeautifyOutlineMode == 2;
+    }
+    if (document.iconBeautifyOutlineWidth)
+        iconBeautifySettings_.outlineWidth = *document.iconBeautifyOutlineWidth;
+    if (document.iconBeautifyOutlineOpacity)
+        iconBeautifySettings_.outlineOpacity = *document.iconBeautifyOutlineOpacity;
+    if (document.iconBeautifyOutlineR)
+        iconBeautifySettings_.outlineR = *document.iconBeautifyOutlineR;
+    if (document.iconBeautifyOutlineG)
+        iconBeautifySettings_.outlineG = *document.iconBeautifyOutlineG;
+    if (document.iconBeautifyOutlineB)
+        iconBeautifySettings_.outlineB = *document.iconBeautifyOutlineB;
+    if (document.iconBeautifyShadowStrength)
+        iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
+    iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
+        iconBeautifySettings_);
+    if (document.iconBeautifyPreset &&
+        iconBeautifySettings_.preset ==
+            snowdesktop::IconBeautifyPreset::DefaultBeautify)
+        iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
+            snowdesktop::IconBeautifyPreset::DefaultBeautify);
+    else if (!document.iconBeautifyPreset)
+        iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
+            iconBeautifySettings_);
 
     for (const auto& page : document.pages)
     {
@@ -210,28 +285,19 @@ void DesktopApp::LoadLayoutSlots()
         const std::string titleModeUtf8 = saved.titleMode.value_or("");
         const bool hasUserRenamed = saved.userRenamed.has_value();
         const bool userRenamed = saved.userRenamed.value_or(false);
-        const std::string scriptUtf8 = !saved.scriptPath.empty()
-            ? saved.scriptPath : saved.legacyScriptPath;
-
         DesktopWidget widget;
         widget.id = Utf8ToWide(saved.id);
         widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
+        widget.demoIconCategory = Utf8ToWide(
+            saved.demoIconCategory);
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
         widget.packageId = Utf8ToWide(saved.packageId);
-        if (widget.packageId.empty())
-            widget.legacyScriptPath = Utf8ToWide(scriptUtf8);
-        if (widget.packageId.empty() &&
-            !widget.legacyScriptPath.empty())
-        {
-            if (const auto migrated =
-                WidgetEngine::ResolveLegacyWidgetPackage(
-                    widget.legacyScriptPath))
-            {
-                widget.packageId = *migrated;
-                widget.legacyScriptPath.clear();
-                legacyWidgetLayoutMigrationPending_ = true;
-            }
-        }
+        widget.packageSourceProvider = Utf8ToWide(
+            saved.packageSourceProvider);
+        widget.packageSourceExternalItemId = Utf8ToWide(
+            saved.packageSourceExternalItemId);
+        widget.packageSourceUrl = Utf8ToWide(saved.packageSourceUrl);
+        CaptureWidgetPackageSource(widget);
 
         if (titleUtf8.empty())
         {
@@ -240,8 +306,7 @@ void DesktopApp::LoadLayoutSlots()
                 widget.title =
                     WidgetEngine::GetWidgetDisplayName(widget.packageId);
                 if (widget.title.empty())
-                    widget.title = !widget.legacyScriptPath.empty()
-                        ? widget.legacyScriptPath : widget.packageId;
+                    widget.title = widget.packageId;
             }
             else if (widget.type == DesktopWidgetType::Guide)
                 widget.title = _LW("app.guide.title");
@@ -269,6 +334,50 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
         widget.listMode = saved.listMode;
+        if (hasTrustedDetailColumns)
+        {
+            widget.detailShowModified = saved.detailShowModified;
+            widget.detailShowType = saved.detailShowType;
+            widget.detailShowSize = saved.detailShowSize;
+        }
+        else if (saved.showDetails)
+        {
+            widget.detailShowModified = true;
+            widget.detailShowType = true;
+            widget.detailShowSize = true;
+        }
+        snowdesktop::list_detail_rules::DividerPositions positions;
+        if (hasTrustedDetailPositions)
+        {
+            positions.modified = saved.detailModifiedPosition.value_or(
+                snowdesktop::list_detail_rules::
+                    kDefaultModifiedPosition);
+            positions.type = saved.detailTypePosition.value_or(
+                snowdesktop::list_detail_rules::kDefaultTypePosition);
+            positions.size = saved.detailSizePosition.value_or(
+                snowdesktop::list_detail_rules::kDefaultSizePosition);
+        }
+        else
+        {
+            positions = snowdesktop::list_detail_rules::
+                LegacyWidthsToPositions(
+                    saved.detailModifiedWidth.value_or(160.0f),
+                    saved.detailTypeWidth.value_or(120.0f),
+                    saved.detailSizeWidth.value_or(90.0f));
+        }
+        positions = snowdesktop::list_detail_rules::NormalizePositions(
+            widget.detailShowModified,
+            widget.detailShowType,
+            widget.detailShowSize,
+            positions);
+        widget.detailModifiedPosition = positions.modified;
+        widget.detailTypePosition = positions.type;
+        widget.detailSizePosition = positions.size;
+        widget.showDetails = snowdesktop::list_detail_rules::
+            HasMetadataColumns(
+                widget.detailShowModified,
+                widget.detailShowType,
+                widget.detailShowSize);
         widget.dateHeaders =
             widget.type == DesktopWidgetType::CollectionGroup
                 ? false : saved.dateHeaders;
@@ -289,6 +398,11 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.largeFolderTitleless =
+            widget.type == DesktopWidgetType::Collection &&
+            snowdesktop::collection_titleless_rules::ResolveStoredMode(
+                document.collectionLargeFolderTitleless,
+                saved.largeFolderTitleless);
         widget.keepWhenDesktopHidden = saved.keepWhenDesktopHidden;
         widget.showTitle = saved.showTitle.value_or(
             widget.type != DesktopWidgetType::LuaScript);
@@ -371,6 +485,20 @@ void DesktopApp::LoadLayoutSlots()
         widget.folderSortMode = snowdesktop::folder_sort_rules::NormalizeMode(
             saved.folderSortMode);
         widget.folderSortAscending = saved.folderSortAscending;
+        widget.contentSortColumn =
+            snowdesktop::list_detail_rules::FromString(
+                saved.contentSortColumn);
+        widget.contentSortAscending = saved.contentSortAscending;
+        if (widget.contentSortColumn ==
+                snowdesktop::list_detail_rules::Column::None &&
+            widget.type == DesktopWidgetType::FolderMapping &&
+            widget.folderSortMode >=
+                snowdesktop::folder_sort_rules::kName)
+        {
+            widget.contentSortColumn = snowdesktop::list_detail_rules::
+                FromLegacyFolderSortMode(widget.folderSortMode);
+            widget.contentSortAscending = widget.folderSortAscending;
+        }
         widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
         widget.itemKeys.reserve(saved.items.size());
         for (const auto& key : saved.items)
@@ -500,6 +628,29 @@ void DesktopApp::LoadLayoutSlots()
         entry.folderItemKeys.reserve(saved.folderItems.size());
         for (const auto& key : saved.folderItems)
             entry.folderItemKeys.push_back(Utf8ToWide(key));
+        entry.listMode = saved.listMode;
+        entry.detailShowModified = saved.detailShowModified;
+        entry.detailShowType = saved.detailShowType;
+        entry.detailShowSize = saved.detailShowSize;
+        const auto positions = snowdesktop::list_detail_rules::
+            NormalizePositions(
+                entry.detailShowModified,
+                entry.detailShowType,
+                entry.detailShowSize,
+                {
+                    saved.detailModifiedPosition.value_or(
+                        snowdesktop::list_detail_rules::
+                            kDefaultModifiedPosition),
+                    saved.detailTypePosition.value_or(
+                        snowdesktop::list_detail_rules::
+                            kDefaultTypePosition),
+                    saved.detailSizePosition.value_or(
+                        snowdesktop::list_detail_rules::
+                            kDefaultSizePosition),
+                });
+        entry.detailModifiedPosition = positions.modified;
+        entry.detailTypePosition = positions.type;
+        entry.detailSizePosition = positions.size;
         if (!entry.reference.empty() &&
             !(entry.type == DockEntryType::DesktopItem &&
                 snowdesktop::shell_item_visibility::IsAlwaysHidden(
@@ -624,6 +775,7 @@ void DesktopApp::LoadLayoutSlots()
  */
 void DesktopApp::SaveLayoutSlots()
 {
+    demoCollectionIdentityCache_.clear();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     layoutRecords_.clear();
     for (const auto& item : items_)
@@ -669,26 +821,47 @@ void DesktopApp::SaveLayoutSlots()
 
     file << "{\n  \"layoutSchemaVersion\": 1"
          << ",\n  \"widgetTitleSchemaVersion\": 1"
-         << ",\n  \"widgetContentOptionsSchemaVersion\": 1"
+         << ",\n  \"widgetContentOptionsSchemaVersion\": 4"
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
-         << ",\n  \"itemFontSize\": " << itemFontSize_
+         << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
+         << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
-         << ",\n  \"componentSpacing\": " << componentSpacingScale_
+         << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
-         << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifyEnabled_ ? "true" : "false")
-         << ",\n  \"iconBeautifyMode\": " << iconBeautifyMode_
-         << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifyBgOpacity_
-         << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifyGradientEnabled_ ? "true" : "false")
-         << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifyGradientDirection_
-         << ",\n  \"iconBeautifyBgStartR\": " << iconBeautifyBgStartR_
-         << ",\n  \"iconBeautifyBgStartG\": " << iconBeautifyBgStartG_
-         << ",\n  \"iconBeautifyBgStartB\": " << iconBeautifyBgStartB_
-         << ",\n  \"iconBeautifyBgEndR\": " << iconBeautifyBgEndR_
-         << ",\n  \"iconBeautifyBgEndG\": " << iconBeautifyBgEndG_
-         << ",\n  \"iconBeautifyBgEndB\": " << iconBeautifyBgEndB_
+         << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
+         << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
+         << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
+         << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
+         << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifySettings_.gradientDirection
+         << ",\n  \"iconBeautifyBgStartR\": " << iconBeautifySettings_.backgroundStartR
+         << ",\n  \"iconBeautifyBgStartG\": " << iconBeautifySettings_.backgroundStartG
+         << ",\n  \"iconBeautifyBgStartB\": " << iconBeautifySettings_.backgroundStartB
+         << ",\n  \"iconBeautifyBgEndR\": " << iconBeautifySettings_.backgroundEndR
+         << ",\n  \"iconBeautifyBgEndG\": " << iconBeautifySettings_.backgroundEndG
+         << ",\n  \"iconBeautifyBgEndB\": " << iconBeautifySettings_.backgroundEndB
+         << ",\n  \"iconBeautifyShape\": " << static_cast<int>(iconBeautifySettings_.shape)
+         << ",\n  \"iconBeautifyContentScale\": " << iconBeautifySettings_.contentScale
+         << ",\n  \"iconBeautifyTextureHighlightStrength\": " << iconBeautifySettings_.textureHighlightStrength
+         << ",\n  \"iconBeautifyTextureHighlightSize\": " << iconBeautifySettings_.textureHighlightSize
+         << ",\n  \"iconBeautifyTextureHighlightAngle\": " << iconBeautifySettings_.textureHighlightAngle
+         << ",\n  \"iconBeautifyTextureShadeStrength\": " << iconBeautifySettings_.textureShadeStrength
+         << ",\n  \"iconBeautifyTextureEdgeHighlight\": " << iconBeautifySettings_.textureEdgeHighlight
+         << ",\n  \"iconBeautifyFilterEnabled\": " << (iconBeautifySettings_.filterEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyFilterStrength\": " << iconBeautifySettings_.filterStrength
+         << ",\n  \"iconBeautifyFilterTintR\": " << iconBeautifySettings_.filterTintR
+         << ",\n  \"iconBeautifyFilterTintG\": " << iconBeautifySettings_.filterTintG
+         << ",\n  \"iconBeautifyFilterTintB\": " << iconBeautifySettings_.filterTintB
+         << ",\n  \"iconBeautifyOutlineEnabled\": " << (iconBeautifySettings_.outlineEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyOutlineWidth\": " << iconBeautifySettings_.outlineWidth
+         << ",\n  \"iconBeautifyOutlineOpacity\": " << iconBeautifySettings_.outlineOpacity
+         << ",\n  \"iconBeautifyOutlineR\": " << iconBeautifySettings_.outlineR
+         << ",\n  \"iconBeautifyOutlineG\": " << iconBeautifySettings_.outlineG
+         << ",\n  \"iconBeautifyOutlineB\": " << iconBeautifySettings_.outlineB
+         << ",\n  \"iconBeautifyShadowStrength\": " << iconBeautifySettings_.shadowStrength
          << ",\n  \"pages\": [\n";
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
@@ -734,6 +907,8 @@ void DesktopApp::SaveLayoutSlots()
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
+    for (auto& widget : widgets_)
+        CaptureWidgetPackageSource(widget);
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];
@@ -743,9 +918,16 @@ void DesktopApp::SaveLayoutSlots()
              << "\", \"title\": \"" << JsonEscapeUtf8(w.title)
              << "\", \"titleMode\": \"" << (hasCustomTitle ? "custom" : "auto")
              << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
+             << "\", \"demoIconCategory\": \""
+             << JsonEscapeUtf8(w.demoIconCategory)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
              << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
-             << "\", \"legacyScriptPath\": \"" << JsonEscapeUtf8(w.legacyScriptPath)
+             << "\", \"packageSourceProvider\": \""
+             << JsonEscapeUtf8(w.packageSourceProvider)
+             << "\", \"packageSourceExternalItemId\": \""
+             << JsonEscapeUtf8(w.packageSourceExternalItemId)
+             << "\", \"packageSourceUrl\": \""
+             << JsonEscapeUtf8(w.packageSourceUrl)
              << "\", \"activeCategory\": \"" << JsonEscapeUtf8(w.activeCategoryId)
              << "\", \"page\": \"" << JsonEscapeUtf8(w.gridCell.pageId)
              << "\", \"x\": " << w.gridCell.column
@@ -754,12 +936,37 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"showDetails\": "
+             << (snowdesktop::list_detail_rules::HasMetadataColumns(
+                    w.detailShowModified,
+                    w.detailShowType,
+                    w.detailShowSize)
+                    ? "true" : "false")
+             << ", \"detailShowModified\": "
+             << (w.detailShowModified ? "true" : "false")
+             << ", \"detailShowType\": "
+             << (w.detailShowType ? "true" : "false")
+             << ", \"detailShowSize\": "
+             << (w.detailShowSize ? "true" : "false")
+             << ", \"detailModifiedPosition\": "
+             << w.detailModifiedPosition
+             << ", \"detailTypePosition\": "
+             << w.detailTypePosition
+             << ", \"detailSizePosition\": "
+             << w.detailSizePosition
+             << ", \"contentSortColumn\": \""
+             << snowdesktop::list_detail_rules::ToString(
+                    w.contentSortColumn)
+             << "\", \"contentSortAscending\": "
+             << (w.contentSortAscending ? "true" : "false")
              << ", \"dateHeaders\": " << (w.dateHeaders ? "true" : "false")
              << ", \"showFileCategories\": " << (w.showFileCategories ? "true" : "false")
              << ", \"showSearchBox\": " << (w.showSearchBox ? "true" : "false")
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"largeFolderTitleless\": "
+             << (w.largeFolderTitleless ? "true" : "false")
              << ", \"keepWhenDesktopHidden\": "
              << (w.keepWhenDesktopHidden ? "true" : "false")
              << ", \"showTitle\": " << (w.showTitle ? "true" : "false")
@@ -805,6 +1012,20 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"folderSortAscending\": "
              << (entry.folderSortAscending
                     ? "true" : "false")
+             << ", \"listMode\": "
+             << (entry.listMode ? "true" : "false")
+             << ", \"detailShowModified\": "
+             << (entry.detailShowModified ? "true" : "false")
+             << ", \"detailShowType\": "
+             << (entry.detailShowType ? "true" : "false")
+             << ", \"detailShowSize\": "
+             << (entry.detailShowSize ? "true" : "false")
+             << ", \"detailModifiedPosition\": "
+             << entry.detailModifiedPosition
+             << ", \"detailTypePosition\": "
+             << entry.detailTypePosition
+             << ", \"detailSizePosition\": "
+             << entry.detailSizePosition
              << ", \"folderItems\": [";
         for (size_t j = 0;
             j < entry.folderItemKeys.size(); ++j)

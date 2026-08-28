@@ -1,7 +1,20 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
+#include "../page_navigation_rules.h"
 #include "../right_click_contract.h"
+#include "../widgets/lua_logical_slot.h"
 
 // Page-navigation clicks and right-button context dispatch.
+
+void DesktopApp::ClearPopupMouseDownItem()
+{
+    Item* const popupItem = popupMouseDownItem_.get();
+    if (mouseDownHit_ == popupItem)
+        mouseDownHit_ = nullptr;
+    if (pendingCtrlToggleWidgetItem_ == popupItem)
+        pendingCtrlToggleWidgetItem_ = nullptr;
+    popupMouseDownItem_.reset();
+}
 
 bool DesktopApp::HandlePageNavClick(POINT point)
 {
@@ -11,28 +24,38 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     const bool hasPrev = pageOffset_ > 0;
     const bool hasNext = pageOffset_ < MaxPageOffset();
 
-    RECT prevRect, nextRect;
-    GetNavButtonRects(prevRect, nextRect);
-
-    int delta = 0;
-    if (PtInRect(&prevRect, point)) delta = -1;
-    else if (PtInRect(&nextRect, point)) delta = 1;
-
-    // 点击落在导航按钮区域内但方向不可用 → 拦截点击（不穿透到下方图标）
-    if (delta != 0 && !((delta == -1 && hasPrev) || (delta == 1 && hasNext)))
-        return true;
+    RECT prevEdge{};
+    RECT nextEdge{};
+    GetNavHotEdgeRects(prevEdge, nextEdge);
+    const auto target = snowdesktop::page_navigation_rules::
+        HitTestPointerTarget(point, prevEdge, nextEdge);
+    const int delta = snowdesktop::page_navigation_rules::
+        PointerTargetDirection(target);
     if (delta == 0) return false;
+
+    const bool directionAvailable =
+        (delta == -1 && hasPrev) ||
+        (delta == 1 && hasNext);
+    if (!directionAvailable)
+        return false;
 
     int newOffset = NextNonEmptyOffset(pageOffset_, delta);
     if (newOffset == pageOffset_) return false;
 
     bool wasDragging = dragSession_.IsActive();
+    if (!wasDragging)
+    {
+        NavigatePageOffset(delta);
+        return true;
+    }
+
     const POINT oldGroupOrigin{
         dragGroupOriginX_, dragGroupOriginY_ };
     pageOffset_ = newOffset;
     ApplyPageMapping();
     if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(point);
     if (wasDragging && !dragSession_.IsActive())
     {
         mouseDownHit_ = nullptr;
@@ -55,6 +78,121 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     return true;
 }
 
+bool DesktopApp::ShowHostInputContextMenu(
+    POINT screenPoint, const std::wstring& widgetId,
+    POINT localPoint, std::string_view surface)
+{
+    if (!widgetEngine_)
+        return false;
+
+    snowdesktop::widget_runtime::HostInputContextMenuState state;
+    if (!widgetEngine_->PrepareHostInputContextMenu(
+            widgetId, localPoint.x, localPoint.y, surface,
+            IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE,
+            state))
+        return false;
+
+    const std::wstring previousPinnedWidgetId =
+        interactionPinnedWidgetId_;
+    interactionPinnedWidgetId_ = widgetId;
+    ClearSelection();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+
+    PrepareMenuIconsForPoint(screenPoint);
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        interactionPinnedWidgetId_ = previousPinnedWidgetId;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    const auto flags = [](bool enabled) {
+        return MF_STRING | (enabled ? 0 : MF_GRAYED);
+    };
+    AppendMenuW(menu, flags(state.canCut),
+        kContextCutCommand, _LW("app.menu.cut"));
+    AppendMenuW(menu, flags(state.canCopy),
+        kContextCopyCommand, _LW("app.menu.copy"));
+    AppendMenuW(menu, flags(state.canPaste),
+        kContextPasteCommand, _LW("app.menu.paste"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, flags(state.canSelectAll),
+        kContextSelectAllCommand, _LW("app.menu.select_all"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING,
+        kContextWidgetOpenComponentPanel,
+        _LW("app.interact.open_component_panel"));
+
+    SetMenuItemIcon(menu, kContextCutCommand, L"\uf0c4");
+    SetMenuItemIcon(menu, kContextCopyCommand, L"\uf0c5");
+    SetMenuItemIcon(menu, kContextPasteCommand, L"\uf0ea");
+    SetMenuItemIcon(menu, kContextSelectAllCommand,
+        snowdesktop::menu_fluent_glyphs::kSelectAll,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextWidgetOpenComponentPanel,
+        snowdesktop::menu_fluent_glyphs::kChevronRight,
+        MenuIconFont::FluentRegular);
+    SetMenuItemQuickAction(menu, kContextCutCommand);
+    SetMenuItemQuickAction(menu, kContextCopyCommand);
+    SetMenuItemQuickAction(menu, kContextPasteCommand);
+    SetMenuItemQuickAction(menu, kContextSelectAllCommand);
+
+    SetForegroundWindow(hwnd_);
+    const UINT command = ShowModernMenu(
+        menu, screenPoint, hwnd_);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    if (command == kContextWidgetOpenComponentPanel)
+    {
+        const size_t widgetIndex = FindWidgetIndexById(widgetId);
+        if (widgetIndex < widgets_.size())
+        {
+            ShowWidgetContextMenu(screenPoint, widgetIndex,
+                std::nullopt, std::nullopt, surface, true);
+        }
+        else
+        {
+            RestoreInteractionInputFocus();
+        }
+        interactionPinnedWidgetId_ = previousPinnedWidgetId;
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+
+    RestoreInteractionInputFocus();
+
+    using snowdesktop::widget_runtime::HostInputEditCommand;
+    switch (command)
+    {
+    case kContextSelectAllCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::SelectAll);
+        break;
+    case kContextCutCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::Cut);
+        break;
+    case kContextCopyCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::Copy);
+        break;
+    case kContextPasteCommand:
+        widgetEngine_->ExecuteHostInputEditCommand(
+            HostInputEditCommand::Paste);
+        break;
+    default:
+        break;
+    }
+
+    interactionPinnedWidgetId_ = previousPinnedWidgetId;
+    UpdateHostInputImePosition();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
 /**
  * @brief 处理鼠标右键释放事件（显示上下文菜单）
  * @param lp LPARAM（含鼠标坐标）
@@ -62,12 +200,49 @@ bool DesktopApp::HandlePageNavClick(POINT point)
 void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     if (renameEdit_ != nullptr) return;
+    keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
 
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelAnimation_.IsInteractive())
+    {
+        const RECT panel = GetLuaWidgetPanelRect();
+        if (PtInRect(&panel, pt))
+        {
+            const RECT content = GetLuaWidgetPanelContentRect();
+            if (PtInRect(&content, pt))
+            {
+                const size_t widgetIndex = FindWidgetIndexById(
+                    luaWidgetPanelRequest_.widgetId);
+                if (widgetIndex < widgets_.size())
+                {
+                    const POINT localPoint{
+                        pt.x - content.left,
+                        pt.y - content.top };
+                    if (!ShowHostInputContextMenu(
+                            screenPt, widgets_[widgetIndex].id,
+                            localPoint,
+                            luaWidgetPanelRequest_.surface))
+                    {
+                        ShowWidgetContextMenu(screenPt, widgetIndex,
+                            std::nullopt, localPoint,
+                            luaWidgetPanelRequest_.surface);
+                    }
+                }
+            }
+            return;
+        }
+        if (luaWidgetPanelRequest_.modal)
+            return;
+    }
+
     if (DockContainer* dock = GetDockContainerAtPoint(pt))
     {
+        EnsureFloatingDockVisibleForAssociatedSurface(
+            screenPt);
+
         if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
         {
             const size_t entryIndex = dockItem->GetEntryIndex();
@@ -101,7 +276,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                                     ? std::optional<size_t>(
                                           entryIndex)
                                     : std::nullopt,
-                                true);
+                                true,
+                                entryIndex);
                     }
                 }
                 else
@@ -174,6 +350,20 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             ShowDockContextMenu(screenPt);
             return;
         }
+    }
+
+    const size_t standaloneInputWidget =
+        HitTestStandaloneWidgetIndex(pt);
+    if (standaloneInputWidget < widgets_.size() &&
+        widgets_[standaloneInputWidget].type ==
+            DesktopWidgetType::LuaScript)
+    {
+        const RECT frame = GetStandaloneWidgetFrameRect(
+            widgets_[standaloneInputWidget]);
+        if (ShowHostInputContextMenu(
+                screenPt, widgets_[standaloneInputWidget].id,
+                POINT{ pt.x - frame.left, pt.y - frame.top }))
+            return;
     }
 
     // A hover-only widget must remain visible while any context menu opened
@@ -440,6 +630,39 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         ShowCollectionGroupTabContextMenu(
             screenPt, groupIndex, collectionId);
+        return;
+    }
+
+    // A logical slot item owns an element-only host menu. Resolve it before
+    // ordinary widget members and the surrounding Lua widget frame.
+    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    {
+        if (desktopIconsHidden_ && !IsRetainedContainer(it->get()))
+            continue;
+        auto* logicalSlot =
+            dynamic_cast<LuaLogicalSlotContainer*>(it->get());
+        if (!logicalSlot) continue;
+        const auto itemHit = logicalSlot->ItemAtPoint(pt);
+        if (!itemHit) continue;
+        if (snowdesktop::right_click_contract::ResolveSlotItemMenu(
+                logicalSlot->GetSlotSurfaceKind(),
+                snowdesktop::right_click_contract::
+                    SlotItemKind::LogicalSlotItem,
+                false) != snowdesktop::right_click_contract::
+                    ContextMenuKind::LogicalSlotItem)
+            break;
+        const size_t widgetIndex =
+            FindWidgetIndexById(logicalSlot->WidgetId());
+        if (widgetIndex >= widgets_.size()) break;
+        SelectWidgetOnly(widgetIndex);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowLuaLogicalSlotItemContextMenu(screenPt,
+            logicalSlot->WidgetId(), logicalSlot->SlotId(),
+            itemHit->itemId,
+            itemHit->kind == snowdesktop::widget_runtime::
+                LogicalSlotKind::Collection,
+            itemHit->index, itemHit->itemCount,
+            itemHit->canRemove);
         return;
     }
 

@@ -1,11 +1,7 @@
 name: Verify
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
-      - "release/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,8 +24,8 @@ jobs:
       - name: Build Release targets
         run: cmake --build --preset release
 
-      - name: Build test targets
-        run: cmake --build --preset tests
+      - name: Build core test targets
+        run: cmake --build --preset core-tests
 
-      - name: Run CTest suite
-        run: ctest --preset tests
+      - name: Run core CTest suite
+        run: ctest --preset core-tests

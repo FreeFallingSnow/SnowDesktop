@@ -2,8 +2,24 @@
 
 #include <windows.h>
 
+#include <cstdint>
+
 namespace snowdesktop::desktop_backdrop_update_rules
 {
+
+inline bool PanelIdentityMatches(
+    std::uintptr_t existingOwnerKey,
+    const RECT& existingFrame,
+    std::uintptr_t requestedOwnerKey,
+    const RECT& requestedFrame) noexcept
+{
+    if (existingOwnerKey != 0 || requestedOwnerKey != 0)
+    {
+        return existingOwnerKey != 0 &&
+            existingOwnerKey == requestedOwnerKey;
+    }
+    return EqualRect(&existingFrame, &requestedFrame) != FALSE;
+}
 
 inline bool CoversClientArea(
     const RECT* updateRect,

@@ -1,7 +1,9 @@
 #include "app.h"
+#include "../demo_mode_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../modern_menu.h"
 #include "../search_match.h"
+#include "../widget_preview_stage.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -88,6 +90,24 @@ bool LuaWidgetMenuSourceMatches(
     case LuaWidgetMenuFilter::All:
     default:
         return true;
+    }
+}
+
+std::optional<LuaWidgetMenuFilter> LuaWidgetMenuFilterForCommand(
+    UINT command)
+{
+    switch (command)
+    {
+    case kContextAddLuaWidgetFilterAll:
+        return LuaWidgetMenuFilter::All;
+    case kContextAddLuaWidgetFilterBuiltin:
+        return LuaWidgetMenuFilter::Builtin;
+    case kContextAddLuaWidgetFilterInstalled:
+        return LuaWidgetMenuFilter::Installed;
+    case kContextAddLuaWidgetFilterDevelopment:
+        return LuaWidgetMenuFilter::Development;
+    default:
+        return std::nullopt;
     }
 }
 
@@ -326,6 +346,34 @@ UINT AddCommandForPreviewCommand(UINT command)
     return 0;
 }
 
+bool IsAddWidgetMenuCommand(UINT command)
+{
+    if (AddCommandForPreviewCommand(command) != 0)
+        return true;
+    if (command >= kContextAddLuaWidgetFirst &&
+        command < kContextAddLuaWidgetFirst +
+            static_cast<UINT>(kLuaWidgetMenuPageSize))
+        return true;
+    switch (command)
+    {
+    case kContextAddCollectionWidget:
+    case kContextAddCollectionGroupWidget:
+    case kContextAddFileGroupWidget:
+    case kContextAddFileCategoryWidget:
+    case kContextAddFolderMappingWidget:
+    case kContextAddLuaWidgetSearch:
+    case kContextAddLuaWidgetFilterAll:
+    case kContextAddLuaWidgetFilterBuiltin:
+    case kContextAddLuaWidgetFilterInstalled:
+    case kContextAddLuaWidgetFilterDevelopment:
+    case kContextAddLuaWidgetPreviousPage:
+    case kContextAddLuaWidgetNextPage:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool ReplaceAddWidgetSubmenu(
     std::vector<snowdesktop::modern_menu::Item>& rootItems,
     std::vector<snowdesktop::modern_menu::Item> replacement)
@@ -487,7 +535,9 @@ DesktopApp::RenderWidgetMenuPreview(
     const std::shared_ptr<snowdesktop::WidgetPreviewScene>& scene,
     const std::wstring& rootWidgetId,
     const std::unordered_map<std::string, std::string>& previewStorage,
-    int width, int height, UINT dpi, bool hovered)
+    int width, int height, UINT dpi,
+    const snowdesktop::component_preview::StagePlacement& stage,
+    bool hovered)
 {
     using snowdesktop::component_preview::Bitmap;
     Bitmap result;
@@ -544,8 +594,55 @@ DesktopApp::RenderWidgetMenuPreview(
     std::unique_ptr<Widget> widget = CreateWidget(data, this);
     if (!widget) return {};
 
+    const PersonalizationSettings globalAppearance = CurrentPersonalization();
+    PersonalizationSettings stageAppearance = globalAppearance;
+    bool customStyle = false;
+    if (previewEngine)
+    {
+        customStyle = previewEngine->HasCustomStyle(data->id);
+        if (customStyle)
+        {
+            const std::string follow = previewEngine->RuntimeGetStorageValue(
+                data->id, "followPersonalization");
+            if (follow == "1" || follow == "true")
+                customStyle = false;
+        }
+        if (customStyle)
+        {
+            stageAppearance = PersonalizationSettings::DarkPreset();
+            float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
+            float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f;
+            float borderAlpha = 0.0f;
+            float gradientEndA = stageAppearance.gradientEndA;
+            bool glass = false, acrylic = false;
+            if (previewEngine->ReadCustomColors(data->id,
+                    bgR, bgG, bgB, alpha,
+                    borderR, borderG, borderB, borderAlpha,
+                    gradientEndA, glass, acrylic))
+            {
+                stageAppearance.glassEnabled = glass;
+                stageAppearance.acrylicEnabled = glass && acrylic;
+            }
+            stageAppearance.glassBlurRadius =
+                globalAppearance.glassBlurRadius;
+            stageAppearance.contentTheme = globalAppearance.contentTheme;
+            const std::string storedTheme =
+                previewEngine->RuntimeGetStorageValue(
+                    data->id, "__contentTheme");
+            if (storedTheme == "0" || storedTheme == "1")
+                stageAppearance.contentTheme = storedTheme[0] - '0';
+        }
+    }
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+    const RECT stageBounds{ 0, 0, width, height };
+    snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
+        { stage.lightTheme, stageAppearance.glassEnabled,
+            stageAppearance.glassBlurRadius,
+            static_cast<float>(ScaleWidgetCu(
+                globalAppearance.cornerRadius, data->cellScale)) },
+        { stage.canvasWidth, stage.canvasHeight,
+            stage.offsetX, stage.offsetY }, stage.wallpaper);
     context->SetTransform(D2D1::Matrix3x2F::Translation(
         static_cast<float>(-desktopFrame.left),
         static_cast<float>(-desktopFrame.top)));
@@ -557,6 +654,7 @@ DesktopApp::RenderWidgetMenuPreview(
             (desktopFrame.top + desktopFrame.bottom) / 2 }
         : POINT{ -32000, -32000 };
     options.frame = desktopFrame;
+    options.dpi = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
     options.interactive = true;
     options.registerBackdrop = false;
     widget->DrawPreview(context.Get(), options.frame, options);
@@ -636,9 +734,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         }
     }
 
-    const PersonalizationSettings appearance = settingsWindow_
-        ? settingsWindow_->GetPersonalization()
-        : PersonalizationSettings::DarkPreset();
+    const PersonalizationSettings appearance = CurrentPersonalization();
     const std::wstring appearanceKey =
         std::to_wstring(menuIconDpi_) + L":" +
         std::to_wstring(menuLightTheme_) + L":" +
@@ -649,11 +745,12 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.widgetBorderAlpha) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
-        std::to_wstring(appearance.categorizedTabFontSize) + L":" +
+        std::to_wstring(appearance.categorizedTabHeight) + L":" +
+        std::to_wstring(appearance.backgroundPreset) + L":" +
         std::to_wstring(appearance.glassEnabled) + L":" +
         std::to_wstring(appearance.acrylicEnabled) + L":" +
+        std::to_wstring(appearance.glassBlurRadius) + L":" +
         std::to_wstring(appearance.contentTheme);
-
     auto makeScene = [&](bool applications = false) {
         auto scene = std::make_shared<snowdesktop::WidgetPreviewScene>();
         const std::wstring fileTitles[] = {
@@ -687,7 +784,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
         for (int i = 0; i < 12; ++i)
         {
             const std::wstring glyph(
-                1, static_cast<wchar_t>(L'A' + i));
+                snowdesktop::demo_mode_rules::
+                    kVisualIdentities[static_cast<size_t>(i)].glyph);
             snowdesktop::WidgetPreviewItem item;
             item.key = L"__preview_item_" + glyph;
             item.glyph = glyph;
@@ -737,8 +835,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 std::max(0, previewPage->columns - root.gridSpan.columns));
             root.gridCell.row = std::clamp(root.gridCell.row, 0,
                 std::max(0, previewPage->rows - root.gridSpan.rows));
-            root.cellScale = CalculateWidgetCellScale(
-                previewPage->cellWidth, previewPage->cellHeight);
+            root.cellScale = GetGridPageCuScale(*previewPage);
             root.bounds = GetGridRect(
                 gridPages_, root.gridCell, root.gridSpan);
         }
@@ -766,6 +863,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
             1, desktopFrame.right - desktopFrame.left);
         card.previewHeight = std::max<LONG>(
             1, desktopFrame.bottom - desktopFrame.top);
+        card.lightStage = false;
+        card.useDesktopWallpaperStage = true;
         card.sizeLabel = _LFW("app.widget_preview.size",
             std::to_wstring(card.columns), std::to_wstring(card.rows));
         card.cacheKey = modeKey + L":" + appearanceKey + L":" +
@@ -775,6 +874,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             std::to_wstring(rootData ? rootData->cellScale : 1.0f);
         card.render = [this, scene, rootId, storage](
                 int width, int height, UINT dpi,
+                const snowdesktop::component_preview::StagePlacement& stage,
                 const snowdesktop::component_preview::ApplySettings& settings,
                 bool hovered) {
             if (DesktopWidget* preview = scene->FindWidget(rootId))
@@ -786,7 +886,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 preview->showSearchBox = settings.showSearchBox;
             }
             return RenderWidgetMenuPreview(
-                scene, rootId, storage, width, height, dpi, hovered);
+                scene, rootId, storage, width, height, dpi, stage, hovered);
         };
         if (rootData)
         {
@@ -1106,6 +1206,8 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
 {
     lastContextMenuScreenPoint_ = screenPoint;
     PrepareMenuIconsForPoint(screenPoint);
+    snowdesktop::component_preview::Window previewWindow;
+    previewWindow.PrefetchDesktopWallpaperBackdrop(hwnd_, screenPoint);
     const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
     std::wstring luaSearch;
     LuaWidgetMenuFilter luaFilter = LuaWidgetMenuFilter::All;
@@ -1114,7 +1216,6 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     size_t luaPage = 0;
     auto items = BuildAddWidgetMenuItems(
         allLuaWidgets, luaWidgets, luaPage, luaSearch, luaFilter);
-    snowdesktop::component_preview::Window previewWindow;
     UINT previewCacheCommand = 0;
     std::wstring previewCachePackage;
     snowdesktop::component_preview::Model previewCache;
@@ -1170,15 +1271,14 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     ConfigureModernMenuEventPump(options);
     options.onCommand = [&](UINT command, auto& currentItems) {
         if (showPreview(command)) return true;
-        if (command >= kContextAddLuaWidgetFilterAll &&
-            command <= kContextAddLuaWidgetFilterDevelopment)
+        if (const auto selectedFilter =
+            LuaWidgetMenuFilterForCommand(command))
         {
-            luaFilter = static_cast<LuaWidgetMenuFilter>(
-                command - kContextAddLuaWidgetFilterAll);
+            luaFilter = *selectedFilter;
             luaPage = 0;
             luaWidgets = FilterLuaWidgetMenuEntries(
                 allLuaWidgets, luaSearch, luaFilter);
-            previewWindow.Close();
+            previewWindow.Hide();
             previewCacheCommand = 0;
             previewCachePackage.clear();
             previewCache = {};
@@ -1209,7 +1309,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
         luaPage = 0;
         luaWidgets = FilterLuaWidgetMenuEntries(
             allLuaWidgets, luaSearch, luaFilter);
-        previewWindow.Close();
+        previewWindow.Hide();
         previewCacheCommand = 0;
         previewCachePackage.clear();
         previewCache = {};
@@ -1338,7 +1438,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, _LW("app.menu.inc_spacing"));
             AppendMenuW(spacingMenu, MF_STRING, kContextSpacingDecrease, _LW("app.menu.dec_spacing"));
-            const std::wstring spacingLabel = _LFW("app.menu.icon_spacing_pct",
+            const std::wstring spacingLabel = _LFW("app.menu.layout_spacing_pct",
                 std::to_wstring(currentSpacingPercent));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(spacingMenu), spacingLabel.c_str());
@@ -1350,20 +1450,46 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         HMENU fontSizeMenu = CreatePopupMenu();
         if (fontSizeMenu)
         {
-            const int currentFontSize = static_cast<int>(std::round(itemFontSize_));
+            const int currentFontSize = static_cast<int>(std::round(itemFontSizeCu_));
             auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
                 UINT flags = MF_STRING;
                 if (currentFontSize == size) flags |= MF_CHECKED;
                 AppendMenuW(fontSizeMenu, flags, id, label);
             };
             addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
-            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 15);
-            addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 16);
-            const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_pt",
+            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 18);
+            addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 24);
+            const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_cu",
                 std::to_wstring(currentFontSize));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel.c_str());
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
+        }
+
+        HMENU listFontSizeMenu = CreatePopupMenu();
+        if (listFontSizeMenu)
+        {
+            const int currentFontSize = static_cast<int>(
+                std::round(listItemFontSizeCu_));
+            auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
+                UINT flags = MF_STRING;
+                if (currentFontSize == size) flags |= MF_CHECKED;
+                AppendMenuW(listFontSizeMenu, flags, id, label);
+            };
+            addFontSizeItem(kContextListFontSizeSmall,
+                _LW("app.menu.font_small"), 12);
+            addFontSizeItem(kContextListFontSizeMedium,
+                _LW("app.menu.font_medium"), 18);
+            addFontSizeItem(kContextListFontSizeLarge,
+                _LW("app.menu.font_large"), 24);
+            const std::wstring fontSizeLabel = _LFW(
+                "app.menu.list_font_size_cu",
+                std::to_wstring(currentFontSize));
+            AppendMenuW(displaySettingsMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(listFontSizeMenu),
+                fontSizeLabel.c_str());
+            SetMenuItemIcon(displaySettingsMenu,
+                reinterpret_cast<UINT_PTR>(listFontSizeMenu), L"");
         }
 
         HMENU fontWeightMenu = CreatePopupMenu();
@@ -1599,7 +1725,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         for (UINT i = 0; i < kLuaWidgetMenuPageSize; ++i)
         {
             SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetFirst + i,
-                L"\uEE65", MenuIconFont::FluentRegular);
+                L"\uEE65",
+                MenuIconFont::FluentRegular);
         }
         SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetPreviousPage,
             L"\uF15B", MenuIconFont::FluentRegular);
@@ -1622,6 +1749,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
     snowdesktop::component_preview::Window previewWindow;
+    bool wallpaperPrefetchStarted = false;
     UINT previewCacheCommand = 0;
     std::wstring previewCachePackage;
     snowdesktop::component_preview::Model previewCache;
@@ -1668,15 +1796,14 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     };
     auto changeLuaWidgetPage = [&](UINT command, auto& rootItems) {
         if (showPreview(command)) return true;
-        if (command >= kContextAddLuaWidgetFilterAll &&
-            command <= kContextAddLuaWidgetFilterDevelopment)
+        if (const auto selectedFilter =
+            LuaWidgetMenuFilterForCommand(command))
         {
-            luaFilter = static_cast<LuaWidgetMenuFilter>(
-                command - kContextAddLuaWidgetFilterAll);
+            luaFilter = *selectedFilter;
             luaPage = 0;
             luaWidgets = FilterLuaWidgetMenuEntries(
                 allLuaWidgets, luaSearch, luaFilter);
-            previewWindow.Close();
+            previewWindow.Hide();
             previewCacheCommand = 0;
             previewCachePackage.clear();
             previewCache = {};
@@ -1707,7 +1834,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         luaPage = 0;
         luaWidgets = FilterLuaWidgetMenuEntries(
             allLuaWidgets, luaSearch, luaFilter);
-        previewWindow.Close();
+        previewWindow.Hide();
         previewCacheCommand = 0;
         previewCachePackage.clear();
         previewCache = {};
@@ -1716,6 +1843,19 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 luaPage, luaSearch, luaFilter));
     };
     auto previewWidgetMenuItem = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
+        if (!wallpaperPrefetchStarted &&
+            IsAddWidgetMenuCommand(hover.command))
+        {
+            const POINT capturePoint{
+                (hover.popupScreenRect.left +
+                    hover.popupScreenRect.right) / 2,
+                (hover.popupScreenRect.top +
+                    hover.popupScreenRect.bottom) / 2,
+            };
+            previewWindow.PrefetchDesktopWallpaperBackdrop(
+                hwnd_, capturePoint);
+            wallpaperPrefetchStarted = true;
+        }
         if (hover.command != 0)
             previewAnchor = hover;
     };
@@ -1823,17 +1963,18 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             needsDesktopFocus = false;
             ShowSettingsWindow(); break;
         case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
-        case kContextFontSizeMedium: SetItemFontSize(15.0f); break;
-        case kContextFontSizeLarge: SetItemFontSize(16.0f); break;
+        case kContextFontSizeMedium: SetItemFontSize(18.0f); break;
+        case kContextFontSizeLarge: SetItemFontSize(24.0f); break;
+        case kContextListFontSizeSmall: SetListItemFontSize(12.0f); break;
+        case kContextListFontSizeMedium: SetListItemFontSize(18.0f); break;
+        case kContextListFontSizeLarge: SetListItemFontSize(24.0f); break;
         case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
         case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
         case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
         case kContextDisplayAppearanceMore:
             needsDesktopFocus = false;
-            if (settingsWindow_)
-                settingsWindow_->ShowAppearanceSettings();
-            else
-                ShowSettingsWindow();
+            ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+                snowdesktop::SettingsPage::Personalization));
             break;
         case kContextPagePrev: NavigatePageOffset(-1); break;
         case kContextPageNext: NavigatePageOffset(1); break;

@@ -1,14 +1,17 @@
 #include "app.h"
 #include "../quick_navigation_rules.h"
+#include "../widget_scroll_rules.h"
 
 // Primary-button press handling and drag-source initialization.
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    dockPressedClosedCollectionPopup_ = false;
     if (middleButtonWidgetMove_) return;
     if (renameEdit_ != nullptr) return;
-    popupMouseDownItem_.reset();
-    popupDragTargetSlot_.reset();
+    keyboardNavVisualFocus_ = false;
+    ClearPopupMouseDownItem();
+    ClearPopupDragTarget();
     pendingGuideAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
@@ -17,9 +20,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         const RECT panel = GetLuaWidgetPanelRect();
         if (!PtInRect(&panel, pt))
         {
-            CloseLuaWidgetPanel(
-                luaWidgetPanelRequest_.widgetId,
-                "outside");
+            if (luaWidgetPanelRequest_.dismissOnOutside)
+                CloseLuaWidgetPanel(
+                    luaWidgetPanelRequest_.widgetId,
+                    "outside");
+            if (luaWidgetPanelRequest_.modal)
+                return;
         }
         else
         {
@@ -41,28 +47,46 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pt.x - content.left;
             const int localY =
                 pt.y - content.top;
+            const std::string& surface =
+                luaWidgetPanelRequest_.surface;
             if (widgetEngine_ &&
                 widgetEngine_->HasFocusedHostInput() &&
                 !widgetEngine_->IsFocusedHostInputAt(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY))
+                    localX, localY, surface))
             {
                 widgetEngine_->BlurHostInput(false);
             }
             mouseDown_ = true;
             mouseDownPoint_ = pt;
             luaWidgetPanelMouseDown_ = true;
-            SetCapture(hwnd_);
+            const HWND panelCaptureHost =
+                handlingFloatingPopupInput_ &&
+                    floatingPopupHwnd_ &&
+                    IsWindow(floatingPopupHwnd_)
+                ? floatingPopupHwnd_
+                : hwnd_;
+            luaWidgetPanelCaptureHwnd_ = nullptr;
+            SetCapture(panelCaptureHost);
+            if (GetCapture() == panelCaptureHost)
+                luaWidgetPanelCaptureHwnd_ = panelCaptureHost;
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, 0, false))
+                    localX, localY, 0, false, surface))
             {
                 if (widgetEngine_)
+                {
+                    const char* eventName = surface == "dialog"
+                        ? "onDialogMouseDown"
+                        : (surface == "popover"
+                            ? "onPopoverMouseDown"
+                            : "onPanelMouseDown");
                     widgetEngine_->InvokeMouseEvent(
                         luaWidgetPanelRequest_.widgetId,
-                        "onPanelMouseDown",
+                        eventName,
                         localX, localY, 1, 0);
+                }
             }
             UpdateHostInputImePosition();
             InvalidateRect(
@@ -71,6 +95,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
     }
     DockContainer* pointDock = GetDockContainerAtPoint(pt);
+    PersistentDockHost* pointDockHost =
+        FindPersistentDockHost(pointDock);
+    const bool popupOwnedByPointDock =
+        collectionPopupDockHost_ == pointDockHost;
     const bool pointInDock = pointDock != nullptr;
     size_t pressedDockCollectionWidgetIndex =
         static_cast<size_t>(-1);
@@ -102,7 +130,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pressedOpenPopupFolderToggle =
                     IsCollectionPopupInteractive() &&
                     dockFolderPopupOpen_ &&
-                    dockFolderPopupSourceId_ == sourceId;
+                    dockFolderPopupSourceId_ == sourceId &&
+                    popupOwnedByPointDock;
             }
         }
     }
@@ -111,14 +140,21 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         snowdesktop::floating_dock_rules::
             ShouldCloseCollectionPopup(
                 popupWidgetIndex_,
-                pressedDockCollectionWidgetIndex);
+                pressedDockCollectionWidgetIndex,
+                popupOwnedByPointDock);
     bool collectionPopupClosedByPointerDown = false;
     HWND interactionCaptureHwnd = hwnd_;
     if (handlingFloatingDockInput_ &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
+        handlingPersistentDockHost_ &&
+        handlingPersistentDockHost_->hwnd &&
+        IsWindow(handlingPersistentDockHost_->hwnd))
         interactionCaptureHwnd =
-            floatingDockHwnd_;
+            handlingPersistentDockHost_->hwnd;
+    else if (handlingFloatingPopupInput_ &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_))
+        interactionCaptureHwnd =
+            floatingPopupHwnd_;
     dockPressedContainer_ = pointDock;
     // Dock is an app switcher: do not move focus away from the current app before
     // deciding whether this click should minimize or restore it. The decision
@@ -170,7 +206,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 ShouldCloseCollectionPopupOnPointerDown(
                     popupWidgetIndex_,
                     pressedDockCollectionWidgetIndex,
-                    PtInRect(&popup, pt) != FALSE))
+                    PtInRect(&popup, pt) != FALSE,
+                    popupOwnedByPointDock))
         {
             CloseCollectionPopup();
             collectionPopupClosedByPointerDown = true;
@@ -202,6 +239,47 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     bool ctrl = (wp & MK_CONTROL) != 0;
 
+    if (IsCollectionPopupInteractive())
+    {
+        DesktopWidget* popupWidget = nullptr;
+        bool pressedPopupToggle = false;
+        if (dockFolderPopupOpen_)
+        {
+            popupWidget = &dockFolderPopupWidget_;
+            pressedPopupToggle = pressedOpenPopupFolderToggle;
+        }
+        else if (popupWidgetIndex_ < widgets_.size())
+        {
+            popupWidget = &widgets_[popupWidgetIndex_];
+            pressedPopupToggle = pressedOpenPopupDockToggle;
+        }
+        if (popupWidget && !pressedPopupToggle)
+        {
+            const RECT popup = GetCollectionPopupRect(*popupWidget);
+            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const int visible = std::max<int>(
+                1, viewport.bottom - viewport.top);
+            const int maximum = GetCollectionPopupMaxScrollOffset(
+                *popupWidget, popup);
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewport.top, viewport.bottom,
+                    visible + maximum, visible,
+                    popupScrollOffset_);
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, pt.y, pt.x, viewport.right))
+            {
+                popupScrollbarDragging_ = true;
+                popupScrollbarDragStartY_ = pt.y;
+                popupScrollbarDragStartOffset_ = popupScrollOffset_;
+                mouseDownHit_ = nullptr;
+                SetCapture(interactionCaptureHwnd);
+                InvalidateRect(hwnd_, &popup, FALSE);
+                return;
+            }
+        }
+    }
+
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
         !pressedOpenPopupFolderToggle)
@@ -229,6 +307,38 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
             const RECT content =
                 GetCollectionPopupContentRect(popup);
+            const RECT detailsHeader =
+                GetCollectionPopupDetailsHeaderRect(popup);
+            if (!IsRectEmptyRect(detailsHeader) &&
+                PtInRect(&detailsHeader, pt))
+            {
+                mouseDownHit_ = nullptr;
+                const auto divider =
+                    HitTestCollectionPopupDetailsDivider(
+                        pt, popup);
+                if (divider != snowdesktop::list_detail_rules::
+                        Column::None)
+                {
+                    detailColumnResizeActive_ = true;
+                    detailColumnResizePopup_ = true;
+                    detailColumnResizeColumn_ = divider;
+                    detailColumnResizeHeaderLeft_ =
+                        detailsHeader.left;
+                    detailColumnResizeHeaderWidth_ =
+                        std::max<int>(
+                            1, detailsHeader.right -
+                                detailsHeader.left);
+                    mouseDownWidgetIndex_ =
+                        static_cast<size_t>(-1);
+                    SetCapture(interactionCaptureHwnd);
+                    SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+                }
+                else
+                {
+                    mouseDown_ = false;
+                }
+                return;
+            }
             bool clickedPopupItem = false;
             for (size_t i = 0;
                  i < dockFolderPopupWidget_.
@@ -320,6 +430,38 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
         std::vector<std::wstring> popupKeys = GetPopupItemKeys(widgets_[popupWidgetIndex_]);
         RECT content = GetCollectionPopupContentRect(popup);
+        const RECT detailsHeader =
+            GetCollectionPopupDetailsHeaderRect(popup);
+        if (!IsRectEmptyRect(detailsHeader) &&
+            PtInRect(&detailsHeader, pt))
+        {
+            mouseDownHit_ = nullptr;
+            const auto divider =
+                HitTestCollectionPopupDetailsDivider(
+                    pt, popup);
+            if (divider != snowdesktop::list_detail_rules::
+                    Column::None)
+            {
+                detailColumnResizeActive_ = true;
+                detailColumnResizePopup_ = true;
+                detailColumnResizeColumn_ = divider;
+                detailColumnResizeHeaderLeft_ =
+                    detailsHeader.left;
+                detailColumnResizeHeaderWidth_ =
+                    std::max<int>(
+                        1, detailsHeader.right -
+                            detailsHeader.left);
+                mouseDownWidgetIndex_ =
+                    static_cast<size_t>(-1);
+                SetCapture(interactionCaptureHwnd);
+                SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            }
+            else
+            {
+                mouseDown_ = false;
+            }
+            return;
+        }
         bool clickedPopupItem = false;
         for (size_t i = 0; i < popupKeys.size(); ++i)
         {
@@ -385,8 +527,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (dock->ContainsInteractivePoint(pt))
         {
             const auto primeDockMinimizeSnapshot =
-                [this]() {
-                    if (floatingDockVisible_ ||
+                [this, dock]() {
+                    if (IsDockContainerEffectivelyFloating(dock) ||
                         dockPressedWindowAction_ !=
                             snowdesktop::dock_window_rules::
                                 DockClickAction::Minimize ||
@@ -409,7 +551,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     [this]() {
                         ToggleWindowsStartMenu();
                     },
-                    true,
                     FloatingDockCloseFocusPolicy::PreserveCurrent);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
@@ -431,6 +572,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (!ctrl) ClearSelection();
                 dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
+                if (dockPressedEntry_ < dockEntries_.size() &&
+                    dockEntries_[dockPressedEntry_].type ==
+                        DockEntryType::Collection)
+                {
+                    dockPressedClosedCollectionPopup_ =
+                        collectionPopupClosedByPointerDown;
+                }
                 if (dockPressedEntry_ < dockEntries_.size() &&
                     dockEntries_[dockPressedEntry_].type ==
                         DockEntryType::DesktopItem)
@@ -668,6 +816,34 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
 
+        if (wh != WidgetHit::ResizeHandle &&
+            wh != WidgetHit::MoveHandle)
+        {
+            const int maximum = wc->GetMaxScrollOffset();
+            const int visible = wc->GetVisibleContentHeight();
+            const RECT viewport = wc->GetContentViewportRect();
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(
+                    viewport.top, viewport.bottom,
+                    visible + maximum, visible,
+                    wc->GetScrollOffset(), wc->GetCellScale());
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, pt.y, pt.x, viewport.right,
+                    wc->GetCellScale()))
+            {
+                widgetScrollbarDragging_ = true;
+                widgetScrollbarDragContainer_ = wc;
+                widgetScrollbarDragStartY_ = pt.y;
+                widgetScrollbarDragStartOffset_ =
+                    wc->GetScrollOffset();
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ = nullptr;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
+                return;
+            }
+        }
+
         if (wh == WidgetHit::ResizeHandle)
         {
             SelectWidgetOnly(wi);
@@ -717,6 +893,74 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
+            return;
+        }
+        else if (wh == WidgetHit::DetailsModifiedDivider ||
+                 wh == WidgetHit::DetailsTypeDivider ||
+                 wh == WidgetHit::DetailsSizeDivider)
+        {
+            auto* list = dynamic_cast<ScrollingItemWidget*>(wc);
+            if (!list) return;
+            const RECT header = list->GetDetailsHeaderRectFromViewport(
+                list->GetContentViewportRect());
+            if (IsRectEmptyRect(header)) return;
+            detailColumnResizeActive_ = true;
+            detailColumnResizePopup_ = false;
+            if (wh == WidgetHit::DetailsModifiedDivider)
+            {
+                detailColumnResizeColumn_ =
+                    snowdesktop::list_detail_rules::Column::Modified;
+            }
+            else if (wh == WidgetHit::DetailsTypeDivider)
+            {
+                detailColumnResizeColumn_ =
+                    snowdesktop::list_detail_rules::Column::Type;
+            }
+            else
+            {
+                detailColumnResizeColumn_ =
+                    snowdesktop::list_detail_rules::Column::Size;
+            }
+            detailColumnResizeHeaderLeft_ = header.left;
+            detailColumnResizeHeaderWidth_ = std::max<int>(
+                1, header.right - header.left);
+            mouseDownWidgetIndex_ = wi;
+            mouseDownHit_ = nullptr;
+            SetCapture(hwnd_);
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            return;
+        }
+        else if (wh == WidgetHit::DetailsNameHeader ||
+                 wh == WidgetHit::DetailsModifiedHeader ||
+                 wh == WidgetHit::DetailsTypeHeader ||
+                 wh == WidgetHit::DetailsSizeHeader)
+        {
+            auto* list = dynamic_cast<ScrollingItemWidget*>(wc);
+            if (!list) return;
+            auto column = snowdesktop::list_detail_rules::Column::Name;
+            int mode = snowdesktop::folder_sort_rules::kName;
+            if (wh == WidgetHit::DetailsModifiedHeader)
+            {
+                column = snowdesktop::list_detail_rules::Column::Modified;
+                mode = snowdesktop::folder_sort_rules::kModified;
+            }
+            else if (wh == WidgetHit::DetailsTypeHeader)
+            {
+                column = snowdesktop::list_detail_rules::Column::Type;
+                mode = snowdesktop::folder_sort_rules::kType;
+            }
+            else if (wh == WidgetHit::DetailsSizeHeader)
+            {
+                column = snowdesktop::list_detail_rules::Column::Size;
+                mode = snowdesktop::folder_sort_rules::kSize;
+            }
+            const DesktopWidget* sortData = list->GetDetailsSortData();
+            const bool ascending = sortData &&
+                sortData->contentSortColumn == column
+                ? !sortData->contentSortAscending
+                : snowdesktop::list_detail_rules::
+                    DefaultAscending(column);
+            SortWidgetContents(wi, mode, ascending);
             return;
         }
         else if (wh == WidgetHit::Content)
@@ -839,9 +1083,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     DesktopWidgetType::FolderMapping &&
                 !folder->sourceFolderPath.empty())
             {
-                ShellExecuteW(hwnd_, L"open",
-                    folder->sourceFolderPath.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL);
+                shellLaunchWorker_.Enqueue(
+                    hwnd_, folder->sourceFolderPath);
             }
             return;
         }

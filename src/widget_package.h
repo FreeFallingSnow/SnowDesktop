@@ -12,17 +12,22 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
+#include "widget_logical_slot.h"
+#include "widget_permission_state.h"
 
 namespace snowdesktop::widget
 {
-inline constexpr int kPackageSchemaVersion = 1;
-inline constexpr int kHostApiVersion = 1;
+inline constexpr int kPackageSchemaVersion = 2;
+inline constexpr int kHostApiVersion = 2;
 inline constexpr std::uint64_t kMaxArchiveBytes = 20ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxExtractedBytes = 64ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxEntryLuaBytes = 1ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxPreviewBytes = 2ull * 1024ull * 1024ull;
+inline constexpr std::uint64_t kMaxResourceBytes = 8ull * 1024ull * 1024ull;
 inline constexpr std::size_t kMaxPackageFiles = 512;
+inline constexpr std::size_t kMaxPackageResources = 32;
 
 enum class ValidationSeverity
 {
@@ -56,6 +61,15 @@ struct LocalizedMetadata
     std::string title;
     std::string description;
     std::unordered_map<std::string, std::string> strings;
+};
+
+struct PackageResource
+{
+    std::string type;
+    std::string path;
+    std::string license;
+
+    bool operator==(const PackageResource&) const = default;
 };
 
 struct PreviewVariant
@@ -101,12 +115,22 @@ struct PackageManifest
     int maxRows = 0;
     int refreshIntervalMs = 0;
     std::vector<std::string> permissions;
+    std::vector<std::string> optionalPermissions;
     std::vector<std::string> networkDomains;
+    std::vector<std::string> requiredFeatures;
+    std::vector<std::string> optionalFeatures;
+    std::unordered_map<std::string, PackageResource> resources;
+    snowdesktop::widget_runtime::LogicalSlotDeclarations logicalSlots;
     std::unordered_map<std::string, LocalizedMetadata> locales;
 };
 
 PackageManifest LocalizePackageManifest(PackageManifest manifest,
     const std::string& requestedLocale);
+bool IsExecutablePackageContract(int schemaVersion,
+    int apiVersion) noexcept;
+bool IsExecutablePackageContract(const PackageManifest& manifest) noexcept;
+std::vector<std::string> DeclaredPermissions(
+    const PackageManifest& manifest);
 
 struct PackageSourceRef
 {
@@ -199,47 +223,31 @@ struct InstalledPackage
     PackageSourceRef source;
     std::filesystem::path root;
     std::string sha256;
+    PermissionDecisionState permissionState =
+        PermissionDecisionState::LegacyImplicit;
     std::vector<std::string> grantedPermissions;
     std::vector<std::string> grantedNetworkDomains;
     bool builtin = false;
     bool development = false;
     bool enabled = true;
+    // Selected within its own source. A development override can temporarily
+    // make a selected managed package inactive without hiding its state from
+    // management UI.
+    bool selected = false;
     bool active = true;
 };
 
-struct LegacyPackage
+struct InvalidPackage
 {
-    std::filesystem::path scriptPath;
-    std::filesystem::path manifestPath;
-    std::wstring legacyName;
-};
-
-struct LegacyMigrationResult
-{
-    bool ok = false;
-    std::wstring legacyName;
     std::string packageId;
-    std::filesystem::path backupDirectory;
+    PackageManifest manifest;
+    PackageSourceRef source;
+    std::filesystem::path root;
     ValidationReport report;
-    std::string error;
+    bool builtin = false;
+    bool development = false;
+    bool selected = false;
 };
-
-struct LegacyLooseImportResult
-{
-    bool ok = false;
-    std::size_t copiedPairs = 0;
-    std::string error;
-};
-
-/**
- * @brief Copy only legacy loose-file component pairs from an old portable
- *        widgets directory into the writable package migration root.
- * @details Folder packages, authoring tools, orphaned Lua files, symbolic
- *          links, junctions and reparse points are never copied.
- */
-LegacyLooseImportResult ImportLegacyLooseWidgetPairs(
-    const std::filesystem::path& sourceWidgets,
-    const std::filesystem::path& destinationWidgets);
 
 struct PackagePaths
 {
@@ -259,8 +267,8 @@ class WidgetPackageValidator
 public:
     ValidationReport ValidateDirectory(const std::filesystem::path& root,
         PackageManifest* manifest = nullptr) const;
-    ValidationReport ValidateArchive(const std::filesystem::path& archive,
-        PackageManifest* manifest = nullptr) const;
+    ValidationReport ValidateArchive(
+        const std::filesystem::path& archive) const;
     bool ReadManifest(const std::filesystem::path& manifestPath,
         PackageManifest& manifest, ValidationReport& report) const;
 
@@ -311,6 +319,13 @@ public:
     bool Initialize(std::string& error);
     const PackagePaths& Paths() const { return paths_; }
     std::vector<InstalledPackage> ListPackages() const;
+    std::vector<InvalidPackage> ListInvalidPackages() const;
+    bool ContainsPackage(const std::string& packageId) const;
+    std::unordered_map<std::string, std::vector<std::string>>
+        SteamSubscriptionHistory() const;
+    bool UpdateSteamSubscriptionHistory(const std::string& accountId,
+        const std::vector<std::string>& publishedFileIds,
+        std::string& error);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
     std::optional<std::filesystem::path> ResolveEntry(
         const std::string& packageId) const;
@@ -344,23 +359,18 @@ public:
         ValidationReport& report, std::string& error) const;
     bool SetEnabled(const std::string& packageId, bool enabled,
         std::string& error);
+    bool SetPermissionDecision(const std::string& packageId,
+        PermissionDecisionState state,
+        const std::vector<std::string>& grantedPermissions,
+        const std::vector<std::string>& grantedNetworkDomains,
+        std::string& error);
+    bool CreateDevelopmentProject(const std::string& packageId,
+        std::filesystem::path& projectRoot, std::string& error);
+    bool SetDevelopmentOverride(const std::string& packageId, bool active,
+        std::string& error);
     bool Rollback(const std::string& packageId, const std::string& version,
         std::string& error);
     bool Uninstall(const std::string& packageId, std::string& error);
-
-    // Only user-authored or third-party loose packages are returned here.
-    // Shipped legacy components are replaced automatically during Initialize.
-    std::vector<LegacyPackage> FindLegacyPackages() const;
-    const std::vector<LegacyMigrationResult>&
-        AutomaticLegacyMigrationResults() const
-    {
-        return automaticLegacyMigrationResults_;
-    }
-    std::filesystem::path PendingLegacyStoragePath() const;
-    std::optional<std::string> ResolveLegacyPackageId(
-        const std::wstring& legacyName) const;
-    LegacyMigrationResult MigrateLegacy(const LegacyPackage& legacy,
-        const std::optional<std::string>& preferredId = std::nullopt);
 
     static std::string Sha256File(const std::filesystem::path& path);
     static std::string GenerateUuid();
@@ -371,9 +381,24 @@ private:
         std::string packageId;
         std::string activeVersion;
         PackageSourceRef source;
+        PermissionDecisionState permissionState =
+            PermissionDecisionState::LegacyImplicit;
         std::vector<std::string> grantedPermissions;
         std::vector<std::string> grantedNetworkDomains;
         bool enabled = true;
+    };
+
+    struct PermissionDecisionRecord
+    {
+        std::string packageId;
+        PackageSourceRef source;
+        PermissionDecisionState state = PermissionDecisionState::Pending;
+        std::vector<std::string> requestedPermissions;
+        std::vector<std::string> requestedOptionalPermissions;
+        std::vector<std::string> requestedNetworkDomains;
+        std::string requestedScopeFingerprint;
+        std::vector<std::string> grantedPermissions;
+        std::vector<std::string> grantedNetworkDomains;
     };
 
     bool Refresh(std::string& error);
@@ -389,21 +414,18 @@ private:
         bool allowSourceChange, bool allowPermissionExpansion,
         InstalledPackage& installed,
         std::string& error);
-    std::vector<LegacyPackage> ScanLegacyPackages() const;
-    std::optional<std::string> BundledReplacementId(
-        const LegacyPackage& legacy) const;
-    LegacyMigrationResult ReplaceBundledLegacy(
-        const LegacyPackage& legacy, const std::string& packageId);
-    bool PrepareBundledLegacyStorage(std::string& error);
-    void MigrateBundledLegacyPackages();
     std::filesystem::path CreateStagingPath(const char* purpose) const;
 
     PackagePaths paths_;
     WidgetPackageValidator validator_;
     std::vector<InstalledPackage> packages_;
+    std::vector<InvalidPackage> invalidPackages_;
     std::unordered_map<std::string, RegistryEntry> registry_;
-    std::unordered_map<std::string, std::string> legacyAliases_;
-    std::vector<LegacyMigrationResult> automaticLegacyMigrationResults_;
+    std::unordered_map<std::string, PermissionDecisionRecord>
+        permissionDecisions_;
+    std::unordered_set<std::string> developmentOverrides_;
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        steamSubscriptionsByAccount_;
 };
 
 class BuiltinPackageSource final : public IWidgetPackageSource

@@ -40,17 +40,21 @@ bool DragTargetResolver::AcceptsInternal(
     const auto relation = contract::ClassifyRelation(
         sourceSurface, targetSurface, source.origin == &target);
     return contract::AcceptsSlotDrop(
-        sourceSurface, payload, targetSurface, relation);
+            sourceSurface, payload, targetSurface, relation) &&
+        target.AcceptsDragPayload(payload, source.entries.size());
 }
 
-bool DragTargetResolver::AcceptsExternal(const Container& target)
+bool DragTargetResolver::AcceptsExternal(const Container& target,
+    std::size_t itemCount)
 {
     namespace contract = snowdesktop::slot_contract;
     return contract::AcceptsSlotDrop(
         contract::SlotSurfaceKind::External,
         contract::DragPayloadKind::ExternalFile,
         target.GetSlotSurfaceKind(),
-        contract::DragRelation::ExternalIngress);
+        contract::DragRelation::ExternalIngress) &&
+        target.AcceptsDragPayload(
+            contract::DragPayloadKind::ExternalFile, itemCount);
 }
 
 DragTargetResolution DragTargetResolver::ResolveInternal(
@@ -68,10 +72,11 @@ DragTargetResolution DragTargetResolver::ResolveInternal(
 DragTargetResolution DragTargetResolver::ResolveExternal(
     const std::vector<std::unique_ptr<Container>>& containers,
     POINT point,
-    const CandidateFilter& filter)
+    const CandidateFilter& filter,
+    std::size_t itemCount)
 {
     return Resolve(containers, point, filter,
-        [](const Container& candidate) {
-            return AcceptsExternal(candidate);
+        [itemCount](const Container& candidate) {
+            return AcceptsExternal(candidate, itemCount);
         });
 }

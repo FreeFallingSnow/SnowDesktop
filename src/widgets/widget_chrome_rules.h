@@ -6,6 +6,77 @@
 namespace snowdesktop::widget_chrome_rules
 {
 
+constexpr bool HasBottomBar(bool showTitle) noexcept
+{
+    return showTitle;
+}
+
+constexpr bool ShowsBottomBar(
+    bool showTitle, bool bottomBarHover, bool hovered) noexcept
+{
+    return HasBottomBar(showTitle) && (!bottomBarHover || hovered);
+}
+
+constexpr bool ShowsResizeHandle(
+    bool showTitle, bool bottomBarHover, bool hovered) noexcept
+{
+    return hovered || (HasBottomBar(showTitle) && !bottomBarHover);
+}
+
+constexpr bool ShowsCompactMoveHandle(
+    bool showTitle, bool hovered) noexcept
+{
+    return !HasBottomBar(showTitle) && hovered;
+}
+
+inline int CompactEdgeHandleWidth(
+    int availableWidth, int preferredWidth) noexcept
+{
+    return std::min(
+        std::max(0, preferredWidth),
+        std::max(0, availableWidth) / 2);
+}
+
+constexpr bool ReservesContentForBottomBar(
+    bool showTitle, bool bottomBarHover) noexcept
+{
+    return HasBottomBar(showTitle) && !bottomBarHover;
+}
+
+constexpr bool UsesCategorizedControlAccentOutline(
+    bool keyboardNavigationVisualFocus,
+    bool navigationSelected) noexcept
+{
+    return keyboardNavigationVisualFocus && navigationSelected;
+}
+
+constexpr float CategorizedControlOutlineWidth(
+    bool keyboardSelected) noexcept
+{
+    return keyboardSelected ? 2.0f : 1.0f;
+}
+
+inline int ReservedBottomBarHeight(
+    bool showTitle, bool bottomBarHover, int scaledBarHeight) noexcept
+{
+    return ReservesContentForBottomBar(showTitle, bottomBarHover)
+        ? std::max(0, scaledBarHeight)
+        : 0;
+}
+
+inline int HostActionContentBottom(
+    bool showTitle, int frameTop, int frameBottom,
+    int moveHandleTop, int handleGap) noexcept
+{
+    const int boundedFrameBottom = std::max(frameTop, frameBottom);
+    if (!HasBottomBar(showTitle))
+        return boundedFrameBottom;
+
+    return std::clamp(
+        moveHandleTop - std::max(0, handleGap),
+        frameTop, boundedFrameBottom);
+}
+
 /**
  * Return the horizontal inset that keeps the bottom-bar edge content inside
  * the rounded widget outline.
@@ -39,6 +110,18 @@ inline int BottomBarSideInset(
     const int roundedInset = static_cast<int>(std::ceil(
         static_cast<double>(radius) - std::sqrt(squaredInside)));
     return std::max(baseInset, roundedInset);
+}
+
+inline int BottomBarTitleTrailingReserve(
+    int buttonCount, int buttonSize, int edgeGap,
+    int betweenGap, int resizeReserve, int titleGap)
+{
+    const int count = std::max(0, buttonCount);
+    return std::max(0, resizeReserve) +
+        std::max(0, edgeGap) +
+        count * std::max(0, buttonSize) +
+        std::max(0, count - 1) * std::max(0, betweenGap) +
+        std::max(0, titleGap);
 }
 
 } // namespace snowdesktop::widget_chrome_rules

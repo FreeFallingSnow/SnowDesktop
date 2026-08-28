@@ -17,6 +17,39 @@ POINT DesktopApp::GetDragTargetPoint(POINT current) const
     };
 }
 
+GridCell DesktopApp::ResolveDesktopRequestCell(
+    const DragSourceList& sourceList, POINT current) const
+{
+    if (sourceList.UsesPointerDesktopPlacement())
+        return CellFromPoint(current);
+    return CellFromPointForDrag(GetDragTargetPoint(current));
+}
+
+void DesktopApp::RefreshDragPresentationAnchor()
+{
+    if (!dragSession_.IsActive())
+    {
+        dragSession_.ClearPresentationAnchor();
+        return;
+    }
+
+    Container* target = dragSession_.TargetContainer();
+    const HitRegion region = dragSession_.TargetRegion();
+    if (target != GetDesktopGrid() ||
+        region == HitRegion::None ||
+        region == HitRegion::Handoff ||
+        region == HitRegion::Blocked)
+    {
+        dragSession_.ClearPresentationAnchor();
+        return;
+    }
+
+    const DragSourceList& sourceList = dragSession_.SourceList();
+    const POINT current = dragSession_.CurrentPoint();
+    dragSession_.UpdatePresentationAnchor(
+        ResolveDesktopRequestCell(sourceList, current));
+}
+
 /**
  * @brief 为选中的桌面项创建 IDataObject（用于拖拽/剪贴板）。
  * @return COM 数据对象，失败返回 nullptr。
@@ -220,24 +253,6 @@ std::unordered_set<std::wstring> DesktopApp::SnapshotDesktopKeys() const
     for (const auto& item : items_)
         if (!item.layoutKey.empty())
             keys.insert(ToUpperInvariant(item.layoutKey));
-    return keys;
-}
-
-/**
- * @brief 获取自快照以来新增的桌面项布局键。
- * @param existingKeys 之前的键快照。
- * @return 新增的键列表。
- */
-std::vector<std::wstring> DesktopApp::NewDesktopKeysSince(
-    const std::unordered_set<std::wstring>& existingKeys) const
-{
-    std::vector<std::wstring> keys;
-    for (const auto& item : items_)
-    {
-        std::wstring key = ToUpperInvariant(item.layoutKey);
-        if (!key.empty() && !existingKeys.contains(key))
-            keys.push_back(key);
-    }
     return keys;
 }
 

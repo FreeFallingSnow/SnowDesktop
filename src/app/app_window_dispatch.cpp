@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_keyboard_rules.h"
 
 // Static window-procedure dispatch adapters.
 
@@ -63,13 +64,58 @@ LRESULT CALLBACK DesktopApp::QuickNavigationWndProc(HWND hwnd, UINT msg, WPARAM 
 LRESULT CALLBACK DesktopApp::FloatingDockWndProc(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    DesktopApp* app = nullptr;
+    PersistentDockHost* host = nullptr;
     if (msg == WM_NCCREATE)
     {
         auto* create =
             reinterpret_cast<CREATESTRUCTW*>(lp);
-        app = static_cast<DesktopApp*>(
+        host = static_cast<PersistentDockHost*>(
             create->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(host));
+    }
+    else
+    {
+        host = reinterpret_cast<PersistentDockHost*>(
+            GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (host && host->owner)
+        return host->owner->HandleFloatingDockMessage(
+            *host, hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK DesktopApp::FloatingPopupWndProc(
+    HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(create->lpCreateParams);
+        SetWindowLongPtrW(
+            hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(
+            GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (app)
+        return app->HandleFloatingPopupMessage(
+            hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK DesktopApp::DragPreviewWndProc(
+    HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(create->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA,
             reinterpret_cast<LONG_PTR>(app));
     }
@@ -79,7 +125,7 @@ LRESULT CALLBACK DesktopApp::FloatingDockWndProc(
             GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
     if (app)
-        return app->HandleFloatingDockMessage(
+        return app->HandleDragPreviewMessage(
             hwnd, msg, wp, lp);
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -255,15 +301,66 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         break;
     case WM_KEYDOWN:
+    {
+        const bool repeated =
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
+        if (TryHandlePageNavigationKey(wp, repeated))
+            return 0;
+        DispatchLuaWidgetViewKeyEvent(wp, true,
+            repeated);
         if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
         {
             UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
-        OnKeyDown(wp);
+        OnKeyDown(wp, repeated);
         UpdateHostInputImePosition();
         return 0;
+    }
+    case WM_SYSKEYDOWN:
+    {
+        using snowdesktop::desktop_keyboard_rules::AltF4Action;
+        const AltF4Action altF4Action =
+            snowdesktop::desktop_keyboard_rules::ResolveAltF4Action(
+                hwnd == inputHwnd_,
+                wp == VK_F4,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 29)) != 0,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        if (altF4Action != AltF4Action::PassThrough)
+        {
+            if (altF4Action ==
+                AltF4Action::RequestWindowsShutdownDialog)
+                RequestWindowsShutdownDialog();
+            return 0;
+        }
+        if (TryHandlePageNavigationKey(
+                wp,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0))
+            return 0;
+        if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
+            DispatchLuaWidgetViewKeyEvent(wp, true,
+                (static_cast<ULONG_PTR>(lp) &
+                    (ULONG_PTR{1} << 30)) != 0);
+        break;
+    }
+    case WM_SYSCHAR:
+    {
+        if (wp > 0x7f) break;
+        const char key = static_cast<char>(wp);
+        if (!((key >= 'A' && key <= 'Z') ||
+                (key >= 'a' && key <= 'z') ||
+                (key >= '0' && key <= '9')))
+            break;
+        const bool repeated =
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
+        if (!OnKeyDown(static_cast<WPARAM>(key), repeated)) break;
+        UpdateHostInputImePosition();
+        return 0;
+    }
     case WM_CHAR:
     {
         wchar_t ch = static_cast<wchar_t>(wp);
@@ -290,8 +387,33 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         return 0;
     }
     case WM_KEYUP:
+        DispatchLuaWidgetViewKeyEvent(wp, false, false);
         RefreshDragHintFromKeyboard();
         return 0;
+    case WM_SYSKEYUP:
+        if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
+            DispatchLuaWidgetViewKeyEvent(wp, false, false);
+        break;
+    case WM_KILLFOCUS:
+        if (widgetEngine_)
+        {
+            widgetEngine_->ClearHostViewKeyState();
+            widgetEngine_->CancelInteractionPointerPress();
+        }
+        break;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        ForgetLuaWidgetPanelCapture(hwnd);
+        if (msg == WM_CANCELMODE ||
+            !IsOwnedPointerCaptureWindow(
+                reinterpret_cast<HWND>(lp)))
+        {
+            if (CanCancelPointerPressAfterCaptureLoss())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+            }
+        }
+        break;
     case WM_TIMER:
         OnTimer(wp);
         return 0;

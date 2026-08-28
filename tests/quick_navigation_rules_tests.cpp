@@ -200,6 +200,53 @@ void TestPinyinInitials()
         "initial sort must use pinyin and preserve stable ties");
 }
 
+void TestExtendedNavigationKeyNames()
+{
+    const auto formatKey = [](UINT virtualKey) {
+        NavigationSettings settings;
+        settings.modifiers = 0;
+        settings.virtualKey = virtualKey;
+        return FormatNavigationHotkey(settings);
+    };
+
+    const std::wstring pageUp = formatKey(VK_PRIOR);
+    const std::wstring pageDown = formatKey(VK_NEXT);
+    Check(!pageUp.empty() && pageUp != formatKey(VK_NUMPAD9),
+        "Page Up must not be displayed as numeric keypad 9");
+    Check(!pageDown.empty() && pageDown != formatKey(VK_NUMPAD3),
+        "Page Down must not be displayed as numeric keypad 3");
+    Check(formatKey(VK_LEFT) != formatKey(VK_NUMPAD4) &&
+            formatKey(VK_RIGHT) != formatKey(VK_NUMPAD6) &&
+            formatKey(VK_UP) != formatKey(VK_NUMPAD8) &&
+            formatKey(VK_DOWN) != formatKey(VK_NUMPAD2),
+        "arrow keys must not be displayed as numeric keypad keys");
+}
+
+void TestApplicationIconCacheIdentity()
+{
+    const std::wstring first =
+        rules::ApplicationIconCacheIdentity(
+            L"shell:AppsFolder\\Vendor.First_app!Main",
+            L"Shared name");
+    const std::wstring second =
+        rules::ApplicationIconCacheIdentity(
+            L"shell:AppsFolder\\Vendor.Second_app!Main",
+            L"Shared name");
+    Check(
+        first != second,
+        "app icon cache identities must not collapse distinct AppsFolder items");
+    Check(
+        first == rules::ApplicationIconCacheIdentity(
+            L"SHELL:APPSFOLDER\\VENDOR.FIRST_APP!MAIN",
+            L"Renamed display value"),
+        "app icon cache identities must be case-insensitive and independent of display names");
+    Check(
+        rules::ApplicationIconCacheIdentity(
+            L"", L"Fallback App") ==
+            L"FALLBACK APP",
+        "display names must provide a stable fallback cache identity");
+}
+
 void TestSourceOwnership()
 {
     const std::vector<std::wstring> items = {
@@ -381,6 +428,16 @@ void TestAnimationRules()
             kMinimumScale) < 80.0f,
         "the panel edge contracts toward the Dock search icon");
     Check(NearlyEqual(
+            SegmentNormalizedStartSlope(0.0f, true), 0.0f) &&
+            NearlyEqual(
+                SegmentNormalizedStartSlope(1.0f, false), 0.0f),
+        "terminal smoothstep segments start at rest");
+    Check(NearlyEqual(
+            SegmentNormalizedStartSlope(0.5f, true), 1.5f) &&
+            NearlyEqual(
+                SegmentNormalizedStartSlope(0.5f, false), 1.5f),
+        "open and close compositor segments preserve midpoint velocity");
+    Check(NearlyEqual(
             ScaleCoordinate(
                 640.0f, 1200.0f, 1.0f),
             640.0f),
@@ -411,6 +468,9 @@ void TestAnimationRules()
             closing.scale,
             state.GetVisual().scale),
         "reopening keeps scale continuous");
+    Check(SegmentNormalizedStartSlope(
+            closing.progress, true) > 0.0f,
+        "a reversed compositor segment carries forward its current velocity");
     state.Advance(2000);
     Check(!state.IsAnimating(),
         "reopened animation completes");
@@ -478,8 +538,10 @@ void TestAnimatedPointerHitRules()
 int main()
 {
     TestViewModePersistenceValues();
+    TestExtendedNavigationKeyNames();
     TestViewModeFilePersistence();
     TestPinyinInitials();
+    TestApplicationIconCacheIdentity();
     TestSourceOwnership();
     TestMappingSectionsFollowTabOrder();
     TestSectionLayout();

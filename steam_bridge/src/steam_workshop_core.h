@@ -32,6 +32,7 @@ struct SteamStatus
     bool compiled = false;
     bool initialized = false;
     bool loggedOn = false;
+    std::uint32_t expectedAppId = 0;
     std::uint32_t appId = 0;
     std::string steamId;
     std::string diagnostic;
@@ -39,6 +40,7 @@ struct SteamStatus
 
 struct WorkshopEulaStatus
 {
+    bool available = false;
     bool accepted = false;
     bool needsAction = false;
     std::uint32_t version = 0;
@@ -135,6 +137,8 @@ public:
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
     std::optional<WorkshopEulaStatus> GetEulaStatus(CoreError& error);
+    bool SetSubscribed(std::uint64_t publishedFileId, bool subscribed,
+        std::chrono::seconds timeout, CoreError& error);
     std::optional<PublishResult> Publish(const PublishRequest& request,
         const PublishProgressCallback& progress, CoreError& error);
 

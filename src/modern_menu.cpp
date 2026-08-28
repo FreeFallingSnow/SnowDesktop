@@ -135,9 +135,10 @@ public:
           panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
           panelRadius_(Scale(8, options.dpi))
     {
-        const int textHeight = -Scale(13, options.dpi);
+        const int textHeight = -metrics_.textFontHeight;
         const int iconHeight = -metrics_.iconFontHeight;
-        const int quickTextHeight = -Scale(10, options.dpi);
+        const int submenuArrowHeight = -metrics_.submenuArrowFontHeight;
+        const int quickTextHeight = -metrics_.quickActionTextFontHeight;
         const int quickIconHeight = -metrics_.quickActionFontHeight;
         textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -150,6 +151,11 @@ public:
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,
             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
+        submenuArrowFont_ = CreateFontW(submenuArrowHeight, 0, 0, 0,
+            FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+            L"FluentSystemIcons-Regular");
         fontAwesomeIconFont_ = CreateFontW(iconHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
@@ -176,6 +182,8 @@ public:
         CloseFromDepth(0);
         if (fontAwesomeIconFont_)
             DeleteObject(fontAwesomeIconFont_);
+        if (submenuArrowFont_)
+            DeleteObject(submenuArrowFont_);
         if (fluentIconFont_)
             DeleteObject(fluentIconFont_);
         if (quickFontAwesomeIconFont_)
@@ -486,7 +494,7 @@ public:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                item.quickIcon,
+                item.quickIcon, item.image,
             };
             UINT state = 0;
             if (!item.enabled)
@@ -547,7 +555,7 @@ public:
             else
             {
                 menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
-                    row, state, palette_, metrics_);
+                    row, state, palette_, metrics_, submenuArrowFont_);
             }
             RestoreDC(memoryDc, savedRowDc);
         }
@@ -571,7 +579,7 @@ public:
                 };
                 menu_icon::DrawItem(memoryDc, textFont_,
                     fluentIconFont_, separatorView, separator, 0,
-                    palette_, metrics_);
+                    palette_, metrics_, submenuArrowFont_);
             }
         }
         RestoreDC(memoryDc, savedDc);
@@ -745,6 +753,7 @@ private:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
+                MenuQuickIcon::FontGlyph, item.image,
             };
             const SIZE measured = menu_icon::MeasureItem(
                 screenDc, textFont_, view, metrics_);
@@ -2261,6 +2270,7 @@ private:
     int panelRadius_ = 0;
     HFONT textFont_ = nullptr;
     HFONT fluentIconFont_ = nullptr;
+    HFONT submenuArrowFont_ = nullptr;
     HFONT fontAwesomeIconFont_ = nullptr;
     HFONT quickTextFont_ = nullptr;
     HFONT quickFluentIconFont_ = nullptr;

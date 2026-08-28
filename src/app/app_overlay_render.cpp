@@ -197,7 +197,8 @@ void DesktopApp::PreparePageNotifyAnimationCache()
     PrepareCompositionAnimationOverlay(
         pageNotifyAnimationOverlay_,
         pageNotifyAnimationRenderCache_,
-        pageNotifyAnimationCacheRect_);
+        pageNotifyAnimationCacheRect_,
+        UiCompositionAnimationHost::Desktop);
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 }

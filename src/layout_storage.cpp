@@ -300,16 +300,23 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 path + ".customTitle", record.customTitle, error) ||
             !ReadOptionalString(object, "titleMode", path + ".titleMode",
                 record.titleMode, error) ||
+            !ReadString(object, "demoIconCategory",
+                path + ".demoIconCategory", record.demoIconCategory,
+                error) ||
             !ReadString(object, "sourceFolderPath",
                 path + ".sourceFolderPath", record.sourceFolderPath,
                 error) ||
             !ReadString(object, "packageId", path + ".packageId",
                 record.packageId, error) ||
-            !ReadString(object, "scriptPath", path + ".scriptPath",
-                record.scriptPath, error) ||
-            !ReadString(object, "legacyScriptPath",
-                path + ".legacyScriptPath", record.legacyScriptPath,
-                error) ||
+            !ReadString(object, "packageSourceProvider",
+                path + ".packageSourceProvider",
+                record.packageSourceProvider, error) ||
+            !ReadString(object, "packageSourceExternalItemId",
+                path + ".packageSourceExternalItemId",
+                record.packageSourceExternalItemId, error) ||
+            !ReadString(object, "packageSourceUrl",
+                path + ".packageSourceUrl",
+                record.packageSourceUrl, error) ||
             !ReadString(object, "activeCategory",
                 path + ".activeCategory", record.activeCategory,
                 error) ||
@@ -328,6 +335,41 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.autoCollect, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
+            !ReadBoolean(object, "showDetails", path + ".showDetails",
+                record.showDetails, error) ||
+            !ReadBoolean(object, "detailShowModified",
+                path + ".detailShowModified",
+                record.detailShowModified, error) ||
+            !ReadBoolean(object, "detailShowType",
+                path + ".detailShowType",
+                record.detailShowType, error) ||
+            !ReadBoolean(object, "detailShowSize",
+                path + ".detailShowSize",
+                record.detailShowSize, error) ||
+            !ReadOptionalFloat(object, "detailModifiedWidth",
+                path + ".detailModifiedWidth",
+                record.detailModifiedWidth, error) ||
+            !ReadOptionalFloat(object, "detailTypeWidth",
+                path + ".detailTypeWidth",
+                record.detailTypeWidth, error) ||
+            !ReadOptionalFloat(object, "detailSizeWidth",
+                path + ".detailSizeWidth",
+                record.detailSizeWidth, error) ||
+            !ReadOptionalFloat(object, "detailModifiedPosition",
+                path + ".detailModifiedPosition",
+                record.detailModifiedPosition, error) ||
+            !ReadOptionalFloat(object, "detailTypePosition",
+                path + ".detailTypePosition",
+                record.detailTypePosition, error) ||
+            !ReadOptionalFloat(object, "detailSizePosition",
+                path + ".detailSizePosition",
+                record.detailSizePosition, error) ||
+            !ReadString(object, "contentSortColumn",
+                path + ".contentSortColumn",
+                record.contentSortColumn, error) ||
+            !ReadBoolean(object, "contentSortAscending",
+                path + ".contentSortAscending",
+                record.contentSortAscending, error) ||
             !ReadBoolean(object, "dateHeaders", path + ".dateHeaders",
                 record.dateHeaders, error) ||
             !ReadBoolean(object, "showFileCategories",
@@ -343,6 +385,9 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadBoolean(object, "scrollContainerMode",
                 path + ".scrollContainerMode", record.scrollContainerMode,
                 error) ||
+            !ReadBoolean(object, "largeFolderTitleless",
+                path + ".largeFolderTitleless",
+                record.largeFolderTitleless, error) ||
             !ReadBoolean(object, "keepWhenDesktopHidden",
                 path + ".keepWhenDesktopHidden",
                 record.keepWhenDesktopHidden, error) ||
@@ -389,7 +434,27 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 path + ".folderSortAscending",
                 record.folderSortAscending, error) ||
             !ReadStringArray(object, "folderItems",
-                path + ".folderItems", record.folderItems, error))
+                path + ".folderItems", record.folderItems, error) ||
+            !ReadBoolean(object, "listMode",
+                path + ".listMode", record.listMode, error) ||
+            !ReadBoolean(object, "detailShowModified",
+                path + ".detailShowModified",
+                record.detailShowModified, error) ||
+            !ReadBoolean(object, "detailShowType",
+                path + ".detailShowType",
+                record.detailShowType, error) ||
+            !ReadBoolean(object, "detailShowSize",
+                path + ".detailShowSize",
+                record.detailShowSize, error) ||
+            !ReadOptionalFloat(object, "detailModifiedPosition",
+                path + ".detailModifiedPosition",
+                record.detailModifiedPosition, error) ||
+            !ReadOptionalFloat(object, "detailTypePosition",
+                path + ".detailTypePosition",
+                record.detailTypePosition, error) ||
+            !ReadOptionalFloat(object, "detailSizePosition",
+                path + ".detailSizePosition",
+                record.detailSizePosition, error))
         {
             return false;
         }
@@ -430,18 +495,30 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.lastPageMonitor, error) ||
         !ReadOptionalRootBoolean(root, "dockEnabled",
             decoded.dockEnabled, error) ||
+        !ReadOptionalFloat(root, "itemFontSizeCu", "itemFontSizeCu",
+            decoded.itemFontSizeCu, error) ||
+        !ReadOptionalFloat(root, "listItemFontSizeCu", "listItemFontSizeCu",
+            decoded.listItemFontSizeCu, error) ||
         !ReadOptionalFloat(root, "itemFontSize", "itemFontSize",
             decoded.itemFontSize, error) ||
+        !ReadOptionalFloat(root, "listItemFontSize", "listItemFontSize",
+            decoded.listItemFontSize, error) ||
         !ReadOptionalFloat(root, "itemFontWeight", "itemFontWeight",
             decoded.itemFontWeight, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
         !ReadOptionalFloat(root, "componentSpacing", "componentSpacing",
             decoded.componentSpacing, error) ||
+        !ReadOptionalFloat(root, "iconSizeScale", "iconSizeScale",
+            decoded.iconSizeScale, error) ||
+        !ReadOptionalRootBoolean(root, "collectionLargeFolderTitleless",
+            decoded.collectionLargeFolderTitleless, error) ||
         !ReadOptionalInteger(root, "shortcutArrowMode", "shortcutArrowMode",
             decoded.shortcutArrowMode, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
+        !ReadOptionalInteger(root, "iconBeautifyPreset", "iconBeautifyPreset",
+            decoded.iconBeautifyPreset, error) ||
         !ReadOptionalInteger(root, "iconBeautifyMode", "iconBeautifyMode",
             decoded.iconBeautifyMode, error) ||
         !ReadOptionalFloat(root, "iconBeautifyBgOpacity",
@@ -469,6 +546,62 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             error) ||
         !ReadOptionalFloat(root, "iconBeautifyBgEndB",
             "iconBeautifyBgEndB", decoded.iconBeautifyBgEndB,
+            error) ||
+        !ReadOptionalInteger(root, "iconBeautifyShape",
+            "iconBeautifyShape", decoded.iconBeautifyShape, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyContentScale",
+            "iconBeautifyContentScale", decoded.iconBeautifyContentScale,
+            error) ||
+        !ReadOptionalInteger(root, "iconBeautifyFinish",
+            "iconBeautifyFinish", decoded.iconBeautifyFinish, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureHighlightStrength",
+            "iconBeautifyTextureHighlightStrength",
+            decoded.iconBeautifyTextureHighlightStrength, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureHighlightSize",
+            "iconBeautifyTextureHighlightSize",
+            decoded.iconBeautifyTextureHighlightSize, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureHighlightAngle",
+            "iconBeautifyTextureHighlightAngle",
+            decoded.iconBeautifyTextureHighlightAngle, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureShadeStrength",
+            "iconBeautifyTextureShadeStrength",
+            decoded.iconBeautifyTextureShadeStrength, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyTextureEdgeHighlight",
+            "iconBeautifyTextureEdgeHighlight",
+            decoded.iconBeautifyTextureEdgeHighlight, error) ||
+        !ReadOptionalRootBoolean(root, "iconBeautifyFilterEnabled",
+            decoded.iconBeautifyFilterEnabled, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterStrength",
+            "iconBeautifyFilterStrength", decoded.iconBeautifyFilterStrength,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintR",
+            "iconBeautifyFilterTintR", decoded.iconBeautifyFilterTintR,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintG",
+            "iconBeautifyFilterTintG", decoded.iconBeautifyFilterTintG,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyFilterTintB",
+            "iconBeautifyFilterTintB", decoded.iconBeautifyFilterTintB,
+            error) ||
+        !ReadOptionalRootBoolean(root, "iconBeautifyOutlineEnabled",
+            decoded.iconBeautifyOutlineEnabled, error) ||
+        !ReadOptionalInteger(root, "iconBeautifyOutlineMode",
+            "iconBeautifyOutlineMode", decoded.iconBeautifyOutlineMode,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineWidth",
+            "iconBeautifyOutlineWidth", decoded.iconBeautifyOutlineWidth,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineOpacity",
+            "iconBeautifyOutlineOpacity", decoded.iconBeautifyOutlineOpacity,
+            error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineR",
+            "iconBeautifyOutlineR", decoded.iconBeautifyOutlineR, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineG",
+            "iconBeautifyOutlineG", decoded.iconBeautifyOutlineG, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyOutlineB",
+            "iconBeautifyOutlineB", decoded.iconBeautifyOutlineB, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyShadowStrength",
+            "iconBeautifyShadowStrength", decoded.iconBeautifyShadowStrength,
             error) ||
         !DecodePages(root, decoded, error) ||
         !DecodeItems(root, decoded, error) ||

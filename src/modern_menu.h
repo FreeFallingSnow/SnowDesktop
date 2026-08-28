@@ -69,6 +69,8 @@ struct Item
     bool textInput = false;
     /** 搜索框当前文本。 */
     std::wstring inputText;
+    /** Non-owning image kept alive by the caller for the synchronous menu. */
+    HBITMAP image = nullptr;
 };
 
 struct HoverInfo

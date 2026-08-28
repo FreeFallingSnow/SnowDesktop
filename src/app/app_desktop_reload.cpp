@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../drag_input_rules.h"
+#include "../popup_icon_load_rules.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -454,21 +456,51 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
-    case kFloatingDockBackdropCommitMessage:
-        FinalizeFloatingDockBackdropCleanup(
-            static_cast<UINT_PTR>(wp));
-        return 0;
     case kForegroundInteractionChangedMessage:
         ReconcileDesktopHoverState();
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kWidgetAudioAnalysisWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnAudioAnalysisWake();
+        return 0;
     case kActivateExistingInstanceMessage:
         ShowSettingsWindow();
         return 0;
     case WM_DISPLAYCHANGE:
         ScheduleDisplayTopologyRefresh();
+        return 0;
+    case WM_SETTINGCHANGE:
+    {
+        const wchar_t* settingArea =
+            reinterpret_cast<const wchar_t*>(lp);
+        const bool traySettings = settingArea &&
+            _wcsicmp(settingArea, L"TraySettings") == 0;
+        const bool immersiveColor = settingArea &&
+            _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
+        if (!traySettings && !immersiveColor)
+            break;
+
+        if (traySettings || immersiveColor)
+            SyncSystemTaskbarSettingsFromWindows();
+        if (immersiveColor)
+            ApplyPersistentDockHostAppearance();
+        if (traySettings)
+        {
+            ScheduleDisplayTopologyRefresh();
+        }
+        RefreshSystemTaskbarAppearance(false);
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+    }
+    case WM_THEMECHANGED:
+        RefreshSystemTaskbarAppearance(false);
+        ApplyPersistentDockHostAppearance();
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_DEVICECHANGE:
         switch (wp)
@@ -553,7 +585,32 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    const bool deferForDrag =
+        snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            dragSession_.HasContext(),
+            dragDropController_.IsTransportActive());
+    if (shellFileOperationInFlight_ > 0 || deferForDrag)
+    {
+        shellReloadPending_ = true;
+        shellReloadLayoutFromDiskPending_ =
+            shellReloadLayoutFromDiskPending_ || reloadLayoutFromDisk;
+        // OLE clears mouseDown_ before entering its nested loop, so the Shell
+        // debounce timer can no longer use that field as a drag-lifetime
+        // proxy. Keep one pending reload alive until both native and OLE drag
+        // ownership have ended.
+        if (deferForDrag && hwnd_ && IsWindow(hwnd_))
+        {
+            SetTimer(hwnd_, kShellChangeTimerId,
+                kShellChangeDebounceMs, nullptr);
+        }
+        return;
+    }
     if (reloading_) return;
+    ClearPopupDragTarget();
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kShellChangeTimerId);
+    shellReloadPending_ = false;
+    shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
     dockAppIdentityCache_.clear();
     dockRunningWindows_.clear();
@@ -564,6 +621,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (reloadLayoutFromDisk)
     {
         LoadLayoutSlots();
+        RecreateItemTextFormat();
+        RecreateComponentListTextFormat();
         // The file has just populated savedPageColumns_/savedPageRows_. Do not
         // overwrite those restored values with the pre-reload runtime grid.
         UpdateLayoutWorkArea(false);
@@ -815,16 +874,55 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)
 {
-    if (task.requestKey.empty())
+    const bool dockFolderPopupTask =
+        !task.isDesktopItem &&
+        task.widgetId == kDockFolderPopupWidgetId;
+    if (task.requestedSize <= 0)
     {
-        const std::wstring& identity = task.isDesktopItem ? task.layoutKey : task.folderPath;
-        task.requestKey = std::to_wstring(task.serial) + L"\n" +
-            (task.isDesktopItem ? L"D\n" : L"F\n") + task.widgetId + L"\n" +
-            ToUpperInvariant(identity) + L"\n" +
-            (task.phase == IconLoadPhase::Phase1 ? L"1" : L"2");
+        if (task.isDesktopItem)
+        {
+            task.requestedSize = GetMaximumShellIconBitmapSize();
+        }
+        else
+        {
+            std::wstring pageId;
+            if (task.widgetId == kDockFolderPopupWidgetId &&
+                dockFolderPopupOpen_)
+            {
+                pageId = popupPageId_;
+            }
+            else
+            {
+                for (const auto& widget : widgets_)
+                {
+                    if (widget.id == task.widgetId)
+                    {
+                        pageId = widget.gridCell.pageId;
+                        break;
+                    }
+                }
+            }
+            task.requestedSize = GetShellIconBitmapSizeForPage(pageId);
+        }
     }
     {
         std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        if (dockFolderPopupTask)
+            task.popupGeneration =
+                dockFolderPopupIconGeneration_;
+        if (task.requestKey.empty())
+        {
+            const std::wstring& identity = task.isDesktopItem
+                ? task.layoutKey : task.folderPath;
+            task.requestKey = std::to_wstring(task.serial) + L"\n" +
+                (task.isDesktopItem ? L"D\n" : L"F\n") +
+                task.widgetId + L"\n" +
+                ToUpperInvariant(identity) + L"\n" +
+                (task.phase == IconLoadPhase::Phase1
+                    ? L"1" : L"2") + L"\n" +
+                std::to_wstring(task.requestedSize) + L"\n" +
+                std::to_wstring(task.popupGeneration);
+        }
         if (!iconLoaderPendingKeys_.insert(task.requestKey).second)
             return;
         iconLoaderQueue_.push_back(std::move(task));
@@ -838,11 +936,21 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     if (!result) return;
 
     std::unique_ptr<IconLoadResult> resultGuard(result);
+    std::uint64_t currentPopupGeneration = 0;
     {
         std::lock_guard<std::mutex> lock(iconLoaderMutex_);
         iconLoaderPendingKeys_.erase(result->requestKey);
+        currentPopupGeneration =
+            dockFolderPopupIconGeneration_;
     }
-    if (result->serial != iconLoadSerial_)
+    const bool dockFolderPopupResult =
+        !result->isDesktopItem &&
+        result->widgetId == kDockFolderPopupWidgetId;
+    if (result->serial != iconLoadSerial_ ||
+        snowdesktop::popup_icon_load_rules::ShouldRejectResult(
+            dockFolderPopupResult,
+            result->popupGeneration,
+            currentPopupGeneration))
     {
         if (result->bitmap) DeleteObject(result->bitmap);
         result->bitmap = nullptr;
@@ -861,6 +969,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     if (item.iconBitmap) { EraseD2DIconCacheForBitmap(item.iconBitmap); DeleteObject(item.iconBitmap); }
                     item.iconBitmap = result->bitmap;
                     item.iconBitmapSize = result->bitmapSize;
+                    item.iconIsMediaThumbnail =
+                        result->iconIsMediaThumbnail;
                     result->bitmap = nullptr;
                 }
                 matched = true;
@@ -909,6 +1019,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         if (entry.iconBitmap) { EraseD2DIconCacheForBitmap(entry.iconBitmap); DeleteObject(entry.iconBitmap); }
                         entry.iconBitmap = result->bitmap;
                         entry.iconBitmapSize = result->bitmapSize;
+                        entry.iconIsMediaThumbnail =
+                            result->iconIsMediaThumbnail;
                         result->bitmap = nullptr;
                     }
                     matched = true;

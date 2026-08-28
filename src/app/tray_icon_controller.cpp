@@ -62,10 +62,12 @@ void TrayIconController::Remove(HWND fallbackOwner)
     Shell_NotifyIconW(NIM_DELETE, &data);
     added_ = false;
     owner_ = nullptr;
+    activeNotificationId_.clear();
 }
 
 bool TrayIconController::ShowBalloon(
     HWND owner,
+    const std::string& notificationId,
     const std::wstring& title,
     const std::wstring& message)
 {
@@ -81,7 +83,43 @@ bool TrayIconController::ShowBalloon(
     wcsncpy_s(data.szInfoTitle, title.c_str(), _TRUNCATE);
     wcsncpy_s(data.szInfo, message.c_str(), _TRUNCATE);
     data.uTimeout = 10000;
-    return Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE;
+    const bool shown = Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE;
+    if (shown) activeNotificationId_ = notificationId;
+    return shown;
+}
+
+bool TrayIconController::UpdateBalloon(
+    HWND owner,
+    const std::string& notificationId,
+    const std::wstring& title,
+    const std::wstring& message)
+{
+    // A tray balloon has no independently addressable update primitive.
+    // Reissuing the same host notification ID replaces the visible balloon.
+    return ShowBalloon(owner, notificationId, title, message);
+}
+
+bool TrayIconController::DismissBalloon(
+    HWND owner,
+    const std::string& notificationId)
+{
+    if (!notificationId.empty() &&
+        notificationId != activeNotificationId_)
+        return true;
+    if (!owner || !IsWindow(owner) || !Add(owner))
+        return false;
+
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = owner_;
+    data.uID = kTrayIconId;
+    data.uFlags = NIF_INFO;
+    data.szInfo[0] = L'\0';
+    data.szInfoTitle[0] = L'\0';
+    const bool dismissed =
+        Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE;
+    if (dismissed) activeNotificationId_.clear();
+    return dismissed;
 }
 
 TrayCallbackAction TrayIconController::ClassifyCallback(

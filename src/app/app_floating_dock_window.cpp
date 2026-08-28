@@ -2,141 +2,500 @@
 
 // Floating-Dock window, composition surface and bounds management.
 
-bool DesktopApp::CreateFloatingDockWindow()
+bool DesktopApp::CreateFloatingDockWindow(
+    PersistentDockHost& host)
 {
-    if (floatingDockHwnd_ && IsWindow(floatingDockHwnd_))
+    if (host.hwnd && IsWindow(host.hwnd))
         return true;
 
-    floatingDockHwnd_ = CreateWindowExW(
+    host.owner = this;
+    host.hwnd = CreateWindowExW(
         snowdesktop::floating_dock_rules::kWindowExStyle,
         kFloatingDockWindowClassName,
         _LW("app.settings.dock_bar"),
         WS_POPUP,
         0, 0, 1, 1,
-        nullptr, nullptr, instance_, this);
-    if (!floatingDockHwnd_)
+        nullptr, nullptr, instance_, &host);
+    if (!host.hwnd)
         return false;
 
     OleDragDropAdapter* oleAdapter = EnsureOleDragDropAdapter();
-    floatingDockDropTargetRegistered_ = oleAdapter &&
+    host.dropTargetRegistered = oleAdapter &&
         SUCCEEDED(RegisterDragDrop(
-            floatingDockHwnd_,
+            host.hwnd,
             static_cast<IDropTarget*>(oleAdapter)));
     const BOOL disableTransitions = TRUE;
-    DwmSetWindowAttribute(floatingDockHwnd_,
+    DwmSetWindowAttribute(host.hwnd,
         DWMWA_TRANSITIONS_FORCEDISABLED,
         &disableTransitions, sizeof(disableTransitions));
     return true;
 }
 
-void DesktopApp::ResetFloatingDockCompositionResources()
+DesktopApp::PersistentDockHost*
+DesktopApp::FindPersistentDockHost(HWND hwnd)
 {
-    floatingDockFrameReady_ = false;
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
-    if (floatingDockDcompVisual_)
-        floatingDockDcompVisual_->SetContent(nullptr);
-    if (floatingDockDesktopCacheVisual_)
-        floatingDockDesktopCacheVisual_->SetContent(nullptr);
-    if (floatingDockDesktopCacheEffect_)
-        floatingDockDesktopCacheEffect_->SetOpacity(0.0f);
-    floatingDockDcompSurface_.Reset();
-    floatingDockCompWidth_ = 0;
-    floatingDockCompHeight_ = 0;
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->hwnd == hwnd)
+            return host.get();
+    return nullptr;
 }
 
-HRESULT DesktopApp::EnsureFloatingDockDesktopCacheVisual()
+const DesktopApp::PersistentDockHost*
+DesktopApp::FindPersistentDockHost(HWND hwnd) const
 {
-    if (!dcompDevice_ || !dcompVisual_)
-        return E_UNEXPECTED;
-    if (!floatingDockDesktopCacheVisual_)
-    {
-        ComPtr<IDCompositionVisual2> visual;
-        HRESULT hr = dcompDevice_->CreateVisual(&visual);
-        if (FAILED(hr) || !visual)
-            return FAILED(hr) ? hr : E_FAIL;
-
-        ComPtr<IDCompositionEffectGroup> effect;
-        hr = dcompDevice_->CreateEffectGroup(&effect);
-        if (FAILED(hr) || !effect)
-            return FAILED(hr) ? hr : E_FAIL;
-        hr = effect->SetOpacity(0.0f);
-        if (SUCCEEDED(hr))
-            hr = visual->SetEffect(effect.Get());
-        if (SUCCEEDED(hr))
-            hr = dcompVisual_->AddVisual(
-                visual.Get(), TRUE, nullptr);
-        if (FAILED(hr))
-            return hr;
-
-        floatingDockDesktopCacheVisual_ = visual;
-        floatingDockDesktopCacheEffect_ = effect;
-    }
-
-    HRESULT hr = floatingDockDesktopCacheVisual_->SetOffsetX(
-        static_cast<float>(floatingDockSourceRect_.left));
-    if (SUCCEEDED(hr))
-    {
-        hr = floatingDockDesktopCacheVisual_->SetOffsetY(
-            static_cast<float>(floatingDockSourceRect_.top));
-    }
-    return hr;
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->hwnd == hwnd)
+            return host.get();
+    return nullptr;
 }
 
-void DesktopApp::FinalizeFloatingDockBackdropCleanup(
-    UINT_PTR commitToken)
+DesktopApp::PersistentDockHost*
+DesktopApp::FindPersistentDockHost(
+    DockContainer* container)
 {
-    if (commitToken != 0 &&
-        floatingDockDesktopCommitPending_ &&
-        commitToken == floatingDockBackdropCommitToken_)
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->container == container)
+            return host.get();
+    return nullptr;
+}
+
+const DesktopApp::PersistentDockHost*
+DesktopApp::FindPersistentDockHost(
+    const DockContainer* container) const
+{
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->container == container)
+            return host.get();
+    return nullptr;
+}
+
+bool DesktopApp::IsPersistentDockHostWindow(HWND hwnd) const
+{
+    return FindPersistentDockHost(hwnd) != nullptr;
+}
+
+bool DesktopApp::IsPersistentDockBackdropWindow(HWND hwnd) const
+{
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->backdrop.IsBackdropWindow(hwnd))
+            return true;
+    return false;
+}
+
+bool DesktopApp::IsDockHostedByPersistentHost(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    return host && host->active;
+}
+
+bool DesktopApp::IsPersistentDockHostPromoted(
+    const PersistentDockHost& host) const
+{
+    return host.active && host.promoted;
+}
+
+bool DesktopApp::IsPersistentDockHostEffectivelyFloating(
+    const PersistentDockHost& host) const
+{
+    return host.active &&
+        snowdesktop::floating_dock_rules::
+            IsDockEffectivelyPromoted(
+                host.promoted,
+                host.passivelyRevealed,
+                dockSettings_.showOnlyWhenSummoned);
+}
+
+bool DesktopApp::ShouldShowPersistentDockHost(
+    const PersistentDockHost& host) const
+{
+    return snowdesktop::floating_dock_rules::
+        ShouldShowPersistentDockHost(
+            host.active,
+            IsPersistentDockHostEffectivelyFloating(host),
+            dockSettings_.showOnlyWhenSummoned,
+            customDesktopVisible_,
+            desktopIconsHidden_,
+            dockSettings_.keepWhenDesktopHidden);
+}
+
+bool DesktopApp::IsDockContainerInteractionVisible(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    // Before graphics initialization, or after a Host creation failure, the
+    // Dock falls back to the desktop foreground surface. Only an active
+    // persistent Host can make that same logical container non-interactive.
+    return !host || !host->active ||
+        ShouldShowPersistentDockHost(*host);
+}
+
+bool DesktopApp::IsDockContainerPromoted(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    return host && IsPersistentDockHostPromoted(*host);
+}
+
+bool DesktopApp::IsDockContainerEffectivelyFloating(
+    const DockContainer* container) const
+{
+    const PersistentDockHost* host =
+        FindPersistentDockHost(container);
+    return host &&
+        IsPersistentDockHostEffectivelyFloating(*host);
+}
+
+bool DesktopApp::
+IsSelectedPersistentDockHostPromoted() const
+{
+    return floatingDockHost_ &&
+        IsPersistentDockHostPromoted(*floatingDockHost_);
+}
+
+bool DesktopApp::HasPromotedDockHosts() const
+{
+    return std::any_of(
+        persistentDockHosts_.begin(),
+        persistentDockHosts_.end(),
+        [this](const auto& host) {
+            return host &&
+                IsPersistentDockHostPromoted(*host);
+        });
+}
+
+bool DesktopApp::IsPointOnPromotedDock(
+    POINT point) const
+{
+    for (const auto& host : persistentDockHosts_)
     {
-        floatingDockDesktopCommitPending_ = false;
-        FinishFloatingDockCloseHandoff();
-        return;
-    }
-    if (commitToken != 0 &&
-        floatingDockRevealCommitPending_ &&
-        commitToken == floatingDockBackdropCommitToken_)
-    {
-        floatingDockRevealCommitPending_ = false;
-        return;
-    }
-    if (commitToken != 0)
-    {
-        if (!floatingDockBackdropCleanupPending_ ||
-            commitToken != floatingDockBackdropCommitToken_)
-            return;
-    }
-    if (commitToken != 0 && floatingDockClosePending_)
-    {
-        floatingDockBackdropCleanupPending_ = false;
-        CompleteFloatingDockCloseHandoff();
-        return;
-    }
-    floatingDockBackdropCleanupPending_ = false;
-    floatingDockBackdropCompositor_.SetVisible(false);
-    floatingDockBackdropCompositor_.Reset();
-    const bool hadCompositionSurface =
-        floatingDockDcompSurface_ != nullptr;
-    ResetFloatingDockCompositionResources();
-    if (hadCompositionSurface && dcompDevice_)
-    {
-        // The target can release its last full-size surface only after the
-        // backdrop ownership transaction has completed. Releasing it in the
-        // close call raced WinComp and exposed a one-frame glass hole.
-        CommitCompositionAnimationFrame();
-        const HRESULT hr = WaitForCompositionPresentation(
-                L"Floating Dock release surface")
-            ? S_OK : E_FAIL;
-        if (FAILED(hr))
+        if (host &&
+            IsPersistentDockHostPromoted(*host) &&
+            PtInRect(&host->dockRect, point))
         {
-            wchar_t message[160]{};
-            wsprintfW(message,
-                L"FloatingDock release surface commit FAILED hr=0x%08X",
-                static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(message);
+            return true;
         }
     }
+    return false;
+}
+
+bool DesktopApp::IsPointInPromotedDockLayer(
+    POINT point) const
+{
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (host &&
+            IsPersistentDockHostPromoted(*host) &&
+            snowdesktop::floating_dock_rules::
+                IsPointInVisibleLayer(
+                    point,
+                    host->dockRect,
+                    host->popupRect,
+                    host->tooltipRect))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DesktopApp::RefreshFloatingDockVisibilityState()
+{
+    floatingDockVisible_ = HasPromotedDockHosts();
+}
+
+void DesktopApp::SelectPersistentDockHost(
+    PersistentDockHost* host)
+{
+    floatingDockHost_ = host;
+    floatingDockHwnd_ = host ? host->hwnd : nullptr;
+    floatingDockContainer_ = host ? host->container : nullptr;
+    floatingDockMonitor_ = host ? host->monitor : nullptr;
+}
+
+void DesktopApp::DestroyPersistentDockHost(
+    PersistentDockHost& host)
+{
+    if (collectionPopupDockHost_ == &host)
+        collectionPopupDockHost_ = nullptr;
+    if (quickNavigationDockHost_ == &host)
+        quickNavigationDockHost_ = nullptr;
+    host.active = false;
+    host.promoted = false;
+    host.passivelyRevealed = false;
+    host.passiveRevealTick = 0;
+    host.passiveLeaveStartTick = 0;
+    host.revealPending = false;
+    host.backdrop.Reset();
+    if (host.dropTargetRegistered &&
+        host.hwnd && IsWindow(host.hwnd))
+        RevokeDragDrop(host.hwnd);
+    host.dropTargetRegistered = false;
+    ResetFloatingDockCompositionResources(host);
+    host.dcompVisual.Reset();
+    host.dcompTarget.Reset();
+    if (host.hwnd && IsWindow(host.hwnd))
+        DestroyWindow(host.hwnd);
+    host.hwnd = nullptr;
+    host.container = nullptr;
+    host.monitor = nullptr;
+}
+
+bool DesktopApp::SyncPersistentDockHosts()
+{
+    // Window creation can trigger an early layout pass before InitGraphics.
+    // Defer the first top-level DockHost allocation until both rendering
+    // devices exist, so startup never creates, hides, and then recovers a
+    // glass/content pair around an expected E_UNEXPECTED render failure.
+    if (!d2dDevice_ || !dcompDevice_)
+        return false;
+
+    const HMONITOR previouslySelectedMonitor =
+        floatingDockMonitor_;
+    SelectPersistentDockHost(nullptr);
+
+    for (auto& host : persistentDockHosts_)
+        if (host)
+            host->container = nullptr;
+
+    if (generalSettings_.dockEnabled)
+    {
+        for (const auto& container : containers_)
+        {
+            auto* dock =
+                dynamic_cast<DockContainer*>(container.get());
+            if (!dock)
+                continue;
+            const RECT bounds = dock->GetBounds();
+            const POINT centerScreen{
+                (bounds.left + bounds.right) / 2 + virtualLeft_,
+                (bounds.top + bounds.bottom) / 2 + virtualTop_
+            };
+            const HMONITOR monitor = MonitorFromPoint(
+                centerScreen, MONITOR_DEFAULTTONEAREST);
+            PersistentDockHost* host = nullptr;
+            for (const auto& existing : persistentDockHosts_)
+            {
+                if (existing && existing->monitor == monitor)
+                {
+                    host = existing.get();
+                    break;
+                }
+            }
+            if (!host)
+            {
+                auto created =
+                    std::make_unique<PersistentDockHost>();
+                created->owner = this;
+                created->monitor = monitor;
+                host = created.get();
+                persistentDockHosts_.push_back(
+                    std::move(created));
+            }
+            host->container = dock;
+            host->sourceRect = {};
+            host->dockRect = {};
+            host->popupRect = {};
+            host->tooltipRect = {};
+        }
+    }
+
+    for (auto it = persistentDockHosts_.begin();
+         it != persistentDockHosts_.end();)
+    {
+        if (!*it || !(*it)->container)
+        {
+            if (*it)
+                DestroyPersistentDockHost(*(*it));
+            it = persistentDockHosts_.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    floatingDockHostActive_ = !persistentDockHosts_.empty();
+    persistentDockHostOwnsVisual_ =
+        floatingDockHostActive_;
+    if (!floatingDockHostActive_)
+    {
+        RefreshFloatingDockVisibilityState();
+        return false;
+    }
+
+    PersistentDockHost* selected = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (host &&
+            host->monitor == previouslySelectedMonitor)
+        {
+            selected = host.get();
+            break;
+        }
+    }
+    if (!selected)
+        selected = persistentDockHosts_.front().get();
+    SelectPersistentDockHost(selected);
+
+    floatingDockPersonalization_ =
+        CurrentPersonalization();
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        PersistentDockHost& host = *ownedHost;
+        if (!CreateFloatingDockWindow(host))
+        {
+            host.active = false;
+            continue;
+        }
+        host.active = true;
+        host.revealPending =
+            !IsWindowVisible(host.hwnd);
+        UpdateFloatingDockWindowBounds(host, false);
+        if (!RenderFloatingDockCompositionFrame(host) ||
+            !host.frameReady)
+        {
+            WriteDiagnosticLogEntry(
+                L"Persistent DockHost initial frame unavailable; host disabled");
+            host.active = false;
+            host.revealPending = false;
+            host.backdrop.HidePopupWindowPair(host.hwnd);
+            continue;
+        }
+        ValidateRect(host.hwnd, nullptr);
+        host.revealPending = false;
+    }
+    floatingDockHostActive_ = std::any_of(
+        persistentDockHosts_.begin(),
+        persistentDockHosts_.end(),
+        [](const auto& host) {
+            return host && host->active;
+        });
+    persistentDockHostOwnsVisual_ =
+        floatingDockHostActive_;
+    CommitCompositionAnimationFrame();
+    FlushPendingCompositionCommit();
+
+    if (!selected->active)
+    {
+        selected = nullptr;
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && host->active)
+            {
+                selected = host.get();
+                break;
+            }
+        }
+        SelectPersistentDockHost(selected);
+    }
+    RefreshFloatingDockVisibilityState();
+    UpdatePersistentDockHostVisibility();
+    InvalidateDragStaticScene();
+    return selected != nullptr;
+}
+
+bool DesktopApp::SyncPersistentDockHost(
+    HMONITOR preferredMonitor)
+{
+    bool requiresRebuild = persistentDockHosts_.empty();
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active ||
+            !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd))
+        {
+            requiresRebuild = true;
+            break;
+        }
+    }
+    if (requiresRebuild &&
+        !SyncPersistentDockHosts())
+        return false;
+    PersistentDockHost* selected = nullptr;
+    if (preferredMonitor)
+    {
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && host->active &&
+                host->monitor == preferredMonitor)
+            {
+                selected = host.get();
+                break;
+            }
+        }
+    }
+    if (!selected)
+        selected = floatingDockHost_;
+    if (!selected && !persistentDockHosts_.empty())
+        selected = persistentDockHosts_.front().get();
+    SelectPersistentDockHost(selected);
+    return selected != nullptr;
+}
+
+void DesktopApp::ApplyPersistentDockHostAppearance()
+{
+    floatingDockPersonalization_ =
+        CurrentPersonalization();
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active)
+            continue;
+        UpdateFloatingDockWindowBounds(
+            *ownedHost, false, true);
+    }
+}
+
+void DesktopApp::UpdatePersistentDockHostVisibility(
+    PersistentDockHost& host)
+{
+    if (!host.hwnd || !IsWindow(host.hwnd))
+        return;
+    const bool shouldShow =
+        ShouldShowPersistentDockHost(host);
+    if (!shouldShow)
+    {
+        // Hide the content/backdrop pair before leaving the floating band.
+        // A visible TOPMOST-to-desktop restack can otherwise expose one native
+        // backdrop frame between the two states.
+        host.backdrop.HidePopupWindowPair(host.hwnd);
+        ApplyFloatingDockLayerPolicy(host);
+        return;
+    }
+
+    ApplyFloatingDockLayerPolicy(host);
+    // Desktop/floating transitions keep the pair visible and only change its
+    // Z-order band. Avoid issuing a redundant SHOWWINDOW transaction, which
+    // can make DWM re-evaluate the native backdrop source for one frame.
+    if (IsWindowVisible(host.hwnd))
+        return;
+    if (host.backdrop.IsAvailable())
+        host.backdrop.ShowPopupWindowPair(host.hwnd);
+    else
+        ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
+}
+
+void DesktopApp::UpdatePersistentDockHostVisibility()
+{
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            UpdatePersistentDockHostVisibility(*host);
+}
+
+void DesktopApp::ResetFloatingDockCompositionResources(
+    PersistentDockHost& host)
+{
+    host.frameReady = false;
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+    if (host.dcompVisual)
+        host.dcompVisual->SetContent(nullptr);
+    host.dcompSurface.Reset();
+    host.compWidth = 0;
+    host.compHeight = 0;
 }
 
 void DesktopApp::DestroyFloatingDockWindow()
@@ -152,47 +511,21 @@ void DesktopApp::DestroyFloatingDockWindow()
     floatingDockHoverTargetKind_ = 0;
     EndFloatingDockKeyboardSession(
         FloatingDockCloseFocusPolicy::PreserveCurrent);
-    ++floatingDockBackdropCommitToken_;
-    floatingDockBackdropCleanupPending_ = false;
-    floatingDockRevealCommitPending_ = false;
-    floatingDockDesktopCommitPending_ = false;
-    floatingDockClosePending_ = false;
     floatingDockPostCloseAction_ = {};
     floatingDockPointerPresentPending_ = false;
     shellPopupMenuLayerDepth_ = 0;
     floatingDockHoverHandoffPending_ = false;
     floatingDockHoverHandoffRect_ = {};
-    floatingDockCloseDesktopRect_ = {};
     floatingDockVisible_ = false;
-    floatingDockDesktopCopySuppressed_ = false;
-    floatingDockRevealPending_ = false;
-    floatingDockContainer_ = nullptr;
-    floatingDockMonitor_ = nullptr;
-    floatingDockSourceRect_ = {};
-    floatingDockRect_ = {};
-    floatingDockPopupRect_ = {};
-    floatingDockTooltipRect_ = {};
-    floatingDockDesktopBackdropHandoffRect_ = {};
-    floatingDockBackdropCompositor_.Reset();
-    if (floatingDockDropTargetRegistered_ &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_))
-        RevokeDragDrop(floatingDockHwnd_);
-    floatingDockDropTargetRegistered_ = false;
-    ResetFloatingDockCompositionResources();
-    if (dcompVisual_ && floatingDockDesktopCacheVisual_)
-    {
-        dcompVisual_->RemoveVisual(
-            floatingDockDesktopCacheVisual_.Get());
-    }
-    floatingDockDesktopCacheEffect_.Reset();
-    floatingDockDesktopCacheVisual_.Reset();
-    floatingDockDcompEffect_.Reset();
-    floatingDockDcompVisual_.Reset();
-    floatingDockDcompTarget_.Reset();
-    if (floatingDockHwnd_ && IsWindow(floatingDockHwnd_))
-        DestroyWindow(floatingDockHwnd_);
-    floatingDockHwnd_ = nullptr;
+    handlingPersistentDockHost_ = nullptr;
+    renderingPersistentDockHost_ = nullptr;
+    SelectPersistentDockHost(nullptr);
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            DestroyPersistentDockHost(*host);
+    persistentDockHosts_.clear();
+    floatingDockHostActive_ = false;
+    persistentDockHostOwnsVisual_ = false;
     if (floatingDockInputHwnd_ &&
         IsWindow(floatingDockInputHwnd_))
         DestroyWindow(floatingDockInputHwnd_);
@@ -236,13 +569,14 @@ DesktopApp::SelectFloatingDockContainerForMonitor(
 }
 
 RECT DesktopApp::
-CalculateFloatingDockStableSourceRect() const
+CalculateFloatingDockStableSourceRect(
+    const PersistentDockHost& host) const
 {
-    if (!floatingDockContainer_)
+    if (!host.container)
         return RECT{};
 
     const RECT dockRect =
-        floatingDockContainer_->
+        host.container->
             GetInteractiveBounds();
     RECT sourceRect =
         snowdesktop::floating_dock_rules::
@@ -253,190 +587,56 @@ CalculateFloatingDockStableSourceRect() const
                             dockRect,
                             dockSettings_.position));
 
-    RECT popupWork = layoutWorkArea_;
-    const POINT dockCenter{
-        (dockRect.left + dockRect.right) / 2,
-        (dockRect.top + dockRect.bottom) / 2
-    };
-    for (const auto& page : gridPages_)
-    {
-        if (PtInRect(&page.bounds, dockCenter))
-        {
-            popupWork = page.workArea;
-            break;
-        }
-    }
-
-    const int workWidth = std::max<LONG>(
-        1, popupWork.right - popupWork.left);
-    const int workHeight = std::max<LONG>(
-        1, popupWork.bottom - popupWork.top);
-    const int cellWidth =
-        GetCollectionPopupCellWidth();
-    const int cellHeight =
-        GetCollectionPopupCellHeight();
-    const int availableWidth =
-        std::max(1, workWidth - 24);
-    const int maxWidth =
-        std::min(560, availableWidth);
-    const int popupContentWidth =
-        std::max(1, maxWidth -
-            kCollectionPopupPaddingX * 2);
-    const int maxColumns = std::max(
-        1, (popupContentWidth +
-                kCollectionPopupGapX) /
-            std::max(1, cellWidth +
-                kCollectionPopupGapX));
-    const int maxHeight =
-        std::max(1, workHeight - 24);
-
-    SIZE maximumPopupSize{};
-    for (const DockEntry& entry : dockEntries_)
-    {
-        const bool folderEntry =
-            IsFolderDockEntry(entry);
-        int itemCount = 0;
-        if (entry.type ==
-                DockEntryType::Collection)
-        {
-            const size_t widgetIndex =
-                FindWidgetIndexById(entry.reference);
-            if (widgetIndex >= widgets_.size())
-                continue;
-            itemCount = static_cast<int>(
-                GetPopupItemKeys(
-                    widgets_[widgetIndex]).size());
-        }
-        else if (folderEntry)
-        {
-            // A folder stack is re-enumerated on open. Reserve the full
-            // clamped popup envelope so a large directory cannot resize or
-            // clip the floating Dock host after it becomes visible.
-            maximumPopupSize.cx = std::max(
-                maximumPopupSize.cx,
-                static_cast<LONG>(maxWidth));
-            maximumPopupSize.cy = std::max(
-                maximumPopupSize.cy,
-                static_cast<LONG>(maxHeight));
-            continue;
-        }
-        else
-            continue;
-
-        int columns =
-            snowdesktop::
-                collection_popup_layout::
-                    PreferredColumnCount(
-                        static_cast<size_t>(
-                            itemCount),
-                        maxColumns);
-        int rows =
-            snowdesktop::
-                collection_popup_layout::
-                    RequiredRowCount(
-                        static_cast<size_t>(
-                            itemCount),
-                        columns);
-        auto widthForColumns =
-            [&](int count) {
-                return
-                    kCollectionPopupPaddingX * 2 +
-                    count * cellWidth +
-                    std::max(0, count - 1) *
-                        kCollectionPopupGapX;
-            };
-        auto heightForRows =
-            [&](int count) {
-                return
-                    kCollectionPopupHeaderHeight +
-                    count * cellHeight +
-                    std::max(0, count - 1) *
-                        kCollectionPopupGapY +
-                    kCollectionPopupBottomPadding;
-            };
-        int width =
-            widthForColumns(columns);
-        int height =
-            heightForRows(rows);
-        if (itemCount > 0 &&
-            height > maxHeight &&
-            columns < maxColumns)
-        {
-            columns = maxColumns;
-            rows =
-                snowdesktop::
-                    collection_popup_layout::
-                        RequiredRowCount(
-                            static_cast<size_t>(
-                                itemCount),
-                            columns);
-            width =
-                widthForColumns(columns);
-            height =
-                heightForRows(rows);
-        }
-        maximumPopupSize.cx = std::max(
-            maximumPopupSize.cx,
-            static_cast<LONG>(
-                std::min(width, availableWidth)));
-        maximumPopupSize.cy = std::max(
-            maximumPopupSize.cy,
-            static_cast<LONG>(
-                std::min(height, maxHeight)));
-    }
-
-    const RECT popupEnvelope =
-        snowdesktop::floating_dock_rules::
-            ReserveCollectionPopupEnvelope(
-                dockRect, popupWork,
-                dockSettings_.position,
-                maximumPopupSize);
-    return snowdesktop::floating_dock_rules::
-        UnionNonEmptyRects(
-            sourceRect, popupEnvelope);
+    return sourceRect;
 }
 
 void DesktopApp::UpdateFloatingDockWindowBounds(
     bool immediatePresent)
 {
-    if (!floatingDockVisible_ || !floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_) ||
-        !floatingDockContainer_)
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            UpdateFloatingDockWindowBounds(
+                *host, immediatePresent);
+}
+
+void DesktopApp::UpdateFloatingDockWindowBounds(
+    PersistentDockHost& host,
+    bool immediatePresent,
+    bool forceRegionRefresh)
+{
+    if (!host.active || !host.hwnd ||
+        !IsWindow(host.hwnd) ||
+        !host.container)
         return;
+    const bool promoted =
+        IsPersistentDockHostEffectivelyFloating(host);
+    const HWND dockHostHwnd = host.hwnd;
+    RECT& floatingDockSourceRect_ = host.sourceRect;
+    RECT& floatingDockRect_ = host.dockRect;
+    RECT& floatingDockPopupRect_ = host.popupRect;
+    RECT& floatingDockTooltipRect_ = host.tooltipRect;
+    bool& floatingDockRevealPending_ =
+        host.revealPending;
+    DesktopBackdropCompositor&
+        floatingDockBackdropCompositor_ =
+            host.backdrop;
     const bool floatingLayerTopmost =
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(
-                true,
+                promoted,
                 shellPopupMenuLayerDepth_);
 
     const RECT nextDockRect =
-        floatingDockContainer_->GetInteractiveBounds();
+        host.container->GetInteractiveBounds();
     const RECT nextTooltipRect =
-        floatingDockContainer_->
+        host.container->
             GetHoveredTitleBounds(
                 lastMousePoint_);
-    RECT nextPopupRect{};
-    if (popupAnchoredToDock_)
-    {
-        if (const DesktopWidget* popupWidget =
-                GetOpenPopupWidget())
-            nextPopupRect =
-                GetCollectionPopupRect(*popupWidget);
-    }
-    // The host allocation must always contain the real popup envelope. Dock
-    // entries can gain items, or the popup can anchor to a hovered slot, after
-    // the initial reveal, so expand the stable source rect instead of keeping
-    // a stale smaller host that clips the popup until the next refresh.
+    const RECT nextPopupRect{};
+    // Collection and folder popups live in the shared floating popup host.
+    // This window retains only the Dock and its hover-title layer.
     RECT requiredSourceRect =
-        CalculateFloatingDockStableSourceRect();
-    if (!IsRectEmpty(&nextPopupRect))
-    {
-        requiredSourceRect =
-            snowdesktop::floating_dock_rules::
-                UnionNonEmptyRects(
-                    requiredSourceRect,
-                    nextPopupRect);
-    }
+        CalculateFloatingDockStableSourceRect(host);
     const RECT previousSourceRect =
         floatingDockSourceRect_;
     if (IsRectEmpty(&floatingDockSourceRect_))
@@ -455,7 +655,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     }
     if (IsRectEmpty(&floatingDockSourceRect_))
     {
-        CloseFloatingDock();
+        host.active = false;
+        UpdatePersistentDockHostVisibility(host);
         return;
     }
     const bool dockGeometryChanged =
@@ -473,9 +674,10 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (!dockGeometryChanged &&
         !popupRegionChanged &&
         !titleRegionChanged &&
-        !sourceRectChanged)
+        !sourceRectChanged &&
+        !forceRegionRefresh)
     {
-        InvalidateFloatingDockWindow();
+        InvalidateFloatingDockWindow(host);
         return;
     }
     floatingDockRect_ = nextDockRect;
@@ -500,11 +702,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 floatingDockSourceRect_);
     const int radius = std::max(1,
         static_cast<int>(std::round(
-            settingsWindow_
-                ? settingsWindow_->GetPersonalization().
-                    cornerRadius
-                : floatingDockPersonalization_.
-                    cornerRadius)));
+            promoted
+                ? floatingDockPersonalization_.cornerRadius
+                : CurrentPersonalization().cornerRadius)));
     constexpr int borderOverdraw = 2;
     HRGN windowRegion = CreateRoundRectRgn(
         dockLocal.left, dockLocal.top,
@@ -548,7 +748,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockTooltipRect_, 7);
     if (windowRegion &&
         !SetWindowRgn(
-            floatingDockHwnd_, windowRegion, FALSE))
+            dockHostHwnd, windowRegion, FALSE))
         DeleteObject(windowRegion);
 
     // Popup and title changes only alter the visible/input region inside the
@@ -556,23 +756,23 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     // surface after the floating Dock has been revealed.
     if (!dockGeometryChanged &&
         !sourceRectChanged &&
-        IsWindowVisible(floatingDockHwnd_))
+        IsWindowVisible(dockHostHwnd))
     {
         InvalidateFloatingDockWindow(
-            immediatePresent);
+            host, immediatePresent);
         return;
     }
 
     const bool firstReveal =
         floatingDockRevealPending_ ||
-        !IsWindowVisible(floatingDockHwnd_);
+        !IsWindowVisible(dockHostHwnd);
     if (firstReveal)
     {
-        // A no-activate popup can otherwise remain underneath the foreground
-        // process. Keep the floating host topmost for its entire visible
-        // lifetime so shell operations and app windows cannot bury it.
+        // Create the hidden host in its eventual Z-order band. Desktop mode
+        // must never transiently enter the topmost band during first layout;
+        // promoted mode remains topmost so a no-activate popup is not buried.
         SetWindowPos(
-            floatingDockHwnd_,
+            dockHostHwnd,
             floatingLayerTopmost
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             floatingDockSourceRect_.left +
@@ -580,23 +780,20 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             floatingDockSourceRect_.top +
                 virtualTop_,
             width, height,
-            SWP_NOACTIVATE |
-                (floatingDockRevealPending_
-                    ? 0 : SWP_SHOWWINDOW));
+            SWP_NOACTIVATE);
     }
     else
     {
         // Resize within the current Z band. Popup-only changes normally keep
         // the stable allocation, while a larger data set can expand it.
         SetWindowPos(
-            floatingDockHwnd_, nullptr,
+            dockHostHwnd, nullptr,
             floatingDockSourceRect_.left +
                 virtualLeft_,
             floatingDockSourceRect_.top +
                 virtualTop_,
             width, height,
-            SWP_NOZORDER | SWP_NOACTIVATE |
-                SWP_SHOWWINDOW);
+            SWP_NOZORDER | SWP_NOACTIVATE);
     }
     bool renderedResizeFrame = false;
     if (!firstReveal && sourceRectChanged)
@@ -607,7 +804,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         // paint. The frame renderer is reentrancy-guarded; on failure the
         // ordinary invalidation below remains the fallback.
         renderedResizeFrame =
-            RenderFloatingDockCompositionFrame();
+            RenderFloatingDockCompositionFrame(host) &&
+            FlushPendingCompositionCommit();
     }
 
     if (sourceRectChanged &&
@@ -619,18 +817,16 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockBackdropCompositor_.
             SetPopupTopmost(floatingLayerTopmost);
         floatingDockBackdropCompositor_.
-            Reattach(floatingDockHwnd_);
-        WaitForCompositionPresentation(
-            L"Floating Dock source rect reattach");
+            Reattach(dockHostHwnd);
     }
 
     if (!floatingDockBackdropCompositor_.IsAvailable())
     {
         if (!floatingDockBackdropCompositor_.
                 InitializePopup(
-                    floatingDockHwnd_,
+                    dockHostHwnd,
                     floatingLayerTopmost,
-                    !floatingDockRevealPending_))
+                    false))
         {
             std::wstring message =
                 L"Floating Dock native backdrop unavailable: ";
@@ -642,29 +838,32 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     if (firstReveal)
     {
         SetWindowPos(
-            floatingDockHwnd_,
+            dockHostHwnd,
             floatingLayerTopmost
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
-                SWP_NOACTIVATE |
-                (floatingDockRevealPending_
-                    ? 0 : SWP_SHOWWINDOW));
+                SWP_NOACTIVATE);
     }
     RECT loggedRect{};
-    GetWindowRect(floatingDockHwnd_, &loggedRect);
+    GetWindowRect(dockHostHwnd, &loggedRect);
     wchar_t message[224]{};
     wsprintfW(message,
         L"Floating Dock shown rect=(%ld,%ld)-(%ld,%ld) exStyle=0x%08X topmost=%d",
         loggedRect.left, loggedRect.top,
         loggedRect.right, loggedRect.bottom,
         static_cast<unsigned>(GetWindowLongPtrW(
-            floatingDockHwnd_, GWL_EXSTYLE)),
+            dockHostHwnd, GWL_EXSTYLE)),
         (GetWindowLongPtrW(
-            floatingDockHwnd_, GWL_EXSTYLE) &
+            dockHostHwnd, GWL_EXSTYLE) &
             WS_EX_TOPMOST) != 0);
     WriteDiagnosticLogEntry(message);
     if (!renderedResizeFrame)
         InvalidateFloatingDockWindow(
-            immediatePresent);
+            host, immediatePresent);
+    // Bounds and backdrop refreshes only prepare hidden geometry. One gated
+    // visibility path owns showing the pair, so an idle auto-hidden Host can
+    // never be revived by a later layout update.
+    if (!floatingDockRevealPending_)
+        UpdatePersistentDockHostVisibility(host);
 }

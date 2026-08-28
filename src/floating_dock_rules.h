@@ -17,6 +17,8 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
+inline constexpr int kPassiveDragRevealEdgeBandDip = 6;
+inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 
 // 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
 // WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
@@ -26,6 +28,93 @@ inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
 {
     return hotkeyEnabled || edgeSwipeEnabled;
+}
+
+inline bool IsDockEffectivelyPromoted(
+    bool manuallyPromoted,
+    bool passiveDragRevealed,
+    bool summonOnlyEnabled)
+{
+    return manuallyPromoted ||
+        (summonOnlyEnabled && passiveDragRevealed);
+}
+
+inline bool ShouldShowPersistentDockHost(
+    bool active,
+    bool effectivelyPromoted,
+    bool summonOnlyEnabled,
+    bool customDesktopVisible,
+    bool desktopIconsHidden,
+    bool keepWhenDesktopHidden)
+{
+    return active &&
+        (effectivelyPromoted ||
+            (!summonOnlyEnabled && customDesktopVisible &&
+                (!desktopIconsHidden ||
+                    keepWhenDesktopHidden)));
+}
+
+inline bool ShouldPassivelyRevealDockForDragAtEdge(
+    bool pointerInEdgeProjection,
+    bool internalDragActive,
+    bool oleDragActive)
+{
+    return pointerInEdgeProjection &&
+        (internalDragActive || oleDragActive);
+}
+
+enum class PassiveDragRevealAction
+{
+    None,
+    Reveal,
+    BeginLeave,
+    CancelLeave,
+    Hide,
+};
+
+inline PassiveDragRevealAction ResolvePassiveDragRevealUpdate(
+    bool summonOnlyEnabled,
+    bool manuallyPromoted,
+    bool passiveDragRevealed,
+    bool revealRequested,
+    bool keepRevealed,
+    bool leavePending,
+    bool leaveDelayElapsed)
+{
+    if (!summonOnlyEnabled || manuallyPromoted)
+        return leavePending
+            ? PassiveDragRevealAction::CancelLeave
+            : PassiveDragRevealAction::None;
+    if (!passiveDragRevealed)
+        return revealRequested
+            ? PassiveDragRevealAction::Reveal
+            : PassiveDragRevealAction::None;
+    if (keepRevealed)
+        return leavePending
+            ? PassiveDragRevealAction::CancelLeave
+            : PassiveDragRevealAction::None;
+    if (!leavePending)
+        return PassiveDragRevealAction::BeginLeave;
+    return leaveDelayElapsed
+        ? PassiveDragRevealAction::Hide
+        : PassiveDragRevealAction::None;
+}
+
+inline bool HasPassiveDragLeaveDelayElapsed(
+    ULONGLONG leaveStartTick,
+    ULONGLONG currentTick,
+    ULONGLONG delay = kPassiveDragLeaveDelayMs)
+{
+    return leaveStartTick != 0 &&
+        currentTick >= leaveStartTick &&
+        currentTick - leaveStartTick >= delay;
+}
+
+inline bool ShouldSummonForDockSurface(
+    bool sourceBelongsToDock,
+    bool floatingDockVisible)
+{
+    return sourceBelongsToDock && !floatingDockVisible;
 }
 
 inline bool ShouldUseFloatingDockLogicalForeground(
@@ -98,6 +187,106 @@ inline bool IsPointOnDockScreenEdge(
     default:
         return monitorRect.bottom - 1 - point.y <= edgeBand;
     }
+}
+
+inline bool IsPointInDockEdgeProjection(
+    POINT point,
+    const RECT& monitorRect,
+    const RECT& dockScreenRect,
+    DockPosition position,
+    int edgeBand)
+{
+    if (IsRectEmpty(&dockScreenRect) ||
+        !IsPointOnDockScreenEdge(
+            point, monitorRect, position, edgeBand))
+    {
+        return false;
+    }
+
+    if (position == DockPosition::Top ||
+        position == DockPosition::Bottom)
+    {
+        const LONG projectionLeft = std::max(
+            monitorRect.left, dockScreenRect.left);
+        const LONG projectionRight = std::min(
+            monitorRect.right, dockScreenRect.right);
+        return projectionLeft < projectionRight &&
+            point.x >= projectionLeft &&
+            point.x < projectionRight;
+    }
+
+    const LONG projectionTop = std::max(
+        monitorRect.top, dockScreenRect.top);
+    const LONG projectionBottom = std::min(
+        monitorRect.bottom, dockScreenRect.bottom);
+    return projectionTop < projectionBottom &&
+        point.y >= projectionTop &&
+        point.y < projectionBottom;
+}
+
+inline bool IsPointInDockEdgeCorridor(
+    POINT point,
+    const RECT& monitorRect,
+    const RECT& dockScreenRect,
+    DockPosition position)
+{
+    if (IsRectEmpty(&monitorRect) ||
+        IsRectEmpty(&dockScreenRect) ||
+        point.x < monitorRect.left ||
+        point.x >= monitorRect.right ||
+        point.y < monitorRect.top ||
+        point.y >= monitorRect.bottom)
+    {
+        return false;
+    }
+
+    if (position == DockPosition::Top ||
+        position == DockPosition::Bottom)
+    {
+        const LONG projectionLeft = std::max(
+            monitorRect.left, dockScreenRect.left);
+        const LONG projectionRight = std::min(
+            monitorRect.right, dockScreenRect.right);
+        if (projectionLeft >= projectionRight ||
+            point.x < projectionLeft ||
+            point.x >= projectionRight)
+        {
+            return false;
+        }
+        if (position == DockPosition::Top)
+        {
+            const LONG innerEdge = std::clamp<LONG>(
+                dockScreenRect.bottom,
+                monitorRect.top, monitorRect.bottom);
+            return point.y < innerEdge;
+        }
+        const LONG innerEdge = std::clamp<LONG>(
+            dockScreenRect.top,
+            monitorRect.top, monitorRect.bottom);
+        return point.y >= innerEdge;
+    }
+
+    const LONG projectionTop = std::max(
+        monitorRect.top, dockScreenRect.top);
+    const LONG projectionBottom = std::min(
+        monitorRect.bottom, dockScreenRect.bottom);
+    if (projectionTop >= projectionBottom ||
+        point.y < projectionTop ||
+        point.y >= projectionBottom)
+    {
+        return false;
+    }
+    if (position == DockPosition::Left)
+    {
+        const LONG innerEdge = std::clamp<LONG>(
+            dockScreenRect.right,
+            monitorRect.left, monitorRect.right);
+        return point.x < innerEdge;
+    }
+    const LONG innerEdge = std::clamp<LONG>(
+        dockScreenRect.left,
+        monitorRect.left, monitorRect.right);
+    return point.x >= innerEdge;
 }
 
 inline bool HasNewPointerButtonPress(
@@ -252,73 +441,6 @@ inline RECT ExpandForBorderOverdraw(
     return visualRect;
 }
 
-inline RECT ReserveCollectionPopupEnvelope(
-    const RECT& dockRect,
-    const RECT& workArea,
-    DockPosition position,
-    SIZE maximumPopupSize)
-{
-    if (maximumPopupSize.cx <= 0 ||
-        maximumPopupSize.cy <= 0)
-        return RECT{};
-
-    constexpr int popupGap = 12;
-    constexpr int placementSlack = 48;
-    RECT envelope{};
-    switch (position)
-    {
-    case DockPosition::Top:
-        envelope = RECT{
-            dockRect.left - maximumPopupSize.cx / 2,
-            dockRect.top,
-            dockRect.right + maximumPopupSize.cx / 2,
-            dockRect.bottom + popupGap +
-                maximumPopupSize.cy
-        };
-        break;
-    case DockPosition::Left:
-        envelope = RECT{
-            dockRect.left,
-            dockRect.top - maximumPopupSize.cy / 2,
-            dockRect.right + popupGap +
-                maximumPopupSize.cx,
-            dockRect.bottom + maximumPopupSize.cy / 2
-        };
-        break;
-    case DockPosition::Right:
-        envelope = RECT{
-            dockRect.left - popupGap -
-                maximumPopupSize.cx,
-            dockRect.top - maximumPopupSize.cy / 2,
-            dockRect.right,
-            dockRect.bottom + maximumPopupSize.cy / 2
-        };
-        break;
-    case DockPosition::Bottom:
-    default:
-        envelope = RECT{
-            dockRect.left - maximumPopupSize.cx / 2,
-            dockRect.top - popupGap -
-                maximumPopupSize.cy,
-            dockRect.right + maximumPopupSize.cx / 2,
-            dockRect.bottom
-        };
-        break;
-    }
-    InflateRect(
-        &envelope,
-        placementSlack,
-        placementSlack);
-
-    RECT popupWork = workArea;
-    InflateRect(&popupWork, -popupGap, -popupGap);
-    RECT clipped{};
-    if (!IntersectRect(
-            &clipped, &envelope, &popupWork))
-        return RECT{};
-    return clipped;
-}
-
 inline bool ShouldRenderDesktopDock(
     bool floatingDockOwnsVisual,
     bool selectedForFloatingHost)
@@ -327,46 +449,11 @@ inline bool ShouldRenderDesktopDock(
         !selectedForFloatingHost;
 }
 
-/**
- * @brief The source copy can be retired only after a valid replacement frame
- * has crossed the compositor presentation barrier.
- */
-inline bool ShouldRetireDesktopDockCopy(
-    bool floatingFrameReady,
-    bool presentationBarrierSucceeded)
-{
-    return floatingFrameReady &&
-        presentationBarrierSucceeded;
-}
-
-/**
- * @brief A pending close owns a frozen hand-off surface.
- *
- * Once the backdrop transaction has been submitted, ordinary HWND paints or
- * pointer-message tail redraws must not mutate that shared surface before the
- * desktop copy has taken ownership.
- */
+/** @brief 常驻 DockHost 只要处于活动状态且未关闭事务挂起就可以继续绘制。 */
 inline bool ShouldRenderFloatingDockFrame(
-    bool floatingDockVisible,
-    bool closePending)
+    bool dockHostActive)
 {
-    return floatingDockVisible && !closePending;
-}
-
-/**
- * @brief 仅当两个 Dock 之间已不存在任何可见或待完成的交接时执行后续动作。
- *
- * 最小化等延后命令会抓取或改变桌面画面；只检查逻辑 visible 会在
- * 异步合成回调尚未完成时提前执行，因此还必须检查待完成状态与 HWND。
- */
-inline bool CanRunPostCloseActionImmediately(
-    bool floatingDockVisible,
-    bool closePending,
-    bool floatingDockWindowVisible)
-{
-    return !floatingDockVisible &&
-        !closePending &&
-        !floatingDockWindowVisible;
+    return dockHostActive;
 }
 
 /**
@@ -385,11 +472,11 @@ inline bool ShouldInvalidateDesktopHover(
  * @brief 需要在当前指针消息结束前同步提交的交互状态。
  */
 inline bool NeedsImmediatePointerPresent(
-    bool itemDragActive,
+    bool itemDragFeedbackChanged,
     bool widgetPreviewActive,
     bool marqueeActive)
 {
-    return itemDragActive ||
+    return itemDragFeedbackChanged ||
         widgetPreviewActive ||
         marqueeActive;
 }
@@ -425,29 +512,22 @@ inline UINT RemainingPointerFrameDelay(
         kPointerFrameIntervalMs - elapsed);
 }
 
-/**
- * @brief Dock 在桌面层和顶层窗口之间切换会改变拖动静态帧内容。
- */
-inline bool FloatingVisibilityChangesStaticScene(
-    bool wasVisible,
-    bool isVisible)
-{
-    return wasVisible != isVisible;
-}
-
 inline bool ShouldCloseCollectionPopup(
     std::size_t openWidgetIndex,
-    std::size_t clickedWidgetIndex)
+    std::size_t clickedWidgetIndex,
+    bool sameDockHost = true)
 {
     return openWidgetIndex !=
             static_cast<std::size_t>(-1) &&
-        openWidgetIndex == clickedWidgetIndex;
+        openWidgetIndex == clickedWidgetIndex &&
+        sameDockHost;
 }
 
 inline bool ShouldCloseCollectionPopupOnPointerDown(
     std::size_t openWidgetIndex,
     std::size_t pressedDockWidgetIndex,
-    bool pointInsidePopup)
+    bool pointInsidePopup,
+    bool sameDockHost = true)
 {
     if (openWidgetIndex ==
             static_cast<std::size_t>(-1) ||
@@ -458,7 +538,8 @@ inline bool ShouldCloseCollectionPopupOnPointerDown(
     // close-on-down followed by open-on-up.
     return !ShouldCloseCollectionPopup(
         openWidgetIndex,
-        pressedDockWidgetIndex);
+        pressedDockWidgetIndex,
+        sameDockHost);
 }
 
 inline POINT WindowPointToDesktopPoint(
@@ -478,6 +559,15 @@ inline RECT DesktopRectToWindowRect(
         -desktopSourceRect.left,
         -desktopSourceRect.top);
     return desktopRect;
+}
+
+inline RECT DockAssociatedPopupInteractionRect(
+    bool anchoredToDock,
+    const RECT& hostedPopupRect)
+{
+    return anchoredToDock
+        ? hostedPopupRect
+        : RECT{};
 }
 
 inline bool ShouldDismissForPointerDown(
@@ -523,6 +613,21 @@ inline bool IsPointInVisibleLayer(
             PtInRect(
                 &tooltipRect,
                 desktopPoint) != FALSE);
+}
+
+inline bool IsTooltipOnlyPoint(
+    POINT desktopPoint,
+    const RECT& dockRect,
+    const RECT& popupRect,
+    const RECT& tooltipRect)
+{
+    if (IsRectEmpty(&tooltipRect) ||
+        !PtInRect(&tooltipRect, desktopPoint))
+        return false;
+    if (PtInRect(&dockRect, desktopPoint))
+        return false;
+    return IsRectEmpty(&popupRect) ||
+        !PtInRect(&popupRect, desktopPoint);
 }
 
 } // namespace snowdesktop::floating_dock_rules

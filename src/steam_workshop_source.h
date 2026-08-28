@@ -26,6 +26,10 @@ public:
     ProviderStatus Status() override;
     SteamWorkshopSubscriptionSnapshot QuerySubscriptions(
         const PackageQuery& query, std::string& error);
+    SteamWorkshopSubscriptionSnapshot QuerySubscriptionsOnline(
+        const PackageQuery& query, std::string& error);
+    bool Unsubscribe(const std::string& externalItemId,
+        std::string& error) const;
     std::vector<PackageDetails> Query(const PackageQuery& query,
         std::string& error) override;
     std::optional<PackageDetails> GetDetails(
@@ -52,11 +56,13 @@ private:
         std::string& error) const;
     std::optional<ResolvedItem> ResolveInstalledFolder(
         const std::string& publishedFileId, const std::string& ownerSteamId,
-        const std::filesystem::path& folder, std::string& error) const;
+        const std::filesystem::path& folder, std::string& error,
+        PackageManifest* detectedManifest = nullptr) const;
 
     std::filesystem::path bridgeExecutable_;
-    WidgetPackageValidator validator_;
     ProviderStatus cachedStatus_;
     std::chrono::steady_clock::time_point statusCheckedAt_{};
+    mutable std::optional<ResolvedItem> resolvedCache_;
+    mutable std::chrono::steady_clock::time_point resolvedCacheCheckedAt_{};
 };
 }

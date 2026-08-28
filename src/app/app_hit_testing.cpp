@@ -27,9 +27,13 @@ DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
-        if (!di->layoutKey.empty() && collectedKeysCache_.count(ToUpperInvariant(di->layoutKey))) continue;
         RECT selRect = GetItemSelectionRect(di->bounds, di->selected);
-        if (PtInRect(&selRect, pt)) return icon;
+        if (!PtInRect(&selRect, pt)) continue;
+        if (!di->layoutKey.empty() &&
+            collectedKeysCache_.count(
+                ToUpperInvariant(di->layoutKey)))
+            continue;
+        return icon;
     }
     return nullptr;
 }
@@ -59,35 +63,55 @@ float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
 int DesktopApp::GetComponentEdgeMargin(
     const GridPage& page, bool vertical) const
 {
-    const float cellScale = CalculateWidgetCellScale(
-        page.cellWidth, page.cellHeight);
-    return snowdesktop::widget_spacing_rules::EffectiveComponentEdgeGap(
+    const float pageVisualScale =
+        GetPageItemVisualMetrics(page).layoutScale;
+    return snowdesktop::layout_spacing_rules::ComponentEdgeMargin(
         vertical ? page.marginX : page.marginY,
         vertical ? page.gapX : page.gapY,
-        cellScale,
-        componentSpacingScale_);
+        pageVisualScale, iconSpacingScale_);
 }
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
-    RECT rect = widget.bounds;
-    const float cellScale = GetWidgetCellScale(widget);
+    RECT frame = widget.bounds;
     for (const auto& page : gridPages_)
     {
         if (page.id != widget.gridCell.pageId) continue;
-        int halfGapX = std::max(ScaleWidgetCu(2.0f, cellScale), page.gapX / 2);
-        int halfGapY = std::max(ScaleWidgetCu(2.0f, cellScale), page.gapY / 2);
-        rect.left   -= halfGapX;
-        rect.top    -= halfGapY;
-        rect.right  += halfGapX;
-        rect.bottom += halfGapY;
+        const float pageVisualScale =
+            GetPageItemVisualMetrics(page).layoutScale;
+        const int outsetX = snowdesktop::layout_spacing_rules::
+            ComponentFrameOutset(
+                page.gapX, pageVisualScale, iconSpacingScale_);
+        const int outsetY = snowdesktop::layout_spacing_rules::
+            ComponentFrameOutset(
+                page.gapY, pageVisualScale, iconSpacingScale_);
+        InflateRect(&frame, outsetX, outsetY);
         break;
     }
-    const int inset = snowdesktop::widget_spacing_rules::ScaledComponentInset(
-        cellScale, componentSpacingScale_);
-    if (rect.right - rect.left > inset * 4 && rect.bottom - rect.top > inset * 4)
-        InflateRect(&rect, -inset, -inset);
-    return rect;
+    return frame;
+}
+
+RECT DesktopApp::GetLuaWidgetHostActionRect(
+    const DesktopWidget& widget) const
+{
+    const RECT frame = GetStandaloneWidgetFrameRect(widget);
+    const float cellScale = GetWidgetCellScale(widget);
+    const int horizontalInset = ScaleWidgetCu(14.0f, cellScale);
+    const int buttonHeight = ScaleWidgetCu(31.0f, cellScale);
+    const int bottomInset = ScaleWidgetCu(14.0f, cellScale);
+    const RECT moveHandle = GetStandaloneWidgetMoveHandleRect(widget);
+    const LONG contentBottom = snowdesktop::widget_chrome_rules::
+        HostActionContentBottom(
+            widget.showTitle, frame.top, frame.bottom,
+            moveHandle.top, ScaleWidgetCu(5.0f, cellScale));
+    const LONG bottom = std::max<LONG>(frame.top + buttonHeight,
+        contentBottom - bottomInset);
+    return {
+        frame.left + horizontalInset,
+        bottom - buttonHeight,
+        frame.right - horizontalInset,
+        bottom
+    };
 }
 
 /**
@@ -99,9 +123,7 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 {
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     const float cellScale = GetWidgetCellScale(widget);
-    const auto personalization = settingsWindow_
-        ? settingsWindow_->GetPersonalization()
-        : PersonalizationSettings{};
+    const auto& personalization = CurrentPersonalization();
     const float barHeight = personalization.barHeight;
     const int handleHeight = ScaleWidgetCu(barHeight, cellScale);
     const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
@@ -122,6 +144,29 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 }
 
 /**
+ * @brief 获取无底栏独立窗口小部件的紧凑移动手柄矩形
+ * @param widget 桌面小部件引用
+ * @return 左下角移动手柄矩形
+ */
+RECT DesktopApp::GetStandaloneWidgetCompactMoveHandleRect(
+    const DesktopWidget& widget) const
+{
+    RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
+    const int preferredWidth = ScaleWidgetCu(
+        CurrentPersonalization().barHeight,
+        GetWidgetCellScale(widget));
+    const int handleWidth = snowdesktop::widget_chrome_rules::
+        CompactEdgeHandleWidth(
+            handle.right - handle.left, preferredWidth);
+    return {
+        handle.left,
+        handle.top,
+        handle.left + handleWidth,
+        handle.bottom
+    };
+}
+
+/**
  * @brief 获取独立窗口小部件的调整大小手柄矩形
  * @param widget 桌面小部件引用
  * @return 调整大小手柄矩形
@@ -129,8 +174,13 @@ RECT DesktopApp::GetStandaloneWidgetMoveHandleRect(const DesktopWidget& widget) 
 RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget) const
 {
     RECT handle = GetStandaloneWidgetMoveHandleRect(widget);
-    const float barHeight = settingsWindow_ ? settingsWindow_->GetPersonalization().barHeight : 24.0f;
-    const int handleWidth = ScaleWidgetCu(barHeight, GetWidgetCellScale(widget));
+    const float barHeight = CurrentPersonalization().barHeight;
+    const int preferredWidth = ScaleWidgetCu(
+        barHeight, GetWidgetCellScale(widget));
+    const int handleWidth = widget.showTitle
+        ? preferredWidth
+        : snowdesktop::widget_chrome_rules::CompactEdgeHandleWidth(
+            handle.right - handle.left, preferredWidth);
     return {
         std::max<LONG>(handle.left, handle.right - handleWidth),
         handle.top,
@@ -157,6 +207,12 @@ WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) cons
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
     RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
     if (PtInRect(&resize, pt)) return WidgetHit::ResizeHandle;
+    if (!snowdesktop::widget_chrome_rules::HasBottomBar(widget.showTitle))
+    {
+        RECT move = GetStandaloneWidgetCompactMoveHandleRect(widget);
+        if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
+        return WidgetHit::Content;
+    }
     RECT move = GetStandaloneWidgetMoveHandleRect(widget);
     if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
     return WidgetHit::Content;

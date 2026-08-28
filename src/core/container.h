@@ -120,6 +120,21 @@ public:
      */
     virtual HitRegion HitTestDrag(POINT pt, Slot*& outSlot) = 0;
 
+    /**
+     * @brief 在几何命中前应用容器自己的载荷、容量和策略约束。
+     *
+     * 集中式 slot contract 决定面之间是否存在路由；具体容器仍可根据
+     * manifest、剩余容量等实例状态进一步拒绝。默认容器不增加约束。
+     */
+    virtual bool AcceptsDragPayload(
+        snowdesktop::slot_contract::DragPayloadKind payload,
+        std::size_t count) const
+    {
+        (void)payload;
+        (void)count;
+        return true;
+    }
+
     /** @brief 获取拖放提示文本（如“移动到文件夹 XX”）
      *  @param slot         目标插槽
      *  @param region       命中区域

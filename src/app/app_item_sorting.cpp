@@ -2,6 +2,71 @@
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
+namespace
+{
+snowdesktop::list_detail_rules::Column ContentSortColumnForMode(int mode)
+{
+    switch (mode)
+    {
+    case snowdesktop::folder_sort_rules::kName:
+        return snowdesktop::list_detail_rules::Column::Name;
+    case snowdesktop::folder_sort_rules::kType:
+        return snowdesktop::list_detail_rules::Column::Type;
+    case snowdesktop::folder_sort_rules::kModified:
+        return snowdesktop::list_detail_rules::Column::Modified;
+    case snowdesktop::folder_sort_rules::kSize:
+        return snowdesktop::list_detail_rules::Column::Size;
+    default:
+        return snowdesktop::list_detail_rules::Column::None;
+    }
+}
+
+bool DesktopItemLess(
+    const DesktopItem& a,
+    const DesktopItem& b,
+    int mode,
+    bool ascending)
+{
+    int comparison = 0;
+    if (mode == snowdesktop::folder_sort_rules::kType)
+    {
+        const bool hasA = !a.typeName.empty();
+        const bool hasB = !b.typeName.empty();
+        if (hasA != hasB)
+            return hasA;
+        if (hasA)
+            comparison = _wcsicmp(
+                a.typeName.c_str(), b.typeName.c_str());
+    }
+    else if (mode == snowdesktop::folder_sort_rules::kModified)
+    {
+        const bool hasA = a.modifiedTime.has_value();
+        const bool hasB = b.modifiedTime.has_value();
+        if (hasA != hasB)
+            return hasA;
+        if (hasA)
+            comparison = CompareFileTime(&*a.modifiedTime,
+                &*b.modifiedTime);
+    }
+    else if (mode == snowdesktop::folder_sort_rules::kSize)
+    {
+        const bool hasA = a.fileSize.has_value();
+        const bool hasB = b.fileSize.has_value();
+        if (hasA != hasB)
+            return hasA;
+        if (hasA && *a.fileSize != *b.fileSize)
+            comparison = *a.fileSize < *b.fileSize ? -1 : 1;
+    }
+    else
+        comparison = _wcsicmp(a.name.c_str(), b.name.c_str());
+
+    if (comparison != 0)
+        return ascending ? comparison < 0 : comparison > 0;
+    comparison = _wcsicmp(a.name.c_str(), b.name.c_str());
+    return comparison < 0;
+}
+}
+
 void DesktopApp::SortIconsByName(bool ascending)
 {
     auto sortForPage = [&](const GridPage& page) {
@@ -147,6 +212,35 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
         return;
     }
 
+    if (w.type == DesktopWidgetType::FileGroup)
+    {
+        for (auto& container : containers_)
+        {
+            auto* group = dynamic_cast<FileGroup*>(container.get());
+            if (!group || group->GetWidgetData() != &w ||
+                !group->IsGroupSearchActive())
+                continue;
+            w.contentSortColumn = ContentSortColumnForMode(mode);
+            w.contentSortAscending = ascending;
+            group->InvalidateHostedView();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return;
+        }
+        std::wstring active = w.activeCategoryId;
+        if (std::find(
+                w.childWidgetIds.begin(), w.childWidgetIds.end(), active) ==
+            w.childWidgetIds.end())
+            active = w.childWidgetIds.empty() ? L"" : w.childWidgetIds.front();
+        const size_t activeIndex = FindWidgetIndexById(active);
+        if (activeIndex < widgets_.size())
+            SortWidgetContents(activeIndex, mode, ascending);
+        return;
+    }
+
+    w.contentSortColumn = ContentSortColumnForMode(mode);
+    w.contentSortAscending = ascending;
+
     if (w.type == DesktopWidgetType::FolderMapping)
     {
         w.folderSortMode =
@@ -181,26 +275,8 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
-                int cmp = 0;
-                if (mode == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                else if (mode == 1)
-                {
-                    cmp = _wcsicmp(items_[ia].typeName.c_str(), items_[ib].typeName.c_str());
-                    if (cmp == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                }
-                else if (mode == 2)
-                {
-                    WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
-                    if (GetFileAttributesExW(items_[ia].parsingName.c_str(), GetFileExInfoStandard, &da) &&
-                        GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
-                    {
-                        int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
-                        if (timeCmp != 0) cmp = timeCmp;
-                        else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                    }
-                    else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                }
-                return ascending ? (cmp < 0) : (cmp > 0);
+                return DesktopItemLess(
+                    items_[ia], items_[ib], mode, ascending);
             });
 
         w.itemKeys = std::move(keys);
@@ -225,26 +301,8 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
-                int cmp = 0;
-                if (mode == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                else if (mode == 1)
-                {
-                    cmp = _wcsicmp(items_[ia].typeName.c_str(), items_[ib].typeName.c_str());
-                    if (cmp == 0) cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                }
-                else if (mode == 2)
-                {
-                    WIN32_FILE_ATTRIBUTE_DATA da{}, db{};
-                    if (GetFileAttributesExW(items_[ia].parsingName.c_str(), GetFileExInfoStandard, &da) &&
-                        GetFileAttributesExW(items_[ib].parsingName.c_str(), GetFileExInfoStandard, &db))
-                    {
-                        int timeCmp = CompareFileTime(&da.ftLastWriteTime, &db.ftLastWriteTime);
-                        if (timeCmp != 0) cmp = timeCmp;
-                        else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                    }
-                    else cmp = _wcsicmp(items_[ia].name.c_str(), items_[ib].name.c_str());
-                }
-                return ascending ? (cmp < 0) : (cmp > 0);
+                return DesktopItemLess(
+                    items_[ia], items_[ib], mode, ascending);
             });
 
         w.itemKeys = std::move(keys);

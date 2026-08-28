@@ -1,9 +1,11 @@
 #include "app.h"
+#include "../page_navigation_rules.h"
 #include "../core/drag_source_rebind.h"
+#include "../core/transient_drag_slot.h"
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
-void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
+void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
 {
     if (!dragSession_.IsActive()) return;
 
@@ -12,44 +14,75 @@ void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
     Container* targetContainer = nullptr;
     Slot* targetSlot = nullptr;
     HitRegion targetRegion = HitRegion::None;
-    popupDragTargetSlot_.reset();
-
-    const bool suppressDesktopWidgetTargets =
-        SuppressDesktopWidgetDragTargets();
-    const bool groupedEntryDrag =
-        dragSession_.SourceList().
-            hasCollectionGroupEntries ||
-        dragSession_.SourceList().
-            hasFileGroupEntries;
-    const bool popupHit =
-        !suppressDesktopWidgetTargets &&
-        !groupedEntryDrag &&
-        HitTestPopupForDrag(clientPoint, targetContainer, targetSlot, targetRegion);
-
-    if (!popupHit && !targetContainer)
+    if (dragDropController_.IsExternalDragActive())
     {
-        const DragTargetResolution resolved =
-            dragDropController_.ResolveInternalTarget(
-                containers_, clientPoint,
-                [&](const Container& candidate) {
-                    if (desktopIconsHidden_ &&
-                        !IsRetainedContainer(&candidate))
-                        return false;
-                    return !suppressDesktopWidgetTargets ||
-                        (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                         !dynamic_cast<const WidgetContainer*>(&candidate));
-                });
-        targetContainer = resolved.container;
-        targetSlot = resolved.slot;
-        targetRegion = resolved.region;
+        if (!HitTestPopupForDrag(
+                clientPoint, targetContainer,
+                targetSlot, targetRegion))
+        {
+            const DragTargetResolution resolved =
+                dragDropController_.ResolveExternalTarget(
+                    containers_, clientPoint,
+                    [&](const Container& candidate) {
+                        return !desktopIconsHidden_ ||
+                            IsRetainedContainer(&candidate);
+                    });
+            targetContainer = resolved.container;
+            targetSlot = resolved.slot;
+            targetRegion = resolved.region;
+        }
+    }
+    else
+    {
+        const bool suppressDesktopWidgetTargets =
+            SuppressDesktopWidgetDragTargets();
+        const bool groupedEntryDrag =
+            dragSession_.SourceList().
+                hasCollectionGroupEntries ||
+            dragSession_.SourceList().
+                hasFileGroupEntries;
+        const bool popupHit =
+            !suppressDesktopWidgetTargets &&
+            !groupedEntryDrag &&
+            HitTestPopupForDrag(
+                clientPoint, targetContainer,
+                targetSlot, targetRegion);
+        if (!popupHit)
+        {
+            const DragTargetResolution resolved =
+                dragDropController_.ResolveInternalTarget(
+                    containers_, clientPoint,
+                    [&](const Container& candidate) {
+                        if (desktopIconsHidden_ &&
+                            !IsRetainedContainer(&candidate))
+                            return false;
+                        return !suppressDesktopWidgetTargets ||
+                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
+                             !dynamic_cast<const WidgetContainer*>(&candidate));
+                    });
+            targetContainer = resolved.container;
+            targetSlot = resolved.slot;
+            targetRegion = resolved.region;
+        }
     }
 
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+}
+
+void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
+{
+    if (!dragSession_.IsActive()) return;
+
+    ResolveCurrentDragTargetAt(clientPoint);
 
     std::wstring hint;
-    if (targetContainer && targetRegion != HitRegion::None)
-        hint = targetContainer->GetDragHint(targetSlot, targetRegion,
+    if (dragSession_.TargetContainer() &&
+        dragSession_.TargetRegion() != HitRegion::None)
+    {
+        hint = dragSession_.TargetContainer()->GetDragHint(
+            dragSession_.TargetSlot(), dragSession_.TargetRegion(),
             dragSession_.Items(), dragSession_.Source(), mods);
+    }
     ShowDragHintWindow(clientPoint, hint);
     InvalidateFloatingDockWindow(true);
 }
@@ -207,12 +240,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     &virtualItem,
                     &content))
                 visibleItem = content;
-            popupDragTargetSlot_ =
-                std::make_unique<Slot>(
-                    targetContainer,
-                    visibleItem, 0);
-            targetSlot =
-                popupDragTargetSlot_.get();
+            targetSlot = popupDragTarget_.BindPlacement(
+                targetContainer,
+                visibleItem, 0, SlotFeedbackRole::Popup);
             targetRegion =
                 HitRegion::SortBefore;
             return true;
@@ -235,45 +265,40 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             const RECT handoffRect =
                 snowdesktop::popup_drag_rules::
                     HandoffActivationBounds(
-                        GetItemIconRect(itemRect));
+                        GetCollectionPopupItemIconRect(
+                            itemRect));
             if (snowdesktop::popup_drag_rules::
                     CanHandoffToItem(
                         true, entry.selected) &&
                 PtInRect(&handoffRect, client))
             {
-                Item* handoffItem =
-                    dockFolderPopupContainer_->
-                        GetMemberItem(i);
-                if (!handoffItem)
-                    continue;
-                popupDragTargetSlot_ =
-                    std::make_unique<Slot>(
-                        targetContainer,
-                        snowdesktop::popup_drag_rules::
-                            HandoffIndicatorBounds(
-                                itemRect),
-                        i);
-                popupDragTargetSlot_->SetItem(
-                    handoffItem);
-                targetSlot =
-                    popupDragTargetSlot_.get();
+                targetSlot = popupDragTarget_.BindHandoff(
+                    targetContainer,
+                    snowdesktop::popup_drag_rules::
+                        HandoffIndicatorBounds(itemRect),
+                    i, SlotFeedbackRole::Popup,
+                    &entry,
+                    [&]() -> std::unique_ptr<Item> {
+                        return std::make_unique<
+                            FolderEntryIcon>(
+                                &entry,
+                                dockFolderPopupContainer_.get(),
+                                this);
+                    });
                 targetRegion = HitRegion::Handoff;
                 return true;
             }
 
-            popupDragTargetSlot_ =
-                std::make_unique<Slot>(
-                    targetContainer,
-                    itemRect, i);
-            targetSlot =
-                popupDragTargetSlot_.get();
+            targetSlot = popupDragTarget_.BindPlacement(
+                targetContainer,
+                itemRect, i, SlotFeedbackRole::Popup);
             targetRegion =
-                client.x <
-                    itemRect.left +
-                        (itemRect.right -
-                         itemRect.left) / 2
-                ? HitRegion::SortBefore
-                : HitRegion::SortAfter;
+                snowdesktop::popup_drag_rules::
+                    IsAfterInsertionMidpoint(
+                        itemRect, client,
+                        dockFolderPopupWidget_.listMode)
+                ? HitRegion::SortAfter
+                : HitRegion::SortBefore;
             return true;
         }
 
@@ -296,12 +321,6 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     &clipped, &itemRect,
                     &content))
                 continue;
-            const LONG edgeXs[] = {
-                itemRect.left -
-                    kCollectionPopupGapX / 2,
-                itemRect.right +
-                    kCollectionPopupGapX / 2,
-            };
             const HitRegion edgeRegions[] = {
                 HitRegion::SortBefore,
                 HitRegion::SortAfter,
@@ -309,24 +328,19 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             for (size_t edge = 0;
                 edge < 2; ++edge)
             {
-                const long long dx =
-                    static_cast<long long>(
-                        client.x) -
-                    edgeXs[edge];
-                long long dy = 0;
-                if (client.y < clipped.top)
-                    dy =
-                        static_cast<long long>(
-                            clipped.top) -
-                        client.y;
-                else if (client.y >=
-                    clipped.bottom)
-                    dy =
-                        static_cast<long long>(
-                            client.y) -
-                        clipped.bottom + 1;
+                const bool after = edge != 0;
+                const auto popupMetrics =
+                    GetOpenCollectionPopupLayoutMetrics();
+                const long gutter =
+                    dockFolderPopupWidget_.listMode
+                    ? popupMetrics.gapY / 2
+                    : popupMetrics.gapX / 2;
                 const long long distance =
-                    dx * dx + dy * dy;
+                    snowdesktop::popup_drag_rules::
+                        InsertionEdgeDistanceSquared(
+                            itemRect, clipped, client,
+                            dockFolderPopupWidget_.listMode,
+                            after, gutter);
                 if (distance >=
                     bestDistanceSquared)
                     continue;
@@ -342,13 +356,10 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             std::numeric_limits<
                 long long>::max())
         {
-            popupDragTargetSlot_ =
-                std::make_unique<Slot>(
-                    targetContainer,
-                    nearestBounds,
-                    nearestIndex);
-            targetSlot =
-                popupDragTargetSlot_.get();
+            targetSlot = popupDragTarget_.BindPlacement(
+                targetContainer,
+                nearestBounds, nearestIndex,
+                SlotFeedbackRole::Popup);
             targetRegion =
                 nearestRegion;
         }
@@ -375,13 +386,19 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     targetContainer = popupContainer;
     targetSlot = nullptr;
     targetRegion = HitRegion::None;
+    if (!CanCurrentDragUseCollectionPopup())
+    {
+        // The popup is the foreground surface, so consume the hit without
+        // exposing a placement slot or passing through to the Dock below it.
+        targetRegion = HitRegion::Blocked;
+        return true;
+    }
     if (!PtInRect(&content, client))
         return true;
 
     size_t slotIndex = 0;
     RECT slotBounds = content;
     HitRegion region = HitRegion::Empty;
-    Item* handoffItem = nullptr;
 
     if (popupKeys.empty())
     {
@@ -394,11 +411,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 &virtualItem,
                 &content))
             visibleItem = content;
-        popupDragTargetSlot_ =
-            std::make_unique<Slot>(
-                popupContainer,
-                visibleItem, 0);
-        targetSlot = popupDragTargetSlot_.get();
+        targetSlot = popupDragTarget_.BindPlacement(
+            popupContainer,
+            visibleItem, 0, SlotFeedbackRole::Popup);
         targetRegion =
             HitRegion::SortBefore;
         return true;
@@ -419,14 +434,15 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     itemIndex != static_cast<size_t>(-1) &&
                         items_[itemIndex].selected))
         {
-            RECT iconRect = GetItemIconRect(itemRect);
+            RECT iconRect =
+                GetCollectionPopupItemIconRect(
+                    itemRect);
             const RECT handoffRect =
                 snowdesktop::popup_drag_rules::
                     HandoffActivationBounds(iconRect);
             if (PtInRect(&handoffRect, client))
             {
                 region = HitRegion::Handoff;
-                handoffItem = popupContainer->GetMemberItem(i);
                 // Keep the icon-sized activation area, but present the same
                 // full-cell handoff feedback used by desktop widgets.
                 slotBounds =
@@ -441,13 +457,31 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             slotBounds = itemRect;
         if (region != HitRegion::Handoff)
         {
-            region = client.x < itemRect.left + (itemRect.right - itemRect.left) / 2
-                ? HitRegion::SortBefore : HitRegion::SortAfter;
+            region = snowdesktop::popup_drag_rules::
+                    IsAfterInsertionMidpoint(
+                        itemRect, client,
+                        widgets_[popupWidgetIndex_].listMode)
+                ? HitRegion::SortAfter
+                : HitRegion::SortBefore;
         }
-        popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-        if (handoffItem)
-            popupDragTargetSlot_->SetItem(handoffItem);
-        targetSlot = popupDragTargetSlot_.get();
+        if (region == HitRegion::Handoff)
+        {
+            targetSlot = popupDragTarget_.BindHandoff(
+                popupContainer, slotBounds, slotIndex,
+                SlotFeedbackRole::Popup,
+                &items_[itemIndex],
+                [&]() -> std::unique_ptr<Item> {
+                    return std::make_unique<DesktopIcon>(
+                        &items_[itemIndex],
+                        popupContainer, this);
+                });
+        }
+        else
+        {
+            targetSlot = popupDragTarget_.BindPlacement(
+                popupContainer, slotBounds, slotIndex,
+                SlotFeedbackRole::Popup);
+        }
         targetRegion = region;
         return true;
     }
@@ -460,23 +494,25 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         if (!IntersectRect(&clipped, &itemRect, &content))
             continue;
 
-        const LONG edgeXs[] = {
-            itemRect.left - kCollectionPopupGapX / 2,
-            itemRect.right + kCollectionPopupGapX / 2,
-        };
         const HitRegion edgeRegions[] = {
             HitRegion::SortBefore,
             HitRegion::SortAfter,
         };
         for (size_t edge = 0; edge < 2; ++edge)
         {
-            const long long dx = static_cast<long long>(client.x) - edgeXs[edge];
-            long long dy = 0;
-            if (client.y < clipped.top)
-                dy = static_cast<long long>(clipped.top) - client.y;
-            else if (client.y >= clipped.bottom)
-                dy = static_cast<long long>(client.y) - clipped.bottom + 1;
-            const long long distanceSquared = dx * dx + dy * dy;
+            const bool after = edge != 0;
+            const auto popupMetrics =
+                GetOpenCollectionPopupLayoutMetrics();
+            const bool listMode =
+                widgets_[popupWidgetIndex_].listMode;
+            const long gutter = listMode
+                ? popupMetrics.gapY / 2
+                : popupMetrics.gapX / 2;
+            const long long distanceSquared =
+                snowdesktop::popup_drag_rules::
+                    InsertionEdgeDistanceSquared(
+                        itemRect, clipped, client,
+                        listMode, after, gutter);
             if (distanceSquared >= bestDistanceSquared) continue;
             bestDistanceSquared = distanceSquared;
             slotIndex = i;
@@ -488,14 +524,15 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     if (bestDistanceSquared == std::numeric_limits<long long>::max())
         return true;
 
-    popupDragTargetSlot_ = std::make_unique<Slot>(popupContainer, slotBounds, slotIndex);
-    targetSlot = popupDragTargetSlot_.get();
+    targetSlot = popupDragTarget_.BindPlacement(
+        popupContainer,
+        slotBounds, slotIndex, SlotFeedbackRole::Popup);
     targetRegion = region;
     return true;
 }
 
 /**
- * @brief 更新拖拽翻页按钮的悬停和自动翻页状态
+ * @brief 更新拖拽翻页热边的悬停和自动翻页状态
  * @param clientPoint 当前鼠标客户端坐标
  * @return 拖拽会话仍可继续时返回 true
  */
@@ -504,32 +541,37 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     lastMousePoint_ = clientPoint;
     if (desktopIconsHidden_)
     {
-        navHoverSide_ = 0;
+        SetPageNavHotEdgeHover(0);
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
         return dragSession_.IsActive();
     }
     if (!dragSession_.IsActive())
     {
-        navHoverSide_ = 0;
+        SetPageNavHotEdgeHover(0);
         navAutoFlipDir_ = 0;
         navAutoFlipTick_ = 0;
         return false;
     }
 
-    RECT prevRect, nextRect;
-    GetNavButtonRects(prevRect, nextRect);
+    RECT prevEdge{}, nextEdge{};
+    GetNavHotEdgeRects(prevEdge, nextEdge);
 
-    int navSide = 0;
-    const bool hasPrev = pageOffset_ > 0;
-    const bool hasNext = pageOffset_ < MaxPageOffset();
-    // 悬停检测不限制 hasPrev/hasNext，让置灰按钮也有 hover 视觉反馈
-    if (PtInRect(&prevRect, clientPoint)) navSide = -1;
-    else if (PtInRect(&nextRect, clientPoint)) navSide = 1;
-    navHoverSide_ = navSide;
+    const auto target = snowdesktop::page_navigation_rules::
+        HitTestPointerTarget(clientPoint, prevEdge, nextEdge);
+    int navSide = snowdesktop::page_navigation_rules::
+        PointerTargetDirection(target);
+    const bool directionAvailable =
+        (navSide == -1 && pageOffset_ > 0) ||
+        (navSide == 1 && pageOffset_ < MaxPageOffset());
+    if (!directionAvailable)
+        navSide = 0;
+    SetPageNavHotEdgeHover(navSide);
 
     // 自动翻页仅在可操作方向触发
-    const bool navEnabled = (navSide == -1 && hasPrev) || (navSide == 1 && hasNext);
+    const bool navEnabled =
+        (navSide == -1 && pageOffset_ > 0) ||
+        (navSide == 1 && pageOffset_ < MaxPageOffset());
     if (navSide == 0 || !navEnabled)
     {
         navAutoFlipDir_ = 0;
@@ -548,6 +590,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const int newOffset = NextNonEmptyOffset(pageOffset_, navSide);
+    navAutoFlipTick_ = now;
     if (newOffset == pageOffset_)
         return true;
 
@@ -564,8 +607,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     if (hasInternalItems && !groupedEntryDrag)
         MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
-
-    navAutoFlipTick_ = now;
+    RefreshPageNavHotEdgeHoverAt(clientPoint);
     if (!dragSession_.IsActive() || (hasInternalItems && dragSession_.Items().empty()))
     {
         mouseDownHit_ = nullptr;

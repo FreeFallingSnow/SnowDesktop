@@ -167,8 +167,7 @@ void DesktopApp::InvalidateDockLaunchBounceRects()
                 static_cast<int>(std::ceil(
                     static_cast<double>(shortSide) * 0.42)));
             InflateRect(&dirty, padding, padding);
-            if (floatingDockVisible_ &&
-                dock == floatingDockContainer_)
+            if (IsDockHostedByPersistentHost(dock))
             {
                 invalidateFloatingDock = true;
             }
@@ -206,9 +205,20 @@ bool DesktopApp::LaunchDesktopItem(
     const bool wasClosed =
         GetDockWindowVisualState(itemIndex) ==
             DockWindowVisualState::Closed;
-    HINSTANCE result = ShellExecuteW(hwnd_, L"open", items_[itemIndex].parsingName.c_str(),
-        nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(result) <= 32)
+    const DesktopItem& item = items_[itemIndex];
+    const wchar_t* extension =
+        PathFindExtensionW(item.parsingName.c_str());
+    const bool useShellItemActivation = item.isShortcut ||
+        (extension &&
+            (_wcsicmp(extension, L".lnk") == 0 ||
+                _wcsicmp(extension, L".url") == 0));
+    const bool launchAccepted =
+        useShellItemActivation && item.absolutePidl.get()
+        ? shellLaunchWorker_.EnqueueShellItem(
+            hwnd_, item.parsingName, item.absolutePidl.get())
+        : shellLaunchWorker_.Enqueue(
+            hwnd_, item.parsingName);
+    if (!launchAccepted)
         return false;
     RecordDockItemUsage(itemIndex);
     if (animateDockLaunch && wasClosed)

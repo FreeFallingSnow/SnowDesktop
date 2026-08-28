@@ -29,8 +29,10 @@ using Microsoft::WRL::ComPtr;
  *
  * 初始化插槽所属容器、边界矩形和索引，此时插槽内尚无项目(item_ 为 nullptr)。
  */
-Slot::Slot(Container* parent, RECT bounds, size_t index)
-    : parent_(parent), bounds_(bounds), index_(index)
+Slot::Slot(Container* parent, RECT bounds, size_t index,
+    SlotLifetime lifetime, SlotFeedbackIdentity feedbackIdentity)
+    : parent_(parent), bounds_(bounds), index_(index), lifetime_(lifetime),
+      feedbackIdentity_(feedbackIdentity)
 {
     assert(parent_ != nullptr);
     assert(
@@ -68,6 +70,19 @@ void Slot::SetItem(Item* item) { item_ = item; }
  * @return size_t 索引值
  */
 size_t Slot::GetIndex() const { return index_; }
+
+void Slot::RebindTransientDragTarget(Container* parent, RECT bounds,
+    size_t index, SlotFeedbackRole feedbackRole, Item* item)
+{
+    assert(lifetime_ == SlotLifetime::TransientDragTarget);
+    assert(parent != nullptr);
+    assert(feedbackRole != SlotFeedbackRole::None);
+    parent_ = parent;
+    bounds_ = bounds;
+    index_ = index;
+    item_ = item;
+    feedbackIdentity_ = { feedbackRole, bounds, 0, 0 };
+}
 
 /**
  * @brief 判断插槽是否为空
@@ -208,7 +223,17 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float it
         region == HitRegion::Handoff || region == HitRegion::Blocked)
         return;
 
-    BarStyle style = parent_->GetInsertionStyle();
+    DrawDropIndicatorWithStyle(
+        ctx, region, parent_->GetInsertionStyle(), itemPad);
+}
+
+void Slot::DrawDropIndicatorWithStyle(ID2D1DeviceContext* ctx,
+    HitRegion region, BarStyle insertionStyle, float itemPad) const
+{
+    if (!ctx || region == HitRegion::None ||
+        region == HitRegion::Handoff || region == HitRegion::Blocked)
+        return;
+
     const float lineWidth = 3.0f;
     const D2D1_COLOR_F blue = D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.92f);
 
@@ -230,7 +255,7 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float it
             ctx->FillRectangle(rf, fillBrush.Get());
         ctx->DrawRectangle(rf, brush.Get(), 2.0f);
     }
-    else if (style == BarStyle::VBar)
+    else if (insertionStyle == BarStyle::VBar)
     {
         float x;
         if (region == HitRegion::SortBefore)

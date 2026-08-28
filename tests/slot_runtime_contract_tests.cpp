@@ -3,6 +3,7 @@
 #include "core/drag_session.h"
 #include "core/drag_target_resolver.h"
 #include "core/item.h"
+#include "core/owned_transient_drag_target.h"
 #include "core/slot.h"
 #include "app/drag_drop_controller.h"
 #include "app/ole_drag_drop_adapter.h"
@@ -10,9 +11,13 @@
 #include "app/rename_controller.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
+#include "drag_input_rules.h"
+#include "ole_drag_rules.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -373,9 +378,47 @@ void TestDragSessionRejectsInvalidatedSlots()
         &container, {NonOwningItemToken()},
         std::move(sourceList),
         POINT{}, POINT{});
-    session.UpdateTarget(
+    const std::uint64_t beginPresentationRevision =
+        session.PresentationRevision();
+    session.UpdatePoint({ 5, 7 });
+    Check(session.PresentationRevision() ==
+            beginPresentationRevision,
+        "pure pointer motion must not invalidate drop feedback");
+    Check(session.UpdateTarget(
         &container, slot,
-        HitRegion::SortBefore);
+        HitRegion::SortBefore),
+        "binding a new target must invalidate drop feedback");
+    const std::uint64_t targetPresentationRevision =
+        session.PresentationRevision();
+    Check(!session.UpdateTarget(
+            &container, slot,
+            HitRegion::SortBefore) &&
+            session.PresentationRevision() ==
+                targetPresentationRevision,
+        "repeating the same target must preserve the drop-feedback revision");
+
+    const std::uint64_t stableTargetRevision =
+        session.PresentationRevision();
+    Check(session.UpdatePresentationAnchor(
+            GridCell{L"primary", 2, 3}) &&
+            session.PresentationRevision() !=
+                stableTargetRevision,
+        "binding an effective desktop landing cell must invalidate drop feedback");
+    const std::uint64_t anchorRevision =
+        session.PresentationRevision();
+    Check(!session.UpdatePresentationAnchor(
+            GridCell{L"primary", 2, 3}) &&
+            session.PresentationRevision() ==
+                anchorRevision,
+        "repeating the same effective landing cell must preserve drop feedback");
+    Check(session.UpdatePresentationAnchor(
+            GridCell{L"primary", 3, 3}) &&
+            session.PresentationRevision() !=
+                anchorRevision,
+        "an effective landing cell change must refresh feedback even when the hit slot is unchanged");
+    Check(session.ClearPresentationAnchor() &&
+            !session.ClearPresentationAnchor(),
+        "leaving the desktop target must clear its presentation anchor exactly once");
 
     Check(session.TargetSlot() == slot &&
             session.TargetRegion() ==
@@ -390,11 +433,61 @@ void TestDragSessionRejectsInvalidatedSlots()
 
     Slot* rebuilt =
         container.GetSlots().front().get();
-    session.UpdateTarget(
-        &container, rebuilt,
-        HitRegion::SortAfter);
+    Check(session.UpdateTarget(
+            &container, rebuilt,
+            HitRegion::SortBefore),
+        "rebinding equal cached geometry from a new generation must refresh feedback");
     Check(session.TargetSlot() == rebuilt,
         "a rebuilt slot can be rebound explicitly");
+
+    auto transient = std::make_unique<Slot>(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotLifetime::TransientDragTarget,
+        SlotFeedbackIdentity{
+            SlotFeedbackRole::Popup,
+            RECT{0, 0, 100, 100}, 0, 0});
+    Check(session.UpdateTarget(
+            &container, transient.get(),
+            HitRegion::SortBefore),
+        "switching from a cached slot to a transient target must refresh feedback");
+    const std::uint64_t transientRevision =
+        session.PresentationRevision();
+    auto equivalentTransient = std::make_unique<Slot>(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotLifetime::TransientDragTarget,
+        SlotFeedbackIdentity{
+            SlotFeedbackRole::Popup,
+            RECT{0, 0, 100, 100}, 0, 0});
+    Check(!session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore) &&
+            session.PresentationRevision() == transientRevision &&
+            session.TargetSlot() == equivalentTransient.get(),
+        "reallocating the same logical transient target must not redraw feedback");
+    equivalentTransient->RebindTransientDragTarget(
+        &container, RECT{100, 0, 200, 100}, 1,
+        SlotFeedbackRole::Popup);
+    Check(session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore),
+        "reusing a transient address for another logical target must refresh feedback");
+    equivalentTransient->RebindTransientDragTarget(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::FileGroupSourceTab);
+    Check(session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore),
+        "changing transient geometry back must refresh feedback");
+    equivalentTransient->RebindTransientDragTarget(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::FileGroupHosted);
+    Check(session.UpdateTarget(
+            &container, equivalentTransient.get(),
+            HitRegion::SortBefore),
+        "equal transient geometry with a different role must refresh feedback");
+    container.InvalidateSlots();
+    Check(session.TargetSlot() == equivalentTransient.get(),
+        "container cache invalidation must not reject an independently owned transient target");
 
     session.DetachRuntimeBindings();
     Check(session.Source() == nullptr &&
@@ -413,6 +506,120 @@ void TestDragSessionRejectsInvalidatedSlots()
             session.TargetRegion() ==
                 HitRegion::None,
         "container tree rebuilds must detach every target binding");
+}
+
+void TestDragSessionVisualVisibilityFollowsOleOwnership()
+{
+    DragSession session;
+    session.Begin(
+        nullptr, {NonOwningItemToken()}, {},
+        POINT{10, 20}, POINT{10, 20});
+    Check(session.IsVisualVisible(),
+        "a newly started internal drag must show its custom visual");
+
+    Check(session.SetVisualVisible(false) &&
+            !session.IsVisualVisible(),
+        "OLE handoff must be able to hide the custom visual without ending the session");
+    Check(!session.SetVisualVisible(false),
+        "repeating the same visual state must be a no-op");
+    Check(session.IsActive() && session.HasContext() &&
+            session.Items().size() == 1,
+        "hiding the visual must retain the live drag payload and context");
+
+    Check(session.SetVisualVisible(true) &&
+            session.IsVisualVisible(),
+        "re-entering SnowDesktop must restore the custom visual");
+    const std::uint64_t activeRevision =
+        session.StaticSceneRevision();
+    session.DeactivateForDrop();
+    Check(!session.IsActive() &&
+            !session.IsVisualVisible() &&
+            session.HasContext() &&
+            session.StaticSceneRevision() != activeRevision,
+        "drop execution must cross an inactive revision barrier while preserving commit context");
+    session.End();
+    Check(!session.IsVisualVisible() && !session.HasContext(),
+        "ending a drag must clear both visual and commit state");
+}
+
+void TestListDragCanAnchorVisualAndLandingToPointer()
+{
+    ContractContainer source(BarStyle::HBar);
+    ContractItem item(RECT{100, 200, 500, 238});
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+
+    DragSession session;
+    session.Begin(
+        &source, {&item}, std::move(sourceList),
+        POINT{360, 219}, POINT{365, 224});
+    session.SetVisualItemBounds({item.GetBounds()});
+
+    // The row is 400 pixels wide, but its compact icon is centered at x=118.
+    // Anchoring that icon to a press in the text area must remove the permanent
+    // row-origin offset from both the landing coordinate and the ghost.
+    session.AnchorToPointer(POINT{118, 219});
+
+    const POINT current{700, 400};
+    const POINT target = session.ResolveTargetPoint(
+        POINT{100, 200}, current);
+    Check(target.x == current.x && target.y == current.y,
+        "pointer-anchored list drag must hit the cell under the pointer");
+
+    const RECT ghost = session.ResolveDraggedBounds(
+        0, item.GetBounds(), current);
+    const POINT ghostIconCenter{
+        ghost.left + 18,
+        ghost.top + 19
+    };
+    Check(ghostIconCenter.x == current.x &&
+            ghostIconCenter.y == current.y,
+        "pointer-anchored list drag must keep the icon ghost under the pointer");
+
+    session.End();
+
+    DragSourceList ordinarySourceList;
+    ordinarySourceList.BindRuntimeOrigin(&source);
+    session.Begin(
+        &source, {&item}, std::move(ordinarySourceList),
+        POINT{360, 219}, POINT{365, 224});
+    const POINT ordinaryTarget = session.ResolveTargetPoint(
+        POINT{100, 200}, current);
+    Check(ordinaryTarget.x == 440 &&
+            ordinaryTarget.y == 381,
+        "a new ordinary drag must restore the original grab-offset policy");
+}
+
+void TestDesktopPlacementPolicyMatchesSourceSemantics()
+{
+    using Surface = snowdesktop::slot_contract::
+        SlotSurfaceKind;
+    ContractContainer desktop(
+        BarStyle::HBar, Surface::Desktop);
+    ContractContainer dock(
+        BarStyle::HBar, Surface::Dock);
+
+    DragSourceList dockWidget;
+    dockWidget.BindRuntimeOrigin(&dock);
+    dockWidget.entries.push_back({});
+    dockWidget.hasWidgets = true;
+    Check(dockWidget.UsesPointerDesktopPlacement(),
+        "Dock sources must resolve desktop placement from the pointer cell");
+    Check(!dockWidget.SupportsDesktopShellHandoff(),
+        "widget payloads must not advertise a Shell handoff target");
+
+    DragSourceList dockFile;
+    dockFile.BindRuntimeOrigin(&dock);
+    dockFile.entries.push_back({});
+    Check(dockFile.UsesPointerDesktopPlacement() &&
+            dockFile.SupportsDesktopShellHandoff(),
+        "path-backed Dock entries must keep pointer placement and Shell handoff support");
+
+    DragSourceList desktopItems;
+    desktopItems.BindRuntimeOrigin(&desktop);
+    desktopItems.entries.push_back({});
+    Check(!desktopItems.UsesPointerDesktopPlacement(),
+        "ordinary desktop drags must preserve their group-origin grab offset");
 }
 
 void TestEverySurfaceRetainsStableDragMetadata()
@@ -890,13 +1097,33 @@ void TestDragDropControllerOwnsTransportTransitions()
     controller.BeginSelfDrag();
     Check(controller.IsSelfDragActive() &&
             controller.IsTransportActive() &&
-            !controller.SelfDragReturned(),
+            !controller.SelfDragReturned() &&
+            !controller.SelfDragNativeResumeRequested(),
         "starting a self OLE drag must reset and own the return state");
     controller.MarkSelfDragReturned();
+    controller.ClearSelfDragReturned();
+    Check(!controller.SelfDragReturned(),
+        "leaving a self target before cancellation must clear the transient return state");
+    controller.MarkSelfDragReturned();
+    controller.RequestSelfDragNativeResume();
+    controller.ClearSelfDragReturned();
     controller.EndSelfDrag();
     Check(!controller.IsTransportActive() &&
-            controller.SelfDragReturned(),
-        "ending self transport must preserve its completion result for the caller");
+            controller.SelfDragReturned() &&
+            controller.SelfDragNativeResumeRequested(),
+        "ending self transport must preserve its latched native-resume result for the caller");
+
+    for (int iteration = 0; iteration < 10000; ++iteration)
+    {
+        controller.BeginSelfDrag();
+        controller.MarkSelfDragReturned();
+        controller.RequestSelfDragNativeResume();
+        controller.EndSelfDrag();
+        Check(!controller.IsTransportActive() &&
+                controller.SelfDragReturned() &&
+                controller.SelfDragNativeResumeRequested(),
+            "repeated self OLE hand-backs must not accumulate or lose transport state");
+    }
 
     controller.BeginExternalDrag({3});
     controller.ContinueExternalDrag();
@@ -923,6 +1150,433 @@ void TestDragDropControllerOwnsTransportTransitions()
     Check(!controller.IsTransportActive() &&
             controller.ExternalSummary().fileCount == 0,
         "ending external transport must clear transient ingress metadata");
+}
+
+void TestModelReloadDeferralCoversRetainedDragLifecycle()
+{
+    ContractContainer source(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop);
+    ContractItem item(RECT{0, 0, 40, 40});
+    DragSession session;
+    DragDropController controller(session);
+    const auto shouldDeferReload = [&]()
+    {
+        return snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            session.HasContext(), controller.IsTransportActive());
+    };
+
+    session.Begin(
+        &source, {&item}, {}, POINT{}, POINT{});
+    controller.BeginSelfDrag();
+    session.DeactivateForDrop();
+    Check(!session.IsActive() && session.HasContext() &&
+            shouldDeferReload(),
+        "a synchronous drop must defer model reload after the active flag clears");
+
+    controller.EndSelfDrag();
+    Check(shouldDeferReload(),
+        "ending OLE first must still defer reload while the drop context is retained");
+    session.End();
+    Check(!shouldDeferReload(),
+        "model reload may resume only after both drag owners have released state");
+
+    int completedReloads = 0;
+    bool reloadPending = false;
+    for (int iteration = 0; iteration < 10000; ++iteration)
+    {
+        session.Begin(
+            &source, {&item}, {}, POINT{}, POINT{});
+        controller.BeginSelfDrag();
+
+        for (int request = 0; request < 4; ++request)
+        {
+            if (shouldDeferReload())
+                reloadPending = true;
+            else
+                ++completedReloads;
+        }
+
+        if ((iteration & 1) == 0)
+        {
+            session.DeactivateForDrop();
+            session.End();
+            Check(shouldDeferReload(),
+                "transport ownership must defer reload after the session ends first");
+            controller.EndSelfDrag();
+        }
+        else
+        {
+            controller.EndSelfDrag();
+            session.DeactivateForDrop();
+            Check(shouldDeferReload(),
+                "retained session context must defer reload after OLE ends first");
+            session.End();
+        }
+
+        if (reloadPending && !shouldDeferReload())
+        {
+            reloadPending = false;
+            ++completedReloads;
+        }
+    }
+    Check(!reloadPending && completedReloads == 10000,
+        "10000 alternating unwind orders must coalesce repeated reload requests and release each one exactly once");
+}
+
+void TestOwnedTransientDragTargetBoundsMemberWrappers()
+{
+    ContractContainer container(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::
+            SlotSurfaceKind::Collection);
+    ContractItem sourceItem(RECT{0, 0, 40, 40});
+    DragSession session;
+    session.Begin(
+        &container, {&sourceItem}, {}, POINT{}, POINT{});
+    snowdesktop::OwnedTransientDragTarget target;
+    std::array<Item*, 2> itemByIndex{};
+    Slot* stableSlot = nullptr;
+    int factoryCalls = 0;
+    std::array<int, 3> memberIdentities{};
+    bool slotStayedStable = true;
+    bool itemStayedStable = true;
+    bool sessionStayedBound = true;
+
+    for (int iteration = 0; iteration < 10000; ++iteration)
+    {
+        const std::size_t index =
+            static_cast<std::size_t>(iteration % 2);
+        const RECT bounds{
+            static_cast<LONG>(index * 100), 0,
+            static_cast<LONG>((index + 1) * 100), 100 };
+        Slot* slot = target.BindHandoff(
+            &container, bounds, index,
+            SlotFeedbackRole::Popup,
+            &memberIdentities[index],
+            [&]() -> std::unique_ptr<Item> {
+                ++factoryCalls;
+                return std::make_unique<ContractItem>(bounds);
+            });
+        session.UpdateTarget(
+            &container, slot, HitRegion::Handoff);
+        if (!stableSlot)
+            stableSlot = slot;
+        else if (slot != stableSlot)
+            slotStayedStable = false;
+        if (!itemByIndex[index])
+            itemByIndex[index] = slot->GetItem();
+        else if (slot->GetItem() != itemByIndex[index])
+            itemStayedStable = false;
+        sessionStayedBound = sessionStayedBound &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() == slot->GetItem();
+    }
+
+    Check(slotStayedStable && itemStayedStable &&
+            sessionStayedBound &&
+            factoryCalls == 2 &&
+            target.OwnedItemCount() == 2,
+        "10000 alternating popup handoff hits must retain one stable wrapper per logical member");
+
+    Slot* thirdMember = target.BindHandoff(
+        &container, RECT{200, 0, 300, 100}, 2,
+        SlotFeedbackRole::Popup,
+        &memberIdentities[2],
+        [&]() -> std::unique_ptr<Item> {
+            ++factoryCalls;
+            return std::make_unique<ContractItem>(
+                RECT{200, 0, 300, 100});
+        });
+    session.UpdateTarget(
+        &container, thirdMember, HitRegion::Handoff);
+    Slot* cachedSecondMember = target.BindHandoff(
+        &container, RECT{100, 0, 200, 100}, 1,
+        SlotFeedbackRole::Popup,
+        &memberIdentities[1],
+        [&]() -> std::unique_ptr<Item> {
+            ++factoryCalls;
+            return std::make_unique<ContractItem>(
+                RECT{100, 0, 200, 100});
+        });
+    session.UpdateTarget(
+        &container, cachedSecondMember,
+        HitRegion::Handoff);
+    Slot* evictedFirstMember = target.BindHandoff(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::Popup,
+        &memberIdentities[0],
+        [&]() -> std::unique_ptr<Item> {
+            ++factoryCalls;
+            return std::make_unique<ContractItem>(
+                RECT{0, 0, 100, 100});
+        });
+    session.UpdateTarget(
+        &container, evictedFirstMember,
+        HitRegion::Handoff);
+    Check(thirdMember == stableSlot &&
+            cachedSecondMember == stableSlot &&
+            evictedFirstMember == stableSlot &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() != nullptr &&
+            factoryCalls == 4 &&
+            target.OwnedItemCount() == 2,
+        "walking across three popup members must evict inactive wrappers while keeping the active session target valid");
+
+    Slot* placement = target.BindPlacement(
+        &container, RECT{0, 0, 100, 100}, 0,
+        SlotFeedbackRole::Popup);
+    session.UpdateTarget(
+        &container, placement, HitRegion::SortBefore);
+    Check(placement == stableSlot &&
+            placement->GetItem() == nullptr &&
+            session.TargetSlot() == placement &&
+            target.OwnedItemCount() == 2,
+        "leaving handoff must detach the Slot without invalidating bounded cached members");
+
+    bool generationSlotStayedStable = true;
+    bool generationCacheStayedBounded = true;
+    for (int generation = 0; generation < 10000; ++generation)
+    {
+        container.InvalidateSlots();
+        Slot* nextGeneration = target.BindHandoff(
+            &container, RECT{0, 0, 100, 100}, 0,
+            SlotFeedbackRole::Popup,
+            &memberIdentities[0],
+            [&]() -> std::unique_ptr<Item> {
+                ++factoryCalls;
+                return std::make_unique<ContractItem>(
+                    RECT{0, 0, 100, 100});
+            });
+        session.UpdateTarget(
+            &container, nextGeneration,
+            HitRegion::Handoff);
+        generationSlotStayedStable =
+            generationSlotStayedStable &&
+            nextGeneration == stableSlot &&
+            nextGeneration->GetItem() != nullptr &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() ==
+                nextGeneration->GetItem();
+        generationCacheStayedBounded =
+            generationCacheStayedBounded &&
+            target.OwnedItemCount() == 1;
+    }
+    Check(generationSlotStayedStable &&
+            generationCacheStayedBounded &&
+            factoryCalls == 10004,
+        "10000 container generations must replace the previous epoch without accumulating handoff wrappers");
+
+    Item* committedTargetItem =
+        session.TargetSlot()->GetItem();
+    session.DeactivateForDrop();
+    Check(!session.IsActive() &&
+            session.HasContext() &&
+            session.TargetSlot() == stableSlot &&
+            session.TargetSlot()->GetItem() ==
+                committedTargetItem,
+        "deactivating for a synchronous drop must retain the transient target until the commit context is detached");
+    session.UpdateTarget(
+        nullptr, nullptr, HitRegion::None);
+    target.Reset();
+    Check(session.TargetSlot() == nullptr &&
+            target.Get() == nullptr &&
+            target.OwnedItemCount() == 0,
+        "popup teardown must detach an inactive drop context before destroying the transient target");
+    session.End();
+}
+
+void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
+{
+    ContractContainer source(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop);
+    ContractItem item(RECT{0, 0, 40, 40});
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+    sourceList.hasDesktopIcons = true;
+
+    DragSession session;
+    session.Begin(
+        &source, {&item}, std::move(sourceList),
+        POINT{}, POINT{});
+    DragDropController controller(session);
+    const bool nativeDragActive =
+        snowdesktop::drag_input_rules::IsNativeDragActive(
+            session.IsActive(), controller.IsTransportActive());
+
+    const HWND mainWindow = reinterpret_cast<HWND>(
+        static_cast<std::uintptr_t>(1));
+    const HWND floatingDock = reinterpret_cast<HWND>(
+        static_cast<std::uintptr_t>(2));
+    const HWND floatingPopup = reinterpret_cast<HWND>(
+        static_cast<std::uintptr_t>(3));
+    std::deque<MSG> queue;
+    LPARAM moveOrdinal = 0;
+    const auto appendMoves = [&](HWND window, int count) {
+        for (int index = 0; index < count; ++index)
+        {
+            MSG message{};
+            message.hwnd = window;
+            message.message = WM_MOUSEMOVE;
+            message.lParam = moveOrdinal++;
+            queue.push_back(message);
+        }
+    };
+    const auto appendBarrier = [&](HWND window, UINT kind, LPARAM token) {
+        MSG message{};
+        message.hwnd = window;
+        message.message = kind;
+        message.lParam = token;
+        queue.push_back(message);
+    };
+
+    appendMoves(mainWindow, 4000);
+    appendBarrier(mainWindow, WM_TIMER, -1);
+    appendMoves(mainWindow, 3000);
+    appendBarrier(mainWindow, WM_KEYDOWN, -2);
+    queue.back().wParam = VK_ESCAPE;
+    appendMoves(floatingDock, 2000);
+    appendMoves(floatingPopup, 1000);
+    appendBarrier(floatingPopup, WM_LBUTTONUP, -3);
+
+    std::vector<MSG> dispatched;
+    std::size_t coalesced = 0;
+    while (!queue.empty())
+    {
+        MSG current = queue.front();
+        queue.pop_front();
+        const bool nativeSurface =
+            snowdesktop::drag_input_rules::
+                IsNativeDragMessageSurface(
+                    current.hwnd == mainWindow,
+                    current.hwnd == floatingDock,
+                    current.hwnd == floatingPopup);
+        coalesced += snowdesktop::drag_input_rules::
+            CoalesceQueuedMouseMoves(
+                nativeDragActive,
+                nativeSurface,
+                current,
+                [&](MSG& next) {
+                    if (queue.empty()) return false;
+                    next = queue.front();
+                    return true;
+                },
+                [&](MSG& next) {
+                    if (queue.empty()) return false;
+                    next = queue.front();
+                    queue.pop_front();
+                    return true;
+                },
+                [](const MSG& left, const MSG& right) {
+                    return left.hwnd == right.hwnd;
+                },
+                [](const MSG& message) {
+                    return message.message == WM_MOUSEMOVE;
+                });
+        dispatched.push_back(current);
+    }
+
+    Check(nativeDragActive && moveOrdinal == 10000 &&
+            coalesced == 9996 && dispatched.size() == 7,
+        "a long native drag queue must collapse 10000 moves to one move per ordered segment");
+    Check(dispatched.size() == 7 &&
+            dispatched[0].message == WM_MOUSEMOVE &&
+            dispatched[0].hwnd == mainWindow &&
+            dispatched[0].lParam == 3999 &&
+            dispatched[1].message == WM_TIMER &&
+            dispatched[2].message == WM_MOUSEMOVE &&
+            dispatched[2].lParam == 6999 &&
+            dispatched[3].message == WM_KEYDOWN &&
+            dispatched[3].wParam == VK_ESCAPE &&
+            dispatched[4].message == WM_MOUSEMOVE &&
+            dispatched[4].hwnd == floatingDock &&
+            dispatched[4].lParam == 8999 &&
+            dispatched[5].message == WM_MOUSEMOVE &&
+            dispatched[5].hwnd == floatingPopup &&
+            dispatched[5].lParam == 9999 &&
+            dispatched[6].message == WM_LBUTTONUP,
+        "move coalescing must preserve timer, Escape, cross-window, and button-up ordering barriers");
+}
+
+void TestSelfOleReturnCancelsTransportBeforeNativeResume()
+{
+    using snowdesktop::ole_drag_rules::SelfOleUnwindAction;
+    using snowdesktop::ole_drag_rules::SelectSelfOleUnwindAction;
+
+    ContractContainer source(
+        BarStyle::VBar,
+        snowdesktop::slot_contract::SlotSurfaceKind::Desktop);
+    ContractItem item(RECT{0, 0, 40, 40});
+    DragSourceList sourceList;
+    sourceList.BindRuntimeOrigin(&source);
+    sourceList.hasDesktopIcons = true;
+    DragSession session;
+    session.Begin(
+        &source, {&item}, std::move(sourceList),
+        POINT{}, POINT{});
+    DragDropController controller(session);
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    const HRESULT heldReturn = controller.QueryContinueSelfDrag(
+        false, true, true);
+    Check(heldReturn == DRAGDROP_S_CANCEL &&
+            controller.SelfDragNativeResumeRequested() &&
+            SelectSelfOleUnwindAction(
+                true, true, true, true) ==
+                SelfOleUnwindAction::ResumeNativeHeld,
+        "an internal return with the button held must cancel OLE and latch native resume");
+    controller.EndSelfDrag();
+    Check(!controller.IsTransportActive() &&
+            snowdesktop::drag_input_rules::IsNativeDragActive(
+                session.IsActive(), controller.IsTransportActive()),
+        "native input must become eligible only after self OLE transport has ended");
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    const HRESULT releasedReturn = controller.QueryContinueSelfDrag(
+        false, false, true);
+    Check(releasedReturn == DRAGDROP_S_CANCEL &&
+            controller.SelfDragNativeResumeRequested() &&
+            SelectSelfOleUnwindAction(
+                true, true, false, true) ==
+                SelfOleUnwindAction::ReleaseNative,
+        "a button release during internal return must cancel OLE before one native release");
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    const HRESULT escaped = controller.QueryContinueSelfDrag(
+        true, true, true);
+    Check(escaped == DRAGDROP_S_CANCEL &&
+            !controller.SelfDragNativeResumeRequested() &&
+            SelectSelfOleUnwindAction(
+                false, true, true, true) ==
+                SelfOleUnwindAction::FinishOle,
+        "Escape must cancel OLE without latching a native resume or release");
+
+    controller.BeginSelfDrag();
+    controller.MarkSelfDragReturned();
+    controller.ClearSelfDragReturned();
+    Check(controller.QueryContinueSelfDrag(
+              false, true, true) == S_OK &&
+            !controller.SelfDragNativeResumeRequested(),
+        "a cleared transient return must continue OLE instead of resuming native input");
+    Check(controller.QueryContinueSelfDrag(
+              false, false, false) == DRAGDROP_S_DROP &&
+            !controller.SelfDragNativeResumeRequested(),
+        "a release outside SnowDesktop must remain an OLE drop");
+
+    Check(SelectSelfOleUnwindAction(
+              true, false, true, true) ==
+                SelfOleUnwindAction::RestartOle &&
+            SelectSelfOleUnwindAction(
+              true, false, false, true) ==
+                SelfOleUnwindAction::FinishOle &&
+            SelectSelfOleUnwindAction(
+              true, true, true, false) ==
+                SelfOleUnwindAction::FinishOle,
+        "OLE unwind must restart only for an active held gesture that crossed outside again");
 }
 
 void TestOleAdapterOwnsComBoundary()
@@ -1087,7 +1741,10 @@ void TestRenameControllerKeepsTargetsExclusive()
 void TestPopupDwellControllerHandlesCandidateChanges()
 {
     PopupDwellController controller;
+    Check(controller.IsIdle(),
+        "a new popup dwell controller must be idle");
     Check(controller.Track(4, 100) &&
+            !controller.IsIdle() &&
             !controller.IsReady(149, 50) &&
             controller.IsReady(150, 50),
         "popup dwell must mature only after the configured delay");
@@ -1110,6 +1767,7 @@ void TestPopupDwellControllerHandlesCandidateChanges()
     controller.Reset();
     Check(controller.Candidate() ==
             PopupDwellController::NoCandidate &&
+            controller.IsIdle() &&
             !controller.IsReady(1000, 0),
         "reset popup dwell must remove both candidate and readiness");
 }
@@ -1121,12 +1779,19 @@ int main()
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
     TestDragSessionRejectsInvalidatedSlots();
+    TestDragSessionVisualVisibilityFollowsOleOwnership();
+    TestListDragCanAnchorVisualAndLandingToPointer();
+    TestDesktopPlacementPolicyMatchesSourceSemantics();
     TestEverySurfaceRetainsStableDragMetadata();
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
+    TestModelReloadDeferralCoversRetainedDragLifecycle();
+    TestOwnedTransientDragTargetBoundsMemberWrappers();
+    TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
+    TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestTrayCallbackClassification();
     TestSelectionControllerCoversEveryRegisteredRange();

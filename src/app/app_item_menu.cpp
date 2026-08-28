@@ -99,7 +99,8 @@ void DesktopApp::ShowItemContextMenu(
     bool keepQuickNavigationOpen,
     std::optional<RECT> dockRenameAnchor,
     std::optional<size_t> dockMappingEntryIndex,
-    bool dockApplicationItem)
+    bool dockApplicationItem,
+    std::optional<size_t> dockEntryIndex)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
     PrepareMenuIconsForPoint(screenPoint);
@@ -118,6 +119,16 @@ void DesktopApp::ShowItemContextMenu(
                         reference,
                     items_[static_cast<size_t>(
                         itemIndex)].layoutKey);
+    const bool directDockFolder =
+        dockEntryIndex &&
+        *dockEntryIndex < dockEntries_.size() &&
+        dockEntries_[*dockEntryIndex].type ==
+            DockEntryType::DesktopItem &&
+        IsFolderDockEntry(
+            dockEntries_[*dockEntryIndex]);
+    DockEntry* dockFolderEntry = directDockFolder
+        ? &dockEntries_[*dockEntryIndex]
+        : nullptr;
 
     int selectedCount = 0;
     for (const auto& item : items_) if (item.selected) ++selectedCount;
@@ -159,6 +170,7 @@ void DesktopApp::ShowItemContextMenu(
             DockWindowVisualState::Closed;
 
     HMENU menu = CreatePopupMenu();
+    HMENU detailsMenu = nullptr;
     AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
     AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextCopyPathCommand, _LW("app.menu.copy_path"));
@@ -194,6 +206,67 @@ void DesktopApp::ShowItemContextMenu(
             : _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
+    if (dockFolderEntry)
+    {
+        const auto statusLabel = [](
+            const wchar_t* title,
+            const wchar_t* status) {
+            std::wstring label = title;
+            label += L"\t";
+            label += status;
+            return label;
+        };
+        const std::wstring displayTypeLabel =
+            statusLabel(
+                _LW("app.interact.display_type"),
+                dockFolderEntry->listMode
+                    ? _LW("app.interact.list_view_state")
+                    : _LW("app.interact.icon_view_state"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(
+            menu, MF_STRING,
+            kContextWidgetToggleListMode,
+            displayTypeLabel.c_str());
+
+        detailsMenu = CreatePopupMenu();
+        if (detailsMenu)
+        {
+            AppendMenuW(
+                detailsMenu,
+                MF_STRING | MF_CHECKED | MF_GRAYED,
+                kContextWidgetDetailName,
+                _LW("widget.details.name"));
+            AppendMenuW(
+                detailsMenu,
+                MF_STRING |
+                    (dockFolderEntry->detailShowModified
+                        ? MF_CHECKED : 0),
+                kContextWidgetDetailModified,
+                _LW("widget.details.modified"));
+            AppendMenuW(
+                detailsMenu,
+                MF_STRING |
+                    (dockFolderEntry->detailShowType
+                        ? MF_CHECKED : 0),
+                kContextWidgetDetailType,
+                _LW("widget.details.type"));
+            AppendMenuW(
+                detailsMenu,
+                MF_STRING |
+                    (dockFolderEntry->detailShowSize
+                        ? MF_CHECKED : 0),
+                kContextWidgetDetailSize,
+                _LW("widget.details.size"));
+            AppendMenuW(
+                menu,
+                MF_POPUP |
+                    (dockFolderEntry->listMode
+                        ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(
+                    detailsMenu),
+                _LW("app.interact.show_details"));
+        }
+    }
     if (dockFrequentItem)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -231,6 +304,24 @@ void DesktopApp::ShowItemContextMenu(
     SetMenuItemIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions,
         MenuIconFont::FluentRegular);
+    if (dockFolderEntry)
+    {
+        SetMenuItemIcon(
+            menu,
+            kContextWidgetToggleListMode,
+            snowdesktop::menu_fluent_glyphs::
+                kContentLayout,
+            MenuIconFont::FluentRegular);
+        if (detailsMenu)
+        {
+            SetMenuItemIcon(
+                menu,
+                reinterpret_cast<UINT_PTR>(
+                    detailsMenu),
+                L"\uF168",
+                MenuIconFont::FluentRegular);
+        }
+    }
     if (dockFrequentItem)
         SetMenuItemIcon(menu, kContextDockRemoveFrequentItem, L"");
     if (canCloseDockApplication)
@@ -251,6 +342,45 @@ void DesktopApp::ShowItemContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
     bool inlineEditorStarted = false;
+
+    const auto applyDockFolderDisplayChange = [&]() {
+        if (!dockFolderEntry || !dockEntryIndex)
+            return;
+        SaveLayoutSlots();
+        const std::wstring sourceId =
+            std::to_wstring(static_cast<int>(
+                dockFolderEntry->type)) +
+            L":" + ToUpperInvariant(
+                dockFolderEntry->reference);
+        if (!dockFolderPopupOpen_ ||
+            dockFolderPopupSourceId_ != sourceId)
+            return;
+
+        dockFolderPopupWidget_.listMode =
+            dockFolderEntry->listMode;
+        dockFolderPopupWidget_.detailShowModified =
+            dockFolderEntry->detailShowModified;
+        dockFolderPopupWidget_.detailShowType =
+            dockFolderEntry->detailShowType;
+        dockFolderPopupWidget_.detailShowSize =
+            dockFolderEntry->detailShowSize;
+        dockFolderPopupWidget_.detailModifiedPosition =
+            dockFolderEntry->detailModifiedPosition;
+        dockFolderPopupWidget_.detailTypePosition =
+            dockFolderEntry->detailTypePosition;
+        dockFolderPopupWidget_.detailSizePosition =
+            dockFolderEntry->detailSizePosition;
+        dockFolderPopupWidget_.showDetails =
+            snowdesktop::list_detail_rules::
+                HasMetadataColumns(
+                    dockFolderEntry->detailShowModified,
+                    dockFolderEntry->detailShowType,
+                    dockFolderEntry->detailShowSize);
+        popupScrollOffset_ = 0;
+        if (dockFolderPopupContainer_)
+            dockFolderPopupContainer_->InvalidateSlots();
+        RefreshDockFolderPopupGeometry();
+    };
 
     switch (command)
     {
@@ -276,6 +406,64 @@ void DesktopApp::ShowItemContextMenu(
     case kContextPropertiesCommand:
         if (canShowProperties)
             ShowPathProperties(itemPath);
+        break;
+    case kContextWidgetToggleListMode:
+        if (dockFolderEntry)
+        {
+            dockFolderEntry->listMode =
+                !dockFolderEntry->listMode;
+            applyDockFolderDisplayChange();
+        }
+        break;
+    case kContextWidgetDetailModified:
+    case kContextWidgetDetailType:
+    case kContextWidgetDetailSize:
+        if (dockFolderEntry &&
+            dockFolderEntry->listMode)
+        {
+            if (command ==
+                    kContextWidgetDetailModified)
+            {
+                dockFolderEntry->detailShowModified =
+                    !dockFolderEntry->
+                        detailShowModified;
+            }
+            else if (command ==
+                    kContextWidgetDetailType)
+            {
+                dockFolderEntry->detailShowType =
+                    !dockFolderEntry->detailShowType;
+            }
+            else
+            {
+                dockFolderEntry->detailShowSize =
+                    !dockFolderEntry->detailShowSize;
+            }
+            const auto positions =
+                snowdesktop::list_detail_rules::
+                    NormalizePositions(
+                        dockFolderEntry->
+                            detailShowModified,
+                        dockFolderEntry->
+                            detailShowType,
+                        dockFolderEntry->
+                            detailShowSize,
+                        {
+                            dockFolderEntry->
+                                detailModifiedPosition,
+                            dockFolderEntry->
+                                detailTypePosition,
+                            dockFolderEntry->
+                                detailSizePosition,
+                        });
+            dockFolderEntry->detailModifiedPosition =
+                positions.modified;
+            dockFolderEntry->detailTypePosition =
+                positions.type;
+            dockFolderEntry->detailSizePosition =
+                positions.size;
+            applyDockFolderDisplayChange();
+        }
         break;
     case kContextRenameCommand:
         if (keepQuickNavigationOpen)

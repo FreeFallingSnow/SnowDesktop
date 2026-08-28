@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <system_error>
@@ -12,6 +13,21 @@ namespace snowdesktop::migration
 namespace
 {
 constexpr wchar_t kPendingMarker[] = L"pending.txt";
+constexpr char kCancelledError[] = "operation cancelled";
+
+bool StopRequested(const CancellationContext& cancellation)
+{
+    return cancellation.stopToken.stop_requested();
+}
+
+bool BeginNonInterruptible(
+    const CancellationContext& cancellation)
+{
+    if (StopRequested(cancellation))
+        return false;
+    return !cancellation.beginNonInterruptible ||
+        cancellation.beginNonInterruptible();
+}
 
 std::filesystem::path ExtendedLengthPath(
     const std::filesystem::path& path, std::error_code& ec)
@@ -156,10 +172,32 @@ bool ReadPendingToken(const std::filesystem::path& marker,
 }
 
 CopyResult CopyDataTree(const std::filesystem::path& source,
-    const std::filesystem::path& destination)
+    const std::filesystem::path& destination,
+    const CancellationContext& cancellation)
 {
     CopyResult result;
     std::error_code ec;
+    const bool destinationExisted =
+        std::filesystem::exists(destination, ec);
+    const bool cleanupDestinationOnCancel =
+        !ec && !destinationExisted;
+    std::filesystem::path cleanupDestination = destination;
+    ec.clear();
+    const auto cancel = [&]() -> CopyResult {
+        result.ok = false;
+        result.cancelled = true;
+        result.error = kCancelledError;
+        if (cleanupDestinationOnCancel)
+        {
+            std::error_code cleanupError;
+            std::filesystem::remove_all(
+                cleanupDestination, cleanupError);
+        }
+        return result;
+    };
+    if (StopRequested(cancellation))
+        return cancel();
+
     const auto extendedSource = ExtendedLengthPath(source, ec);
     if (ec)
     {
@@ -173,6 +211,7 @@ CopyResult CopyDataTree(const std::filesystem::path& source,
             destination, ec);
         return result;
     }
+    cleanupDestination = extendedDestination;
 
     if (IsReparsePoint(extendedSource, result))
         return result;
@@ -206,6 +245,9 @@ CopyResult CopyDataTree(const std::filesystem::path& source,
 
     while (entry != end)
     {
+        if (StopRequested(cancellation))
+            return cancel();
+
         const auto current = entry->path();
         if (IsReparsePoint(current, result))
             return result;
@@ -258,22 +300,49 @@ CopyResult CopyDataTree(const std::filesystem::path& source,
                     target.parent_path(), ec);
                 return result;
             }
-            std::filesystem::copy_file(current, target,
-                std::filesystem::copy_options::overwrite_existing, ec);
-            if (ec)
+            std::ifstream input(current, std::ios::binary);
+            std::ofstream output(target,
+                std::ios::binary | std::ios::trunc);
+            if (!input || !output)
             {
                 SetCopyError(result,
-                    "cannot copy migration source file", current, ec);
+                    "cannot open migration source or staging file",
+                    current);
+                return result;
+            }
+            std::array<char, 64 * 1024> buffer{};
+            std::uintmax_t copiedBytes = 0;
+            while (input)
+            {
+                if (StopRequested(cancellation))
+                {
+                    input.close();
+                    output.close();
+                    return cancel();
+                }
+                input.read(buffer.data(), buffer.size());
+                const auto count = input.gcount();
+                if (StopRequested(cancellation))
+                {
+                    input.close();
+                    output.close();
+                    return cancel();
+                }
+                if (count > 0)
+                {
+                    output.write(buffer.data(), count);
+                    copiedBytes += static_cast<std::uintmax_t>(count);
+                }
+            }
+            output.flush();
+            if (!input.eof() || !output)
+            {
+                SetCopyError(result,
+                    "cannot copy migration source file", current);
                 return result;
             }
             ++result.files;
-            result.bytes += std::filesystem::file_size(current, ec);
-            if (ec)
-            {
-                SetCopyError(result,
-                    "cannot read copied migration file size", current, ec);
-                return result;
-            }
+            result.bytes += copiedBytes;
         }
         else
         {
@@ -292,14 +361,26 @@ CopyResult CopyDataTree(const std::filesystem::path& source,
         }
     }
 
+    if (StopRequested(cancellation))
+        return cancel();
     result.ok = true;
     return result;
 }
 
 bool Queue(const std::filesystem::path& stateRoot,
-    const std::wstring& token, std::string& error)
+    const std::wstring& token, std::string& error,
+    const CancellationContext& cancellation, bool* cancelled)
 {
     error.clear();
+    if (cancelled)
+        *cancelled = false;
+    if (StopRequested(cancellation))
+    {
+        if (cancelled)
+            *cancelled = true;
+        error = kCancelledError;
+        return false;
+    }
     if (!IsSafeToken(token))
     {
         error = "invalid migration token";
@@ -342,6 +423,14 @@ bool Queue(const std::filesystem::path& stateRoot,
         }
     }
     const auto marker = root / kPendingMarker;
+    if (!BeginNonInterruptible(cancellation))
+    {
+        if (cancelled)
+            *cancelled = true;
+        error = kCancelledError;
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
     if (!MoveFileExW(temporary.c_str(), marker.c_str(),
         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {

@@ -83,6 +83,14 @@ bool ContainsReparsePoint(const std::filesystem::path& absolutePath)
     return false;
 }
 
+bool IsBundledComponentDirectory(const std::filesystem::path& path)
+{
+    std::error_code error;
+    const auto root = path.parent_path();
+    return std::filesystem::is_regular_file(
+        root / L"snowdesktop-lua-widget" / L"SKILL.md", error) && !error;
+}
+
 std::optional<std::filesystem::path> SafeDirectory(
     const std::filesystem::path& input, std::string& error)
 {
@@ -97,6 +105,11 @@ std::optional<std::filesystem::path> SafeDirectory(
     if (ec || !std::filesystem::is_directory(canonical, ec) || ec)
     {
         error = "project directory does not exist";
+        return std::nullopt;
+    }
+    if (IsBundledComponentDirectory(canonical))
+    {
+        error = "bundled components are not creator projects";
         return std::nullopt;
     }
     if (ContainsReparsePoint(absolute) || ContainsReparsePoint(canonical))
@@ -293,6 +306,8 @@ bool ProjectStore::Load(std::string& error)
             projects_.clear();
             return false;
         }
+        if (IsBundledComponentDirectory(project.sourceDirectory))
+            continue;
         if (std::any_of(projects_.begin(), projects_.end(),
             [&](const WorkshopProject& current)
             { return current.localId == project.localId; }))
@@ -403,6 +418,9 @@ bool ProjectStore::Discover(const std::filesystem::path& developmentRoot,
         error = "development root cannot be a symbolic link or junction";
         return false;
     }
+    if (std::filesystem::is_regular_file(developmentRoot /
+            L"snowdesktop-lua-widget" / L"SKILL.md", ec) && !ec)
+        return true;
     for (std::filesystem::directory_iterator iterator(developmentRoot,
              std::filesystem::directory_options::skip_permission_denied, ec),
          end; iterator != end; iterator.increment(ec))

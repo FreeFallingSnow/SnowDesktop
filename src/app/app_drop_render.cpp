@@ -1,6 +1,109 @@
 #include "app.h"
+#include "../pending_drop_rules.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
+
+bool DesktopApp::ApplyPendingFolderPlacements(
+    DesktopWidget& targetWidget,
+    const std::wstring& widgetId,
+    const std::wstring& popupSourceId)
+{
+    if (!pendingLandingCache_.active ||
+        pendingLandingCache_.folderPlacements.empty())
+        return false;
+    if (pendingLandingCache_.tick != 0 &&
+        GetTickCount() - pendingLandingCache_.tick > 10000)
+    {
+        pendingLandingCache_.Clear();
+        return false;
+    }
+
+    bool changed = false;
+    std::vector<PendingFolderPlacement> remaining;
+    remaining.reserve(
+        pendingLandingCache_.folderPlacements.size());
+    for (auto& placement :
+        pendingLandingCache_.folderPlacements)
+    {
+        const bool widgetMatches =
+            !widgetId.empty() &&
+            !placement.widgetId.empty() &&
+            placement.widgetId == widgetId;
+        const bool popupMatches =
+            !popupSourceId.empty() &&
+            !placement.popupSourceId.empty() &&
+            placement.popupSourceId == popupSourceId;
+        const bool pathMatches =
+            placement.sourceFolderPath.empty() ||
+            PathsEqualInsensitive(
+                placement.sourceFolderPath,
+                targetWidget.sourceFolderPath);
+        if ((!widgetMatches && !popupMatches) || !pathMatches)
+        {
+            remaining.push_back(std::move(placement));
+            continue;
+        }
+
+        std::vector<FolderEntry> inserted =
+            snowdesktop::pending_drop_rules::ExtractMatching(
+                targetWidget.folderEntries,
+                [&](const FolderEntry& entry) {
+                    return !placement.existingPaths.contains(
+                        ToUpperInvariant(entry.fullPath));
+                });
+
+        if (!placement.sourceNames.empty() &&
+            inserted.size() > 1)
+        {
+            std::vector<FolderEntry> ordered;
+            ordered.reserve(inserted.size());
+            for (const auto& sourceName :
+                placement.sourceNames)
+            {
+                auto match = std::find_if(
+                    inserted.begin(), inserted.end(),
+                    [&](const FolderEntry& entry) {
+                        return MatchPendingName(
+                            entry.name, sourceName);
+                    });
+                if (match == inserted.end())
+                    continue;
+                ordered.push_back(std::move(*match));
+                inserted.erase(match);
+            }
+            std::move(
+                inserted.begin(), inserted.end(),
+                std::back_inserter(ordered));
+            inserted = std::move(ordered);
+        }
+
+        if (!inserted.empty())
+        {
+            snowdesktop::pending_drop_rules::InsertAt(
+                targetWidget.folderEntries,
+                placement.insertIndex,
+                std::move(inserted));
+            snowdesktop::folder_sort_rules::RewriteOrderKeys(
+                targetWidget.folderEntries,
+                targetWidget.itemKeys);
+            targetWidget.folderSortMode =
+                snowdesktop::folder_sort_rules::kManual;
+            targetWidget.contentSortColumn =
+                snowdesktop::list_detail_rules::Column::None;
+            changed = true;
+        }
+        // A successful file operation gets exactly one reconciliation pass.
+        // If it overwrote an existing path there is no new member to move, and
+        // retaining this snapshot could capture an unrelated later file.
+    }
+
+    pendingLandingCache_.folderPlacements =
+        std::move(remaining);
+    pendingLandingCache_.active =
+        !pendingLandingCache_.entries.empty() ||
+        !pendingLandingCache_.folderPlacements.empty();
+    return changed;
+}
 
 void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
     const DropPreviewList& preview)
@@ -122,6 +225,13 @@ void DesktopApp::ApplyPendingPlacement()
 
     std::vector<bool> entryUsed(pendingLandingCache_.entries.size(), false);
     bool changed = false;
+    for (auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::FolderMapping)
+            continue;
+        changed = ApplyPendingFolderPlacements(
+            widget, widget.id) || changed;
+    }
     for (size_t itemIndex = 0; itemIndex < items_.size(); ++itemIndex)
     {
         auto& item = items_[itemIndex];
@@ -166,14 +276,16 @@ void DesktopApp::ApplyPendingPlacement()
                 bool allowKey = !widget || landing.action == DropAction::Link || widget->AllowsDesktopKey(key);
                 if (allowKey)
                 {
-                    auto exists = std::find_if(widgetData->itemKeys.begin(), widgetData->itemKeys.end(),
-                        [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
-                    if (exists == widgetData->itemKeys.end())
-                    {
-                        size_t insertAt = std::min(landing.insertIndex, widgetData->itemKeys.size());
-                        widgetData->itemKeys.insert(
-                            widgetData->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
-                    }
+                    // Auto-collect may already have appended this new key.
+                    // Remove every provisional owner, then restore the exact
+                    // preview boundary in the requested target.
+                    RemoveDesktopKeysFromWidgets({key});
+                    std::vector<std::wstring> insertedKey{key};
+                    snowdesktop::pending_drop_rules::InsertAt(
+                        widgetData->itemKeys,
+                        landing.insertIndex,
+                        std::move(insertedKey));
+                    RefreshCollectedKeysCache();
                     if (widget) widget->InvalidateSlots();
                 }
             }
@@ -228,7 +340,9 @@ void DesktopApp::ApplyPendingPlacement()
             remaining.push_back(pendingLandingCache_.entries[i]);
 
     pendingLandingCache_.entries = std::move(remaining);
-    pendingLandingCache_.active = !pendingLandingCache_.entries.empty();
+    pendingLandingCache_.active =
+        !pendingLandingCache_.entries.empty() ||
+        !pendingLandingCache_.folderPlacements.empty();
     if (!pendingLandingCache_.active)
         pendingLandingCache_.existingDesktopKeys.clear();
 

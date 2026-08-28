@@ -165,6 +165,10 @@ public:
     void Cancel();
     bool IsActive() const;
     bool IsActiveFor(HWND window) const;
+    bool IsPresentationWindow(HWND window) const noexcept
+    {
+        return window && window == hwnd_;
+    }
     DockWindowTransitionDirection GetDirection() const;
 
 private:

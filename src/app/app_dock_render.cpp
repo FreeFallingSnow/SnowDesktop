@@ -6,11 +6,7 @@ bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle)
 {
     if (!ctx || IsRectEmptyRect(rect)) return false;
-    PersonalizationSettings appearance = PersonalizationSettings::DarkPreset();
-    if (settingsWindow_)
-        appearance = settingsWindow_->GetPersonalization();
-    else
-        LoadPersonalization(GetPersonalizationPath().c_str(), appearance);
+    const PersonalizationSettings appearance = CurrentPersonalization();
 
     const float luminance = appearance.widgetBgR * 0.2126f +
         appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
@@ -134,7 +130,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const RECT indicatorIconRect = iconRect;
     const bool lt = IsLightContentTheme();
 
-    auto drawDesktopItem = [&](const DesktopItem& item, RECT target) {
+    auto drawDesktopItem = [&](const DesktopItem& item, RECT target,
+        const DesktopWidget* demoCollection = nullptr) {
         RECT bitmapTarget = target;
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
@@ -147,16 +144,33 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             InflateRect(&bitmapTarget, -inset, -inset);
         }
         const float alpha = item.isCut ? 0.4f : 1.0f;
-        if (item.iconState == IconState::Loading)
+        const bool useDemoIdentity = demoCollection
+            ? ShouldUseDemoCollectionIdentity(demoCollection)
+            : ShouldUseDemoIdentity(item);
+        const std::wstring_view demoIdentity = item.layoutKey.empty()
+            ? std::wstring_view(item.parsingName)
+            : std::wstring_view(item.layoutKey);
+        if (useDemoIdentity)
+        {
+            if (demoCollection)
+                DrawDemoCollectionIdentityIcon(
+                    ctx, *demoCollection, demoIdentity,
+                    bitmapTarget, alpha);
+            else
+                DrawDemoIdentityIcon(
+                    ctx, demoIdentity, bitmapTarget, alpha);
+        }
+        else if (item.iconState == IconState::Loading)
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
-        else if (ID2D1Bitmap1* bitmap = recycleBin
-            ? GetOrCreateD2DBitmap(item.iconBitmap, false)
-            : GetOrCreateD2DBitmap(item.iconBitmap))
-            ctx->DrawBitmap(bitmap, ToD2DRect(bitmapTarget), alpha,
-                D2D1_INTERPOLATION_MODE_LINEAR);
+        else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
+                item.iconBitmap,
+                !recycleBin &&
+                    ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
+            DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha);
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
-        if (ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+        if (!useDemoIdentity &&
+            ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
             item.iconState != IconState::Loading)
             DrawShortcutArrowOverlay(ctx, bitmapTarget, alpha);
     };
@@ -330,7 +344,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 CellRect(
                     collectionLayout,
                     col, row);
-        drawDesktopItem(items_[itemIndex], cell);
+        drawDesktopItem(items_[itemIndex], cell, &widget);
     }
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);
@@ -351,9 +365,16 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const bool lt = IsLightContentTheme();
-    if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        ctx->DrawBitmap(bitmap, ToD2DRect(iconRect), 1.0f,
-            D2D1_INTERPOLATION_MODE_LINEAR);
+    if (generalSettings_.demoModeEnabled &&
+        demoIdentityAssetsAvailable_)
+    {
+        const std::wstring_view identity = app.identityKey.empty()
+            ? std::wstring_view(app.executablePath)
+            : std::wstring_view(app.identityKey);
+        DrawDemoIdentityIcon(ctx, identity, iconRect);
+    }
+    else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
+        DrawIconBitmap(ctx, bitmap, iconRect);
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
     if (state == 2)

@@ -131,9 +131,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
     {
     case kContextOpenCommand:
         for (const auto& path : selectedPaths)
-            ShellExecuteW(hwnd_, L"open",
-                path.c_str(), nullptr, nullptr,
-                SW_SHOWNORMAL);
+            shellLaunchWorker_.Enqueue(
+                hwnd_, path);
         break;
     case kContextRevealLocationCommand:
         if (singleSelection)

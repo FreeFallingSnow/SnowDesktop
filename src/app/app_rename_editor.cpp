@@ -41,8 +41,10 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetItemLayoutScale(rect);
-    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(itemFontSize_ * renameScale))),
+    const float renameScale = GetGridCuScaleForBounds(
+        gridPages_, rect);
+    renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
+        ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -131,7 +133,7 @@ bool DesktopApp::BeginDockAnchoredRename(
         DeleteObject(renameFont_);
     const int fontHeight = std::max(
         12, MulDiv(
-            static_cast<int>(std::round(itemFontSize_)),
+            static_cast<int>(std::round(itemFontSizeCu_)),
             static_cast<int>(dpiX), 96));
     renameFont_ = CreateFontW(
         -fontHeight, 0, 0, 0, FW_NORMAL,
@@ -195,7 +197,8 @@ BeginRenameDockFolderPopupEntry(
         GetCollectionPopupItemRect(
             popup, memberIndex);
     RECT rect =
-        GetItemTextRect(itemRect, true);
+        GetCollectionPopupItemTextRect(
+            itemRect);
     if (IsRectEmptyRect(rect))
     {
         renameController_.Reset();
@@ -208,11 +211,13 @@ BeginRenameDockFolderPopupEntry(
         reinterpret_cast<POINT*>(
             &screenRect), 2);
 
-    const DWORD style =
+    DWORD style =
         WS_POPUP | WS_VISIBLE |
-        ES_AUTOVSCROLL |
-        ES_MULTILINE | ES_CENTER |
-        ES_WANTRETURN;
+        ES_AUTOVSCROLL;
+    style |= dockFolderPopupWidget_.listMode
+        ? ES_LEFT
+        : (ES_MULTILINE | ES_CENTER |
+            ES_WANTRETURN);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE |
             WS_EX_TOOLWINDOW |
@@ -235,13 +240,13 @@ BeginRenameDockFolderPopupEntry(
     if (renameFont_)
         DeleteObject(renameFont_);
     const float renameScale =
-        GetItemLayoutScale(itemRect);
+        GetGridCuScaleForBounds(gridPages_, itemRect);
     renameFont_ = CreateFontW(
         -std::max(
             1, static_cast<int>(
                 std::round(
-                    itemFontSize_ *
-                    renameScale))),
+                    ScaleWidgetFontCu(
+                        itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE,
         DEFAULT_CHARSET,

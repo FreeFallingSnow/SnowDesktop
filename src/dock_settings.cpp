@@ -10,10 +10,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -163,6 +166,256 @@ bool IsWindows11OrGreater()
     version.dwOSVersionInfoSize = sizeof(version);
     return rtlGetVersion(&version) == 0 &&
         version.dwMajorVersion >= 10 && version.dwBuildNumber >= 22000;
+}
+
+bool ReadSystemTaskbarAutoHideEnabled()
+{
+    APPBARDATA data{};
+    data.cbSize = sizeof(data);
+    return (SHAppBarMessage(ABM_GETSTATE, &data) & ABS_AUTOHIDE) != 0;
+}
+
+bool ReadSystemTaskbarAlignmentCentered()
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            L"TaskbarAl", RRF_RT_REG_DWORD, nullptr,
+            &value, &size) != ERROR_SUCCESS)
+        return true;
+    return value != 0;
+}
+
+bool ReadWindowsSystemLightThemeEnabled()
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr,
+            &value, &size) != ERROR_SUCCESS)
+        return true;
+    return value != 0;
+}
+
+bool ApplySystemTaskbarAutoHideEnabled(bool enabled)
+{
+    APPBARDATA data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = FindWindowW(L"Shell_TrayWnd", nullptr);
+    const UINT_PTR currentState = SHAppBarMessage(ABM_GETSTATE, &data);
+    const bool current = (currentState & ABS_AUTOHIDE) != 0;
+    if (current == enabled)
+        return true;
+
+    data.lParam = static_cast<LPARAM>(enabled
+        ? (currentState | ABS_AUTOHIDE)
+        : (currentState & ~static_cast<UINT_PTR>(ABS_AUTOHIDE)));
+    SHAppBarMessage(ABM_SETSTATE, &data);
+    return ReadSystemTaskbarAutoHideEnabled() == enabled;
+}
+
+bool ApplySystemTaskbarAlignmentCentered(bool centered)
+{
+    if (ReadSystemTaskbarAlignmentCentered() == centered)
+        return true;
+
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return false;
+    const DWORD value = centered ? 1 : 0;
+    const LONG result = RegSetValueExW(key, L"TaskbarAl", 0,
+        REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS)
+        return false;
+
+    DWORD_PTR ignored = 0;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+        reinterpret_cast<LPARAM>(L"TraySettings"),
+        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1500, &ignored);
+    return ReadSystemTaskbarAlignmentCentered() == centered;
+}
+
+bool ApplyWindowsSystemLightThemeEnabled(bool enabled)
+{
+    if (ReadWindowsSystemLightThemeEnabled() == enabled)
+        return true;
+
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return false;
+    const DWORD value = enabled ? 1 : 0;
+    const LONG result = RegSetValueExW(key, L"SystemUsesLightTheme", 0,
+        REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS)
+        return false;
+
+    DWORD_PTR ignored = 0;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+        reinterpret_cast<LPARAM>(L"ImmersiveColorSet"),
+        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1500, &ignored);
+    SendNotifyMessageW(HWND_BROADCAST, WM_THEMECHANGED, 0, 0);
+    return ReadWindowsSystemLightThemeEnabled() == enabled;
+}
+
+class WindowsShellSettingsController
+{
+public:
+    WindowsShellSettingsController()
+        : worker_([this] { Run(); })
+    {
+    }
+
+    ~WindowsShellSettingsController()
+    {
+        {
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+        }
+        wake_.notify_one();
+        if (worker_.joinable())
+            worker_.join();
+    }
+
+    bool RequestAutoHide(bool enabled)
+    {
+        return Request(autoHide_, enabled);
+    }
+
+    bool RequestAlignment(bool centered)
+    {
+        return Request(alignment_, centered);
+    }
+
+    bool RequestSystemTheme(bool enabled)
+    {
+        return Request(systemTheme_, enabled);
+    }
+
+    std::optional<bool> RequestedAutoHide() const
+    {
+        return Requested(autoHide_);
+    }
+
+    std::optional<bool> RequestedAlignment() const
+    {
+        return Requested(alignment_);
+    }
+
+    std::optional<bool> RequestedSystemTheme() const
+    {
+        return Requested(systemTheme_);
+    }
+
+private:
+    struct SettingRequest
+    {
+        bool pending = false;
+        bool visible = false;
+        bool value = false;
+        std::uint64_t generation = 0;
+    };
+
+    struct WorkItem
+    {
+        bool valid = false;
+        bool value = false;
+        std::uint64_t generation = 0;
+    };
+
+    bool Request(SettingRequest& request, bool value)
+    {
+        {
+            std::lock_guard lock(mutex_);
+            if (stopping_)
+                return false;
+            request.pending = true;
+            request.visible = true;
+            request.value = value;
+            ++request.generation;
+        }
+        wake_.notify_one();
+        return true;
+    }
+
+    std::optional<bool> Requested(const SettingRequest& request) const
+    {
+        std::lock_guard lock(mutex_);
+        if (!request.visible)
+            return std::nullopt;
+        return request.value;
+    }
+
+    static WorkItem Take(SettingRequest& request)
+    {
+        if (!request.pending)
+            return {};
+        request.pending = false;
+        return { true, request.value, request.generation };
+    }
+
+    void Complete(SettingRequest& request, const WorkItem& work)
+    {
+        if (!work.valid)
+            return;
+        std::lock_guard lock(mutex_);
+        if (!request.pending && request.generation == work.generation)
+            request.visible = false;
+    }
+
+    void Run()
+    {
+        for (;;)
+        {
+            WorkItem autoHide;
+            WorkItem alignment;
+            WorkItem systemTheme;
+            {
+                std::unique_lock lock(mutex_);
+                wake_.wait(lock, [this] {
+                    return stopping_ || autoHide_.pending ||
+                        alignment_.pending || systemTheme_.pending;
+                });
+                if (stopping_ && !autoHide_.pending &&
+                    !alignment_.pending && !systemTheme_.pending)
+                    return;
+                autoHide = Take(autoHide_);
+                alignment = Take(alignment_);
+                systemTheme = Take(systemTheme_);
+            }
+
+            if (autoHide.valid)
+                ApplySystemTaskbarAutoHideEnabled(autoHide.value);
+            Complete(autoHide_, autoHide);
+            if (alignment.valid)
+                ApplySystemTaskbarAlignmentCentered(alignment.value);
+            Complete(alignment_, alignment);
+            if (systemTheme.valid)
+                ApplyWindowsSystemLightThemeEnabled(systemTheme.value);
+            Complete(systemTheme_, systemTheme);
+        }
+    }
+
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    SettingRequest autoHide_;
+    SettingRequest alignment_;
+    SettingRequest systemTheme_;
+    bool stopping_ = false;
+    std::thread worker_;
+};
+
+WindowsShellSettingsController& GetWindowsShellSettingsController()
+{
+    static WindowsShellSettingsController controller;
+    return controller;
 }
 
 class TaskbarBackdropController
@@ -315,7 +568,20 @@ public:
                 taskbars.push_back(target.taskbar);
         }
         for (HWND taskbar : taskbars)
-            PostMessageW(taskbar, applyMessage, 0, 0);
+        {
+            if (hookEnabled)
+            {
+                PostMessageW(taskbar, applyMessage, 0, 0);
+                continue;
+            }
+
+            // Process the restore while the shared state and owner process are
+            // still alive. The Explorer-side owner watcher remains a crash
+            // fallback, but graceful exit must not race an asynchronous post.
+            DWORD_PTR ignored = 0;
+            SendMessageTimeoutW(taskbar, applyMessage, 0, 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored);
+        }
 
         if (!hookEnabled)
         {
@@ -530,93 +796,41 @@ std::wstring GetDockSettingsPath()
 
 bool IsSystemTaskbarAutoHideEnabled()
 {
-    APPBARDATA data{};
-    data.cbSize = sizeof(data);
-    return (SHAppBarMessage(ABM_GETSTATE, &data) & ABS_AUTOHIDE) != 0;
+    if (const auto requested =
+            GetWindowsShellSettingsController().RequestedAutoHide())
+        return *requested;
+    return ReadSystemTaskbarAutoHideEnabled();
 }
 
-bool SetSystemTaskbarAutoHideEnabled(bool enabled)
+bool RequestSystemTaskbarAutoHideEnabled(bool enabled)
 {
-    APPBARDATA data{};
-    data.cbSize = sizeof(data);
-    data.hWnd = FindWindowW(L"Shell_TrayWnd", nullptr);
-    const UINT_PTR currentState = SHAppBarMessage(ABM_GETSTATE, &data);
-    const bool current = (currentState & ABS_AUTOHIDE) != 0;
-    if (current == enabled)
-        return true;
-
-    data.lParam = static_cast<LPARAM>(enabled
-        ? (currentState | ABS_AUTOHIDE)
-        : (currentState & ~static_cast<UINT_PTR>(ABS_AUTOHIDE)));
-    SHAppBarMessage(ABM_SETSTATE, &data);
-    return IsSystemTaskbarAutoHideEnabled() == enabled;
+    return GetWindowsShellSettingsController().RequestAutoHide(enabled);
 }
 
 bool IsSystemTaskbarAlignmentCentered()
 {
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-            L"TaskbarAl", RRF_RT_REG_DWORD, nullptr,
-            &value, &size) != ERROR_SUCCESS)
-        return true;
-    return value != 0;
+    if (const auto requested =
+            GetWindowsShellSettingsController().RequestedAlignment())
+        return *requested;
+    return ReadSystemTaskbarAlignmentCentered();
 }
 
-bool SetSystemTaskbarAlignmentCentered(bool centered)
+bool RequestSystemTaskbarAlignmentCentered(bool centered)
 {
-    HKEY key = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return false;
-    const DWORD value = centered ? 1 : 0;
-    const LONG result = RegSetValueExW(key, L"TaskbarAl", 0,
-        REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
-    RegCloseKey(key);
-    if (result != ERROR_SUCCESS)
-        return false;
-
-    DWORD_PTR ignored = 0;
-    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-        reinterpret_cast<LPARAM>(L"TraySettings"),
-        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1500, &ignored);
-    return IsSystemTaskbarAlignmentCentered() == centered;
+    return GetWindowsShellSettingsController().RequestAlignment(centered);
 }
 
 bool IsWindowsSystemLightThemeEnabled()
 {
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-            L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr,
-            &value, &size) != ERROR_SUCCESS)
-        return true;
-    return value != 0;
+    if (const auto requested =
+            GetWindowsShellSettingsController().RequestedSystemTheme())
+        return *requested;
+    return ReadWindowsSystemLightThemeEnabled();
 }
 
-bool SetWindowsSystemLightThemeEnabled(bool enabled)
+bool RequestWindowsSystemLightThemeEnabled(bool enabled)
 {
-    HKEY key = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return false;
-    const DWORD value = enabled ? 1 : 0;
-    const LONG result = RegSetValueExW(key, L"SystemUsesLightTheme", 0,
-        REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
-    RegCloseKey(key);
-    if (result != ERROR_SUCCESS)
-        return false;
-
-    DWORD_PTR ignored = 0;
-    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
-        reinterpret_cast<LPARAM>(L"ImmersiveColorSet"),
-        SMTO_ABORTIFHUNG | SMTO_NORMAL, 1500, &ignored);
-    SendNotifyMessageW(HWND_BROADCAST, WM_THEMECHANGED, 0, 0);
-    return IsWindowsSystemLightThemeEnabled() == enabled;
+    return GetWindowsShellSettingsController().RequestSystemTheme(enabled);
 }
 
 bool RestartWindowsExplorer()
@@ -771,6 +985,29 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     ReadBoolField(text, "keepWhenDesktopHidden",
         settings.keepWhenDesktopHidden);
+    ReadBoolField(text, "allowDesktopContentOverlap",
+        settings.allowDesktopContentOverlap);
+    bool loadedLegacyAutoHide = false;
+    if (!ReadBoolField(text, "showOnlyWhenSummoned",
+            settings.showOnlyWhenSummoned))
+    {
+        // Compatibility with development builds that briefly described this
+        // summon-only behavior as automatic hiding.
+        loadedLegacyAutoHide = ReadBoolField(
+            text, "autoHide", settings.showOnlyWhenSummoned);
+    }
+    bool summonOnlyLinkedPreferencesAreBase = false;
+    ReadBoolField(text, "summonOnlyLinkedPreferencesAreBase",
+        summonOnlyLinkedPreferencesAreBase);
+    // Earlier development builds persisted both linked settings as true after
+    // forcing them on. Migrate only that signature; preserve any explicit
+    // non-default combination from legacy or externally edited files.
+    snowdesktop::dock_settings_rules::
+        MigrateSummonOnlyLinkedPreferencesToBase(
+            settings.showOnlyWhenSummoned,
+            summonOnlyLinkedPreferencesAreBase || loadedLegacyAutoHide,
+            settings.allowDesktopContentOverlap,
+            settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
@@ -848,6 +1085,12 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"keepWhenDesktopHidden\": "
          << (settings.keepWhenDesktopHidden ? "true" : "false") << ",\n";
+    file << "  \"allowDesktopContentOverlap\": "
+         << (settings.allowDesktopContentOverlap ? "true" : "false")
+         << ",\n";
+    file << "  \"showOnlyWhenSummoned\": "
+         << (settings.showOnlyWhenSummoned ? "true" : "false") << ",\n";
+    file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
     file << "  \"systemTaskbarAutoHide\": "

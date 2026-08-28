@@ -274,10 +274,10 @@ std::wstring GetPersonalizationPath()
 bool LoadPersonalization(
     const wchar_t* path,
     PersonalizationSettings& s,
-    bool* categorizedTabFontSizeLoaded)
+    bool* categorizedTabHeightLoaded)
 {
-    if (categorizedTabFontSizeLoaded)
-        *categorizedTabFontSizeLoaded = false;
+    if (categorizedTabHeightLoaded)
+        *categorizedTabHeightLoaded = false;
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
     std::ostringstream ss;
@@ -296,12 +296,22 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "widgetBorderAlpha", v)) s.widgetBorderAlpha = (float)v;
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
-    if (ReadDoubleField(text, "categorizedTabFontSize", v))
+    if (ReadDoubleField(text, "categorizedTabHeight", v))
     {
-        s.categorizedTabFontSize =
-            std::clamp(static_cast<float>(v), 10.0f, 22.0f);
-        if (categorizedTabFontSizeLoaded)
-            *categorizedTabFontSizeLoaded = true;
+        s.categorizedTabHeight =
+            std::clamp(static_cast<float>(v), 24.0f, 48.0f);
+        if (categorizedTabHeightLoaded)
+            *categorizedTabHeightLoaded = true;
+    }
+    else if (ReadDoubleField(text, "categorizedTabFontSize", v))
+    {
+        // 旧版按字号保存（10–22 cu）。换算为标签条高度：
+        // 默认字号 15 对应默认高度 34。
+        s.categorizedTabHeight = std::clamp(
+            static_cast<float>(v) * 34.0f / 15.0f,
+            24.0f, 48.0f);
+        if (categorizedTabHeightLoaded)
+            *categorizedTabHeightLoaded = true;
     }
     if (ReadDoubleField(text, "backgroundPreset", v))
     {
@@ -316,6 +326,9 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "contentTheme", v)) s.contentTheme = std::clamp(static_cast<int>(v), 0, 1);
     bool b2 = false;
     if (ReadBoolField(text, "acrylicEnabled", b2)) s.acrylicEnabled = b2;
+    bool b3 = false;
+    if (ReadBoolField(text, "showCategoryTabCounts", b3))
+        s.showCategoryTabCounts = b3;
     // Presets are immutable choices in the UI. Refresh persisted acrylic
     // values so palette refinements and the old placeholder migration are
     // applied without requiring users to reselect the theme.
@@ -324,14 +337,18 @@ bool LoadPersonalization(
     {
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
-        const float categorizedTabFontSize =
-            s.categorizedTabFontSize;
+        const float categorizedTabHeight =
+            s.categorizedTabHeight;
+        const bool showCategoryTabCounts =
+            s.showCategoryTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
-        s.categorizedTabFontSize =
-            categorizedTabFontSize;
+        s.categorizedTabHeight =
+            categorizedTabHeight;
+        s.showCategoryTabCounts =
+            showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
     }
     return true;
@@ -363,11 +380,13 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBorderAlpha\": " << s.widgetBorderAlpha << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
-    file << "  \"categorizedTabFontSize\": "
+    file << "  \"categorizedTabHeight\": "
          << std::clamp(
-                s.categorizedTabFontSize,
-                10.0f, 22.0f)
+                s.categorizedTabHeight,
+                24.0f, 48.0f)
          << ",\n";
+    file << "  \"showCategoryTabCounts\": "
+         << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "

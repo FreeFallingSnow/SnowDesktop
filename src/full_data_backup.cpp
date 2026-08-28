@@ -26,6 +26,32 @@ namespace
 {
 constexpr int kBackupSchemaVersion = 1;
 constexpr wchar_t kManifestName[] = L"backup.json";
+constexpr char kCancelledError[] = "operation cancelled";
+
+bool StopRequested(const CancellationContext& cancellation,
+    bool& cancelled, std::string& error)
+{
+    if (!cancellation.stopToken.stop_requested())
+        return false;
+    cancelled = true;
+    error = kCancelledError;
+    return true;
+}
+
+bool BeginNonInterruptible(const CancellationContext& cancellation,
+    bool& cancelled, std::string& error)
+{
+    if (StopRequested(cancellation, cancelled, error))
+        return false;
+    if (cancellation.beginNonInterruptible &&
+        !cancellation.beginNonInterruptible())
+    {
+        cancelled = true;
+        error = kCancelledError;
+        return false;
+    }
+    return true;
+}
 
 struct FileRecord
 {
@@ -268,8 +294,12 @@ bool IsSafeArchivePath(std::string_view name)
     return true;
 }
 
-std::string Sha256File(const std::filesystem::path& path)
+std::string Sha256File(const std::filesystem::path& path,
+    const CancellationContext& cancellation, bool& cancelled,
+    std::string& error)
 {
+    if (StopRequested(cancellation, cancelled, error))
+        return {};
     std::ifstream file(path, std::ios::binary);
     if (!file)
         return {};
@@ -305,8 +335,20 @@ std::string Sha256File(const std::filesystem::path& path)
     std::array<char, 64 * 1024> buffer{};
     while (file)
     {
+        if (StopRequested(cancellation, cancelled, error))
+        {
+            BCryptDestroyHash(hash);
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+            return {};
+        }
         file.read(buffer.data(), buffer.size());
         const auto count = file.gcount();
+        if (StopRequested(cancellation, cancelled, error))
+        {
+            BCryptDestroyHash(hash);
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+            return {};
+        }
         if (count > 0 &&
             BCryptHashData(hash,
                 reinterpret_cast<PUCHAR>(buffer.data()),
@@ -334,7 +376,8 @@ std::string Sha256File(const std::filesystem::path& path)
 
 bool CollectRecords(const std::filesystem::path& data,
     std::vector<FileRecord>& records, std::uint64_t& totalBytes,
-    std::string& error)
+    std::string& error, const CancellationContext& cancellation,
+    bool& cancelled)
 {
     records.clear();
     totalBytes = 0;
@@ -352,6 +395,8 @@ bool CollectRecords(const std::filesystem::path& data,
         !filesystemError && entry != end;
         entry.increment(filesystemError))
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return false;
         if (IsReparsePoint(entry->path()))
         {
             error = "backup data contains a reparse point";
@@ -376,10 +421,12 @@ bool CollectRecords(const std::filesystem::path& data,
             error = "backup data exceeds size limits";
             return false;
         }
-        record.sha256 = Sha256File(entry->path());
+        record.sha256 = Sha256File(entry->path(), cancellation,
+            cancelled, error);
         if (record.sha256.empty())
         {
-            error = "cannot hash backup file: " + record.path;
+            if (!cancelled)
+                error = "cannot hash backup file: " + record.path;
             return false;
         }
         totalBytes += record.size;
@@ -571,8 +618,11 @@ bool ReadManifest(const std::filesystem::path& path,
 }
 
 bool ValidateBackupDirectory(const std::filesystem::path& root,
-    BackupManifest& manifest, std::string& error)
+    BackupManifest& manifest, std::string& error,
+    const CancellationContext& cancellation, bool& cancelled)
 {
+    if (StopRequested(cancellation, cancelled, error))
+        return false;
     const auto data = root / L"data";
     if (!LooksLikeDataDirectory(data) ||
         !ReadManifest(root / kManifestName, manifest, error))
@@ -621,7 +671,8 @@ bool ValidateBackupDirectory(const std::filesystem::path& root,
 
     std::vector<FileRecord> actual;
     std::uint64_t actualBytes = 0;
-    if (!CollectRecords(data, actual, actualBytes, error))
+    if (!CollectRecords(data, actual, actualBytes, error,
+            cancellation, cancelled))
         return false;
     if (actual.size() != manifest.files.size() ||
         actualBytes != manifest.totalBytes)
@@ -643,8 +694,11 @@ bool ValidateBackupDirectory(const std::filesystem::path& root,
 }
 
 bool CopyDataForBackup(const std::filesystem::path& source,
-    const std::filesystem::path& destination, std::string& error)
+    const std::filesystem::path& destination, std::string& error,
+    const CancellationContext& cancellation, bool& cancelled)
 {
+    if (StopRequested(cancellation, cancelled, error))
+        return false;
     if (!LooksLikeDataDirectory(source) || IsReparsePoint(source))
     {
         error = "source is not a valid SnowDesktop data directory";
@@ -680,6 +734,8 @@ bool CopyDataForBackup(const std::filesystem::path& source,
         !filesystemError && entry != end;
         entry.increment(filesystemError))
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return false;
         const auto relative =
             entry->path().lexically_relative(extendedSource);
         if (relative.empty() ||
@@ -719,9 +775,38 @@ bool CopyDataForBackup(const std::filesystem::path& source,
                 target.parent_path(), filesystemError);
             if (!filesystemError)
             {
-                std::filesystem::copy_file(entry->path(), target,
-                    std::filesystem::copy_options::overwrite_existing,
-                    filesystemError);
+                std::ifstream input(entry->path(), std::ios::binary);
+                std::ofstream output(target,
+                    std::ios::binary | std::ios::trunc);
+                if (!input || !output)
+                {
+                    error = "cannot open backup source or destination file";
+                    return false;
+                }
+                std::array<char, 64 * 1024> buffer{};
+                while (input)
+                {
+                    if (StopRequested(
+                            cancellation, cancelled, error))
+                    {
+                        return false;
+                    }
+                    input.read(buffer.data(), buffer.size());
+                    const auto count = input.gcount();
+                    if (StopRequested(
+                            cancellation, cancelled, error))
+                    {
+                        return false;
+                    }
+                    if (count > 0)
+                        output.write(buffer.data(), count);
+                }
+                output.flush();
+                if (!input.eof() || !output)
+                {
+                    error = "cannot copy backup data file";
+                    return false;
+                }
             }
         }
         else
@@ -745,10 +830,12 @@ bool BuildBackupDirectory(const std::filesystem::path& sourceData,
     const std::filesystem::path& destination,
     const std::string& id, const std::string& hostVersion,
     const std::string& sourceType, BackupInfo& info,
-    std::string& error)
+    std::string& error, const CancellationContext& cancellation,
+    bool& cancelled)
 {
     if (!CopyDataForBackup(
-            sourceData, destination / L"data", error))
+            sourceData, destination / L"data", error,
+            cancellation, cancelled))
     {
         return false;
     }
@@ -758,7 +845,8 @@ bool BuildBackupDirectory(const std::filesystem::path& sourceData,
     manifest.hostVersion = hostVersion;
     manifest.sourceType = sourceType;
     if (!CollectRecords(destination / L"data",
-            manifest.files, manifest.totalBytes, error) ||
+            manifest.files, manifest.totalBytes, error,
+            cancellation, cancelled) ||
         !WriteTextFile(destination / kManifestName,
             ManifestJson(manifest), error))
     {
@@ -832,8 +920,11 @@ struct ZipItem
 };
 
 bool CalculateCrc(const std::filesystem::path& path,
-    std::uint32_t& crc, std::string& error)
+    std::uint32_t& crc, std::string& error,
+    const CancellationContext& cancellation, bool& cancelled)
 {
+    if (StopRequested(cancellation, cancelled, error))
+        return false;
     std::ifstream input(path, std::ios::binary);
     if (!input)
     {
@@ -844,9 +935,13 @@ bool CalculateCrc(const std::filesystem::path& path,
     std::uint32_t state = 0xffffffffu;
     while (input)
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return false;
         input.read(reinterpret_cast<char*>(buffer.data()),
             buffer.size());
         const auto count = input.gcount();
+        if (StopRequested(cancellation, cancelled, error))
+            return false;
         if (count > 0)
             state = Crc32Update(state, buffer.data(),
                 static_cast<std::size_t>(count));
@@ -856,8 +951,11 @@ bool CalculateCrc(const std::filesystem::path& path,
 }
 
 bool WriteStoreZip(const std::filesystem::path& root,
-    const std::filesystem::path& output, std::string& error)
+    const std::filesystem::path& output, std::string& error,
+    const CancellationContext& cancellation, bool& cancelled)
 {
+    if (StopRequested(cancellation, cancelled, error))
+        return false;
     std::vector<ZipItem> items;
     std::uint64_t archivePayload = 0;
     std::error_code filesystemError;
@@ -874,6 +972,8 @@ bool WriteStoreZip(const std::filesystem::path& root,
         !filesystemError && entry != end;
         entry.increment(filesystemError))
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return false;
         if (IsReparsePoint(entry->path()))
         {
             error = "backup archive source contains a reparse point";
@@ -890,7 +990,8 @@ bool WriteStoreZip(const std::filesystem::path& root,
         if (filesystemError || !IsSafeArchivePath(item.path) ||
             item.size > (std::numeric_limits<std::uint32_t>::max)() ||
             archivePayload > kMaxArchiveBytes - item.size ||
-            !CalculateCrc(item.source, item.crc, error))
+            !CalculateCrc(item.source, item.crc, error,
+                cancellation, cancelled))
         {
             if (error.empty())
                 error = "backup archive exceeds ZIP32 limits";
@@ -945,9 +1046,16 @@ bool WriteStoreZip(const std::filesystem::path& root,
         error = "cannot create backup archive";
         return false;
     }
+    const auto cancelTemporary = [&]() {
+        archive.close();
+        std::filesystem::remove(temporary, filesystemError);
+        return false;
+    };
     std::array<char, 64 * 1024> buffer{};
     for (auto& item : items)
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return cancelTemporary();
         const auto position = archive.tellp();
         if (position < 0 ||
             position > (std::numeric_limits<std::uint32_t>::max)() ||
@@ -975,8 +1083,12 @@ bool WriteStoreZip(const std::filesystem::path& root,
         std::ifstream source(item.source, std::ios::binary);
         while (source)
         {
+            if (StopRequested(cancellation, cancelled, error))
+                return cancelTemporary();
             source.read(buffer.data(), buffer.size());
             const auto count = source.gcount();
+            if (StopRequested(cancellation, cancelled, error))
+                return cancelTemporary();
             if (count > 0)
                 archive.write(buffer.data(), count);
         }
@@ -999,6 +1111,8 @@ bool WriteStoreZip(const std::filesystem::path& root,
         static_cast<std::uint32_t>(centralOffsetValue);
     for (const auto& item : items)
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return cancelTemporary();
         Write32(archive, 0x02014b50);
         Write16(archive, 20);
         Write16(archive, 20);
@@ -1048,6 +1162,11 @@ bool WriteStoreZip(const std::filesystem::path& root,
         return false;
     }
     archive.close();
+    if (!BeginNonInterruptible(cancellation, cancelled, error))
+    {
+        std::filesystem::remove(temporary, filesystemError);
+        return false;
+    }
     if (!MoveFileExW(temporary.c_str(), extendedOutput.c_str(),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {
@@ -1060,8 +1179,11 @@ bool WriteStoreZip(const std::filesystem::path& root,
 }
 
 bool ExtractStoreZip(const std::filesystem::path& archivePath,
-    const std::filesystem::path& destination, std::string& error)
+    const std::filesystem::path& destination, std::string& error,
+    const CancellationContext& cancellation, bool& cancelled)
 {
+    if (StopRequested(cancellation, cancelled, error))
+        return false;
     std::error_code filesystemError;
     const auto extendedArchive =
         ExtendedLengthPath(archivePath, filesystemError);
@@ -1107,6 +1229,8 @@ bool ExtractStoreZip(const std::filesystem::path& archivePath,
     std::array<unsigned char, 64 * 1024> buffer{};
     while (archive)
     {
+        if (StopRequested(cancellation, cancelled, error))
+            return false;
         const auto headerPosition = archive.tellg();
         archive.read(reinterpret_cast<char*>(header.data()), 4);
         if (archive.gcount() == 0)
@@ -1228,6 +1352,11 @@ bool ExtractStoreZip(const std::filesystem::path& archivePath,
         std::uint32_t crc = 0xffffffffu;
         while (remaining > 0)
         {
+            if (StopRequested(cancellation, cancelled, error))
+            {
+                CloseHandle(output);
+                return false;
+            }
             const auto chunk = static_cast<std::streamsize>(
                 (std::min<std::uint64_t>)(remaining, buffer.size()));
             archive.read(
@@ -1236,6 +1365,11 @@ bool ExtractStoreZip(const std::filesystem::path& archivePath,
             {
                 CloseHandle(output);
                 error = "backup archive entry is truncated";
+                return false;
+            }
+            if (StopRequested(cancellation, cancelled, error))
+            {
+                CloseHandle(output);
                 return false;
             }
             DWORD written = 0;
@@ -1314,9 +1448,12 @@ BackupInfo ManifestToInfo(const std::filesystem::path& root,
 
 OperationResult QueueDataDirectory(
     const std::filesystem::path& stateRoot,
-    const std::filesystem::path& sourceData)
+    const std::filesystem::path& sourceData,
+    const CancellationContext& cancellation)
 {
     OperationResult result;
+    if (StopRequested(cancellation, result.cancelled, result.error))
+        return result;
     if (!LooksLikeDataDirectory(sourceData))
     {
         result.error =
@@ -1328,18 +1465,25 @@ OperationResult QueueDataDirectory(
     const auto staging = stateRoot / L"TempState" /
         L"PortableMigration" / (L"staging-" + wideToken);
     const auto copy =
-        snowdesktop::migration::CopyDataTree(sourceData, staging);
+        snowdesktop::migration::CopyDataTree(
+            sourceData, staging, cancellation);
     if (!copy.ok)
     {
+        result.cancelled = copy.cancelled;
         result.error = copy.error;
+        std::error_code cleanupError;
+        RemoveTree(staging, cleanupError);
         return result;
     }
     std::string queueError;
+    bool queueCancelled = false;
     if (!snowdesktop::migration::Queue(
-            stateRoot, wideToken, queueError))
+            stateRoot, wideToken, queueError,
+            cancellation, &queueCancelled))
     {
         std::error_code cleanupError;
         RemoveTree(staging, cleanupError);
+        result.cancelled = queueCancelled;
         result.error = queueError;
         return result;
     }
@@ -1428,9 +1572,12 @@ std::vector<BackupInfo> FullDataBackupManager::List() const
     return result;
 }
 
-OperationResult FullDataBackupManager::Create()
+OperationResult FullDataBackupManager::Create(
+    const CancellationContext& cancellation)
 {
     OperationResult result;
+    if (StopRequested(cancellation, result.cancelled, result.error))
+        return result;
     const std::string token = TimestampToken();
     const auto staging =
         backupRoot_ / (L".staging-" + Utf8ToWide(token));
@@ -1446,7 +1593,14 @@ OperationResult FullDataBackupManager::Create()
     }
     BackupInfo info;
     if (!BuildBackupDirectory(activeData_, staging, token,
-            hostVersion_, sourceType_, info, result.error))
+            hostVersion_, sourceType_, info, result.error,
+            cancellation, result.cancelled))
+    {
+        RemoveTree(staging, error);
+        return result;
+    }
+    if (!BeginNonInterruptible(
+            cancellation, result.cancelled, result.error))
     {
         RemoveTree(staging, error);
         return result;
@@ -1468,9 +1622,12 @@ OperationResult FullDataBackupManager::Create()
 
 OperationResult FullDataBackupManager::Export(
     const BackupInfo& backup,
-    const std::filesystem::path& archive) const
+    const std::filesystem::path& archive,
+    const CancellationContext& cancellation) const
 {
     OperationResult result;
+    if (StopRequested(cancellation, result.cancelled, result.error))
+        return result;
     if (archive.empty())
     {
         result.error = "backup archive path is empty";
@@ -1495,7 +1652,7 @@ OperationResult FullDataBackupManager::Export(
         BackupInfo generated;
         if (!BuildBackupDirectory(backup.data, temporaryRoot,
                 token, hostVersion_, "migration", generated,
-                result.error))
+                result.error, cancellation, result.cancelled))
         {
             RemoveTree(temporaryRoot, error);
             return result;
@@ -1503,8 +1660,10 @@ OperationResult FullDataBackupManager::Export(
         exportRoot = temporaryRoot;
     }
     BackupManifest manifest;
-    if (!ValidateBackupDirectory(exportRoot, manifest, result.error) ||
-        !WriteStoreZip(exportRoot, archive, result.error))
+    if (!ValidateBackupDirectory(exportRoot, manifest, result.error,
+            cancellation, result.cancelled) ||
+        !WriteStoreZip(exportRoot, archive, result.error,
+            cancellation, result.cancelled))
     {
         if (!temporaryRoot.empty())
             RemoveTree(temporaryRoot, error);
@@ -1518,28 +1677,36 @@ OperationResult FullDataBackupManager::Export(
 }
 
 OperationResult FullDataBackupManager::QueueRestore(
-    const BackupInfo& backup) const
+    const BackupInfo& backup,
+    const CancellationContext& cancellation) const
 {
     OperationResult result;
+    if (StopRequested(cancellation, result.cancelled, result.error))
+        return result;
     if (!backup.migrationRollback)
     {
         BackupManifest manifest;
         if (!ValidateBackupDirectory(
-                backup.root, manifest, result.error))
+                backup.root, manifest, result.error,
+                cancellation, result.cancelled))
         {
             return result;
         }
     }
-    result = QueueDataDirectory(stateRoot_, backup.data);
+    result = QueueDataDirectory(
+        stateRoot_, backup.data, cancellation);
     if (result.ok)
         result.backup = backup;
     return result;
 }
 
 OperationResult FullDataBackupManager::ImportAndQueue(
-    const std::filesystem::path& archive) const
+    const std::filesystem::path& archive,
+    const CancellationContext& cancellation) const
 {
     OperationResult result;
+    if (StopRequested(cancellation, result.cancelled, result.error))
+        return result;
     const std::string extension =
         LowerAscii(archive.extension().string());
     if (extension != ".snowbackup" && extension != ".zip")
@@ -1551,20 +1718,22 @@ OperationResult FullDataBackupManager::ImportAndQueue(
     const auto extraction = stateRoot_ / L"TempState" /
         L"BackupImport" / Utf8ToWide(token);
     std::error_code cleanupError;
-    if (!ExtractStoreZip(archive, extraction, result.error))
+    if (!ExtractStoreZip(archive, extraction, result.error,
+            cancellation, result.cancelled))
     {
         RemoveTree(extraction, cleanupError);
         return result;
     }
     BackupManifest manifest;
     if (!ValidateBackupDirectory(
-            extraction, manifest, result.error))
+            extraction, manifest, result.error,
+            cancellation, result.cancelled))
     {
         RemoveTree(extraction, cleanupError);
         return result;
     }
     result = QueueDataDirectory(
-        stateRoot_, extraction / L"data");
+        stateRoot_, extraction / L"data", cancellation);
     if (result.ok)
         result.backup = ManifestToInfo(extraction, manifest);
     RemoveTree(extraction, cleanupError);
@@ -1572,15 +1741,19 @@ OperationResult FullDataBackupManager::ImportAndQueue(
 }
 
 OperationResult FullDataBackupManager::QueueDirectory(
-    const std::filesystem::path& sourceData) const
+    const std::filesystem::path& sourceData,
+    const CancellationContext& cancellation) const
 {
-    return QueueDataDirectory(stateRoot_, sourceData);
+    return QueueDataDirectory(stateRoot_, sourceData, cancellation);
 }
 
 OperationResult FullDataBackupManager::Delete(
-    const BackupInfo& backup) const
+    const BackupInfo& backup,
+    const CancellationContext& cancellation) const
 {
     OperationResult result;
+    if (StopRequested(cancellation, result.cancelled, result.error))
+        return result;
     const auto allowedRoot = backup.migrationRollback
         ? stateRoot_ / L"TempState" / L"PortableMigration"
         : backupRoot_;
@@ -1592,6 +1765,11 @@ OperationResult FullDataBackupManager::Delete(
         return result;
     }
     std::error_code error;
+    if (!BeginNonInterruptible(
+            cancellation, result.cancelled, result.error))
+    {
+        return result;
+    }
     const auto removed = RemoveTree(backup.root, error);
     if (error || removed == 0)
     {

@@ -2,24 +2,188 @@
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
+#include "widget_preview_stage.h"
+#if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
+#include "app/wallpaper_engine_capture.h"
+#endif
 
 #include <dwmapi.h>
+#include <shobjidl_core.h>
 #include <windowsx.h>
+#include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cwchar>
 #include <cwctype>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace snowdesktop::component_preview
 {
+
+float detail::RoundedRectangleCoverage(float sampleX, float sampleY,
+    float left, float top, float right, float bottom, float radius)
+{
+    const float halfWidth = std::max(0.0f, (right - left) * 0.5f);
+    const float halfHeight = std::max(0.0f, (bottom - top) * 0.5f);
+    if (halfWidth <= 0.0f || halfHeight <= 0.0f)
+        return 0.0f;
+    const float resolvedRadius = std::clamp(
+        radius, 0.0f, std::min(halfWidth, halfHeight));
+    const float centerX = (left + right) * 0.5f;
+    const float centerY = (top + bottom) * 0.5f;
+    const float qx = std::fabs(sampleX - centerX) -
+        (halfWidth - resolvedRadius);
+    const float qy = std::fabs(sampleY - centerY) -
+        (halfHeight - resolvedRadius);
+    const float signedDistance =
+        std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) +
+        std::min(std::max(qx, qy), 0.0f) - resolvedRadius;
+    return std::clamp(0.5f - signedDistance, 0.0f, 1.0f);
+}
+
 namespace
 {
+
+using Microsoft::WRL::ComPtr;
 
 constexpr wchar_t kPreviewWindowClass[] =
     L"SnowDesktop.ComponentPreviewPopup";
 constexpr UINT_PTR kOpenTimer = 1;
 constexpr UINT_PTR kHideTimer = 2;
+constexpr UINT kWallpaperEngineFrameReady = WM_APP + 0x349;
+constexpr DWORD kWallpaperEngineCaptureTimeoutMs = 2500;
+
+struct ScopedComApartment
+{
+    ScopedComApartment()
+        : result(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))
+    {
+    }
+
+    ~ScopedComApartment()
+    {
+        if (result == S_OK || result == S_FALSE)
+            CoUninitialize();
+    }
+
+    HRESULT result = E_FAIL;
+};
+
+widget_preview::WallpaperPosition ToWallpaperPosition(
+    DESKTOP_WALLPAPER_POSITION position)
+{
+    switch (position)
+    {
+    case DWPOS_CENTER:
+        return widget_preview::WallpaperPosition::Center;
+    case DWPOS_TILE:
+        return widget_preview::WallpaperPosition::Tile;
+    case DWPOS_STRETCH:
+        return widget_preview::WallpaperPosition::Stretch;
+    case DWPOS_FIT:
+        return widget_preview::WallpaperPosition::Fit;
+    case DWPOS_SPAN:
+        return widget_preview::WallpaperPosition::Span;
+    case DWPOS_FILL:
+    default:
+        return widget_preview::WallpaperPosition::Fill;
+    }
+}
+
+std::uint32_t ToOpaquePixel(COLORREF color)
+{
+    return 0xff000000u |
+        (static_cast<std::uint32_t>(GetRValue(color)) << 16) |
+        (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
+        static_cast<std::uint32_t>(GetBValue(color));
+}
+
+RECT VirtualDesktopBounds()
+{
+    const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    return { left, top,
+        left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+        top + GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+}
+
+std::wstring ReadCurrentUserString(
+    const wchar_t* subkey, const wchar_t* valueName)
+{
+    DWORD byteCount = 0;
+    if (RegGetValueW(HKEY_CURRENT_USER, subkey, valueName,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, nullptr,
+            &byteCount) != ERROR_SUCCESS || byteCount < sizeof(wchar_t))
+        return {};
+    std::vector<wchar_t> buffer(
+        static_cast<std::size_t>(byteCount) / sizeof(wchar_t) + 1, L'\0');
+    if (RegGetValueW(HKEY_CURRENT_USER, subkey, valueName,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, buffer.data(),
+            &byteCount) != ERROR_SUCCESS)
+        return {};
+    return std::wstring(buffer.data());
+}
+
+int ParseInteger(const std::wstring& text, int fallback)
+{
+    if (text.empty()) return fallback;
+    wchar_t* end = nullptr;
+    const long value = std::wcstol(text.c_str(), &end, 10);
+    return end && end != text.c_str() ? static_cast<int>(value) : fallback;
+}
+
+COLORREF ReadLegacyDesktopColor()
+{
+    const std::wstring value = ReadCurrentUserString(
+        L"Control Panel\\Colors", L"Background");
+    unsigned red = 0;
+    unsigned green = 0;
+    unsigned blue = 0;
+    if (swscanf_s(value.c_str(), L"%u %u %u",
+            &red, &green, &blue) != 3)
+        return RGB(0, 0, 0);
+    return RGB(std::min(red, 255u), std::min(green, 255u),
+        std::min(blue, 255u));
+}
+
+struct StaticWallpaperSettings
+{
+    std::filesystem::path path;
+    widget_preview::WallpaperPosition position =
+        widget_preview::WallpaperPosition::Fill;
+    COLORREF backgroundColor = RGB(0, 0, 0);
+};
+
+StaticWallpaperSettings ReadLegacyWallpaperSettings()
+{
+    StaticWallpaperSettings settings;
+    std::array<wchar_t, 32768> wallpaperPath{};
+    if (SystemParametersInfoW(SPI_GETDESKWALLPAPER,
+            static_cast<UINT>(wallpaperPath.size()), wallpaperPath.data(), 0) &&
+        wallpaperPath[0])
+    {
+        settings.path = wallpaperPath.data();
+    }
+    else
+    {
+        settings.path = ReadCurrentUserString(
+            L"Control Panel\\Desktop", L"WallPaper");
+    }
+    const int wallpaperStyle = ParseInteger(ReadCurrentUserString(
+        L"Control Panel\\Desktop", L"WallpaperStyle"), 10);
+    const bool tileWallpaper = ParseInteger(ReadCurrentUserString(
+        L"Control Panel\\Desktop", L"TileWallpaper"), 0) != 0;
+    settings.position =
+        widget_preview::WallpaperPositionFromLegacySettings(
+            wallpaperStyle, tileWallpaper);
+    settings.backgroundColor = ReadLegacyDesktopColor();
+    return settings;
+}
 
 int Scale(int value, UINT dpi)
 {
@@ -37,31 +201,101 @@ void Fill(HDC dc, const RECT& rect, COLORREF color)
     }
 }
 
-void RoundedBox(HDC dc, const RECT& rect, int radius,
-    COLORREF fill, COLORREF border)
+void BlendRgb(std::uint32_t& pixel, COLORREF color, float coverage)
 {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldBrush = brush ? SelectObject(dc, brush) : nullptr;
-    HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-        radius * 2, radius * 2);
-    if (oldPen) SelectObject(dc, oldPen);
-    if (oldBrush) SelectObject(dc, oldBrush);
-    if (pen) DeleteObject(pen);
-    if (brush) DeleteObject(brush);
+    coverage = std::clamp(coverage, 0.0f, 1.0f);
+    if (coverage <= 0.0f) return;
+    const float inverse = 1.0f - coverage;
+    const auto mix = [&](unsigned destination, unsigned source) {
+        return static_cast<std::uint32_t>(std::clamp(
+            std::lround(destination * inverse + source * coverage),
+            0L, 255L));
+    };
+    const std::uint32_t alpha = pixel & 0xff000000u;
+    const std::uint32_t blue = mix(pixel & 0xffu, GetBValue(color));
+    const std::uint32_t green = mix(
+        (pixel >> 8) & 0xffu, GetGValue(color));
+    const std::uint32_t red = mix(
+        (pixel >> 16) & 0xffu, GetRValue(color));
+    pixel = alpha | blue | (green << 8) | (red << 16);
 }
 
-void RoundedOutline(HDC dc, const RECT& rect, int radius, COLORREF border)
+void RoundedBox(std::uint32_t* pixels, int width, int height,
+    const RECT& rect, int radius, COLORREF fill, COLORREF border)
 {
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-        radius * 2, radius * 2);
-    if (oldBrush) SelectObject(dc, oldBrush);
-    if (oldPen) SelectObject(dc, oldPen);
-    if (pen) DeleteObject(pen);
+    if (!pixels || width <= 0 || height <= 0 || IsRectEmpty(&rect))
+        return;
+    GdiFlush();
+    const int left = std::clamp(static_cast<int>(rect.left), 0, width);
+    const int top = std::clamp(static_cast<int>(rect.top), 0, height);
+    const int right = std::clamp(static_cast<int>(rect.right), 0, width);
+    const int bottom = std::clamp(static_cast<int>(rect.bottom), 0, height);
+    const float outerRadius = static_cast<float>(std::max(0, radius));
+    const float innerRadius = std::max(0.0f, outerRadius - 1.0f);
+    for (int y = top; y < bottom; ++y)
+    {
+        for (int x = left; x < right; ++x)
+        {
+            const float sampleX = static_cast<float>(x) + 0.5f;
+            const float sampleY = static_cast<float>(y) + 0.5f;
+            const float outerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left),
+                static_cast<float>(rect.top),
+                static_cast<float>(rect.right),
+                static_cast<float>(rect.bottom), outerRadius);
+            if (outerCoverage <= 0.0f) continue;
+            const float innerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left + 1),
+                static_cast<float>(rect.top + 1),
+                static_cast<float>(rect.right - 1),
+                static_cast<float>(rect.bottom - 1), innerRadius);
+            std::uint32_t& pixel = pixels[
+                static_cast<std::size_t>(y) * width + x];
+            BlendRgb(pixel, border, outerCoverage);
+            BlendRgb(pixel, fill, innerCoverage);
+        }
+    }
+}
+
+void RoundedOutline(std::uint32_t* pixels, int width, int height,
+    const RECT& rect, int radius, COLORREF border)
+{
+    if (!pixels || width <= 0 || height <= 0 || IsRectEmpty(&rect))
+        return;
+    GdiFlush();
+    const int left = std::clamp(static_cast<int>(rect.left), 0, width);
+    const int top = std::clamp(static_cast<int>(rect.top), 0, height);
+    const int right = std::clamp(static_cast<int>(rect.right), 0, width);
+    const int bottom = std::clamp(static_cast<int>(rect.bottom), 0, height);
+    const float outerRadius = static_cast<float>(std::max(0, radius));
+    const float innerRadius = std::max(0.0f, outerRadius - 1.0f);
+    for (int y = top; y < bottom; ++y)
+    {
+        for (int x = left; x < right; ++x)
+        {
+            const float sampleX = static_cast<float>(x) + 0.5f;
+            const float sampleY = static_cast<float>(y) + 0.5f;
+            const float outerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left),
+                static_cast<float>(rect.top),
+                static_cast<float>(rect.right),
+                static_cast<float>(rect.bottom), outerRadius);
+            const float innerCoverage = detail::RoundedRectangleCoverage(
+                sampleX, sampleY,
+                static_cast<float>(rect.left + 1),
+                static_cast<float>(rect.top + 1),
+                static_cast<float>(rect.right - 1),
+                static_cast<float>(rect.bottom - 1), innerRadius);
+            const float coverage = std::clamp(
+                outerCoverage - innerCoverage, 0.0f, 1.0f);
+            if (coverage <= 0.0f) continue;
+            BlendRgb(pixels[static_cast<std::size_t>(y) * width + x],
+                border, coverage);
+        }
+    }
 }
 
 void DrawCenteredText(HDC dc, HFONT font, COLORREF color,
@@ -206,13 +440,18 @@ void DrawBitmap(HDC destination, const Bitmap& image, const RECT& bounds)
     DeleteObject(bitmap);
 }
 
-bool IsInsideRoundedPanel(int x, int y, int width, int height, int radius)
+void ApplyPremultipliedCoverage(std::uint32_t& pixel, float coverage)
 {
-    const int nearestX = std::clamp(x, radius, width - radius - 1);
-    const int nearestY = std::clamp(y, radius, height - radius - 1);
-    const int dx = x - nearestX;
-    const int dy = y - nearestY;
-    return dx * dx + dy * dy <= radius * radius;
+    coverage = std::clamp(coverage, 0.0f, 1.0f);
+    const auto scale = [&](unsigned channel) {
+        return static_cast<std::uint32_t>(std::clamp(
+            std::lround(channel * coverage), 0L, 255L));
+    };
+    const std::uint32_t blue = scale(pixel & 0xffu);
+    const std::uint32_t green = scale((pixel >> 8) & 0xffu);
+    const std::uint32_t red = scale((pixel >> 16) & 0xffu);
+    const std::uint32_t alpha = scale((pixel >> 24) & 0xffu);
+    pixel = blue | (green << 8) | (red << 16) | (alpha << 24);
 }
 
 bool SameRgb(std::uint32_t pixel, COLORREF color)
@@ -313,9 +552,27 @@ using DwmExtendFrameIntoClientAreaFn = HRESULT(WINAPI*)(
 
 } // namespace
 
+Window::Window(WallpaperBackdropCaptureHandler captureHandler)
+    : wallpaperBackdropCaptureHandler_(std::move(captureHandler))
+{
+}
+
 Window::~Window()
 {
     Close();
+}
+
+void Window::PrefetchDesktopWallpaperBackdrop(
+    HWND owner, POINT screenPoint)
+{
+    if (!EnsureCreated(owner)) return;
+    const HMONITOR selectedMonitor = MonitorFromPoint(
+        screenPoint, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor{ sizeof(monitor) };
+    if (!selectedMonitor ||
+        !GetMonitorInfoW(selectedMonitor, &monitor))
+        return;
+    StartWallpaperEngineBackdropCapture(monitor.rcMonitor);
 }
 
 bool Window::EnsureCreated(HWND owner)
@@ -371,7 +628,27 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
         effectiveAppearance);
     onApply_ = std::move(onApply);
     componentHovered_ = false;
+    waitingForWallpaperEngineFrame_ = false;
     currentCard_ = std::min(currentCard_, model_.cards.size() - 1);
+    if (!IsWindowVisible(hwnd_))
+    {
+        desktopWallpaper_ = {};
+        desktopWallpaperBounds_ = {};
+        desktopWallpaperEngineFrame_.reset();
+        if (std::any_of(model_.cards.begin(), model_.cards.end(),
+                [](const Card& value) {
+                    return value.useDesktopWallpaperStage;
+                }))
+        {
+            if (LoadDesktopWallpaperBackdrop() ==
+                WallpaperBackdropLoadResult::WaitingForCapture)
+            {
+                waitingForWallpaperEngineFrame_ = true;
+                ApplyWindowAppearance();
+                return true;
+            }
+        }
+    }
     ApplyWindowAppearance();
     if (!RenderCurrent())
         return false;
@@ -438,6 +715,7 @@ void Window::ScheduleHide()
     if (!hwnd_ || !IsWindow(hwnd_)) return;
     KillTimer(hwnd_, kOpenTimer);
     pendingModel_ = {};
+    waitingForWallpaperEngineFrame_ = false;
     if (IsWindowVisible(hwnd_))
         SetTimer(hwnd_, kHideTimer,
             modern_menu::kSubmenuCloseDelayMs, nullptr);
@@ -450,11 +728,16 @@ void Window::Hide()
         KillTimer(hwnd_, kHideTimer);
         KillTimer(hwnd_, kOpenTimer);
         ShowWindow(hwnd_, SW_HIDE);
+        desktopWallpaper_ = {};
+        desktopWallpaperBounds_ = {};
+        desktopWallpaperEngineFrame_.reset();
+        waitingForWallpaperEngineFrame_ = false;
     }
 }
 
 void Window::Close()
 {
+    CancelWallpaperEngineBackdropCapture(true);
     if (hwnd_ && IsWindow(hwnd_)) DestroyWindow(hwnd_);
     hwnd_ = nullptr;
     width_ = 0;
@@ -464,6 +747,12 @@ void Window::Close()
     onApply_ = {};
     pendingModel_ = {};
     pendingOnApply_ = {};
+    desktopWallpaper_ = {};
+    desktopWallpaperBounds_ = {};
+    wallpaperEngineCache_.reset();
+    wallpaperEngineCacheBounds_ = {};
+    desktopWallpaperEngineFrame_.reset();
+    waitingForWallpaperEngineFrame_ = false;
 }
 
 RECT Window::OptionBoundsForTesting(
@@ -482,8 +771,302 @@ std::wstring Window::ModelIdentity(const Model& model) const
     std::wstring result = model.title + L"|" +
         std::to_wstring(model.cards.size());
     for (const Card& card : model.cards)
-        result += L"|" + card.cacheKey;
+    {
+        result += L"|" + card.cacheKey +
+            (card.lightStage ? L":stage-light" : L":stage-dark") + L":" +
+            std::to_wstring(widget_preview::WallpaperFingerprint(
+                card.stageWallpaper ? *card.stageWallpaper :
+                    widget_preview::Wallpaper{})) +
+            (card.useDesktopWallpaperStage ? L":desktop-wallpaper" : L"");
+    }
     return result;
+}
+
+Window::WallpaperBackdropLoadResult
+Window::LoadDesktopWallpaperBackdrop()
+{
+    const POINT anchor{
+        (menuBounds_.left + menuBounds_.right) / 2,
+        (menuBounds_.top + menuBounds_.bottom) / 2,
+    };
+    const HMONITOR selectedMonitor = MonitorFromPoint(anchor,
+        MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor{ sizeof(monitor) };
+    if (!selectedMonitor || !GetMonitorInfoW(selectedMonitor, &monitor))
+        return WallpaperBackdropLoadResult::Ready;
+    const int width = monitor.rcMonitor.right - monitor.rcMonitor.left;
+    const int height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
+    if (width <= 0 || height <= 0)
+        return WallpaperBackdropLoadResult::Ready;
+
+    if (wallpaperEngineCaptureState_)
+    {
+        bool completed = false;
+        std::uint64_t generation = 0;
+        {
+            std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+            completed = wallpaperEngineCaptureState_->completed;
+            generation = wallpaperEngineCaptureState_->generation;
+        }
+        if (completed)
+            FinishWallpaperEngineBackdropCapture(generation);
+    }
+
+    if (wallpaperEngineCache_ &&
+        EqualRect(&wallpaperEngineCacheBounds_, &monitor.rcMonitor))
+    {
+        desktopWallpaperEngineFrame_ = wallpaperEngineCache_;
+        desktopWallpaperBounds_ = monitor.rcMonitor;
+        return WallpaperBackdropLoadResult::Ready;
+    }
+
+    if (wallpaperEngineCaptureState_)
+    {
+        bool completed = false;
+        RECT requestedBounds{};
+        {
+            std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+            completed = wallpaperEngineCaptureState_->completed;
+            requestedBounds =
+                wallpaperEngineCaptureState_->requestedBounds;
+        }
+        if (!completed &&
+            EqualRect(&requestedBounds, &monitor.rcMonitor))
+            return WallpaperBackdropLoadResult::WaitingForCapture;
+    }
+
+    StaticWallpaperSettings settings = ReadLegacyWallpaperSettings();
+    ScopedComApartment com;
+    ComPtr<IDesktopWallpaper> wallpaperApi;
+    if ((SUCCEEDED(com.result) || com.result == RPC_E_CHANGED_MODE) &&
+        FAILED(CoCreateInstance(CLSID_DesktopWallpaper, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wallpaperApi))))
+        wallpaperApi.Reset();
+
+    if (wallpaperApi)
+    {
+        COLORREF backgroundColor{};
+        if (SUCCEEDED(wallpaperApi->GetBackgroundColor(&backgroundColor)))
+            settings.backgroundColor = backgroundColor;
+        DESKTOP_WALLPAPER_POSITION systemPosition{};
+        if (SUCCEEDED(wallpaperApi->GetPosition(&systemPosition)))
+            settings.position = ToWallpaperPosition(systemPosition);
+    }
+
+    std::wstring monitorId;
+    UINT monitorCount = 0;
+    if (wallpaperApi && SUCCEEDED(
+            wallpaperApi->GetMonitorDevicePathCount(&monitorCount)))
+    {
+        for (UINT index = 0; index < monitorCount; ++index)
+        {
+            LPWSTR rawMonitorId = nullptr;
+            if (FAILED(wallpaperApi->GetMonitorDevicePathAt(
+                    index, &rawMonitorId)) || !rawMonitorId)
+                continue;
+            RECT candidate{};
+            const bool matches = SUCCEEDED(wallpaperApi->GetMonitorRECT(
+                    rawMonitorId, &candidate)) &&
+                MonitorFromRect(&candidate, MONITOR_DEFAULTTONULL) ==
+                    selectedMonitor;
+            if (matches)
+                monitorId = rawMonitorId;
+            CoTaskMemFree(rawMonitorId);
+            if (matches) break;
+        }
+    }
+
+    if (wallpaperApi)
+    {
+        LPWSTR rawWallpaperPath = nullptr;
+        HRESULT pathResult = wallpaperApi->GetWallpaper(
+            settings.position == widget_preview::WallpaperPosition::Span
+                ? nullptr
+                : (monitorId.empty() ? nullptr : monitorId.c_str()),
+            &rawWallpaperPath);
+        if ((FAILED(pathResult) || pathResult == S_FALSE ||
+                !rawWallpaperPath || !*rawWallpaperPath) &&
+            settings.position == widget_preview::WallpaperPosition::Span &&
+            !monitorId.empty())
+        {
+            if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
+            rawWallpaperPath = nullptr;
+            pathResult = wallpaperApi->GetWallpaper(
+                monitorId.c_str(), &rawWallpaperPath);
+        }
+        if (pathResult == S_OK)
+            settings.path = rawWallpaperPath
+                ? std::filesystem::path(rawWallpaperPath)
+                : std::filesystem::path{};
+        if (rawWallpaperPath) CoTaskMemFree(rawWallpaperPath);
+    }
+
+    const widget_preview::Wallpaper source =
+        widget_preview::LoadWallpaperImage(settings.path);
+    if (source.pixels.empty())
+    {
+        desktopWallpaper_.width = width;
+        desktopWallpaper_.height = height;
+        desktopWallpaper_.pixels.assign(
+            static_cast<std::size_t>(width) * height,
+            ToOpaquePixel(settings.backgroundColor));
+    }
+    else
+    {
+        const RECT canvasBounds =
+            settings.position == widget_preview::WallpaperPosition::Tile ||
+                settings.position == widget_preview::WallpaperPosition::Span
+            ? VirtualDesktopBounds()
+            : monitor.rcMonitor;
+        desktopWallpaper_ = widget_preview::RenderWallpaperRegion(
+            source, canvasBounds, monitor.rcMonitor, settings.position,
+            ToOpaquePixel(settings.backgroundColor));
+    }
+    desktopWallpaperBounds_ = monitor.rcMonitor;
+    return WallpaperBackdropLoadResult::Ready;
+}
+
+void Window::StartWallpaperEngineBackdropCapture(
+    const RECT& monitorBounds)
+{
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+    WallpaperBackdropCaptureHandler captureHandler =
+        wallpaperBackdropCaptureHandler_;
+#if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
+    if (!captureHandler)
+    {
+        captureHandler = [](const RECT& bounds, DWORD timeoutMs,
+                             const std::atomic_bool* cancelled) {
+            WallpaperBackdropCaptureResult capture;
+            auto result =
+                wallpaper_engine_capture::CaptureOneShotForMonitor(
+                    bounds, timeoutMs, cancelled);
+            capture.wallpaper.width = result.backdrop.width;
+            capture.wallpaper.height = result.backdrop.height;
+            capture.wallpaper.pixels =
+                std::move(result.backdrop.pixels);
+            capture.desktopBounds = result.backdrop.desktopBounds;
+            return capture;
+        };
+    }
+#endif
+    if (!captureHandler)
+        return;
+    if (wallpaperEngineCaptureThread_.joinable())
+    {
+        bool completed = false;
+        if (wallpaperEngineCaptureState_)
+        {
+            std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+            completed = wallpaperEngineCaptureState_->completed;
+        }
+        if (!completed)
+            return;
+        wallpaperEngineCaptureThread_.join();
+        wallpaperEngineCaptureState_.reset();
+    }
+
+    auto state = std::make_shared<WallpaperEngineCaptureState>();
+    state->generation = ++wallpaperEngineCaptureGeneration_;
+    state->requestedBounds = monitorBounds;
+    wallpaperEngineCaptureState_ = state;
+    const HWND notifyWindow = hwnd_;
+    wallpaperEngineCaptureThread_ = std::thread(
+        [state, monitorBounds, notifyWindow,
+            captureHandler = std::move(captureHandler)] {
+            auto result = captureHandler(
+                monitorBounds, kWallpaperEngineCaptureTimeoutMs,
+                &state->cancelled);
+            {
+                std::lock_guard lock(state->mutex);
+                if (!state->cancelled.load(std::memory_order_relaxed) &&
+                    !result.wallpaper.pixels.empty())
+                {
+                    state->wallpaper = std::move(result.wallpaper);
+                    state->desktopBounds = result.desktopBounds;
+                }
+                state->completed = true;
+            }
+            PostMessageW(notifyWindow, kWallpaperEngineFrameReady,
+                static_cast<WPARAM>(state->generation), 0);
+        });
+}
+
+void Window::FinishWallpaperEngineBackdropCapture(
+    std::uint64_t generation)
+{
+    if (!wallpaperEngineCaptureState_ ||
+        wallpaperEngineCaptureState_->generation != generation)
+        return;
+    widget_preview::Wallpaper wallpaper;
+    RECT desktopBounds{};
+    bool apply = false;
+    {
+        std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+        apply = wallpaperEngineCaptureState_->completed &&
+            !wallpaperEngineCaptureState_->cancelled.load(
+                std::memory_order_relaxed) &&
+            !wallpaperEngineCaptureState_->wallpaper.pixels.empty();
+        if (apply)
+        {
+            wallpaper = std::move(
+                wallpaperEngineCaptureState_->wallpaper);
+            desktopBounds = wallpaperEngineCaptureState_->desktopBounds;
+        }
+    }
+    if (wallpaperEngineCaptureThread_.joinable())
+        wallpaperEngineCaptureThread_.join();
+    wallpaperEngineCaptureState_.reset();
+    const bool waitingForFrame = waitingForWallpaperEngineFrame_;
+    waitingForWallpaperEngineFrame_ = false;
+    if (apply)
+    {
+        auto sharedWallpaper =
+            std::make_shared<widget_preview::Wallpaper>(
+                std::move(wallpaper));
+        wallpaperEngineCache_ = sharedWallpaper;
+        wallpaperEngineCacheBounds_ = desktopBounds;
+        if (hwnd_ &&
+            (IsWindowVisible(hwnd_) || waitingForFrame))
+        {
+            desktopWallpaper_ = {};
+            desktopWallpaperEngineFrame_ =
+                std::move(sharedWallpaper);
+            desktopWallpaperBounds_ = desktopBounds;
+            if (RenderCurrent() && waitingForFrame)
+                ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        }
+        return;
+    }
+    if (!waitingForFrame || !hwnd_ || model_.Empty())
+        return;
+    LoadDesktopWallpaperBackdrop();
+    if (RenderCurrent())
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+}
+
+void Window::CancelWallpaperEngineBackdropCapture(bool wait)
+{
+    if (wallpaperEngineCaptureState_)
+        wallpaperEngineCaptureState_->cancelled.store(
+            true, std::memory_order_relaxed);
+    if (!wallpaperEngineCaptureThread_.joinable())
+    {
+        wallpaperEngineCaptureState_.reset();
+        return;
+    }
+    bool completed = false;
+    if (wallpaperEngineCaptureState_)
+    {
+        std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
+        completed = wallpaperEngineCaptureState_->completed;
+    }
+    if (wait || completed)
+    {
+        wallpaperEngineCaptureThread_.join();
+        wallpaperEngineCaptureState_.reset();
+    }
 }
 
 bool Window::RenderCurrent()
@@ -503,10 +1086,6 @@ bool Window::RenderCurrent()
             [&](const Option& option) {
                 return IsOptionVisible(card, option);
             }));
-    const int controlsHeight =
-        (pagerHeight ? pagerHeight + controlMargin * 2 : 0) +
-        static_cast<int>(visibleOptionCount) *
-            (optionHeight + controlMargin);
     const int previewWidth = std::max(1, card.previewWidth);
     const int previewHeight = std::max(1, card.previewHeight);
     width_ = std::max(Scale(360, dpi_),
@@ -539,21 +1118,16 @@ bool Window::RenderCurrent()
         HasVisibleText(card.sizeLabel);
     const bool hasDescription = HasVisibleText(card.description);
     const bool hasApplyButton = HasVisibleText(model_.applyLabel);
-    const int metadataHorizontalPadding = Scale(10, dpi_);
-    const int metadataTopPadding = Scale(8, dpi_);
-    const int metadataBottomPadding = Scale(8, dpi_);
     const int cardHeaderHeight = hasCardHeader ? Scale(21, dpi_) : 0;
     const int descriptionHeight = MeasureTextHeight(measureDc, bodyFont,
-        card.description,
-        width_ - (padding + metadataHorizontalPadding) * 2,
+        card.description, textWidth,
         DT_LEFT | DT_WORDBREAK);
     const int applyButtonHeight = hasApplyButton ? Scale(32, dpi_) : 0;
     if (measureDc) DeleteDC(measureDc);
 
     int metadataHeight = 0;
-    if (hasCardHeader || hasDescription || hasApplyButton)
+    if (hasCardHeader || hasDescription)
     {
-        metadataHeight = metadataTopPadding + metadataBottomPadding;
         if (hasCardHeader)
             metadataHeight += cardHeaderHeight;
         if (hasDescription)
@@ -561,18 +1135,20 @@ bool Window::RenderCurrent()
             if (hasCardHeader) metadataHeight += Scale(2, dpi_);
             metadataHeight += descriptionHeight;
         }
-        if (hasApplyButton)
-        {
-            if (hasCardHeader || hasDescription)
-                metadataHeight += Scale(6, dpi_);
-            metadataHeight += applyButtonHeight;
-        }
     }
+    const int externalControlsHeight =
+        (pagerHeight ? gap + pagerHeight : 0) +
+        (metadataHeight ? gap + metadataHeight : 0) +
+        (visibleOptionCount ? gap +
+            static_cast<int>(visibleOptionCount) * optionHeight +
+            static_cast<int>(visibleOptionCount - 1) * controlMargin : 0) +
+        (hasApplyButton ? gap + applyButtonHeight : 0);
     height_ = padding + titleHeight +
         (introductionHeight ? Scale(4, dpi_) + introductionHeight : 0) +
         (resizeHintHeight ? Scale(2, dpi_) + resizeHintHeight : 0) +
-        gap + previewInset + previewHeight + controlsHeight + metadataHeight +
-        previewInset + padding;
+        gap + previewInset + previewHeight + previewInset +
+        externalControlsHeight + padding;
+    POINT destination = ResolvePosition(menuBounds_, dpi_);
 
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -639,14 +1215,84 @@ bool Window::RenderCurrent()
     const int previewLeft = (width_ - previewWidth) / 2;
     previewRect_ = { previewLeft, cardTop + previewInset,
         previewLeft + previewWidth, cardTop + previewInset + previewHeight };
-    // Keep the viewport material transparent.  The component renderer owns
-    // every pixel inside it, including a fully transparent clock background.
-    RoundedOutline(dc, previewRect_, Scale(6, dpi_), palette.separator);
+    cardRect_ = { padding, cardTop, width_ - padding,
+        previewRect_.bottom + previewInset };
+    const int cardWidth = cardRect_.right - cardRect_.left;
+    const int cardHeight = cardRect_.bottom - cardRect_.top;
+    const int cardRadius = Scale(8, dpi_);
+    snowdesktop::widget_preview::Wallpaper wallpaper;
+    const widget_preview::Wallpaper* desktopWallpaper =
+        desktopWallpaperEngineFrame_
+        ? desktopWallpaperEngineFrame_.get()
+        : &desktopWallpaper_;
+    if (card.useDesktopWallpaperStage &&
+        !desktopWallpaper->pixels.empty())
+    {
+        RECT screenCard = cardRect_;
+        OffsetRect(&screenCard, destination.x, destination.y);
+        wallpaper = snowdesktop::widget_preview::CropWallpaper(
+            *desktopWallpaper, desktopWallpaperBounds_, screenCard);
+    }
+    if (wallpaper.pixels.empty() && card.stageWallpaper &&
+        !card.stageWallpaper->pixels.empty())
+    {
+        wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
+            *card.stageWallpaper, cardWidth, cardHeight);
+    }
+    if (wallpaper.pixels.empty())
+    {
+        wallpaper = snowdesktop::widget_preview::GenerateWallpaper(
+            cardWidth, cardHeight, card.lightStage);
+    }
+    const bool lightStage = card.useDesktopWallpaperStage
+        ? snowdesktop::widget_preview::WallpaperIsLight(wallpaper)
+        : card.lightStage;
+    const auto cardPalette = menu_icon::ResolvePalette(lightStage);
+    Bitmap cardStage;
+    cardStage.width = wallpaper.width;
+    cardStage.height = wallpaper.height;
+    cardStage.pixels = wallpaper.pixels;
+    for (int y = 0; y < cardStage.height; ++y)
+    {
+        for (int x = 0; x < cardStage.width; ++x)
+        {
+            const float coverage = detail::RoundedRectangleCoverage(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f,
+                0.0f, 0.0f,
+                static_cast<float>(cardStage.width),
+                static_cast<float>(cardStage.height),
+                static_cast<float>(cardRadius));
+            ApplyPremultipliedCoverage(cardStage.pixels[
+                static_cast<size_t>(y) * cardStage.width + x], coverage);
+        }
+    }
+    DrawBitmap(dc, cardStage, cardRect_);
 
-    const std::wstring frameCacheKey = card.cacheKey.empty()
+    const StagePlacement stagePlacement{
+        cardWidth, cardHeight,
+        previewRect_.left - cardRect_.left,
+        previewRect_.top - cardRect_.top,
+        lightStage,
+        &wallpaper };
+    RoundedOutline(pixels, width_, height_, previewRect_, Scale(6, dpi_),
+        cardPalette.separator);
+
+    std::wstring frameCacheKey = card.cacheKey.empty()
         ? std::wstring{}
         : card.cacheKey + SettingsCacheSuffix(
             card.applySettings, componentHovered_);
+    if (!frameCacheKey.empty())
+    {
+        frameCacheKey += L":stage:" + std::to_wstring(cardWidth) + L"x" +
+            std::to_wstring(cardHeight) + L"@" +
+            std::to_wstring(stagePlacement.offsetX) + L"," +
+            std::to_wstring(stagePlacement.offsetY) +
+            (stagePlacement.lightTheme ? L":light" : L":dark") + L":" +
+            std::to_wstring(
+                snowdesktop::widget_preview::WallpaperFingerprint(
+                    wallpaper));
+    }
     Bitmap rendered;
     if (!frameCacheKey.empty())
     {
@@ -657,7 +1303,7 @@ bool Window::RenderCurrent()
     if (rendered.pixels.empty() && card.render)
     {
         rendered = card.render(previewWidth, previewHeight, dpi_,
-            card.applySettings, componentHovered_);
+            stagePlacement, card.applySettings, componentHovered_);
         if (!frameCacheKey.empty() && !rendered.pixels.empty())
         {
             if (cardFrameCache_.size() >= 128)
@@ -666,8 +1312,10 @@ bool Window::RenderCurrent()
         }
     }
     DrawBitmap(dc, rendered, previewRect_);
+    RoundedOutline(pixels, width_, height_, cardRect_, cardRadius,
+        cardPalette.separator);
 
-    int controlsY = previewRect_.bottom;
+    int controlsY = cardRect_.bottom;
     previousButton_ = {};
     nextButton_ = {};
     previousGlyphRect_ = {};
@@ -675,9 +1323,9 @@ bool Window::RenderCurrent()
     pagerRect_ = {};
     if (pagerHeight)
     {
-        controlsY += controlMargin;
-        pagerRect_ = { padding + previewInset, controlsY,
-            width_ - padding - previewInset, controlsY + pagerHeight };
+        controlsY += gap;
+        pagerRect_ = { padding, controlsY,
+            width_ - padding, controlsY + pagerHeight };
         const int buttonWidth = Scale(42, dpi_);
         previousButton_ = pagerRect_;
         previousButton_.right = previousButton_.left + buttonWidth;
@@ -685,9 +1333,9 @@ bool Window::RenderCurrent()
         nextButton_.left = nextButton_.right - buttonWidth;
         RECT statusRect{ previousButton_.right, pagerRect_.top,
             nextButton_.left, pagerRect_.bottom };
-        RoundedBox(dc, previousButton_, Scale(6, dpi_),
+        RoundedBox(pixels, width_, height_, previousButton_, Scale(6, dpi_),
             palette.hoverBackground, palette.separator);
-        RoundedBox(dc, nextButton_, Scale(6, dpi_),
+        RoundedBox(pixels, width_, height_, nextButton_, Scale(6, dpi_),
             palette.hoverBackground, palette.separator);
         DrawCenteredGlyph(dc, glyphFont,
             currentCard_ > 0 ? palette.text : palette.disabledText,
@@ -699,16 +1347,61 @@ bool Window::RenderCurrent()
             currentCard_ + 1 < model_.cards.size()
                 ? palette.text : palette.disabledText,
             L'\u203a', nextButton_, nextGlyphRect_);
-        controlsY = pagerRect_.bottom + controlMargin;
+        controlsY = pagerRect_.bottom;
+    }
+
+    metadataRect_ = {};
+    if (metadataHeight)
+    {
+        controlsY += gap;
+        metadataRect_ = { padding, controlsY, width_ - padding,
+            controlsY + metadataHeight };
+        const int metadataLeft = padding;
+        const int metadataRight = width_ - padding;
+        int metadataY = controlsY;
+        if (hasCardHeader)
+        {
+            RECT cardTitle{ metadataLeft, metadataY, metadataRight,
+                metadataY + cardHeaderHeight };
+            if (HasVisibleText(card.sizeLabel))
+            {
+                RECT badge = cardTitle;
+                badge.left = std::max(
+                    badge.left, badge.right - Scale(58, dpi_));
+                RoundedBox(pixels, width_, height_, badge, Scale(7, dpi_),
+                    palette.hoverBackground, palette.separator);
+                DrawCenteredText(dc, bodyFont, palette.disabledText,
+                    card.sizeLabel, badge);
+                cardTitle.right = badge.left - Scale(6, dpi_);
+            }
+            if (HasVisibleText(card.title))
+            {
+                DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
+                    cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            metadataY += cardHeaderHeight;
+        }
+        if (hasDescription)
+        {
+            if (hasCardHeader) metadataY += Scale(2, dpi_);
+            RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
+                metadataY + descriptionHeight };
+            DrawWrappedText(dc, bodyFont, palette.disabledText,
+                card.description, descriptionRect);
+            metadataY = descriptionRect.bottom;
+        }
+        controlsY = metadataY;
     }
 
     optionHits_.clear();
+    bool firstOption = true;
     for (const Option& option : card.options)
     {
         if (!IsOptionVisible(card, option)) continue;
-        controlsY += controlMargin;
-        RECT row{ padding + previewInset, controlsY,
-            width_ - padding - previewInset, controlsY + optionHeight };
+        controlsY += firstOption ? gap : controlMargin;
+        firstOption = false;
+        RECT row{ padding, controlsY,
+            width_ - padding, controlsY + optionHeight };
         const int choiceWidth = Scale(70, dpi_);
         const int choiceGap = Scale(6, dpi_);
         RECT onRect{ row.right - choiceWidth, row.top,
@@ -718,13 +1411,14 @@ bool Window::RenderCurrent()
         RECT labelRect{ row.left, row.top,
             offRect.left - Scale(8, dpi_), row.bottom };
         const bool enabled = OptionValue(card.applySettings, option.setting);
-        DrawWrappedText(dc, bodyFont, palette.text, option.label, labelRect,
+        DrawWrappedText(dc, bodyFont, palette.text,
+            option.label, labelRect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         const int capsuleRadius = optionHeight / 2;
-        RoundedBox(dc, offRect, capsuleRadius,
+        RoundedBox(pixels, width_, height_, offRect, capsuleRadius,
             enabled ? palette.background : palette.hoverBackground,
             enabled ? palette.separator : palette.accent);
-        RoundedBox(dc, onRect, capsuleRadius,
+        RoundedBox(pixels, width_, height_, onRect, capsuleRadius,
             enabled ? palette.hoverBackground : palette.background,
             enabled ? palette.accent : palette.separator);
         DrawCenteredText(dc, bodyFont,
@@ -738,52 +1432,13 @@ bool Window::RenderCurrent()
         controlsY = row.bottom;
     }
 
-    const int metadataTop = previewRect_.bottom + controlsHeight;
-    RECT cardRect{ padding, cardTop, width_ - padding,
-        metadataTop + metadataHeight + previewInset };
     applyRect_ = {};
-    RoundedOutline(dc, cardRect, Scale(8, dpi_), palette.separator);
-    const int metadataLeft = cardRect.left + metadataHorizontalPadding;
-    const int metadataRight = cardRect.right - metadataHorizontalPadding;
-    int metadataY = metadataTop +
-        (metadataHeight ? metadataTopPadding : 0);
-    if (hasCardHeader)
-    {
-        RECT cardTitle{ metadataLeft, metadataY, metadataRight,
-            metadataY + cardHeaderHeight };
-        if (HasVisibleText(card.sizeLabel))
-        {
-            RECT badge = cardTitle;
-            badge.left = std::max(
-                badge.left, badge.right - Scale(58, dpi_));
-            RoundedBox(dc, badge, Scale(7, dpi_),
-                palette.hoverBackground, palette.separator);
-            DrawCenteredText(dc, bodyFont, palette.disabledText,
-                card.sizeLabel, badge);
-            cardTitle.right = badge.left - Scale(6, dpi_);
-        }
-        if (HasVisibleText(card.title))
-        {
-            DrawWrappedText(dc, cardTitleFont, palette.text, card.title,
-                cardTitle, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-        }
-        metadataY += cardHeaderHeight;
-    }
-    if (hasDescription)
-    {
-        if (hasCardHeader) metadataY += Scale(2, dpi_);
-        RECT descriptionRect{ metadataLeft, metadataY, metadataRight,
-            metadataY + descriptionHeight };
-        DrawWrappedText(dc, bodyFont, palette.disabledText,
-            card.description, descriptionRect);
-        metadataY = descriptionRect.bottom;
-    }
     if (hasApplyButton)
     {
-        if (hasCardHeader || hasDescription) metadataY += Scale(6, dpi_);
-        applyRect_ = { metadataLeft, metadataY, metadataRight,
-            metadataY + applyButtonHeight };
-        RoundedBox(dc, applyRect_, Scale(8, dpi_),
+        controlsY += gap;
+        applyRect_ = { padding, controlsY, width_ - padding,
+            controlsY + applyButtonHeight };
+        RoundedBox(pixels, width_, height_, applyRect_, Scale(8, dpi_),
             palette.accent, palette.accent);
         DrawCenteredText(dc, cardTitleFont, RGB(255, 255, 255),
             model_.applyLabel, applyRect_);
@@ -794,6 +1449,7 @@ bool Window::RenderCurrent()
     if (bodyFont) DeleteObject(bodyFont);
     if (glyphFont) DeleteObject(glyphFont);
 
+    GdiFlush();
     const int radius = Scale(10, dpi_);
     const unsigned contentAlpha = blurEnabled_ ? 246u : 255u;
     const unsigned materialAlpha = blurEnabled_
@@ -805,13 +1461,20 @@ bool Window::RenderCurrent()
         {
             std::uint32_t& pixel = pixels[
                 static_cast<size_t>(y) * width_ + x];
-            if (!IsInsideRoundedPanel(x, y, width_, height_, radius))
+            const float coverage = detail::RoundedRectangleCoverage(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f,
+                0.0f, 0.0f, static_cast<float>(width_),
+                static_cast<float>(height_), static_cast<float>(radius));
+            if (coverage <= 0.0f)
             {
                 pixel = 0;
                 continue;
             }
-            const unsigned alpha = SameRgb(pixel, palette.background)
+            const unsigned baseAlpha = SameRgb(pixel, palette.background)
                 ? materialAlpha : contentAlpha;
+            const unsigned alpha = static_cast<unsigned>(std::clamp(
+                std::lround(baseAlpha * coverage), 0L, 255L));
             const unsigned blue = (pixel & 0xFFu) * alpha / 255u;
             const unsigned green = ((pixel >> 8) & 0xFFu) * alpha / 255u;
             const unsigned red = ((pixel >> 16) & 0xFFu) * alpha / 255u;
@@ -819,12 +1482,11 @@ bool Window::RenderCurrent()
         }
     }
 
-    HRGN region = CreateRoundRectRgn(0, 0, width_ + 1, height_ + 1,
-        radius * 2, radius * 2);
-    if (region && !SetWindowRgn(hwnd_, region, FALSE))
-        DeleteObject(region);
+    // A GDI window region is binary and would clip away the partial-alpha
+    // edge pixels produced above.  Let the layered window's alpha channel
+    // define the rounded outline instead.
+    SetWindowRgn(hwnd_, nullptr, FALSE);
 
-    POINT destination = ResolvePosition(menuBounds_, dpi_);
     SIZE size{ width_, height_ };
     POINT source{};
     BLENDFUNCTION blend{
@@ -1102,6 +1764,10 @@ LRESULT CALLBACK Window::WindowProc(
             if (!self->PointerInsideMenuOrPreview())
                 self->Hide();
         }
+        return 0;
+    case kWallpaperEngineFrameReady:
+        self->FinishWallpaperEngineBackdropCapture(
+            static_cast<std::uint64_t>(wParam));
         return 0;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;

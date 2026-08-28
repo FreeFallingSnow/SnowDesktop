@@ -12,9 +12,12 @@
  */
 #include "desktop_backdrop_compositor.h"
 
+#include "desktop_backdrop_update_rules.h"
+
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <DispatcherQueue.h>
+#include <dwmapi.h>
 #include <windows.graphics.effects.interop.h>
 #include <windows.ui.composition.interop.h>
 
@@ -213,6 +216,7 @@ struct DesktopBackdropCompositor::Impl
     struct PanelVisual
     {
         RECT frame{};
+        std::uintptr_t ownerKey = 0;
         int cornerRadius = 0;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
@@ -352,11 +356,57 @@ struct DesktopBackdropCompositor::Impl
         SIZE size{};
         if (!QueryContentPlacement(parent, origin, size))
             return false;
-        SetWindowPos(backdropWindow, contentWindow, origin.x, origin.y,
-            size.cx, size.cy, SWP_NOACTIVATE |
-            (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 
-        return true;
+        POINT screenOrigin = origin;
+        SetLastError(ERROR_SUCCESS);
+        if (!popupMode &&
+            MapWindowPoints(
+                parent, nullptr, &screenOrigin, 1) == 0 &&
+            GetLastError() != ERROR_SUCCESS)
+        {
+            return false;
+        }
+        const RECT expectedRect{
+            screenOrigin.x,
+            screenOrigin.y,
+            screenOrigin.x + size.cx,
+            screenOrigin.y + size.cy,
+        };
+        RECT currentRect{};
+        const bool placementMatches =
+            GetWindowRect(backdropWindow, &currentRect) &&
+            EqualRect(&currentRect, &expectedRect) != FALSE;
+        const bool pairedZOrder =
+            GetWindow(backdropWindow, GW_HWNDPREV) ==
+                contentWindow;
+        const bool currentlyVisible =
+            (GetWindowLongPtrW(
+                backdropWindow, GWL_STYLE) & WS_VISIBLE) != 0;
+        const bool visibilityMatches =
+            currentlyVisible == visible;
+        if (placementMatches && pairedZOrder &&
+            visibilityMatches)
+        {
+            // Ordinary panel paints do not own HWND placement. In
+            // particular, a Dock demotion has already moved the content and
+            // glass pair in one DeferWindowPos transaction; issuing another
+            // helper-only SetWindowPos/SWP_SHOWWINDOW here would make DWM
+            // re-evaluate the BackdropBrush source for an extra frame.
+            return true;
+        }
+
+        UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        if (placementMatches)
+            flags |= SWP_NOMOVE | SWP_NOSIZE;
+        if (pairedZOrder)
+            flags |= SWP_NOZORDER;
+        if (!visibilityMatches)
+            flags |= visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+        return SetWindowPos(
+            backdropWindow,
+            pairedZOrder ? nullptr : contentWindow,
+            origin.x, origin.y, size.cx, size.cy,
+            flags) != FALSE;
     }
 
     bool SyncPanelWindowRegion()
@@ -370,18 +420,15 @@ struct DesktopBackdropCompositor::Impl
             return false;
         for (const PanelVisual& panel : panels)
         {
-            const int cornerDiameter = std::max(
-                2,
-                static_cast<int>(std::lround(
-                    static_cast<float>(
-                        panel.cornerRadius * 2))));
-            HRGN frameRegion = CreateRoundRectRgn(
+            // The CompositionRoundedRectangleGeometry below supplies the
+            // antialiased clip. Limit this helper HWND only to each panel's
+            // rectangular bounds so a binary GDI region cannot cut off the
+            // partially covered pixels along the rounded edge.
+            HRGN frameRegion = CreateRectRgn(
                 panel.frame.left,
                 panel.frame.top,
                 panel.frame.right + 1,
-                panel.frame.bottom + 1,
-                cornerDiameter,
-                cornerDiameter);
+                panel.frame.bottom + 1);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
@@ -527,8 +574,16 @@ struct DesktopBackdropCompositor::Impl
         available = false;
         panels.clear();
         blurFactories.clear();
-        if (target)
-            target.Root(nullptr);
+        try
+        {
+            if (target)
+                target.Root(nullptr);
+        }
+        catch (...)
+        {
+            // Destruction must continue even if the compositor target is
+            // already faulted; otherwise its helper HWND can remain visible.
+        }
         root = nullptr;
         target = nullptr;
         // The compositor and dispatcher queue are shared by every backdrop
@@ -570,6 +625,72 @@ bool DesktopBackdropCompositor::InitializePopup(
     return InitializeInternal(
         contentWindow, true, topmost,
         initiallyVisible);
+}
+
+void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
+    HWND contentWindow, HWND contentInsertAfter,
+    bool topmost)
+{
+    const bool contentValid =
+        contentWindow && IsWindow(contentWindow);
+    if (!contentValid)
+        return;
+
+    HWND backdropWindow = nullptr;
+    if (impl_ && impl_->popupMode &&
+        impl_->available &&
+        impl_->contentWindow == contentWindow &&
+        impl_->backdropWindow &&
+        IsWindow(impl_->backdropWindow))
+    {
+        backdropWindow = impl_->backdropWindow;
+        impl_->popupTopmost = topmost;
+    }
+
+    constexpr UINT contentFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER;
+    bool positionedTogether = false;
+    if (backdropWindow)
+    {
+        POINT origin{};
+        SIZE size{};
+        if (impl_->QueryContentPlacement(
+                nullptr, origin, size))
+        {
+            HDWP deferred = BeginDeferWindowPos(2);
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, contentWindow,
+                    contentInsertAfter,
+                    0, 0, 0, 0, contentFlags);
+            }
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, backdropWindow,
+                    contentWindow,
+                    origin.x, origin.y,
+                    size.cx, size.cy,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            }
+            if (deferred)
+            {
+                positionedTogether =
+                    EndDeferWindowPos(deferred) != FALSE;
+            }
+        }
+    }
+
+    if (!positionedTogether)
+    {
+        SetWindowPos(
+            contentWindow, contentInsertAfter,
+            0, 0, 0, 0, contentFlags);
+        if (backdropWindow)
+            impl_->SyncWindowPlacement();
+    }
 }
 
 void DesktopBackdropCompositor::SetPopupTopmost(
@@ -661,6 +782,11 @@ bool DesktopBackdropCompositor::InitializeInternal(
         impl_->contentWindow = nullptr;
         return false;
     }
+    const BOOL disableTransitions = TRUE;
+    DwmSetWindowAttribute(
+        impl_->backdropWindow,
+        DWMWA_TRANSITIONS_FORCEDISABLED,
+        &disableTransitions, sizeof(disableTransitions));
 
     try
     {
@@ -730,6 +856,132 @@ void DesktopBackdropCompositor::SetVisible(bool visible)
         ShowWindow(impl_->backdropWindow, SW_HIDE);
 }
 
+void DesktopBackdropCompositor::ShowPopupWindowPair(
+    HWND contentWindow)
+{
+    const bool contentValid =
+        contentWindow && IsWindow(contentWindow);
+    if (!impl_)
+    {
+        if (contentValid)
+            ShowWindow(contentWindow, SW_SHOWNOACTIVATE);
+        return;
+    }
+
+    HWND backdropWindow =
+        impl_->popupMode &&
+        impl_->backdropWindow &&
+        IsWindow(impl_->backdropWindow)
+            ? impl_->backdropWindow
+            : nullptr;
+    impl_->visible = true;
+    bool shownTogether = false;
+    if (contentValid && backdropWindow &&
+        impl_->contentWindow == contentWindow)
+    {
+        POINT origin{};
+        SIZE size{};
+        if (impl_->QueryContentPlacement(nullptr, origin, size))
+        {
+            // Establish the helper immediately behind the still-hidden
+            // content window, then reveal both HWNDs in one User32 batch.
+            SetWindowPos(
+                backdropWindow, contentWindow,
+                origin.x, origin.y, size.cx, size.cy,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            constexpr UINT showFlags =
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW;
+            HDWP deferred = BeginDeferWindowPos(2);
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, backdropWindow, nullptr,
+                    0, 0, 0, 0, showFlags);
+            }
+            if (deferred)
+            {
+                deferred = DeferWindowPos(
+                    deferred, contentWindow, nullptr,
+                    0, 0, 0, 0, showFlags);
+            }
+            if (deferred)
+                shownTogether = EndDeferWindowPos(deferred) != FALSE;
+        }
+    }
+
+    if (!shownTogether)
+    {
+        if (backdropWindow)
+            impl_->SyncWindowPlacement();
+        if (contentValid)
+            ShowWindow(contentWindow, SW_SHOWNOACTIVATE);
+    }
+}
+
+void DesktopBackdropCompositor::HidePopupWindowPair(
+    HWND contentWindow)
+{
+    const bool contentValid =
+        contentWindow && IsWindow(contentWindow);
+    if (!impl_)
+    {
+        if (contentValid)
+            ShowWindow(contentWindow, SW_HIDE);
+        return;
+    }
+
+    HWND backdropWindow =
+        impl_->popupMode &&
+        impl_->backdropWindow &&
+        IsWindow(impl_->backdropWindow)
+            ? impl_->backdropWindow
+            : nullptr;
+    bool hiddenTogether = false;
+    if (contentValid && backdropWindow &&
+        impl_->contentWindow == contentWindow)
+    {
+        constexpr UINT hideFlags =
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_HIDEWINDOW;
+        HDWP deferred = BeginDeferWindowPos(2);
+        if (deferred)
+        {
+            deferred = DeferWindowPos(
+                deferred, contentWindow, nullptr,
+                0, 0, 0, 0, hideFlags);
+        }
+        if (deferred)
+        {
+            deferred = DeferWindowPos(
+                deferred, backdropWindow, nullptr,
+                0, 0, 0, 0, hideFlags);
+        }
+        if (deferred)
+        {
+            hiddenTogether =
+                EndDeferWindowPos(deferred) != FALSE;
+        }
+    }
+
+    if (!hiddenTogether)
+    {
+        if (contentValid)
+            ShowWindow(contentWindow, SW_HIDE);
+        if (backdropWindow)
+            ShowWindow(backdropWindow, SW_HIDE);
+    }
+
+    if (impl_->popupMode)
+    {
+        impl_->visible = false;
+        // A scale animation temporarily expands the helper HWND region. Both
+        // popup-owned windows are hidden now, so restoring the cached panel
+        // region cannot expose an intermediate glass frame.
+        impl_->SetAnimationPathRegionExpanded(false);
+    }
+}
+
 void DesktopBackdropCompositor::SetVisualTransform(
     float scale, float opacity,
     float anchorX, float anchorY)
@@ -760,6 +1012,113 @@ void DesktopBackdropCompositor::SetVisualTransform(
     }
 }
 
+bool DesktopBackdropCompositor::StartVisualScaleAnimation(
+    float fromScale, float toScale, float opacity,
+    float anchorX, float anchorY,
+    std::uint32_t durationMilliseconds,
+    float normalizedStartSlope)
+{
+    return StartVisualTransformAnimation(
+        fromScale, toScale, opacity, opacity,
+        anchorX, anchorY, durationMilliseconds,
+        normalizedStartSlope);
+}
+
+bool DesktopBackdropCompositor::StartVisualTransformAnimation(
+    float fromScale, float toScale,
+    float fromOpacity, float toOpacity,
+    float anchorX, float anchorY,
+    std::uint32_t durationMilliseconds,
+    float normalizedStartSlope)
+{
+    if (!impl_ || !impl_->available || !impl_->root ||
+        !impl_->compositor || durationMilliseconds == 0 ||
+        !impl_->contentWindow || !IsWindow(impl_->contentWindow))
+        return false;
+
+    const float clampedFrom =
+        std::clamp(fromScale, 0.01f, 1.0f);
+    const float clampedTo =
+        std::clamp(toScale, 0.01f, 1.0f);
+    const float clampedFromOpacity =
+        std::clamp(fromOpacity, 0.0f, 1.0f);
+    const float clampedToOpacity =
+        std::clamp(toOpacity, 0.0f, 1.0f);
+    const float clampedStartSlope =
+        std::clamp(normalizedStartSlope, 0.0f, 2.0f);
+
+    HRESULT animationHr = E_UNEXPECTED;
+    try
+    {
+        const auto easing =
+            impl_->compositor.CreateCubicBezierEasingFunction(
+                wfn::float2{
+                    1.0f / 3.0f,
+                    clampedStartSlope / 3.0f },
+                wfn::float2{ 2.0f / 3.0f, 1.0f });
+        auto animation =
+            impl_->compositor.CreateVector3KeyFrameAnimation();
+        animation.Duration(wf::TimeSpan{
+            static_cast<std::int64_t>(
+                durationMilliseconds) * 10'000LL });
+        animation.InsertKeyFrame(
+            0.0f,
+            wfn::float3{ clampedFrom, clampedFrom, 1.0f });
+        animation.InsertKeyFrame(
+            1.0f,
+            wfn::float3{ clampedTo, clampedTo, 1.0f },
+            easing);
+        auto opacityAnimation =
+            impl_->compositor.CreateScalarKeyFrameAnimation();
+        opacityAnimation.Duration(wf::TimeSpan{
+            static_cast<std::int64_t>(
+                durationMilliseconds) * 10'000LL });
+        opacityAnimation.InsertKeyFrame(
+            0.0f, clampedFromOpacity);
+        opacityAnimation.InsertKeyFrame(
+            1.0f, clampedToOpacity, easing);
+
+        impl_->root.CenterPoint(wfn::float3{
+            anchorX, anchorY, 0.0f });
+        impl_->SetAnimationPathRegionExpanded(
+            std::min(clampedFrom, clampedTo) < 0.9995f);
+        // Keep final values as the base properties. Direct assignments also
+        // disconnect prior animations before a rapid reversal.
+        impl_->root.Scale(wfn::float3{
+            clampedTo, clampedTo, 1.0f });
+        impl_->root.Opacity(clampedToOpacity);
+        impl_->root.StartAnimation(L"Scale", animation);
+        impl_->root.StartAnimation(L"Opacity", opacityAnimation);
+        impl_->RequestCommit();
+        return true;
+    }
+    catch (...)
+    {
+        animationHr = winrt::to_hresult();
+    }
+
+    try
+    {
+        impl_->root.Scale(wfn::float3{
+            clampedFrom, clampedFrom, 1.0f });
+        impl_->root.Opacity(clampedFromOpacity);
+        impl_->SetAnimationPathRegionExpanded(
+            clampedFrom < 0.9995f);
+        impl_->RequestCommit();
+    }
+    catch (...)
+    {
+        impl_->SetError(
+            L"backdrop.restore_scale_animation",
+            winrt::to_hresult());
+        impl_->Reset();
+        return false;
+    }
+    impl_->lastError = FormatHresult(
+        L"backdrop.animate_scale", animationHr);
+    return false;
+}
+
 void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
 {
     if (!impl_->available)
@@ -773,8 +1132,9 @@ void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
     impl_->SyncWindowPlacement();
 }
 
-bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
-    float blurRadius)
+bool DesktopBackdropCompositor::AddPanel(
+    const RECT& frame, float cornerRadius,
+    float blurRadius, std::uintptr_t ownerKey)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -784,13 +1144,17 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
     try
     {
         auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(),
-            [&frame](const Impl::PanelVisual& panel) {
-                return EqualRect(&panel.frame, &frame) != FALSE;
+            [&frame, ownerKey](const Impl::PanelVisual& panel) {
+                return snowdesktop::desktop_backdrop_update_rules::
+                    PanelIdentityMatches(
+                        panel.ownerKey, panel.frame,
+                        ownerKey, frame);
             });
         if (existing == impl_->panels.end())
         {
             Impl::PanelVisual panel{};
             panel.frame = frame;
+            panel.ownerKey = ownerKey;
             panel.cornerRadius = cornerKey;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
@@ -801,6 +1165,12 @@ bool DesktopBackdropCompositor::AddPanel(const RECT& frame, float cornerRadius,
             impl_->panels.push_back(std::move(panel));
             existing = std::prev(impl_->panels.end());
         }
+
+        // A moving Dock keeps one SpriteVisual and changes its geometry in
+        // place. Treating every magnified RECT as a new identity leaves all
+        // earlier rectangles alive during partial frames, causing the native
+        // backdrop region and per-move work to grow without bound.
+        existing->frame = frame;
 
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {

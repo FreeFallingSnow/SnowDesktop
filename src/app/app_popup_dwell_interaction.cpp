@@ -3,18 +3,83 @@
 
 // Collection/file-group dwell activation and popup tab switching.
 
+bool DesktopApp::CanCurrentDragUseCollectionPopup() const
+{
+    const DragSourceList& sourceList =
+        dragSession_.SourceList();
+    return snowdesktop::dock_drop_rules::
+        CanUseCollectionPopup(
+            dragSession_.IsActive(),
+            dragDropController_.IsExternalDragActive(),
+            sourceList.Empty(),
+            sourceList.hasWidgets,
+            sourceList.hasCollectionGroupEntries,
+            sourceList.hasFileGroupEntries);
+}
+
+void DesktopApp::EnsureCollectionPopupDwellTimerArmed()
+{
+    if (collectionPopupDwellTimerArmed_ ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return;
+    collectionPopupDwellTimerArmed_ =
+        SetTimer(
+            hwnd_, kCollectionPopupDwellTimerId,
+            kCollectionPopupDwellIntervalMs, nullptr) != 0;
+}
+
+void DesktopApp::CancelCollectionPopupDwell()
+{
+    if (!collectionPopupDwellTimerArmed_ &&
+        popupDwellController_.IsIdle())
+        return;
+    popupDwellController_.Reset();
+    const bool wasArmed = collectionPopupDwellTimerArmed_;
+    collectionPopupDwellTimerArmed_ = false;
+    if (wasArmed && hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+}
+
+void DesktopApp::EnsureCollectionGroupTabDwellTimerArmed()
+{
+    if (collectionGroupTabDwellTimerArmed_ ||
+        !hwnd_ || !IsWindow(hwnd_))
+        return;
+    collectionGroupTabDwellTimerArmed_ =
+        SetTimer(
+            hwnd_, kCollectionGroupTabDwellTimerId,
+            kCollectionGroupTabDwellIntervalMs, nullptr) != 0;
+}
+
+void DesktopApp::CancelCollectionGroupTabDwell()
+{
+    if (!collectionGroupTabDwellTimerArmed_ &&
+        collectionGroupTabDwellWidgetIndex_ ==
+            static_cast<size_t>(-1) &&
+        collectionGroupTabDwellId_.empty() &&
+        collectionGroupTabDwellTick_ == 0)
+        return;
+    collectionGroupTabDwellWidgetIndex_ =
+        static_cast<size_t>(-1);
+    collectionGroupTabDwellId_.clear();
+    collectionGroupTabDwellTick_ = 0;
+    const bool wasArmed =
+        collectionGroupTabDwellTimerArmed_;
+    collectionGroupTabDwellTimerArmed_ = false;
+    if (wasArmed && hwnd_ && IsWindow(hwnd_))
+    {
+        KillTimer(
+            hwnd_, kCollectionGroupTabDwellTimerId);
+    }
+}
+
 void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
     lastMousePoint_ = point;
-    if (!dragSession_.IsActive() ||
-        SuppressDesktopWidgetDragTargets() ||
-        (dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries))
+    if (!CanCurrentDragUseCollectionPopup() ||
+        SuppressDesktopWidgetDragTargets())
     {
-        popupDwellController_.Reset();
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        CancelCollectionPopupDwell();
         return;
     }
 
@@ -23,14 +88,17 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     if (popupDwellController_.CancelIfOccluded(
             IsPointInsideOpenPopup(point)))
     {
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        CancelCollectionPopupDwell();
         return;
     }
 
     size_t hoveredCollection = static_cast<size_t>(-1);
-    if (DockContainer* dock = GetDockContainerAtPoint(point))
+    DockContainer* hoveredDock =
+        GetDockContainerAtPoint(point);
+    if (hoveredDock)
     {
-        if (DockEntryItem* entry = dock->EntryAtPoint(point);
+        if (DockEntryItem* entry =
+                hoveredDock->EntryAtPoint(point);
             entry && entry->GetEntryType() == DockEntryType::Collection)
         {
             hoveredCollection = FindWidgetIndexById(entry->GetReference());
@@ -62,21 +130,24 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
         break;
     }
 
+    const bool samePopupSource =
+        hoveredCollection == popupWidgetIndex_ &&
+        collectionPopupDockHost_ ==
+            FindPersistentDockHost(hoveredDock);
     if (hoveredCollection == static_cast<size_t>(-1) ||
-        hoveredCollection == popupWidgetIndex_)
+        samePopupSource)
     {
-        popupDwellController_.Reset();
-        KillTimer(hwnd_, kCollectionPopupDwellTimerId);
+        CancelCollectionPopupDwell();
         return;
     }
 
     DWORD now = GetTickCount();
-    if (popupDwellController_.Track(
-            hoveredCollection, now))
-    {
-        SetTimer(hwnd_, kCollectionPopupDwellTimerId, kCollectionPopupDwellIntervalMs, nullptr);
+    const bool candidateChanged =
+        popupDwellController_.Track(
+            hoveredCollection, now);
+    EnsureCollectionPopupDwellTimerArmed();
+    if (candidateChanged)
         return;
-    }
 
     TryOpenDwellCollectionPopup(now);
 }
@@ -88,27 +159,52 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
  */
 bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
 {
-    if (SuppressDesktopWidgetDragTargets())
+    if (!CanCurrentDragUseCollectionPopup() ||
+        SuppressDesktopWidgetDragTargets())
+    {
+        CancelCollectionPopupDwell();
         return false;
+    }
     // Recheck at timer delivery so a candidate captured before another popup
     // opened cannot replace it through the foreground popup.
     if (popupDwellController_.CancelIfOccluded(
             IsPointInsideOpenPopup(lastMousePoint_)))
+    {
+        CancelCollectionPopupDwell();
         return false;
+    }
     const size_t candidate =
         popupDwellController_.Candidate();
     if (candidate >= widgets_.size())
+    {
+        CancelCollectionPopupDwell();
         return false;
+    }
     if (desktopIconsHidden_ &&
         !widgets_[candidate].keepWhenDesktopHidden)
+    {
+        CancelCollectionPopupDwell();
         return false;
-    if (candidate == popupWidgetIndex_)
+    }
+    DockContainer* candidateDock =
+        GetDockContainerAtPoint(lastMousePoint_);
+    const bool samePopupSource =
+        candidate == popupWidgetIndex_ &&
+        collectionPopupDockHost_ ==
+            FindPersistentDockHost(candidateDock);
+    if (samePopupSource ||
+        widgets_[candidate].type !=
+            DesktopWidgetType::Collection)
+    {
+        CancelCollectionPopupDwell();
         return false;
+    }
     if (!popupDwellController_.IsReady(
             now, kCollectionPopupDwellDelayMs))
         return false;
 
     size_t widgetIndex = candidate;
+    CancelCollectionPopupDwell();
     OpenCollectionPopupAt(widgetIndex, lastMousePoint_);
     UpdateWindow(hwnd_);
     return true;
@@ -118,12 +214,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
     POINT point)
 {
     auto clearDwell = [&]() {
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
-        collectionGroupTabDwellTick_ = 0;
-        KillTimer(
-            hwnd_, kCollectionGroupTabDwellTimerId);
+        CancelCollectionGroupTabDwell();
     };
 
     const DragSourceList& sourceList =
@@ -225,12 +316,8 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
             std::move(hoveredId);
         collectionGroupTabDwellTick_ =
             GetTickCount();
-        SetTimer(
-            hwnd_,
-            kCollectionGroupTabDwellTimerId,
-            kCollectionGroupTabDwellIntervalMs,
-            nullptr);
     }
+    EnsureCollectionGroupTabDwellTimerArmed();
 }
 
 bool DesktopApp::TryActivateCollectionGroupTab(
@@ -239,17 +326,18 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     if (!dragSession_.IsActive() ||
         collectionGroupTabDwellWidgetIndex_ >=
             widgets_.size() ||
-        collectionGroupTabDwellId_.empty() ||
-        now - collectionGroupTabDwellTick_ <
+        collectionGroupTabDwellId_.empty())
+    {
+        CancelCollectionGroupTabDwell();
+        return false;
+    }
+    if (now - collectionGroupTabDwellTick_ <
             kCollectionGroupTabDwellDelayMs)
         return false;
 
     if (IsPointInsideOpenPopup(lastMousePoint_))
     {
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
-        collectionGroupTabDwellTick_ = 0;
+        CancelCollectionGroupTabDwell();
         return false;
     }
 
@@ -261,9 +349,7 @@ bool DesktopApp::TryActivateCollectionGroupTab(
         data.type == DesktopWidgetType::FileGroup;
     if (!collectionGroup && !fileGroup)
     {
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
+        CancelCollectionGroupTabDwell();
         return false;
     }
 
@@ -282,9 +368,7 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     }
     if (!groupedContainer)
     {
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
+        CancelCollectionGroupTabDwell();
         return false;
     }
 
@@ -357,21 +441,16 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     }
     if (!activated)
     {
-        collectionGroupTabDwellWidgetIndex_ =
-            static_cast<size_t>(-1);
-        collectionGroupTabDwellId_.clear();
+        CancelCollectionGroupTabDwell();
         return false;
     }
+    CancelCollectionGroupTabDwell();
     cachedDropPreview_ = {};
     cachedDropPreviewPoint_ = {-1, -1};
     dragSession_.InvalidateStaticScene();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, FALSE);
 
-    collectionGroupTabDwellWidgetIndex_ =
-        static_cast<size_t>(-1);
-    collectionGroupTabDwellId_.clear();
-    collectionGroupTabDwellTick_ = 0;
     int mods = 0;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
         mods |= MK_CONTROL;
@@ -724,11 +803,8 @@ ShowDockFolderPopupContextMenu(
     case kContextOpenCommand:
         for (const auto& path :
              GetSelectedFolderEntryPaths())
-            ShellExecuteW(
-                hwnd_, L"open",
-                path.c_str(),
-                nullptr, nullptr,
-                SW_SHOWNORMAL);
+            shellLaunchWorker_.Enqueue(
+                hwnd_, path);
         break;
     case kContextRevealLocationCommand:
         if (selectedPaths.size() == 1)

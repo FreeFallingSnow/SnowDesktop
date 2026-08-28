@@ -7,19 +7,42 @@
 
 #include "widget_package.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace snowdesktop::widget
 {
+struct SteamWorkshopInstallFailure
+{
+    std::string packageId;
+    std::string externalItemId;
+    PackageManifest manifest;
+    std::string error;
+};
+
 struct SteamWorkshopSubscriptionSnapshot
 {
     bool authoritative = false;
+    std::string activeSteamAccountId;
     std::vector<std::string> subscribedPublishedFileIds;
+    std::vector<std::string> explicitlyUnsubscribedPublishedFileIds;
     std::vector<PackageDetails> installable;
+    // Query workers resolve and validate these paths off the UI thread. Before
+    // reconciliation, packages that need applying are copied into the local
+    // package staging area so the UI thread never touches a slow/offline Steam
+    // library or starts SteamAPI merely to install an already-detected item.
+    std::unordered_map<std::string, std::filesystem::path> localArtifacts;
+    std::unordered_map<std::string, std::filesystem::path> preparedArtifacts;
+    std::vector<std::string> preparationErrors;
+    std::vector<SteamWorkshopInstallFailure> discoveryFailures;
     std::string error;
 };
+
+using SteamWorkshopSubscriptionHistory =
+    std::unordered_map<std::string, std::vector<std::string>>;
 
 enum class SteamWorkshopSyncActionKind
 {
@@ -35,6 +58,7 @@ struct SteamWorkshopSyncAction
     std::string packageId;
     std::string externalItemId;
     std::string version;
+    PackageManifest expectedManifest;
 };
 
 struct SteamWorkshopSyncPlan
@@ -49,6 +73,7 @@ struct SteamWorkshopSyncResult
     int updated = 0;
     int uninstalled = 0;
     std::vector<std::string> errors;
+    std::vector<SteamWorkshopInstallFailure> installFailures;
 
     bool Changed() const
     {
@@ -57,6 +82,12 @@ struct SteamWorkshopSyncResult
 };
 
 std::string SteamPublishedFileId(std::string_view externalItemId);
+std::unordered_map<std::string, std::string>
+BuildSteamWorkshopPackageAssociations(
+    const SteamWorkshopSubscriptionSnapshot& snapshot);
+void ResolveSteamWorkshopSubscriptionRemovals(
+    SteamWorkshopSubscriptionSnapshot& snapshot,
+    const SteamWorkshopSubscriptionHistory& history);
 SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     const std::vector<InstalledPackage>& installed,
     const SteamWorkshopSubscriptionSnapshot& snapshot);

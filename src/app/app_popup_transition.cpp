@@ -129,40 +129,120 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     POINT anchorPoint, const std::wstring& categoryId,
     bool closingStartedByCurrentPress)
 {
+    {
+        wchar_t message[320]{};
+        swprintf_s(
+            message,
+            L"Popup input trace: collection-open index=%llu generation=%u lua=%d currentCollection=%d mouseDown=%d capture=%p",
+            static_cast<unsigned long long>(widgetIndex),
+            floatingPopupMouseHookGeneration_,
+            luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1,
+            GetOpenPopupWidget() ? 1 : 0,
+            mouseDown_ ? 1 : 0,
+            GetCapture());
+        WriteDiagnosticLogEntry(message);
+    }
     if (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::Collection)
         return;
 
+    CancelCollectionPopupDwell();
+
     DismissActiveContextMenuForPopupTransition();
 
+    PersistentDockHost* requestedDockHost = nullptr;
+    if (DockContainer* requestedDock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* requestedItem =
+                requestedDock->EntryAtPoint(anchorPoint);
+            requestedItem &&
+            requestedItem->GetEntryType() ==
+                DockEntryType::Collection &&
+            requestedItem->GetReference() ==
+                widgets_[widgetIndex].id)
+        {
+            requestedDockHost =
+                FindPersistentDockHost(requestedDock);
+        }
+    }
     const bool samePopupSource =
         !dockFolderPopupOpen_ &&
-        popupWidgetIndex_ == widgetIndex;
+        popupWidgetIndex_ == widgetIndex &&
+        collectionPopupDockHost_ == requestedDockHost;
     switch (snowdesktop::popup_animation_rules::
         ResolveExistingSourceAction(
             samePopupSource,
             popupAnimation_.IsInteractive(),
-            closingStartedByCurrentPress))
+            closingStartedByCurrentPress &&
+                popupAnimation_.IsClosing(),
+            popupAnimation_.IsClosing()))
     {
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::CloseExisting:
+        pendingCollectionPopupOpen_.reset();
         CloseCollectionPopup();
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::KeepClosing:
         return;
     case snowdesktop::popup_animation_rules::
+        ExistingSourceAction::OpenAfterExistingCloses:
+        pendingCollectionPopupOpen_ =
+            PendingCollectionPopupOpenRequest{
+                widgets_[widgetIndex].id,
+                anchorPoint,
+                categoryId,
+            };
+        return;
+    case snowdesktop::popup_animation_rules::
         ExistingSourceAction::ReopenExisting:
+        pendingCollectionPopupOpen_.reset();
+        AdvanceFloatingPopupContentGeneration();
         StartCollectionPopupAnimation(true);
         InvalidateCollectionPopupAnimation(true);
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::OpenAtRequestedAnchor:
     default:
+        pendingCollectionPopupOpen_.reset();
         break;
     }
 
+    // The low-level outside-click notification is posted asynchronously.
+    // Bind it to the collection content that existed at button-down so the
+    // press which requested this popup cannot dismiss the newly published
+    // content after its release handler returns.
+    AdvanceFloatingPopupContentGeneration();
+
+    if (DockContainer* dock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* dockItem =
+                dock->EntryAtPoint(anchorPoint);
+            dockItem &&
+            dockItem->GetEntryType() ==
+                DockEntryType::Collection &&
+            dockItem->GetReference() ==
+                widgets_[widgetIndex].id)
+        {
+            POINT anchorScreen = anchorPoint;
+            if (hwnd_ && IsWindow(hwnd_))
+                ClientToScreen(hwnd_, &anchorScreen);
+            else
+            {
+                anchorScreen.x += virtualLeft_;
+                anchorScreen.y += virtualTop_;
+            }
+            EnsureFloatingDockVisibleForAssociatedSurface(
+                anchorScreen);
+        }
+    }
+
+    if (dockFolderPopupOpen_)
+        CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;
     dockFolderPopupContainer_.reset();
@@ -170,11 +250,12 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     dockFolderPopupMarqueeInitialSelection_.clear();
     dockFolderPopupSourceId_.clear();
     dockFolderPopupMappingWidgetId_.clear();
-    dockFolderPopupWidget_.folderEntries.clear();
+    ClearDockFolderPopupEntries();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
     popupAnchoredToDock_ = false;
+    collectionPopupDockHost_ = nullptr;
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_ = categoryId;
     popupPageId_ = widgets_[widgetIndex].gridCell.pageId;
@@ -213,6 +294,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                     dockItem->GetBounds(), anchorPoint);
                 popupDockPosition_ = dockSettings_.position;
                 popupAnchoredToDock_ = true;
+                collectionPopupDockHost_ =
+                    FindPersistentDockHost(dock);
                 switch (popupDockPosition_)
                 {
                 case DockPosition::Top:
@@ -239,18 +322,18 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
-    popupDwellController_.Reset();
     StartCollectionPopupAnimation();
-    if (floatingDockVisible_)
+    if (popupAnchoredToDock_)
     {
-        floatingDockContainer_ =
-            GetDockContainerAtPoint(anchorPoint);
-        if (!floatingDockContainer_)
-            floatingDockContainer_ =
-                SelectFloatingDockContainerForMonitor(
-                    floatingDockMonitor_);
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
+        PersistentDockHost* host =
+            collectionPopupDockHost_;
+        if (host &&
+            IsPersistentDockHostEffectivelyFloating(*host))
+        {
+            SelectPersistentDockHost(host);
+            UpdateFloatingDockWindowBounds(*host);
+            InvalidateFloatingDockWindow(*host, true);
+        }
     }
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))
@@ -259,6 +342,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         InflateRect(&dirty, 6, 6);
         InvalidateRect(hwnd_, &dirty, FALSE);
     }
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::ShowDockFolderPopupSortMenu(
@@ -442,10 +526,69 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
 
 
 
+bool DesktopApp::IsOpenDockFolderPopupDropTarget(
+    const Container* targetContainer,
+    const Item* targetItem) const
+{
+    const bool targetContainerIsPopup =
+        targetContainer &&
+        targetContainer == dockFolderPopupContainer_.get();
+    const bool targetItemContainerIsPopup =
+        targetItem &&
+        targetItem->GetContainer() ==
+            dockFolderPopupContainer_.get();
+
+    bool targetMatchesDockEntry = false;
+    if (const auto* dockTarget =
+            dynamic_cast<const DockEntryItem*>(targetItem))
+    {
+        const size_t entryIndex =
+            dockTarget->GetEntryIndex();
+        if (entryIndex < dockEntries_.size() &&
+            IsFolderDockEntry(dockEntries_[entryIndex]))
+        {
+            const DockEntry& entry =
+                dockEntries_[entryIndex];
+            const std::wstring sourceId =
+                std::to_wstring(
+                    static_cast<int>(entry.type)) +
+                L":" +
+                ToUpperInvariant(entry.reference);
+            targetMatchesDockEntry =
+                sourceId == dockFolderPopupSourceId_;
+        }
+    }
+
+    const std::wstring targetPath =
+        targetItem ? targetItem->GetPath() : L"";
+    const bool targetMatchesFolderPath =
+        !targetPath.empty() &&
+        !dockFolderPopupWidget_.sourceFolderPath.empty() &&
+        PathsEqualInsensitive(
+            targetPath,
+            dockFolderPopupWidget_.sourceFolderPath);
+
+    return snowdesktop::dock_folder_rules::
+        OpenPopupNeedsRefreshAfterDrop(
+            dockFolderPopupOpen_,
+            targetContainerIsPopup,
+            targetItemContainerIsPopup,
+            targetMatchesDockEntry,
+            targetMatchesFolderPath);
+}
+
 void DesktopApp::RefreshDockFolderPopup()
 {
+    if (shellFileOperationInFlight_ > 0)
+    {
+        shellDockFolderPopupRefreshPending_ = true;
+        return;
+    }
+    shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
+    CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
     for (auto& entry : dockFolderPopupWidget_.folderEntries)
@@ -472,6 +615,26 @@ void DesktopApp::RefreshDockFolderPopup()
                     source.folderSortAscending;
             dockFolderPopupWidget_.itemKeys =
                 source.itemKeys;
+            dockFolderPopupWidget_.listMode =
+                source.listMode;
+            dockFolderPopupWidget_.showDetails =
+                source.showDetails;
+            dockFolderPopupWidget_.detailShowModified =
+                source.detailShowModified;
+            dockFolderPopupWidget_.detailShowType =
+                source.detailShowType;
+            dockFolderPopupWidget_.detailShowSize =
+                source.detailShowSize;
+            dockFolderPopupWidget_.detailModifiedPosition =
+                source.detailModifiedPosition;
+            dockFolderPopupWidget_.detailTypePosition =
+                source.detailTypePosition;
+            dockFolderPopupWidget_.detailSizePosition =
+                source.detailSizePosition;
+            dockFolderPopupWidget_.contentSortColumn =
+                source.contentSortColumn;
+            dockFolderPopupWidget_.contentSortAscending =
+                source.contentSortAscending;
         }
         else
         {
@@ -483,9 +646,16 @@ void DesktopApp::RefreshDockFolderPopup()
     {
         EnumerateFolderMappingEntries(
             dockFolderPopupWidget_, true);
+        if (ApplyPendingFolderPlacements(
+                dockFolderPopupWidget_,
+                dockFolderPopupMappingWidgetId_,
+                dockFolderPopupSourceId_))
+        {
+            CommitDockFolderPopupStateToSource();
+        }
     }
     else
-        dockFolderPopupWidget_.folderEntries.clear();
+        ClearDockFolderPopupEntries();
     dockFolderPopupContainer_ =
         std::make_unique<FolderMapping>(
             &dockFolderPopupWidget_, this);
@@ -506,22 +676,14 @@ void DesktopApp::RefreshDockFolderPopupGeometry()
             dockFolderPopupWidget_,
             popupRect_));
     InvalidateDragStaticScene();
-    if (floatingDockVisible_)
-    {
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
-    }
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::RefreshOpenCollectionPopupGeometry()
 {
-    if (!floatingDockVisible_ ||
-        !floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_) ||
-        !popupAnchoredToDock_ ||
-        !GetOpenPopupWidget())
+    if (!GetOpenPopupWidget())
         return;
 
     if (dockFolderPopupOpen_)
@@ -542,8 +704,7 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
             widgets_[popupWidgetIndex_],
             popupRect_));
     InvalidateDragStaticScene();
-    UpdateFloatingDockWindowBounds();
-    InvalidateFloatingDockWindow(true);
+    UpdateFloatingPopupWindowBounds(true);
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -575,6 +736,26 @@ CommitDockFolderPopupStateToSource()
                     folderSortAscending;
             source.itemKeys =
                 dockFolderPopupWidget_.itemKeys;
+            source.listMode =
+                dockFolderPopupWidget_.listMode;
+            source.showDetails =
+                dockFolderPopupWidget_.showDetails;
+            source.detailShowModified =
+                dockFolderPopupWidget_.detailShowModified;
+            source.detailShowType =
+                dockFolderPopupWidget_.detailShowType;
+            source.detailShowSize =
+                dockFolderPopupWidget_.detailShowSize;
+            source.detailModifiedPosition =
+                dockFolderPopupWidget_.detailModifiedPosition;
+            source.detailTypePosition =
+                dockFolderPopupWidget_.detailTypePosition;
+            source.detailSizePosition =
+                dockFolderPopupWidget_.detailSizePosition;
+            source.contentSortColumn =
+                dockFolderPopupWidget_.contentSortColumn;
+            source.contentSortAscending =
+                dockFolderPopupWidget_.contentSortAscending;
             RefreshFolderMappingWidget(
                 sourceIndex);
             SaveLayoutSlots();
@@ -605,6 +786,20 @@ CommitDockFolderPopupStateToSource()
                 folderSortAscending;
         entry.folderItemKeys =
             dockFolderPopupWidget_.itemKeys;
+        entry.listMode =
+            dockFolderPopupWidget_.listMode;
+        entry.detailShowModified =
+            dockFolderPopupWidget_.detailShowModified;
+        entry.detailShowType =
+            dockFolderPopupWidget_.detailShowType;
+        entry.detailShowSize =
+            dockFolderPopupWidget_.detailShowSize;
+        entry.detailModifiedPosition =
+            dockFolderPopupWidget_.detailModifiedPosition;
+        entry.detailTypePosition =
+            dockFolderPopupWidget_.detailTypePosition;
+        entry.detailSizePosition =
+            dockFolderPopupWidget_.detailSizePosition;
         SaveLayoutSlots();
         return;
     }
@@ -650,6 +845,11 @@ void DesktopApp::SortDockFolderPopupContents(
             mode;
         dockFolderPopupWidget_.
             folderSortAscending = ascending;
+        dockFolderPopupWidget_.contentSortColumn =
+            snowdesktop::list_detail_rules::
+                FromLegacyFolderSortMode(mode);
+        dockFolderPopupWidget_.contentSortAscending =
+            ascending;
         snowdesktop::folder_sort_rules::
             StableSort(
                 dockFolderPopupWidget_.

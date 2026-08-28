@@ -285,6 +285,31 @@ struct DragSourceList
     bool Empty() const { return entries.empty(); }
 
     /**
+     * @brief 桌面放置是否直接以鼠标所在格为请求落点。
+     *
+     * Dock、外部来源和组条目在落桌面时没有可复用的桌面项目左上角，
+     * 必须按鼠标中心命中；普通桌面项目仍保留抓取点相对组原点的偏移。
+     */
+    bool UsesPointerDesktopPlacement() const
+    {
+        using Surface = snowdesktop::slot_contract::
+            SlotSurfaceKind;
+        return Empty() || !origin ||
+            SourceSurfaceKind() == Surface::Dock ||
+            hasCollectionGroupEntries ||
+            UsesFileGroupSourceInsertion() ||
+            (hasOriginWidget &&
+                originWidgetType ==
+                    DesktopWidgetType::CollectionGroup);
+    }
+
+    /** @brief 当前载荷是否能够交给桌面 Shell 图标处理。 */
+    bool SupportsDesktopShellHandoff() const
+    {
+        return !hasWidgets;
+    }
+
+    /**
      * @brief 是否应按文件组来源标签的插入语义处理。
      *
      * 除文件组自身的来源标签外，Dock 中的映射文件夹组件也会作为一个
@@ -457,6 +482,12 @@ struct DropPreviewList
     size_t insertIndex = 0;
     bool fileBacked = false;
     bool consumeDockSource = false;
+    // File-backed Dock drops first materialize a managed desktop entry, then
+    // pin that exact created path.  Keeping the intent in the preview lets the
+    // asynchronous completion commit the Dock entry without diffing a stale
+    // desktop-item snapshot.
+    bool pinMaterializedItemsToDock = false;
+    size_t dockInsertIndex = 0;
     std::vector<DropLanding> landings;
 
     bool Empty() const { return landings.empty(); }
@@ -489,6 +520,25 @@ struct PendingLandingEntry
 };
 
 /**
+ * @struct PendingFolderPlacement
+ * @brief 文件操作完成后需要恢复的文件夹成员插入位置。
+ *
+ * FolderMapping 和 Dock 文件夹弹窗不使用桌面 layoutKey。它们在目录
+ * 重新枚举后，通过操作前路径快照识别新增成员，再恢复拖放预览中的
+ * 插入边界。widgetId 标识持久化 FolderMapping；popupSourceId 标识没有
+ * 持久化组件的 Dock 文件夹入口。
+ */
+struct PendingFolderPlacement
+{
+    std::wstring widgetId;
+    std::wstring popupSourceId;
+    std::wstring sourceFolderPath;
+    size_t insertIndex = 0;
+    std::unordered_set<std::wstring> existingPaths;
+    std::vector<std::wstring> sourceNames;
+};
+
+/**
  * @struct PendingLandingCache
  * @brief 挂起的落地操作缓存
  *
@@ -507,6 +557,7 @@ struct PendingLandingEntry
 struct PendingLandingCache
 {
     std::vector<PendingLandingEntry> entries;
+    std::vector<PendingFolderPlacement> folderPlacements;
     std::unordered_set<std::wstring> existingDesktopKeys;
     bool active = false;
     DWORD tick = 0;
@@ -517,6 +568,7 @@ struct PendingLandingCache
     void Clear()
     {
         entries.clear();
+        folderPlacements.clear();
         existingDesktopKeys.clear();
         active = false;
         tick = 0;

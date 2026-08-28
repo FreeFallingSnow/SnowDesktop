@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "steam_app_identity.h"
 #include "steam_workshop_core.h"
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -66,6 +67,23 @@ std::wstring Utf8ToWide(std::string_view value)
         static_cast<int>(value.size()), result.data(), length) != length)
         return {};
     return result;
+}
+
+bool OpenUrl(std::string_view url)
+{
+    const std::wstring wide = Utf8ToWide(url);
+    if (wide.empty()) return false;
+    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", wide.c_str(),
+        nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(opened) > 32;
+}
+
+void OpenCommunityItem(std::uint64_t publishedFileId,
+    std::string_view webUrl)
+{
+    if (!OpenUrl(snowdesktop::steam_bridge::SteamCommunityItemClientUrl(
+            publishedFileId)))
+        OpenUrl(webUrl);
 }
 
 void WriteJsonString(std::ostream& output, std::string_view value)
@@ -115,12 +133,17 @@ void PrintUsage()
         << "MIT-licensed SnowDesktop/Steam process boundary\n\n"
         << "Usage:\n"
         << "  SnowDesktopSteamBridge.exe --version\n"
+        << "  SnowDesktopSteamBridge.exe configuration\n"
         << "  SnowDesktopSteamBridge.exe status\n"
         << "  SnowDesktopSteamBridge.exe workshop list-subscribed [--details]\n"
         << "  SnowDesktopSteamBridge.exe workshop list-published [--page N]\n"
         << "  SnowDesktopSteamBridge.exe workshop item-details --item ID\n"
         << "  SnowDesktopSteamBridge.exe workshop item-state --item ID\n"
         << "  SnowDesktopSteamBridge.exe workshop install-info --item ID\n"
+        << "  SnowDesktopSteamBridge.exe workshop subscribe --item ID"
+           " [--timeout-seconds N]\n"
+        << "  SnowDesktopSteamBridge.exe workshop unsubscribe --item ID"
+           " [--timeout-seconds N]\n"
         << "  SnowDesktopSteamBridge.exe workshop download --item ID"
            " [--high-priority] [--timeout-seconds N]\n"
         << "  SnowDesktopSteamBridge.exe workshop eula-status\n"
@@ -131,6 +154,21 @@ void PrintUsage()
            " [--change-note TEXT] [--timeout-seconds N] [--open-page]\n\n"
         << "All successful command output is JSON. Long-running download and"
            " publish commands emit JSON Lines progress events before the final result.\n";
+}
+
+int PrintConfiguration()
+{
+    std::cout << "{\"ok\":true,\"protocolVersion\":1,"
+                 "\"version\":";
+    WriteJsonString(std::cout, SNOWDESKTOP_VERSION);
+    std::cout << ",\"expectedAppId\":" <<
+        snowdesktop::steam_bridge::kSteamAppId
+              << ",\"windowsDepotId\":" <<
+        snowdesktop::steam_bridge::kSteamWindowsDepotId
+              << ",\"steamworksCompiled\":"
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
+              << "}\n";
+    return 0;
 }
 
 struct ParsedOptions
@@ -282,7 +320,29 @@ public:
         const ESteamAPIInitResult result = SteamAPI_InitEx(&message);
         initialized_ = result == k_ESteamAPIInitResult_OK;
         if (!initialized_)
+        {
+            errorCode_ = "steam_init_failed";
             error_ = message[0] ? message : "SteamAPI_InitEx failed";
+            return;
+        }
+        ISteamUtils* utils = SteamUtils();
+        if (!utils)
+        {
+            errorCode_ = "steam_interface_unavailable";
+            error_ = "ISteamUtils was unavailable after initialization";
+            SteamAPI_Shutdown();
+            initialized_ = false;
+            return;
+        }
+        appId_ = utils->GetAppID();
+        if (!snowdesktop::steam_bridge::IsExpectedSteamAppId(appId_))
+        {
+            errorCode_ = "steam_app_id_mismatch";
+            error_ = snowdesktop::steam_bridge::SteamAppIdMismatchMessage(
+                appId_);
+            SteamAPI_Shutdown();
+            initialized_ = false;
+        }
     }
 
     ~SteamApiSession()
@@ -294,10 +354,17 @@ public:
     SteamApiSession& operator=(const SteamApiSession&) = delete;
 
     [[nodiscard]] bool IsInitialized() const noexcept { return initialized_; }
+    [[nodiscard]] std::uint32_t AppId() const noexcept { return appId_; }
+    [[nodiscard]] const std::string& ErrorCode() const noexcept
+    {
+        return errorCode_;
+    }
     [[nodiscard]] const std::string& Error() const noexcept { return error_; }
 
 private:
     bool initialized_ = false;
+    std::uint32_t appId_ = 0;
+    std::string errorCode_ = "steam_init_failed";
     std::string error_;
 };
 
@@ -486,7 +553,7 @@ void WriteInstallInfo(std::ostream& output, const InstallInfo& info)
 
 int PrintInitializationFailure(const SteamApiSession& steam)
 {
-    return PrintError(kSteamInitializationFailed, "steam_init_failed",
+    return PrintError(kSteamInitializationFailed, steam.ErrorCode(),
         steam.Error().empty()
             ? "Launch the bridge through Steam and keep the Steam client running"
             : steam.Error());
@@ -504,7 +571,9 @@ int PrintStatus()
             "Steam interfaces were unavailable after initialization");
     std::cout << "{\"ok\":true,\"protocolVersion\":1,"
                  "\"steamworksCompiled\":true,\"initialized\":true,"
-                 "\"appId\":" << utils->GetAppID()
+                 "\"expectedAppId\":"
+              << snowdesktop::steam_bridge::kSteamAppId
+              << ",\"appId\":" << steam.AppId()
               << ",\"loggedOn\":" << (user->BLoggedOn() ? "true" : "false")
               << ",\"steamId\":\""
               << user->GetSteamID().ConvertToUint64() << "\"}\n";
@@ -547,9 +616,17 @@ int ListSubscribedWorkshopItems(const ParsedOptions& options)
         const PublishedFileId_t itemId = itemIds[index];
         const std::uint32_t state = ugc->GetItemState(itemId);
         const InstallInfo install = GetInstallInfo(*ugc, itemId);
+        std::uint64_t downloaded = 0;
+        std::uint64_t total = 0;
+        const bool hasDownload = ugc->GetItemDownloadInfo(
+            itemId, &downloaded, &total);
         std::cout << "{\"publishedFileId\":\""
                   << static_cast<std::uint64_t>(itemId) << "\",";
         WriteItemState(std::cout, state);
+        std::cout << ",\"downloadInfo\":{\"available\":"
+                  << (hasDownload ? "true" : "false")
+                  << ",\"downloaded\":" << downloaded
+                  << ",\"total\":" << total << '}';
         std::cout << ",\"installInfo\":{";
         WriteInstallInfo(std::cout, install);
         std::cout << '}';
@@ -763,10 +840,16 @@ int PrintWorkshopEulaStatus()
     if (!WaitForCall(ugc->GetWorkshopEULAStatus(), status,
         std::chrono::seconds(30), error))
         return PrintError(kSteamOperationFailed, "eula_query_failed", error);
+    if (status.m_eResult == k_EResultInvalidParam)
+    {
+        std::cout << "{\"ok\":true,\"available\":false}\n";
+        return 0;
+    }
     if (status.m_eResult != k_EResultOK)
         return PrintError(kSteamOperationFailed, "eula_query_failed",
             ResultName(status.m_eResult));
-    std::cout << "{\"ok\":true,\"appId\":" << status.m_nAppID
+    std::cout << "{\"ok\":true,\"available\":true,\"appId\":"
+              << status.m_nAppID
               << ",\"version\":" << status.m_unVersion
               << ",\"actionTime\":" << status.m_rtAction
               << ",\"accepted\":"
@@ -918,9 +1001,7 @@ int PublishWorkshopItemWithCore(const ParsedOptions& options)
     if (!result) return PrintError(error.exitCode, error.code, error.message);
     if (options.HasFlag(L"--open-page"))
     {
-        const auto url = Utf8ToWide(result->communityUrl);
-        ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr,
-            SW_SHOWNORMAL);
+        OpenCommunityItem(result->publishedFileId, result->communityUrl);
     }
     std::cout << "{\"ok\":true,\"publishedFileId\":\""
               << result->publishedFileId << "\",\"created\":"
@@ -930,6 +1011,28 @@ int PublishWorkshopItemWithCore(const ParsedOptions& options)
               << ",\"communityUrl\":";
     WriteJsonString(std::cout, result->communityUrl);
     std::cout << "}\n";
+    return 0;
+}
+
+int SetWorkshopSubscription(const ParsedOptions& options, bool subscribed)
+{
+    std::uint64_t publishedFileId = 0;
+    std::string message;
+    if (!ReadItemId(options, publishedFileId, message))
+        return PrintError(kInvalidArguments, "invalid_arguments", message);
+    const int timeout = ReadTimeoutSeconds(options, 30, 300, message);
+    if (timeout == 0)
+        return PrintError(kInvalidArguments, "invalid_arguments", message);
+
+    snowdesktop::steam_bridge::SteamWorkshopCore core;
+    snowdesktop::steam_bridge::CoreError error;
+    if (!core.SetSubscribed(publishedFileId, subscribed,
+            std::chrono::seconds(timeout), error))
+        return PrintError(error.exitCode, error.code, error.message);
+
+    std::cout << "{\"ok\":true,\"publishedFileId\":\""
+              << publishedFileId << "\",\"subscribed\":"
+              << (subscribed ? "true" : "false") << "}\n";
     return 0;
 }
 
@@ -972,6 +1075,14 @@ int RunWorkshopCommand(const std::wstring& command,
                 "invalid_arguments", error);
         return DownloadWorkshopItem(options);
     }
+    if (command == L"subscribe" || command == L"unsubscribe")
+    {
+        if (!ParseOptions(arguments,
+            { L"--item", L"--timeout-seconds" }, {}, {}, options, error))
+            return PrintError(kInvalidArguments,
+                "invalid_arguments", error);
+        return SetWorkshopSubscription(options, command == L"subscribe");
+    }
     if (command == L"eula-status")
     {
         if (!arguments.empty())
@@ -999,7 +1110,9 @@ int PrintStatus()
     std::cout
         << "{\"ok\":false,\"protocolVersion\":1,"
            "\"steamworksCompiled\":false,\"initialized\":false,"
-           "\"reason\":\"external Steamworks SDK was not configured\"}\n";
+           "\"expectedAppId\":"
+        << snowdesktop::steam_bridge::kSteamAppId << ','
+        << "\"reason\":\"external Steamworks SDK was not configured\"}\n";
     return kSteamworksUnavailable;
 }
 
@@ -1031,6 +1144,8 @@ int wmain(int argc, wchar_t* argv[])
         std::cout << SNOWDESKTOP_VERSION << '\n';
         return 0;
     }
+    if (command == L"configuration" && argc == 2)
+        return PrintConfiguration();
     if (command == L"status" && argc == 2)
         return PrintStatus();
     if (command == L"workshop" && argc >= 3)

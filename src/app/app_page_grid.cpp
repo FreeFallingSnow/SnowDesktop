@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../page_navigation_rules.h"
 #include "../widgets/collection_group_rules.h"
 #include "../widgets/guide_widget_rules.h"
 
@@ -69,6 +70,7 @@ void DesktopApp::AdjustGridRows(int delta)
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -101,6 +103,7 @@ void DesktopApp::AdjustGridColumns(int delta)
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -145,6 +148,7 @@ void DesktopApp::SetGridDimensions(int columns, int rows)
     RelayoutDisplacedItems();
     SaveLayoutSlots();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -245,28 +249,148 @@ void DesktopApp::ToggleLastPagePin(POINT screenPoint)
  * @brief 设置图标间距比例（0.5 ~ 2.0），并重新布局。
  * @param value 新的间距倍率。
  */
-void DesktopApp::SetIconSpacing(float value)
+void DesktopApp::PreviewIconSpacing(float value)
 {
-    const float clamped = std::clamp(
-        value,
-        snowdesktop::widget_spacing_rules::kMinimumScale,
-        snowdesktop::widget_spacing_rules::kMaximumScale);
-    const bool iconSpacingChanged = clamped != iconSpacingScale_;
-    if (!iconSpacingChanged &&
-        snowdesktop::widget_spacing_rules::ClampComponentScale(
-            componentSpacingScale_, GetMaximumComponentSpacingScale()) ==
-            componentSpacingScale_)
-        return;
+    const float clamped = snowdesktop::layout_spacing_rules::
+        ClampScale(value);
+    if (clamped == iconSpacingScale_) return;
     iconSpacingScale_ = clamped;
     for (auto& page : gridPages_)
         ApplyIconSpacingToPage(page);
-    componentSpacingScale_ = snowdesktop::widget_spacing_rules::
-        ClampComponentScale(
-            componentSpacingScale_, GetMaximumComponentSpacingScale());
+
+    // A spacing preview changes only geometry. Existing runtime desktop items
+    // point at these model records, so update their bounds directly. Widget
+    // item rectangles are cached by their containers, so invalidate those
+    // caches after updating widget bounds; the synchronous preview paint below
+    // then rebuilds drawing, hit testing, and mosaic geometry from one layout.
+    for (auto& item : items_)
+    {
+        if (item.name.empty()) continue;
+        item.bounds = GetGridRect(
+            gridPages_, item.gridCell, item.gridSpan);
+    }
+    for (auto& widget : widgets_)
+    {
+        if (IsGroupedWidget(widget)) continue;
+        const GridPage* page = FindGridPage(
+            gridPages_, widget.gridCell.pageId);
+        if (page)
+            widget.cellScale = GetGridPageCuScale(*page);
+        widget.bounds = GetGridRect(
+            gridPages_, widget.gridCell, widget.gridSpan);
+    }
+    for (auto& container : containers_)
+    {
+        if (auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(container.get()))
+            widgetContainer->InvalidateSlots();
+    }
+    iconSpacingPreviewActive_ = true;
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        // Settings-slider mouse moves can continuously occupy the queue, and
+        // WM_PAINT is generated only after higher-priority input drains. Paint
+        // and submit this preview synchronously so the retained DComp surface
+        // cannot alternate between the committed value and a delayed preview.
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+}
+
+void DesktopApp::SetIconSpacing(float value)
+{
+    const float clamped = snowdesktop::layout_spacing_rules::
+        ClampScale(value);
+    const bool changed = clamped != iconSpacingScale_;
+    if (!changed && !iconSpacingPreviewActive_) return;
+    iconSpacingScale_ = clamped;
+    for (auto& page : gridPages_)
+        ApplyIconSpacingToPage(page);
     ApplyDockWorkAreaReservation();
     LayoutItems();
+    RefreshIconBitmapResolution();
     SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    iconSpacingPreviewActive_ = false;
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+/**
+ * @brief 轻量预览页面级图标大小。
+ *
+ * 标题字号、两行标题高度、标题间距和本地标题宽度均保持不变；
+ * 仅页面视觉度量中的图标边长以及由它决定的项目总高度发生变化。
+ */
+void DesktopApp::PreviewItemIconSize(float value)
+{
+    const float clamped = std::clamp(value,
+        kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
+    if (clamped == itemIconSizeScale_) return;
+    itemIconSizeScale_ = clamped;
+    for (auto& page : gridPages_)
+        ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
+
+    for (auto& item : items_)
+    {
+        if (item.name.empty()) continue;
+        item.bounds = GetGridRect(
+            gridPages_, item.gridCell, item.gridSpan);
+    }
+    for (auto& widget : widgets_)
+    {
+        if (IsGroupedWidget(widget)) continue;
+        const GridPage* page = FindGridPage(
+            gridPages_, widget.gridCell.pageId);
+        if (page)
+            widget.cellScale = GetGridPageCuScale(*page);
+        widget.bounds = GetGridRect(
+            gridPages_, widget.gridCell, widget.gridSpan);
+    }
+    if (!SynchronizeDockContainerAreas())
+        LayoutItems();
+    else
+    {
+        for (auto& container : containers_)
+            container->InvalidateSlots();
+    }
+    itemIconSizePreviewActive_ = true;
+    InvalidateDragStaticScene();
+    if (floatingDockHostActive_)
+        UpdateFloatingDockWindowBounds();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+}
+
+/**
+ * @brief 提交页面级图标大小并刷新相关布局与位图分辨率。
+ */
+void DesktopApp::SetItemIconSize(float value)
+{
+    const float clamped = std::clamp(value,
+        kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
+    const bool changed = clamped != itemIconSizeScale_;
+    if (!changed && !itemIconSizePreviewActive_) return;
+    itemIconSizeScale_ = clamped;
+    for (auto& page : gridPages_)
+        ApplyIconSpacingToPage(page);
+    ApplyDockWorkAreaReservation();
+    LayoutItems();
+    RefreshIconBitmapResolution();
+    InvalidateDockContainers();
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    itemIconSizePreviewActive_ = false;
+    if (floatingDockHostActive_)
+        UpdateFloatingDockWindowBounds();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateDockRects(TRUE);
 }
 
 /**
@@ -275,78 +399,22 @@ void DesktopApp::SetIconSpacing(float value)
  */
 void DesktopApp::AdjustIconSpacing(float delta)
 {
-    const float newValue = std::clamp(
-        iconSpacingScale_ + delta,
-        snowdesktop::widget_spacing_rules::kMinimumScale,
-        snowdesktop::widget_spacing_rules::kMaximumScale);
+    const float newValue = snowdesktop::layout_spacing_rules::
+        ClampScale(iconSpacingScale_ + delta);
     SetIconSpacing(newValue);
-}
-
-void DesktopApp::SetComponentSpacing(float value)
-{
-    const float clamped = snowdesktop::widget_spacing_rules::
-        ClampComponentScale(value, GetMaximumComponentSpacingScale());
-    if (clamped == componentSpacingScale_)
-        return;
-
-    componentSpacingScale_ = clamped;
-    ApplyDockWorkAreaReservation();
-    LayoutItems();
-    SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-}
-
-float DesktopApp::GetMaximumComponentSpacingScale() const
-{
-    if (gridPages_.empty())
-        return snowdesktop::widget_spacing_rules::kMaximumComponentScale;
-
-    float maximum = snowdesktop::widget_spacing_rules::kMaximumComponentScale;
-    for (const auto& page : gridPages_)
-    {
-        maximum = std::min(maximum,
-            snowdesktop::widget_spacing_rules::MaximumComponentScaleForPage(
-                page.cellWidth, page.cellHeight, page.gapX, page.gapY,
-                CalculateWidgetCellScale(page.cellWidth, page.cellHeight)));
-    }
-
-    // Large Collection slots retain the complete desktop item cell, which
-    // already includes the icon-to-title gap and the whole title band. Only
-    // inter-row gaps may be compressed as the component frame moves inward.
-    for (const auto& widget : widgets_)
-    {
-        if (widget.type != DesktopWidgetType::Collection ||
-            widget.scrollContainerMode ||
-            (widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1))
-            continue;
-        const GridPage* page = nullptr;
-        for (const auto& candidate : gridPages_)
-            if (candidate.id == widget.gridCell.pageId)
-            {
-                page = &candidate;
-                break;
-            }
-        if (!page) continue;
-
-        const float cellScale = CalculateWidgetCellScale(
-            page->cellWidth, page->cellHeight);
-        const int rows = std::max(1, widget.gridSpan.rows);
-        maximum = std::min(maximum,
-            snowdesktop::widget_spacing_rules::
-                MaximumComponentScaleForCollectionRows(
-                    rows, page->gapY, cellScale));
-    }
-    return maximum;
 }
 
 /**
  * @brief 设置图标标题字号，重新创建文本格式并刷新。
  * @param value 新的字号。
  */
-void DesktopApp::SetItemFontSize(float value)
+void DesktopApp::SetItemFontSize(float valueCu)
 {
-    if (value == itemFontSize_) return;
-    itemFontSize_ = value;
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    const bool changed = valueCu != itemFontSizeCu_;
+    if (!changed && !itemFontSizePreviewActive_) return;
+    itemFontSizeCu_ = valueCu;
     RecreateItemTextFormat();
 
     // Dock icon geometry is derived from the grid icon size, which in turn
@@ -355,14 +423,84 @@ void DesktopApp::SetItemFontSize(float value)
     // the Dock keeps drawing its previous-size slots until another interaction.
     ApplyDockWorkAreaReservation();
     LayoutItems();
+    RefreshIconBitmapResolution();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
-    if (floatingDockVisible_)
+    itemFontSizePreviewActive_ = false;
+    if (floatingDockHostActive_)
         UpdateFloatingDockWindowBounds();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
     InvalidateDockRects(TRUE);
+}
+
+void DesktopApp::PreviewItemFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    if (valueCu == itemFontSizeCu_) return;
+    itemFontSizeCu_ = valueCu;
+    itemFontSizePreviewActive_ = true;
+    RecreateItemTextFormat();
+    ApplyDockWorkAreaReservation();
+    LayoutItems();
+    InvalidateDockContainers();
+    InvalidateDragStaticScene();
+    if (floatingDockHostActive_)
+        UpdateFloatingDockWindowBounds();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+    InvalidateDockRects(TRUE);
+}
+
+void DesktopApp::SetListItemFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    const bool changed = valueCu != listItemFontSizeCu_;
+    if (!changed && !listItemFontSizePreviewActive_) return;
+    listItemFontSizeCu_ = valueCu;
+    RecreateComponentListTextFormat();
+    for (auto& container : containers_)
+    {
+        if (auto* widget =
+                dynamic_cast<WidgetContainer*>(container.get()))
+            widget->InvalidateSlots();
+    }
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    listItemFontSizePreviewActive_ = false;
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateFloatingDockWindow(false);
+}
+
+void DesktopApp::PreviewListItemFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    if (valueCu == listItemFontSizeCu_) return;
+    listItemFontSizeCu_ = valueCu;
+    listItemFontSizePreviewActive_ = true;
+    RecreateComponentListTextFormat();
+    for (auto& container : containers_)
+    {
+        if (auto* widget = dynamic_cast<WidgetContainer*>(container.get()))
+            widget->InvalidateSlots();
+    }
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+    InvalidateFloatingDockWindow(false);
 }
 
 DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
@@ -372,13 +510,33 @@ DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
 
 void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
 {
-    if (weight == itemFontWeight_) return;
+    const bool changed = weight != itemFontWeight_;
+    if (!changed && !itemFontWeightPreviewActive_) return;
     itemFontWeight_ = weight;
     RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
+    itemFontWeightPreviewActive_ = false;
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateDockRects(TRUE);
+}
+
+void DesktopApp::PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight)
+{
+    if (weight == itemFontWeight_) return;
+    itemFontWeight_ = weight;
+    itemFontWeightPreviewActive_ = true;
+    RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
     InvalidateDockRects(TRUE);
 }
 
@@ -412,79 +570,35 @@ bool DesktopApp::ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShor
 
 void DesktopApp::SetIconBeautifyEnabled(bool enabled)
 {
-    SetIconBeautifySettings(enabled,
-        iconBeautifyMode_,
-        iconBeautifyBgOpacity_,
-        iconBeautifyGradientEnabled_,
-        iconBeautifyBgStartR_,
-        iconBeautifyBgStartG_,
-        iconBeautifyBgStartB_,
-        iconBeautifyBgEndR_,
-        iconBeautifyBgEndG_,
-        iconBeautifyBgEndB_,
-        iconBeautifyGradientDirection_);
+    auto settings = iconBeautifySettings_;
+    settings.enabled = enabled;
+    SetIconBeautifySettings(settings);
 }
 
-void DesktopApp::SetIconBeautifySettings(bool enabled,
-    int beautifyMode,
-    float backgroundOpacity,
-    bool gradientEnabled,
-    float backgroundStartR,
-    float backgroundStartG,
-    float backgroundStartB,
-    float backgroundEndR,
-    float backgroundEndG,
-    float backgroundEndB,
-    int gradientDirection)
+void DesktopApp::SetIconBeautifySettings(
+    const snowdesktop::IconBeautifySettings& rawSettings,
+    snowdesktop::IconBeautifyUpdateKind updateKind)
 {
-    beautifyMode = std::clamp(beautifyMode, 0, 1);
-    backgroundOpacity = std::clamp(backgroundOpacity, 0.0f, 1.0f);
-    backgroundStartR = std::clamp(backgroundStartR, 0.0f, 1.0f);
-    backgroundStartG = std::clamp(backgroundStartG, 0.0f, 1.0f);
-    backgroundStartB = std::clamp(backgroundStartB, 0.0f, 1.0f);
-    backgroundEndR = std::clamp(backgroundEndR, 0.0f, 1.0f);
-    backgroundEndG = std::clamp(backgroundEndG, 0.0f, 1.0f);
-    backgroundEndB = std::clamp(backgroundEndB, 0.0f, 1.0f);
-    gradientDirection = std::clamp(gradientDirection, 0, 3);
-
-    auto differs = [](float lhs, float rhs) {
-        return std::fabs(lhs - rhs) > 0.0005f;
-    };
-
-    if (enabled == iconBeautifyEnabled_ &&
-        beautifyMode == iconBeautifyMode_ &&
-        gradientEnabled == iconBeautifyGradientEnabled_ &&
-        !differs(backgroundOpacity, iconBeautifyBgOpacity_) &&
-        !differs(backgroundStartR, iconBeautifyBgStartR_) &&
-        !differs(backgroundStartG, iconBeautifyBgStartG_) &&
-        !differs(backgroundStartB, iconBeautifyBgStartB_) &&
-        !differs(backgroundEndR, iconBeautifyBgEndR_) &&
-        !differs(backgroundEndG, iconBeautifyBgEndG_) &&
-        !differs(backgroundEndB, iconBeautifyBgEndB_) &&
-        gradientDirection == iconBeautifyGradientDirection_)
+    const auto settings = snowdesktop::icon_beautify::Normalize(rawSettings);
+    if (snowdesktop::icon_beautify::Equal(settings, iconBeautifySettings_))
     {
+        if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)
+            SaveLayoutSlots();
         return;
     }
 
-    iconBeautifyEnabled_ = enabled;
-    iconBeautifyMode_ = beautifyMode;
-    iconBeautifyBgOpacity_ = backgroundOpacity;
-    iconBeautifyGradientEnabled_ = gradientEnabled;
-    iconBeautifyBgStartR_ = backgroundStartR;
-    iconBeautifyBgStartG_ = backgroundStartG;
-    iconBeautifyBgStartB_ = backgroundStartB;
-    iconBeautifyBgEndR_ = backgroundEndR;
-    iconBeautifyBgEndG_ = backgroundEndG;
-    iconBeautifyBgEndB_ = backgroundEndB;
-    iconBeautifyGradientDirection_ = gradientDirection;
+    iconBeautifySettings_ = settings;
 
     d2dIconCache_.clear();
+    ResetDemoIconLoader();
     placeholderIconCache_.clear();
     quickNavSysIconCache_.clear();
+    quickNavAppIconCache_.clear();
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     InvalidateDragStaticScene();
-    SaveLayoutSlots();
+    if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)
+        SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
     if (quickNavigationOpen_)
         InvalidateQuickNavigationWindow();
@@ -630,8 +744,8 @@ bool DesktopApp::PageHasContent(const std::wstring& pageId) const
     for (const auto& item : items_)
         if (!item.name.empty() && item.gridCell.pageId == pageId) return true;
     for (const auto& w : widgets_)
-        if (!IsGroupedWidget(w) &&
-            w.gridCell.pageId == pageId) return true;
+        if (w.gridCell.pageId == pageId &&
+            !IsGroupedWidget(w)) return true;
     return false;
 }
 
@@ -680,18 +794,12 @@ bool DesktopApp::RemoveRedundantGuideWidgets()
  */
 int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
 {
-    if (savedPageIds_.empty() || gridPages_.empty()) return fromOffset;
-    const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
-    int offset = fromOffset;
-    while (true)
-    {
-        offset += direction;
-        if (offset < 0 || offset > static_cast<int>(savedPageIds_.size()) - visiblePageCount)
-            return fromOffset;
-        size_t pageIdx = static_cast<size_t>((visiblePageCount - 1) + offset);
-        if (pageIdx < savedPageIds_.size() && PageHasContent(savedPageIds_[pageIdx]))
-            return offset;
-    }
+    return snowdesktop::page_navigation_rules::NextNonEmptyOffset(
+        fromOffset, direction,
+        savedPageIds_.size(), gridPages_.size(),
+        [this](std::size_t pageIndex) {
+            return PageHasContent(savedPageIds_[pageIndex]);
+        });
 }
 
 /**
@@ -700,17 +808,11 @@ int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
  */
 int DesktopApp::MaxPageOffset() const
 {
-    if (savedPageIds_.empty() || gridPages_.empty()) return 0;
-    const int visiblePageCount = static_cast<int>(std::min(savedPageIds_.size(), gridPages_.size()));
-    const int rawMax = std::max(0, static_cast<int>(savedPageIds_.size()) - visiblePageCount);
-    int result = 0;
-    for (int off = 1; off <= rawMax; ++off)
-    {
-        size_t pageIdx = static_cast<size_t>((visiblePageCount - 1) + off);
-        if (pageIdx < savedPageIds_.size() && PageHasContent(savedPageIds_[pageIdx]))
-            result = off;
-    }
-    return result;
+    return snowdesktop::page_navigation_rules::MaximumOffset(
+        savedPageIds_.size(), gridPages_.size(),
+        [this](std::size_t pageIndex) {
+            return PageHasContent(savedPageIds_[pageIndex]);
+        });
 }
 
 std::wstring DesktopApp::GetPageDisplayName(int index) const
@@ -725,6 +827,7 @@ void DesktopApp::NavigatePageOffset(int delta)
     pageOffset_ = NextNonEmptyOffset(pageOffset_, delta);
     ApplyPageMapping();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(lastMousePoint_);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
     RestoreDesktopWindowLayer();
 }
@@ -734,6 +837,7 @@ void DesktopApp::JumpToPageOffset(int targetOffset)
     pageOffset_ = std::clamp(targetOffset, 0, MaxPageOffset());
     ApplyPageMapping();
     LayoutItems();
+    RefreshPageNavHotEdgeHoverAt(lastMousePoint_);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
     RestoreDesktopWindowLayer();
 }
@@ -1074,6 +1178,7 @@ void DesktopApp::ApplyPageMapping()
     // geometry, so refresh the reservation before LayoutItems() rebuilds the
     // Dock containers from dockAreas_.
     ApplyDockWorkAreaReservation();
+    RefreshIconBitmapResolution();
 }
 
 /**

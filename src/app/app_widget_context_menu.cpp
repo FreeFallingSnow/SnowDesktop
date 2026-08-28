@@ -1,6 +1,11 @@
 #include "app.h"
+#include "../demo_collection_rules.h"
+#include "../collection_titleless_rules.h"
 #include "../menu_fluent_glyphs.h"
+#include "../right_click_contract.h"
 #include "../widgets/collection_group_rules.h"
+
+#include <functional>
 
 // Widget editor, group-tab and generic widget context menus.
 
@@ -145,9 +150,107 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
     }
 }
 
+void DesktopApp::ShowLuaLogicalSlotItemContextMenu(
+    POINT screenPoint, const std::wstring& widgetId,
+    const std::string& slotId, const std::string& itemId,
+    bool collection, size_t itemIndex, size_t itemCount,
+    bool canRemove)
+{
+    if (!widgetEngine_) return;
+    PrepareMenuIconsForPoint(screenPoint);
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+
+    if (collection)
+    {
+        AppendMenuW(menu,
+            MF_STRING | (itemIndex == 0 ? MF_GRAYED : 0),
+            kContextLuaLogicalSlotMovePrevious,
+            _LW("app.interact.logical_slot_move_previous"));
+        AppendMenuW(menu,
+            MF_STRING |
+                (itemIndex + 1 >= itemCount ? MF_GRAYED : 0),
+            kContextLuaLogicalSlotMoveNext,
+            _LW("app.interact.logical_slot_move_next"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        SetMenuItemIcon(menu, kContextLuaLogicalSlotMovePrevious,
+            L"\uE74A", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, kContextLuaLogicalSlotMoveNext,
+            L"\uE74B", MenuIconFont::FluentRegular);
+    }
+    AppendMenuW(menu, MF_STRING | (canRemove ? 0 : MF_GRAYED),
+        kContextLuaLogicalSlotRemove,
+        _LW("app.interact.logical_slot_remove"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING,
+        kContextWidgetOpenComponentPanel,
+        _LW("app.interact.open_component_panel"));
+    SetMenuItemIcon(menu, kContextLuaLogicalSlotRemove,
+        L"\uF34C", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextWidgetOpenComponentPanel,
+        snowdesktop::menu_fluent_glyphs::kChevronRight,
+        MenuIconFont::FluentRegular);
+
+    SetForegroundWindow(hwnd_);
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+
+    if (command == kContextWidgetOpenComponentPanel)
+    {
+        const size_t widgetIndex = FindWidgetIndexById(widgetId);
+        if (widgetIndex < widgets_.size())
+        {
+            ShowWidgetContextMenu(screenPoint, widgetIndex,
+                std::nullopt, std::nullopt, "desktop", true);
+        }
+        else
+        {
+            RestoreInteractionInputFocus();
+        }
+        return;
+    }
+
+    snowdesktop::widget_runtime::LogicalSlotChange change;
+    std::string error;
+    bool handled = false;
+    bool succeeded = true;
+    if (command == kContextLuaLogicalSlotMovePrevious && itemIndex > 0)
+    {
+        handled = true;
+        succeeded = widgetEngine_->RuntimeMoveHostLogicalSlotItem(
+            widgetId, slotId, itemId, itemIndex - 1, change, error);
+    }
+    else if (command == kContextLuaLogicalSlotMoveNext &&
+        itemIndex + 1 < itemCount)
+    {
+        handled = true;
+        succeeded = widgetEngine_->RuntimeMoveHostLogicalSlotItem(
+            widgetId, slotId, itemId, itemIndex + 1, change, error);
+    }
+    else if (command == kContextLuaLogicalSlotRemove && canRemove)
+    {
+        handled = true;
+        succeeded = widgetEngine_->RuntimeRemoveHostLogicalSlotItem(
+            widgetId, slotId, itemId, change, error);
+    }
+    if (handled && !succeeded)
+    {
+        widgetEngine_->RuntimeRecordError(widgetId,
+            "logical slot host menu: " + error);
+        MessageBeep(MB_ICONWARNING);
+    }
+    if (handled) InvalidateRect(hwnd_, nullptr, FALSE);
+    RestoreInteractionInputFocus();
+}
+
 void DesktopApp::ShowWidgetContextMenu(
     POINT screenPoint, size_t widgetIndex,
-    std::optional<RECT> dockRenameAnchor)
+    std::optional<RECT> dockRenameAnchor,
+    std::optional<POINT> luaLocalPoint,
+    std::string_view luaSurface,
+    bool forceComponentMenu)
 {
     if (widgetIndex >= widgets_.size()) return;
     PrepareMenuIconsForPoint(screenPoint);
@@ -171,6 +274,21 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     const DesktopWidget& effectiveSource =
         widgets_[effectiveSourceIndex];
+    size_t contentSortTargetIndex = effectiveSourceIndex;
+    if (widget.type == DesktopWidgetType::FileGroup)
+    {
+        for (const auto& container : containers_)
+        {
+            const auto* group = dynamic_cast<const FileGroup*>(
+                container.get());
+            if (group && group->GetWidgetData() == &widget &&
+                group->IsGroupSearchActive())
+            {
+                contentSortTargetIndex = widgetIndex;
+                break;
+            }
+        }
+    }
     const auto statusLabel = [](const wchar_t* title,
                                 const wchar_t* status) {
         std::wstring label = title;
@@ -190,6 +308,34 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.listMode
             ? _LW("app.interact.list_view_state")
             : _LW("app.interact.icon_view_state"));
+    HMENU detailsMenu = nullptr;
+    const auto appendDetailsMenu = [&]() {
+        detailsMenu = CreatePopupMenu();
+        if (!detailsMenu) return;
+        AppendMenuW(detailsMenu,
+            MF_STRING | MF_CHECKED | MF_GRAYED,
+            kContextWidgetDetailName,
+            _LW("widget.details.name"));
+        AppendMenuW(detailsMenu,
+            MF_STRING |
+                (widget.detailShowModified ? MF_CHECKED : 0),
+            kContextWidgetDetailModified,
+            _LW("widget.details.modified"));
+        AppendMenuW(detailsMenu,
+            MF_STRING |
+                (widget.detailShowType ? MF_CHECKED : 0),
+            kContextWidgetDetailType,
+            _LW("widget.details.type"));
+        AppendMenuW(detailsMenu,
+            MF_STRING |
+                (widget.detailShowSize ? MF_CHECKED : 0),
+            kContextWidgetDetailSize,
+            _LW("widget.details.size"));
+        AppendMenuW(menu,
+            MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
+            reinterpret_cast<UINT_PTR>(detailsMenu),
+            _LW("app.interact.show_details"));
+    };
     const std::wstring categoryVisibilityLabel = visibilityLabel(
         _LW("app.interact.file_categories"),
         widget.showFileCategories);
@@ -205,10 +351,48 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     std::vector<LuaWidgetMenuItem> luaMenuItems;
+    std::vector<LuaWidgetMenuItem> luaMenuActions;
+    auto luaMenuScope = snowdesktop::right_click_contract::
+        LuaWidgetMenuScope::Widget;
+    bool luaElementMenu = false;
+    HMENU demoCategoryMenu = nullptr;
 
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
+        if (generalSettings_.demoModeEnabled &&
+            demoIdentityAssetsAvailable_)
+        {
+            demoCategoryMenu = CreatePopupMenu();
+            if (demoCategoryMenu)
+            {
+                UINT flags = MF_STRING;
+                if (widget.demoIconCategory.empty()) flags |= MF_CHECKED;
+                AppendMenuW(demoCategoryMenu, flags,
+                    kContextWidgetDemoCategoryFirst,
+                    _LW("app.demo_category.auto"));
+                for (size_t index = 0;
+                    index < snowdesktop::demo_collection_rules::
+                        kCategories.size(); ++index)
+                {
+                    const auto& category =
+                        snowdesktop::demo_collection_rules::
+                            kCategories[index];
+                    flags = MF_STRING;
+                    if (snowdesktop::demo_collection_rules::
+                            EqualsAsciiInsensitive(
+                                widget.demoIconCategory, category.id))
+                        flags |= MF_CHECKED;
+                    AppendMenuW(demoCategoryMenu, flags,
+                        kContextWidgetDemoCategoryFirst + 1 +
+                            static_cast<UINT>(index),
+                        _LW(category.titleKey));
+                }
+                AppendMenuW(menu, MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(demoCategoryMenu),
+                    _LW("app.demo_category.icon_category"));
+            }
+        }
         const bool compactCollection =
             widget.gridSpan.columns <= 1 && widget.gridSpan.rows <= 1;
         if (!compactCollection)
@@ -220,6 +404,7 @@ void DesktopApp::ShowWidgetContextMenu(
             {
                 AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
                     displayTypeLabel.c_str());
+                appendDetailsMenu();
             }
         }
     }
@@ -228,6 +413,7 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleSearchBox,
             searchVisibilityLabel.c_str());
@@ -270,6 +456,7 @@ void DesktopApp::ShowWidgetContextMenu(
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -308,6 +495,7 @@ void DesktopApp::ShowWidgetContextMenu(
             autoCollectLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -326,6 +514,7 @@ void DesktopApp::ShowWidgetContextMenu(
             kContextPasteCommand, _LW("app.menu.paste"));
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
+        appendDetailsMenu();
         AppendMenuW(menu, MF_STRING,
             kContextWidgetToggleFileCategories,
             categoryVisibilityLabel.c_str());
@@ -339,50 +528,117 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     else if (widget.type == DesktopWidgetType::LuaScript)
     {
-        AppendMenuW(menu, MF_STRING, kContextWidgetEdit, _LW("app.interact.detailed_settings"));
         if (widgetEngine_)
         {
             widgetEngine_->EnsureWidgetLoaded(widget.id, widget.packageId);
-            luaMenuItems = widgetEngine_->GetContextMenu(widget.id);
-            for (size_t i = 0; i < luaMenuItems.size() &&
-                kContextLuaWidgetMenuFirst + static_cast<UINT>(i) <= kContextLuaWidgetMenuLast; ++i)
+            if (!forceComponentMenu)
             {
-                const auto& item = luaMenuItems[i];
-                if (item.separator)
+                POINT clientPoint = screenPoint;
+                ScreenToClient(hwnd_, &clientPoint);
+                const RECT frame = GetStandaloneWidgetFrameRect(widget);
+                const POINT localPoint = luaLocalPoint.value_or(POINT{
+                    clientPoint.x - frame.left,
+                    clientPoint.y - frame.top });
+                luaMenuItems = widgetEngine_->GetContextMenu(widget.id,
+                    localPoint.x, localPoint.y, luaSurface);
+                const bool hasElementAction =
+                    snowdesktop::right_click_contract::
+                        HasLuaElementMenuAction(luaMenuItems);
+                luaMenuScope = snowdesktop::right_click_contract::
+                    ResolveLuaWidgetMenuScope(hasElementAction);
+                luaElementMenu = luaMenuScope ==
+                    snowdesktop::right_click_contract::
+                        LuaWidgetMenuScope::Element;
+            }
+            if (!luaElementMenu)
+            {
+                AppendMenuW(menu, MF_STRING, kContextWidgetEdit,
+                    _LW("app.interact.detailed_settings"));
+            }
+            const auto setLuaItemIcon = [this, &widget](HMENU targetMenu,
+                                                 UINT_PTR itemId,
+                                                 const LuaWidgetMenuItem& item) {
+                if (!item.imageResourceName.empty())
                 {
-                    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-                    continue;
+                    const auto* source = widgetEngine_->
+                        RuntimeFindPackageImageSource(widget.id,
+                            item.imageResourceName);
+                    if (source)
+                        SetMenuItemImage(targetMenu, itemId, *source);
+                    return;
                 }
-                UINT flags = MF_STRING | (item.enabled ? 0 : MF_GRAYED);
-                AppendMenuW(menu, flags,
-                    kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
-                    Utf8ToWide(item.label).c_str());
-                if (!item.icon.empty())
+                if (item.icon.empty()) return;
+                const std::wstring icon = Utf8ToWide(item.icon);
+                const bool useFluent =
+                    _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
+                    _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
+                SetMenuItemIcon(targetMenu, itemId, icon.c_str(),
+                    useFluent
+                        ? MenuIconFont::FluentRegular
+                        : MenuIconFont::FontAwesomeSolid);
+            };
+            std::function<void(HMENU,
+                const std::vector<LuaWidgetMenuItem>&)> appendLuaMenuItems;
+            appendLuaMenuItems = [&](HMENU targetMenu,
+                                     const std::vector<LuaWidgetMenuItem>& items) {
+                for (const auto& item : items)
                 {
-                    std::wstring icon = Utf8ToWide(item.icon);
-                    const bool useFluent =
-                        _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
-                        _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
-                    SetMenuItemIcon(menu,
-                        kContextLuaWidgetMenuFirst + static_cast<UINT>(i),
-                        icon.c_str(),
-                        useFluent
-                            ? MenuIconFont::FluentRegular
-                            : MenuIconFont::FontAwesomeSolid);
+                    if (item.separator)
+                    {
+                        AppendMenuW(targetMenu, MF_SEPARATOR, 0, nullptr);
+                        continue;
+                    }
+                    UINT flags = (item.enabled ? 0 : MF_GRAYED) |
+                        (item.checked ? MF_CHECKED : 0);
+                    if (!item.children.empty())
+                    {
+                        HMENU submenu = CreatePopupMenu();
+                        if (!submenu) continue;
+                        appendLuaMenuItems(submenu, item.children);
+                        const UINT_PTR submenuId =
+                            reinterpret_cast<UINT_PTR>(submenu);
+                        if (!AppendMenuW(targetMenu, flags | MF_POPUP,
+                                submenuId,
+                                Utf8ToWide(item.label).c_str()))
+                        {
+                            DestroyMenu(submenu);
+                            continue;
+                        }
+                        setLuaItemIcon(targetMenu, submenuId, item);
+                        continue;
+                    }
+                    if (kContextLuaWidgetMenuFirst +
+                            static_cast<UINT>(luaMenuActions.size()) >
+                        kContextLuaWidgetMenuLast)
+                        continue;
+                    const UINT commandId = kContextLuaWidgetMenuFirst +
+                        static_cast<UINT>(luaMenuActions.size());
+                    if (!AppendMenuW(targetMenu, flags | MF_STRING,
+                            commandId, Utf8ToWide(item.label).c_str()))
+                        continue;
+                    setLuaItemIcon(targetMenu, commandId, item);
+                    luaMenuActions.push_back(item);
                 }
+            };
+            appendLuaMenuItems(menu, luaMenuItems);
+            if (snowdesktop::right_click_contract::
+                    ShouldOfferComponentPanelShortcut(luaMenuScope))
+            {
+                AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                AppendMenuW(menu, MF_STRING,
+                    kContextWidgetOpenComponentPanel,
+                    _LW("app.interact.open_component_panel"));
             }
         }
     }
 
-    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr, wDateMenu = nullptr;
+    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr,
+        wDateMenu = nullptr, wSizeMenu = nullptr;
     if ((widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::CollectionGroup ||
-        widget.type == DesktopWidgetType::FileGroup) &&
-        (widget.type == DesktopWidgetType::CollectionGroup ||
-            widget.type == DesktopWidgetType::FileGroup ||
-            !widget.dateHeaders))
+        widget.type == DesktopWidgetType::FileGroup))
     {
         sortMenu = CreatePopupMenu();
         if (sortMenu)
@@ -408,24 +664,21 @@ void DesktopApp::ShowWidgetContextMenu(
                 AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, _LW("app.menu.sort_desc"));
                 AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), _LW("app.interact.sort_date"));
             }
+            wSizeMenu = CreatePopupMenu();
+            if (wSizeMenu)
+            {
+                AppendMenuW(wSizeMenu, MF_STRING,
+                    kContextWidgetSortBySize, _LW("app.menu.sort_asc"));
+                AppendMenuW(wSizeMenu, MF_STRING,
+                    kContextWidgetSortBySizeDesc, _LW("app.menu.sort_desc"));
+                AppendMenuW(sortMenu, MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(wSizeMenu),
+                    _LW("app.menu.sort_size"));
+            }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
         }
     }
 
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    if (CanRenameWidget(widget))
-    {
-        AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    }
-    auto toggleLabel = [](const wchar_t* title, bool enabled) {
-        std::wstring label = title;
-        label += L"\t";
-        label += enabled
-            ? _LW("app.interact.on")
-            : _LW("app.interact.off");
-        return label;
-    };
     const UINT hoverToggleCommand = widget.showOnHoverOnly
         ? kContextWidgetShowOnHoverOff
         : kContextWidgetShowOnHoverOn;
@@ -435,25 +688,59 @@ void DesktopApp::ShowWidgetContextMenu(
     const UINT privacyToggleCommand = widget.privacyMode
         ? kContextWidgetPrivacyModeOff
         : kContextWidgetPrivacyModeOn;
-    const std::wstring hoverLabel = toggleLabel(
-        _LW("app.interact.hover_only"), widget.showOnHoverOnly);
-    const std::wstring keepLabel = toggleLabel(
-        _LW("app.interact.keep_when_hidden"),
-        widget.keepWhenDesktopHidden);
-    AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
-    AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
-    if (widget.type == DesktopWidgetType::Collection ||
-        widget.type == DesktopWidgetType::FileCategories ||
-        widget.type == DesktopWidgetType::FolderMapping ||
-        widget.type == DesktopWidgetType::CollectionGroup ||
-        widget.type == DesktopWidgetType::FileGroup)
+    const bool showLargeFolderTitlelessOption =
+        widget.type == DesktopWidgetType::Collection &&
+        snowdesktop::collection_titleless_rules::
+            IsLargeFolderMode(
+                widget.scrollContainerMode,
+                widget.gridSpan.columns,
+                widget.gridSpan.rows);
+    if (!luaElementMenu)
     {
-        const std::wstring privacyLabel = toggleLabel(
-            _LW("app.interact.privacy_mode"), widget.privacyMode);
-        AppendMenuW(menu, MF_STRING,
-            privacyToggleCommand, privacyLabel.c_str());
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        if (CanRenameWidget(widget))
+        {
+            AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        }
+        auto toggleLabel = [](const wchar_t* title, bool enabled) {
+            std::wstring label = title;
+            label += L"\t";
+            label += enabled
+                ? _LW("app.interact.on")
+                : _LW("app.interact.off");
+            return label;
+        };
+        const std::wstring hoverLabel = toggleLabel(
+            _LW("app.interact.hover_only"), widget.showOnHoverOnly);
+        const std::wstring keepLabel = toggleLabel(
+            _LW("app.interact.keep_when_hidden"),
+            widget.keepWhenDesktopHidden);
+        AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
+        AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
+        if (widget.type == DesktopWidgetType::Collection ||
+            widget.type == DesktopWidgetType::FileCategories ||
+            widget.type == DesktopWidgetType::FolderMapping ||
+            widget.type == DesktopWidgetType::CollectionGroup ||
+            widget.type == DesktopWidgetType::FileGroup)
+        {
+            const std::wstring privacyLabel = toggleLabel(
+                _LW("app.interact.privacy_mode"), widget.privacyMode);
+            AppendMenuW(menu, MF_STRING,
+                privacyToggleCommand, privacyLabel.c_str());
+        }
+        if (showLargeFolderTitlelessOption)
+        {
+            const std::wstring titlelessLabel = toggleLabel(
+                _LW("app.interact.large_folder_titleless"),
+                widget.largeFolderTitleless);
+            AppendMenuW(menu, MF_STRING,
+                kContextWidgetToggleLargeFolderTitleless,
+                titlelessLabel.c_str());
+        }
+        AppendMenuW(menu, MF_STRING, kContextWidgetDelete,
+            _LW("app.interact.delete_widget"));
     }
-    AppendMenuW(menu, MF_STRING, kContextWidgetDelete, _LW("app.interact.delete_widget"));
 
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,
@@ -462,6 +749,9 @@ void DesktopApp::ShowWidgetContextMenu(
         snowdesktop::menu_fluent_glyphs::kAutoCollect);
     setFluentIcon(menu, kContextWidgetToggleListMode,
         snowdesktop::menu_fluent_glyphs::kContentLayout);
+    if (detailsMenu)
+        setFluentIcon(menu,
+            reinterpret_cast<UINT_PTR>(detailsMenu), L"\uF168");
     setFluentIcon(menu, kContextWidgetToggleDateGroup,
         snowdesktop::menu_fluent_glyphs::kDateHeader);
     setFluentIcon(menu, kContextWidgetOpenFolder, L"\uF42E");
@@ -474,6 +764,8 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions);
     setFluentIcon(menu, kContextWidgetEdit, L"\uF6A9");
+    setFluentIcon(menu, kContextWidgetOpenComponentPanel,
+        snowdesktop::menu_fluent_glyphs::kChevronRight);
     setFluentIcon(menu, kContextWidgetRename, L"\U000F0A39");
     setFluentIcon(menu, kContextWidgetDelete, L"\uF34C");
     SetMenuItemQuickAction(menu, kContextWidgetEdit);
@@ -491,6 +783,12 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         setFluentIcon(menu, privacyToggleCommand,
             widget.privacyMode ? L"\uE78F" : L"\uE795");
+    }
+    if (showLargeFolderTitlelessOption)
+    {
+        setFluentIcon(menu,
+            kContextWidgetToggleLargeFolderTitleless,
+            snowdesktop::menu_fluent_glyphs::kCompactGrid);
     }
     if (sortMenu)
     {
@@ -532,10 +830,25 @@ void DesktopApp::ShowWidgetContextMenu(
                 kContextWidgetSortByDateDesc,
                 snowdesktop::menu_fluent_glyphs::kSortDateDescending);
         }
+        if (wSizeMenu)
+        {
+            setFluentIcon(sortMenu,
+                reinterpret_cast<UINT_PTR>(wSizeMenu),
+                snowdesktop::menu_fluent_glyphs::kSort);
+            setFluentIcon(wSizeMenu,
+                kContextWidgetSortBySize,
+                snowdesktop::menu_fluent_glyphs::kSortNameAscending);
+            setFluentIcon(wSizeMenu,
+                kContextWidgetSortBySizeDesc,
+                snowdesktop::menu_fluent_glyphs::kSortNameDescending);
+        }
     }
     if (widget.type == DesktopWidgetType::Collection)
         setFluentIcon(menu, kContextWidgetToggleCollectionMode,
             snowdesktop::menu_fluent_glyphs::kCollection);
+    if (demoCategoryMenu)
+        setFluentIcon(menu,
+            reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
     SetForegroundWindow(hwnd_);
     UINT command = ShowModernMenu(
@@ -543,18 +856,101 @@ void DesktopApp::ShowWidgetContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
 
+    if (command == kContextWidgetOpenComponentPanel && luaElementMenu)
+    {
+        RestoreDesktopWindowLayer();
+        ShowWidgetContextMenu(screenPoint, widgetIndex,
+            dockRenameAnchor, std::nullopt, luaSurface, true);
+        return;
+    }
+
     if (command >= kContextLuaWidgetMenuFirst && command <= kContextLuaWidgetMenuLast)
     {
+        // Finish restoring the desktop menu owner before dispatching the Lua
+        // action. The action may synchronously open another interaction
+        // surface (for example the logical-slot picker), which must keep the
+        // focus it establishes.
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
         size_t itemIndex = static_cast<size_t>(command - kContextLuaWidgetMenuFirst);
-        if (itemIndex < luaMenuItems.size() && widgetEngine_)
+        if (itemIndex < luaMenuActions.size() && widgetEngine_)
         {
-            widgetEngine_->InvokeMenu(widgets_[widgetIndex].id, luaMenuItems[itemIndex].id);
+            widgetEngine_->InvokeMenu(
+                widgets_[widgetIndex].id, luaMenuActions[itemIndex]);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        return;
+    }
+
+    if (command >= kContextWidgetDemoCategoryFirst &&
+        command <= kContextWidgetDemoCategoryLast)
+    {
+        if (command == kContextWidgetDemoCategoryFirst)
+        {
+            widgets_[widgetIndex].demoIconCategory.clear();
+        }
+        else
+        {
+            const size_t categoryIndex = static_cast<size_t>(
+                command - kContextWidgetDemoCategoryFirst - 1);
+            if (categoryIndex < snowdesktop::demo_collection_rules::
+                    kCategories.size())
+            {
+                widgets_[widgetIndex].demoIconCategory =
+                    snowdesktop::demo_collection_rules::
+                        kCategories[categoryIndex].id;
+            }
+        }
+        demoCollectionIdentityCache_.clear();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        InvalidateFloatingDockWindow(false);
         RestoreDesktopWindowLayer();
         RestoreInteractionInputFocus();
         return;
     }
+
+    const auto refreshOpenPopupDisplay = [&]() {
+        const DesktopWidget& source =
+            widgets_[widgetIndex];
+        if (dockFolderPopupOpen_ &&
+            dockFolderPopupMappingWidgetId_ ==
+                source.id)
+        {
+            dockFolderPopupWidget_.listMode =
+                source.listMode;
+            dockFolderPopupWidget_.showDetails =
+                source.showDetails;
+            dockFolderPopupWidget_.detailShowModified =
+                source.detailShowModified;
+            dockFolderPopupWidget_.detailShowType =
+                source.detailShowType;
+            dockFolderPopupWidget_.detailShowSize =
+                source.detailShowSize;
+            dockFolderPopupWidget_.detailModifiedPosition =
+                source.detailModifiedPosition;
+            dockFolderPopupWidget_.detailTypePosition =
+                source.detailTypePosition;
+            dockFolderPopupWidget_.detailSizePosition =
+                source.detailSizePosition;
+            dockFolderPopupWidget_.contentSortColumn =
+                source.contentSortColumn;
+            dockFolderPopupWidget_.contentSortAscending =
+                source.contentSortAscending;
+            popupScrollOffset_ = 0;
+            if (dockFolderPopupContainer_)
+                dockFolderPopupContainer_->
+                    InvalidateSlots();
+            RefreshDockFolderPopupGeometry();
+            return;
+        }
+        if (!dockFolderPopupOpen_ &&
+            popupWidgetIndex_ == widgetIndex)
+        {
+            popupScrollOffset_ = 0;
+            RefreshOpenCollectionPopupGeometry();
+        }
+    };
 
     bool needsDesktopFocus = true;
     switch (command)
@@ -571,9 +967,8 @@ void DesktopApp::ShowWidgetContextMenu(
         if (effectiveSource.type ==
                 DesktopWidgetType::FolderMapping &&
             !effectiveSource.sourceFolderPath.empty())
-            ShellExecuteW(hwnd_, L"open",
-                effectiveSource.sourceFolderPath.c_str(),
-                nullptr, nullptr, SW_SHOWNORMAL);
+            shellLaunchWorker_.Enqueue(
+                hwnd_, effectiveSource.sourceFolderPath);
         break;
     case kContextWidgetToggleListMode:
         widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
@@ -591,8 +986,86 @@ void DesktopApp::ShowWidgetContextMenu(
             }
         }
         SaveLayoutSlots();
+        refreshOpenPopupDisplay();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
+    case kContextWidgetDetailModified:
+    case kContextWidgetDetailType:
+    case kContextWidgetDetailSize:
+    {
+        if (!widgets_[widgetIndex].listMode) break;
+        auto& detailWidget = widgets_[widgetIndex];
+        auto column = snowdesktop::list_detail_rules::Column::Modified;
+        bool enabling = false;
+        if (command == kContextWidgetDetailModified)
+        {
+            enabling = !detailWidget.detailShowModified;
+            detailWidget.detailShowModified = enabling;
+        }
+        else if (command == kContextWidgetDetailType)
+        {
+            column = snowdesktop::list_detail_rules::Column::Type;
+            enabling = !detailWidget.detailShowType;
+            detailWidget.detailShowType = enabling;
+        }
+        else
+        {
+            column = snowdesktop::list_detail_rules::Column::Size;
+            enabling = !detailWidget.detailShowSize;
+            detailWidget.detailShowSize = enabling;
+        }
+        if (enabling)
+        {
+            const snowdesktop::list_detail_rules::DividerPositions positions{
+                detailWidget.detailModifiedPosition,
+                detailWidget.detailTypePosition,
+                detailWidget.detailSizePosition };
+            const float adjusted = snowdesktop::list_detail_rules::
+                ClampDraggedPosition(
+                    column,
+                    column == snowdesktop::list_detail_rules::Column::Modified
+                        ? detailWidget.detailModifiedPosition
+                        : column == snowdesktop::list_detail_rules::Column::Type
+                            ? detailWidget.detailTypePosition
+                            : detailWidget.detailSizePosition,
+                    detailWidget.detailShowModified,
+                    detailWidget.detailShowType,
+                    detailWidget.detailShowSize,
+                    positions);
+            if (column == snowdesktop::list_detail_rules::Column::Modified)
+                detailWidget.detailModifiedPosition = adjusted;
+            else if (column == snowdesktop::list_detail_rules::Column::Type)
+                detailWidget.detailTypePosition = adjusted;
+            else
+                detailWidget.detailSizePosition = adjusted;
+        }
+        detailWidget.showDetails =
+            snowdesktop::list_detail_rules::HasMetadataColumns(
+                detailWidget.detailShowModified,
+                detailWidget.detailShowType,
+                detailWidget.detailShowSize);
+        detailWidget.scrollOffset = 0;
+        for (auto& container : containers_)
+        {
+            auto* widgetContainer =
+                dynamic_cast<WidgetContainer*>(container.get());
+            if (widgetContainer &&
+                widgetContainer->GetWidgetData() ==
+                    &widgets_[widgetIndex])
+            {
+                if (auto* group =
+                        dynamic_cast<FileGroup*>(widgetContainer))
+                    group->InvalidateHostedView();
+                else
+                    widgetContainer->InvalidateSlots();
+                break;
+            }
+        }
+        SaveLayoutSlots();
+        refreshOpenPopupDisplay();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    }
     case kContextWidgetToggleAutoCollect:
         if (effectiveSourceIndex >= widgets_.size() ||
             widgets_[effectiveSourceIndex].type !=
@@ -867,22 +1340,28 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextWidgetSortByName:
-        SortWidgetContents(effectiveSourceIndex, 0, true);
+        SortWidgetContents(contentSortTargetIndex, 0, true);
         break;
     case kContextWidgetSortByNameDesc:
-        SortWidgetContents(effectiveSourceIndex, 0, false);
+        SortWidgetContents(contentSortTargetIndex, 0, false);
         break;
     case kContextWidgetSortByType:
-        SortWidgetContents(effectiveSourceIndex, 1, true);
+        SortWidgetContents(contentSortTargetIndex, 1, true);
         break;
     case kContextWidgetSortByTypeDesc:
-        SortWidgetContents(effectiveSourceIndex, 1, false);
+        SortWidgetContents(contentSortTargetIndex, 1, false);
         break;
     case kContextWidgetSortByDate:
-        SortWidgetContents(effectiveSourceIndex, 2, true);
+        SortWidgetContents(contentSortTargetIndex, 2, true);
         break;
     case kContextWidgetSortByDateDesc:
-        SortWidgetContents(effectiveSourceIndex, 2, false);
+        SortWidgetContents(contentSortTargetIndex, 2, false);
+        break;
+    case kContextWidgetSortBySize:
+        SortWidgetContents(contentSortTargetIndex, 3, true);
+        break;
+    case kContextWidgetSortBySizeDesc:
+        SortWidgetContents(contentSortTargetIndex, 3, false);
         break;
     case kContextWidgetShowOnHoverOn:
         widgets_[widgetIndex].showOnHoverOnly = true;
@@ -913,6 +1392,22 @@ void DesktopApp::ShowWidgetContextMenu(
         widgets_[widgetIndex].privacyMode = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleLargeFolderTitleless:
+        if (widgets_[widgetIndex].type ==
+            DesktopWidgetType::Collection)
+        {
+            widgets_[widgetIndex].largeFolderTitleless =
+                !widgets_[widgetIndex].largeFolderTitleless;
+            for (auto& c : containers_)
+            {
+                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
+                if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
+                { wc->InvalidateSlots(); break; }
+            }
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
         break;
     case kContextWidgetToggleCollectionMode:
         widgets_[widgetIndex].scrollContainerMode =

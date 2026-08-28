@@ -101,7 +101,11 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 }
 
 void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
-    bool drawText, bool quickNavLayout)
+    bool drawText, bool quickNavLayout,
+    const DesktopWidget* demoCollection,
+    bool iconOnlyHighlight,
+    bool centerIconVertically,
+    int forcedIconSize)
 {
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
@@ -113,12 +117,27 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     const float dragOpacity = dragged ? 0.6f : 1.0f;
     const float alpha = dragOpacity * cutOpacity;
 
+    RECT iconRect = forcedIconSize > 0 && !quickNavLayout
+        ? snowdesktop::ResolveCenteredIconRect(
+            rect, forcedIconSize)
+        : (quickNavLayout
+            ? app_->GetQuickNavItemIconRect(rect)
+            : app_->GetItemIconRect(rect));
+    if (forcedIconSize <= 0 &&
+        centerIconVertically && !quickNavLayout)
+        iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
+            rect, iconRect);
+    const RECT highlightRect = iconOnlyHighlight && !quickNavLayout
+        ? snowdesktop::ResolveIconOnlyHighlightRect(
+            rect, iconRect, app_->GetItemLayoutScale(rect))
+        : rect;
+
     if (hovered && !selected)
     {
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
-        app_->DrawD2DRoundedRectangle(context, rect,
+        app_->DrawD2DRoundedRectangle(context, highlightRect,
             radius,
             lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f * alpha)
                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
@@ -126,13 +145,20 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
     }
 
-    RECT iconRect = quickNavLayout
-        ? app_->GetQuickNavItemIconRect(rect)
-        : app_->GetItemIconRect(rect);
+    const bool useDemoIdentity = demoCollection
+        ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
+        : app_->ShouldUseDemoIdentity(*item_);
+    const std::wstring_view demoIdentity = item_->layoutKey.empty()
+        ? std::wstring_view(item_->parsingName)
+        : std::wstring_view(item_->layoutKey);
 
     if (selected && !dragged)
     {
-        RECT sel = quickNavLayout ? rect : app_->GetItemSelectionRect(rect, true);
+        RECT sel = iconOnlyHighlight
+            ? highlightRect
+            : (quickNavLayout
+                ? rect
+                : app_->GetItemSelectionRect(rect, true));
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
@@ -144,19 +170,26 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
-    if (item_->iconState == IconState::Loading)
+    if (useDemoIdentity)
+    {
+        if (demoCollection)
+            app_->DrawDemoCollectionIdentityIcon(
+                context, *demoCollection, demoIdentity, iconRect, alpha);
+        else
+            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
+    }
+    else if (item_->iconState == IconState::Loading)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
     }
     else
     {
-        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, item_->iconBitmap);
+        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(
+            context, item_->iconBitmap,
+            app_->ShouldBeautifyIconBitmap(item_->iconIsMediaThumbnail));
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(
-                static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            app_->DrawIconBitmap(context, bmp, iconRect, alpha);
         }
         else
         {
@@ -164,12 +197,35 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         }
     }
 
-    if (app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
+    if (!useDemoIdentity &&
+        app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
         item_->iconState != IconState::Loading)
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged && drawText)
-        app_->DrawItemText(context, rect, item_->name, selected, alpha, lightTheme);
+        DrawTitle(context, rect, selected, alpha, lightTheme, demoCollection);
+}
+
+void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
+    bool selected, float opacity, bool lightTheme,
+    const DesktopWidget* demoCollection)
+{
+    if (!app_ || !item_ || !context) return;
+    const bool useDemoIdentity = demoCollection
+        ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
+        : app_->ShouldUseDemoIdentity(*item_);
+    const std::wstring_view demoIdentity = item_->layoutKey.empty()
+        ? std::wstring_view(item_->parsingName)
+        : std::wstring_view(item_->layoutKey);
+    const std::wstring title = useDemoIdentity
+        ? (demoCollection
+            ? app_->GetDemoCollectionIdentityTitle(
+                *demoCollection, demoIdentity)
+            : app_->GetDemoIdentityTitle(demoIdentity))
+        : item_->name;
+    app_->DrawItemText(
+        context, rect, title,
+        selected, opacity, lightTheme);
 }
 
 /**
@@ -306,13 +362,12 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     }
     else
     {
-        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(context, entry_->iconBitmap);
+        ID2D1Bitmap* bmp = app_->GetOrCreateD2DBitmap(
+            context, entry_->iconBitmap,
+            app_->ShouldBeautifyIconBitmap(entry_->iconIsMediaThumbnail));
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(
-                static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            app_->DrawIconBitmap(context, bmp, iconRect, opacity);
         }
         else
         {
@@ -325,7 +380,17 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged && drawText)
-        app_->DrawItemText(context, rect, entry_->name, selected, opacity, lightTheme);
+        DrawTitle(context, rect, selected, opacity, lightTheme);
+}
+
+void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
+    RECT rect, bool selected, float opacity,
+    bool lightTheme, const DesktopWidget*)
+{
+    if (!app_ || !entry_ || !context) return;
+    app_->DrawItemText(
+        context, rect, entry_->name,
+        selected, opacity, lightTheme);
 }
 
 /**
@@ -410,6 +475,12 @@ Container* ExternalFileItem::GetContainer() const { return nullptr; }
  * @note ExternalFileItem 仅为文件路径的轻量包装，不参与实际绘制。
  */
 void ExternalFileItem::Draw(ID2D1DeviceContext*, RECT, int) {}
+
+void ExternalFileItem::DrawTitle(
+    ID2D1RenderTarget*, RECT, bool, float,
+    bool, const DesktopWidget*)
+{
+}
 
 /**
  * @brief 创建拖放数据对象（未实现）

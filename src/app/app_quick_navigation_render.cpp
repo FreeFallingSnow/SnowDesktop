@@ -80,9 +80,17 @@ void DesktopApp::EnsureQuickNavTextFormats()
  */
 void DesktopApp::ResetQuickNavCompositionResources()
 {
+    if (quickNavigationAnimationCompletionToken_)
+    {
+        uiAnimationScheduler_.Cancel(
+            quickNavigationAnimationCompletionToken_);
+    }
+    quickNavigationAnimationCompletionToken_ = 0;
+    quickNavigationAnimationCompositorDriven_ = false;
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     quickNavSysIconCache_.clear();
+    quickNavAppIconCache_.clear();
     if (quickNavDcompVisual_)
         quickNavDcompVisual_->SetContent(nullptr);
     quickNavDcompSurface_.Reset();
@@ -197,6 +205,28 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 L"QuickNav SetEffect FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
             WriteDiagnosticLogEntry(buf);
+            return hr;
+        }
+    }
+    if (!quickNavDcompScaleTransform_)
+    {
+        HRESULT hr = quickNavDcompDevice_->CreateScaleTransform(
+            &quickNavDcompScaleTransform_);
+        if (FAILED(hr) || !quickNavDcompScaleTransform_)
+        {
+            wchar_t buf[128];
+            wsprintfW(
+                buf,
+                L"QuickNav CreateScaleTransform FAILED hr=0x%08X",
+                static_cast<unsigned>(hr));
+            WriteDiagnosticLogEntry(buf);
+            return FAILED(hr) ? hr : E_FAIL;
+        }
+        hr = quickNavDcompVisual_->SetTransform(
+            quickNavDcompScaleTransform_.Get());
+        if (FAILED(hr))
+        {
+            quickNavDcompScaleTransform_.Reset();
             return hr;
         }
     }
@@ -359,13 +389,29 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             static_cast<float>(QuickNavScale(16)) / 2.0f,
             quickNavAppearance_.contentTheme == 1, screenOrigin);
     }
+    constexpr float windowBorderStrokeWidth = 1.0f;
+    constexpr float windowBorderInset =
+        windowBorderStrokeWidth * 0.5f;
+    const D2D1_RECT_F windowBorderRect =
+        D2D1::RectF(
+            static_cast<float>(overlay.left) +
+                windowBorderInset,
+            static_cast<float>(overlay.top) +
+                windowBorderInset,
+            static_cast<float>(overlay.right) -
+                windowBorderInset,
+            static_cast<float>(overlay.bottom) -
+                windowBorderInset);
     DrawD2DRoundedRectangle(ctx.Get(),
-        MakeRect(overlay.left, overlay.top, overlay.right - 1, overlay.bottom - 1),
-        windowCornerRadius,
+        windowBorderRect,
+        std::max(
+            0.0f,
+            windowCornerRadius - windowBorderInset),
         D2D1::ColorF(0, 0, 0, 0),
         D2D1::ColorF(quickNavAppearance_.widgetBorderR,
             quickNavAppearance_.widgetBorderG,
-            quickNavAppearance_.widgetBorderB, borderAlpha));
+            quickNavAppearance_.widgetBorderB, borderAlpha),
+        windowBorderStrokeWidth);
 
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
@@ -880,9 +926,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
             {
+                const DesktopWidget* demoCollection =
+                    entry.demoCollectionIndex < widgets_.size()
+                    ? &widgets_[entry.demoCollectionIndex] : nullptr;
                 DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
-                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false, true);
-                DrawQuickNavItemText(ctx.Get(), itemRectApp, items_[entry.itemIndex].name,
+                icon.Draw(ctx.Get(), itemRectApp, state,
+                    quickNavLightTheme_, false, true, demoCollection);
+                DrawQuickNavItemText(ctx.Get(), itemRectApp, entry.name,
                     false, quickNavLightTheme_);
             }
             else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
@@ -962,7 +1012,14 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
-                    DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
+                    if (!IsLuaLogicalSlotPickerOpen() &&
+                        generalSettings_.demoModeEnabled &&
+                        demoIdentityAssetsAvailable_)
+                        DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
+                            iconRect);
+                    else
+                        DrawQuickNavAppIcon(
+                            ctx.Get(), entry, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);
                     RECT nameRect = rowRectApp;
@@ -977,7 +1034,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     typeRect.top += QuickNavScale(24);
                     typeRect.bottom -= QuickNavScale(5);
 
-                    DrawD2DTextEllipsis(ctx.Get(), entry.name, nameRect,
+                    const std::wstring appName =
+                        !IsLuaLogicalSlotPickerOpen() &&
+                        generalSettings_.demoModeEnabled &&
+                        demoIdentityAssetsAvailable_
+                        ? GetDemoIdentityTitle(entry.parsingName)
+                        : entry.name;
+                    DrawD2DTextEllipsis(ctx.Get(), appName, nameRect,
                         quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.app_label"), typeRect,

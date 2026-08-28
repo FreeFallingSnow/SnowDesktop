@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widget_item_layout.h"
 
 // Keyboard drag hints, Shell verbs and desktop-grid navigation.
 
@@ -364,7 +365,31 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
     int maxScroll = wc->GetMaxScrollOffset();
     if (maxScroll <= 0) return;
 
-    // 按行比例计算目标滚动位置（适配含 gapY 的 FolderMapping/Collection）
+    auto applyScroll = [&](int scroll) {
+        scroll = std::clamp(scroll, 0, maxScroll);
+        if (scroll == widget.scrollOffset) return;
+        widget.scrollOffset = scroll;
+        if (auto* group = dynamic_cast<FileGroup*>(wc))
+            group->InvalidateHostedView();
+        else
+            wc->InvalidateSlots();
+    };
+
+    // Drawing, hit testing and keyboard reveal all ask the component for the
+    // same local-track rectangle. This also accounts for search/date headers
+    // and for FileGroup-hosted source geometry.
+    const RECT viewport = wc->GetContentViewportRect();
+    const RECT target = wc->GetMemberLayoutRect(
+        static_cast<size_t>(memberIndex));
+    if (!IsRectEmptyRect(target) && !IsRectEmptyRect(viewport))
+    {
+        applyScroll(snowdesktop::widget_item_layout::
+            ScrollOffsetToReveal(viewport, target,
+                widget.scrollOffset, maxScroll));
+        return;
+    }
+
+    // Fallback for non-item surfaces that cannot provide member geometry.
     int columns = std::max(1, widget.gridSpan.columns);
     bool listMode = ((widget.type == DesktopWidgetType::CollectionGroup ||
                       widget.type == DesktopWidgetType::FileGroup) &&
@@ -406,16 +431,7 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
     int scroll = (totalRows <= 1) ? 0
         : static_cast<int>((static_cast<int64_t>(row) * maxScroll) / (totalRows - 1));
 
-    scroll = std::clamp(scroll, 0, maxScroll);
-    if (scroll != widget.scrollOffset)
-    {
-        widget.scrollOffset = scroll;
-        if (auto* group =
-                dynamic_cast<FileGroup*>(wc))
-            group->InvalidateHostedView();
-        else
-            wc->InvalidateSlots();
-    }
+    applyScroll(scroll);
 }
 
 /**
@@ -427,7 +443,14 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
  */
 void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 {
+    keyboardNavVisualFocus_ = true;
     if (keyboardNavWidgetIndex_ >= widgets_.size()) return;
+    const auto clearSelectionForKeyboardNavigation = [this]() {
+        ClearSelection();
+        keyboardNavVisualFocus_ = true;
+    };
+    const size_t navigationWidgetIndex =
+        keyboardNavWidgetIndex_;
     auto& widget = widgets_[keyboardNavWidgetIndex_];
 
     if (widget.type == DesktopWidgetType::FileGroup)
@@ -462,10 +485,24 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 : static_cast<size_t>(std::distance(
                     sourceIds.begin(), activeSourceIt));
 
+        const bool searchAvailable =
+            !IsRectEmptyRect(group->GetSearchBoxRect());
+        auto focusSearch = [&]() {
+            if (!searchAvailable) return;
+            group->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ = groupIndex;
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavSearchBox_ = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+
         auto focusSource = [&](size_t index,
             bool activate) {
             if (index >= sourceIds.size()) return;
-            ClearSelection();
+            group->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
             if (activate)
             {
                 widget.activeCategoryId =
@@ -516,7 +553,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             if (!activeData ||
                 index >= categoryIds.size())
                 return;
-            ClearSelection();
+            group->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
             if (activate)
             {
                 activeData->activeCategoryId =
@@ -530,6 +568,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 static_cast<int>(index);
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = true;
+            group->EnsureCategoryTabVisible(index);
             if (activate) SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, FALSE);
         };
@@ -549,7 +588,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 : folderIndices.size());
         auto selectItem = [&](size_t index) {
             if (index >= itemCount) return;
-            ClearSelection();
+            group->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
             if (groupSearching)
             {
                 Item* item =
@@ -585,6 +625,18 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             InvalidateRect(hwnd_, nullptr, FALSE);
         };
 
+        if (keyboardNavSearchBox_)
+        {
+            if (arrowKey == VK_DOWN)
+            {
+                if (!groupSearching)
+                    focusSource(activeSource, false);
+                else if (itemCount > 0)
+                    selectItem(0);
+            }
+            return;
+        }
+
         if (keyboardNavCollectionGroupTabs_)
         {
             size_t current =
@@ -606,6 +658,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 else if (itemCount > 0)
                     selectItem(0);
             }
+            else if (arrowKey == VK_UP)
+                focusSearch();
             return;
         }
         if (keyboardNavFileGroupCategoryTabs_)
@@ -660,7 +714,10 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             current < static_cast<size_t>(columns))
         {
             if (groupSearching)
+            {
+                focusSearch();
                 return;
+            }
             if (!categoryIds.empty())
                 focusCategory(activeCategory, false);
             else
@@ -710,10 +767,24 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             : static_cast<size_t>(
                 std::distance(childIds.begin(), activeIt));
 
+        const bool searchAvailable =
+            !IsRectEmptyRect(group->GetSearchBoxRect());
+        auto focusSearch = [&]() {
+            if (!searchAvailable) return;
+            group->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
+            keyboardNavInsideWidget_ = true;
+            keyboardNavWidgetIndex_ = groupWidgetIndex;
+            keyboardNavMemberIndex_ = -1;
+            keyboardNavSearchBox_ = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+
         auto focusTab = [&](size_t tabIndex,
             bool activate) {
             if (tabIndex >= childIds.size()) return;
-            ClearSelection();
+            group->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
             if (activate)
             {
                 widget.activeCategoryId =
@@ -736,6 +807,14 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, FALSE);
         };
+
+        if (keyboardNavSearchBox_)
+        {
+            if (arrowKey == VK_DOWN &&
+                !childIds.empty())
+                focusTab(activeTab, false);
+            return;
+        }
 
         if (keyboardNavCollectionGroupTabs_)
         {
@@ -767,7 +846,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 const size_t itemIndex =
                     FindItemIndexByKey(keys.front());
                 if (itemIndex >= items_.size()) return;
-                ClearSelection();
+                clearSelectionForKeyboardNavigation();
                 items_[itemIndex].selected = true;
                 keyboardNavInsideWidget_ = true;
                 keyboardNavWidgetIndex_ =
@@ -780,6 +859,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
             }
+            else if (arrowKey == VK_UP)
+                focusSearch();
             return;
         }
 
@@ -862,6 +943,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）
     std::vector<std::wstring> visibleKeys;
     std::vector<size_t> visibleFolderIndices;
+    std::vector<std::wstring> categoryIds;
+    ScrollingItemWidget* categorizedWidget = nullptr;
     if (widget.type == DesktopWidgetType::CollectionGroup)
     {
         for (auto& c : containers_)
@@ -889,14 +972,23 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 auto* fc = dynamic_cast<FileCategories*>(wc);
                 if (fc)
                 {
+                    categorizedWidget = fc;
                     const auto& rk = fc->GetSearchResultKeys();
                     visibleKeys.assign(rk.begin(), rk.end());
+                    if (widget.showFileCategories &&
+                        (!widget.showSearchBox ||
+                            !fc->IsSearchActive()))
+                    {
+                        const auto& ids =
+                            fc->CachedVisibleCategoryIds();
+                        categoryIds.assign(
+                            ids.begin(), ids.end());
+                    }
                 }
                 break;
             }
         }
         memberCount = visibleKeys.size();
-        if (memberCount == 0) return;
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
@@ -905,16 +997,162 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             auto* mapping = dynamic_cast<FolderMapping*>(c.get());
             if (mapping && mapping->GetWidgetData() == &widget)
             {
+                categorizedWidget = mapping;
                 const auto& indices = mapping->GetVisibleEntryIndices();
                 visibleFolderIndices.assign(indices.begin(), indices.end());
+                if (widget.showFileCategories)
+                {
+                    const auto& ids =
+                        mapping->GetVisibleCategoryIds();
+                    categoryIds.assign(
+                        ids.begin(), ids.end());
+                }
                 break;
             }
         }
         memberCount = visibleFolderIndices.size();
-        if (memberCount == 0) return;
     }
     else if (memberCount == 0)
     {
+        return;
+    }
+
+    const bool searchAvailable =
+        categorizedWidget &&
+        !IsRectEmptyRect(
+            categorizedWidget->GetSearchBoxRect());
+    auto focusSearch = [&]() {
+        if (!searchAvailable) return;
+        categorizedWidget->SetSearchFocused(false);
+        clearSelectionForKeyboardNavigation();
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = navigationWidgetIndex;
+        keyboardNavMemberIndex_ = -1;
+        keyboardNavSearchBox_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+
+    auto activeCategoryIt = std::find(
+        categoryIds.begin(), categoryIds.end(),
+        widget.activeCategoryId);
+    const size_t activeCategory =
+        activeCategoryIt == categoryIds.end()
+            ? 0
+            : static_cast<size_t>(std::distance(
+                categoryIds.begin(), activeCategoryIt));
+    auto focusCategory = [&](size_t index,
+        bool activate) {
+        if (!categorizedWidget ||
+            index >= categoryIds.size())
+            return;
+        categorizedWidget->SetSearchFocused(false);
+        clearSelectionForKeyboardNavigation();
+        if (activate)
+        {
+            widget.activeCategoryId = categoryIds[index];
+            widget.scrollOffset = 0;
+            if (auto* mapping =
+                    dynamic_cast<FolderMapping*>(
+                        categorizedWidget))
+                mapping->InvalidateFilterCache();
+            else
+                categorizedWidget->InvalidateSlots();
+        }
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = navigationWidgetIndex;
+        keyboardNavMemberIndex_ =
+            static_cast<int>(index);
+        keyboardNavFileGroupCategoryTabs_ = true;
+        categorizedWidget->EnsureCategoryTabVisible(index);
+        if (activate) SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+
+    auto selectVisibleItem = [&](size_t index) {
+        if (index >= memberCount) return;
+        size_t selectedItemIndex =
+            static_cast<size_t>(-1);
+        size_t selectedEntryIndex =
+            static_cast<size_t>(-1);
+        if (widget.type == DesktopWidgetType::FolderMapping)
+        {
+            selectedEntryIndex =
+                visibleFolderIndices[index];
+            if (selectedEntryIndex >=
+                widget.folderEntries.size())
+                return;
+        }
+        else
+        {
+            selectedItemIndex =
+                FindItemIndexByKey(visibleKeys[index]);
+            if (selectedItemIndex >= items_.size())
+                return;
+        }
+        if (categorizedWidget)
+            categorizedWidget->SetSearchFocused(false);
+        clearSelectionForKeyboardNavigation();
+        if (selectedEntryIndex <
+            widget.folderEntries.size())
+            widget.folderEntries[
+                selectedEntryIndex].selected = true;
+        else
+            items_[selectedItemIndex].selected = true;
+        keyboardNavInsideWidget_ = true;
+        keyboardNavWidgetIndex_ = navigationWidgetIndex;
+        keyboardNavMemberIndex_ =
+            widget.type == DesktopWidgetType::FolderMapping
+                ? static_cast<int>(selectedEntryIndex)
+                : static_cast<int>(index);
+        ScrollWidgetToMember(
+            keyboardNavWidgetIndex_,
+            static_cast<int>(index));
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+
+    if (keyboardNavSearchBox_)
+    {
+        if (arrowKey == VK_DOWN)
+        {
+            if (!categoryIds.empty())
+                focusCategory(activeCategory, false);
+            else if (memberCount > 0)
+                selectVisibleItem(0);
+        }
+        return;
+    }
+    if (keyboardNavFileGroupCategoryTabs_)
+    {
+        if (categoryIds.empty())
+        {
+            if (searchAvailable)
+                focusSearch();
+            return;
+        }
+        size_t current = keyboardNavMemberIndex_ >= 0
+            ? std::min(
+                static_cast<size_t>(keyboardNavMemberIndex_),
+                categoryIds.size() - 1)
+            : activeCategory;
+        if (arrowKey == VK_LEFT && current > 0)
+            focusCategory(current - 1, true);
+        else if (arrowKey == VK_RIGHT &&
+                 current + 1 < categoryIds.size())
+            focusCategory(current + 1, true);
+        else if (arrowKey == VK_UP)
+            focusSearch();
+        else if (arrowKey == VK_DOWN &&
+                 memberCount > 0)
+            selectVisibleItem(0);
+        return;
+    }
+
+    if (memberCount == 0)
+    {
+        if (!categoryIds.empty())
+            focusCategory(activeCategory, false);
+        else
+            focusSearch();
         return;
     }
 
@@ -961,6 +1199,16 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     int nextRow = currentRow;
     int nextCol = currentCol;
+
+    if (arrowKey == VK_UP && currentRow == 0 &&
+        (!categoryIds.empty() || searchAvailable))
+    {
+        if (!categoryIds.empty())
+            focusCategory(activeCategory, false);
+        else
+            focusSearch();
+        return;
+    }
 
     switch (arrowKey)
     {
@@ -1104,8 +1352,34 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         if (static_cast<size_t>(nextIdx) >= inlineCap)
         {
             if (popupWidgetIndex_ != keyboardNavWidgetIndex_)
+            {
+                POINT popupAnchor{
+                    widget.bounds.right - 1,
+                    widget.bounds.bottom - 1,
+                };
+                for (const auto& container : containers_)
+                {
+                    auto* collection =
+                        dynamic_cast<Collection*>(container.get());
+                    if (!collection ||
+                        collection->GetWidgetData() != &widget)
+                        continue;
+                    const RECT allButton =
+                        collection->GetAllButtonRect();
+                    if (!IsRectEmptyRect(allButton))
+                    {
+                        popupAnchor = {
+                            allButton.left +
+                                (allButton.right - allButton.left) / 2,
+                            allButton.top +
+                                (allButton.bottom - allButton.top) / 2,
+                        };
+                    }
+                    break;
+                }
                 OpenCollectionPopupAt(keyboardNavWidgetIndex_,
-                    POINT{ widget.bounds.left, widget.bounds.top });
+                    popupAnchor);
+            }
         }
         else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
             (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
@@ -1120,20 +1394,20 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         popupWidgetIndex_ < widgets_.size())
     {
         RECT rPopup = popupRect_;
-        int popupCols = GetCollectionPopupColumnCount(rPopup);
-        int popupRow = nextIdx / std::max(1, popupCols);
-        int cellH = kMinCellHeight;
-        for (const auto& page : gridPages_)
-            if (page.id == popupPageId_) { cellH = page.cellHeight; break; }
         RECT content = GetCollectionPopupContentRect(rPopup);
         int viewH = std::max(1, static_cast<int>(content.bottom - content.top));
-        int targetY = popupRow * cellH;
+        const RECT targetRect = GetCollectionPopupItemRect(
+            rPopup, static_cast<size_t>(nextIdx));
+        const int targetTop = targetRect.top - content.top +
+            popupScrollOffset_;
+        const int targetBottom = targetRect.bottom - content.top +
+            popupScrollOffset_;
         int maxPopupScroll = GetCollectionPopupMaxScrollOffset(
             widgets_[keyboardNavWidgetIndex_], rPopup);
-        if (targetY < popupScrollOffset_)
-            popupScrollOffset_ = targetY;
-        else if (targetY + cellH > popupScrollOffset_ + viewH)
-            popupScrollOffset_ = targetY + cellH - viewH;
+        if (targetTop < popupScrollOffset_)
+            popupScrollOffset_ = targetTop;
+        else if (targetBottom > popupScrollOffset_ + viewH)
+            popupScrollOffset_ = targetBottom - viewH;
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, maxPopupScroll);
     }
 

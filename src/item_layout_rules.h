@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 
 namespace snowdesktop::item_layout_rules
 {
@@ -53,6 +54,33 @@ constexpr int CollapsedTextHeight(float lineHeight)
             truncated) ? 1 : 0);
     return std::max(
         1, roundedUp + 1);
+}
+
+/**
+ * @brief 为给定数量的标题行保留完整行高和抗锯齿余量。
+ *
+ * 选中态使用实际 DirectWrite 行数调用此函数，因此高度随完整文件名
+ * 增长，不再设置固定的最大显示行数。
+ */
+constexpr int TextHeightForLineCount(
+    float lineHeight,
+    std::size_t lineCount)
+{
+    if (lineHeight <= 0.0f) return 1;
+    const double height =
+        static_cast<double>(lineHeight) *
+        static_cast<double>(
+            std::max<std::size_t>(1, lineCount));
+    if (height >= static_cast<double>(
+            std::numeric_limits<int>::max() - 1))
+    {
+        return std::numeric_limits<int>::max();
+    }
+    const int truncated = static_cast<int>(height);
+    const int roundedUp = truncated +
+        (height > static_cast<double>(truncated)
+            ? 1 : 0);
+    return roundedUp + 1;
 }
 
 /**

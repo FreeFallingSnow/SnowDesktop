@@ -15,6 +15,8 @@ constexpr wchar_t kInputWindowClassName[] = L"SnowDesktopInputWindow";
 constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
 constexpr wchar_t kFloatingDockWindowClassName[] = L"SnowDesktopFloatingDockWindow";
+constexpr wchar_t kFloatingPopupWindowClassName[] = L"SnowDesktopFloatingPopupWindow";
+constexpr wchar_t kDragPreviewWindowClassName[] = L"SnowDesktopDragPreviewWindow";
 constexpr wchar_t kHiddenBySnowDesktopProp[] = L"SnowDesktop.HiddenExplorerIconLayer";
 
 // ── 透明色键值 ────────────────────────────────
@@ -22,7 +24,10 @@ constexpr COLORREF kTransparentKey = RGB(1, 2, 3);
 
 // ── 图标与网格布局 ────────────────────────────
 constexpr int kIconSize = 64;
-constexpr int kIconBitmapSize = 64;
+constexpr float kListItemIconSize = 32.0f;
+// Baseline source resolution for call sites that do not have a concrete
+// destination yet. Layout-aware loaders choose a 64..256 pixel bucket.
+constexpr int kIconBitmapSize = 96;
 constexpr int kCellWidth = 92;
 constexpr int kMinCellHeight = 116;
 constexpr int kGridMarginX = 6;
@@ -30,7 +35,15 @@ constexpr int kGridMarginY = 6;
 constexpr int kMarginX = kGridMarginX;
 constexpr int kMarginY = 6;
 constexpr int kTextTop = 70;
+// The 15 cu baseline keeps legacy row-height geometry stable. New layouts and
+// reset actions use the separate 16 cu configurable default below.
 constexpr float kItemFontSize = 15.0f;
+constexpr float kDefaultItemFontSizeCu = 16.0f;
+constexpr float kMinimumItemFontSizeCu = 10.0f;
+constexpr float kMaximumItemFontSizeCu = 24.0f;
+constexpr float kDefaultItemIconSizeScale = 1.0f;
+constexpr float kMinimumItemIconSizeScale = 0.5f;
+constexpr float kMaximumItemIconSizeScale = 1.2f;
 constexpr float kItemLineHeight = kItemFontSize * 7.0f / 6.0f;
 constexpr float kItemBaseline = kItemFontSize * 5.0f / 6.0f;
 constexpr int kTextCollapsedHeight = 28;
@@ -86,6 +99,7 @@ constexpr UINT kContextRefreshCommand = 41007;
 constexpr UINT kContextSortByNameCommand = 41008;
 constexpr UINT kContextSortByTypeCommand = 41009;
 constexpr UINT kContextMoreCommand = 41010;
+constexpr UINT kContextSelectAllCommand = 41011;
 constexpr UINT kContextGridAddRow = 41012;
 constexpr UINT kContextGridRemoveRow = 41013;
 constexpr UINT kContextGridAddColumn = 41014;
@@ -142,6 +156,15 @@ constexpr UINT kContextWidgetToggleCollectionMode = 41039;
 constexpr UINT kContextCopyPathCommand = 41052;
 constexpr UINT kContextRunAsAdministratorCommand = 41053;
 constexpr UINT kContextPropertiesCommand = 41054;
+constexpr UINT kContextWidgetDetailName = 41055;
+constexpr UINT kContextWidgetSortBySize = 41056;
+constexpr UINT kContextWidgetSortBySizeDesc = 41057;
+constexpr UINT kContextWidgetDetailModified = 41058;
+constexpr UINT kContextWidgetDetailType = 41059;
+constexpr UINT kContextWidgetDetailSize = 41060;
+constexpr UINT kContextWidgetToggleLargeFolderTitleless = 41061;
+constexpr UINT kContextWidgetDemoCategoryFirst = 41900;
+constexpr UINT kContextWidgetDemoCategoryLast = 41912;
 constexpr UINT kContextSpacingPresetFirst = 41150;
 constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
@@ -150,6 +173,9 @@ constexpr UINT kContextGridAdjustmentDone = 41403;
 constexpr UINT kContextFontSizeSmall = 41404;
 constexpr UINT kContextFontSizeMedium = 41405;
 constexpr UINT kContextFontSizeLarge = 41406;
+constexpr UINT kContextListFontSizeSmall = 41551;
+constexpr UINT kContextListFontSizeMedium = 41552;
+constexpr UINT kContextListFontSizeLarge = 41553;
 constexpr UINT kContextFontWeightBold = 41427;
 constexpr UINT kContextFontWeightMedium = 41428;
 constexpr UINT kContextFontWeightFine = 41429;
@@ -183,6 +209,10 @@ constexpr UINT kContextDockRemoveFrequentItem = 41809;
 constexpr UINT kContextDockCloseApplication = 41810;
 constexpr UINT kContextDockKeepWhenHiddenOn = 41811;
 constexpr UINT kContextDockKeepWhenHiddenOff = 41812;
+constexpr UINT kContextLuaLogicalSlotMovePrevious = 41813;
+constexpr UINT kContextLuaLogicalSlotMoveNext = 41814;
+constexpr UINT kContextLuaLogicalSlotRemove = 41815;
+constexpr UINT kContextWidgetOpenComponentPanel = 41816;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -191,7 +221,14 @@ constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;
 constexpr UINT kShellFileOperationCompletedMessage = WM_APP + 7;
 constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
-constexpr UINT kFloatingDockBackdropCommitMessage = WM_APP + 9;
+constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
+constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
+constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;
+constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
+constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
+constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
+constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
+constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 
@@ -206,7 +243,7 @@ constexpr UINT_PTR kDesktopHostWatchTimerId = 4;
 constexpr UINT kDesktopHostWatchIntervalMs = 2000;
 constexpr UINT_PTR kWidgetRefreshTimerId = 5;
 constexpr UINT kWidgetRefreshIntervalMs = 1000;
-constexpr DWORD kSteamWorkshopSubscriptionPollIntervalMs = 15000;
+constexpr DWORD kSteamWorkshopSubscriptionFallbackPollIntervalMs = 60000;
 constexpr UINT_PTR kCollectionPopupDwellTimerId = 6;
 constexpr UINT kCollectionPopupDwellIntervalMs = 50;
 constexpr DWORD kCollectionPopupDwellDelayMs = 600;
@@ -226,6 +263,9 @@ constexpr UINT kCollectionGroupTabDwellIntervalMs = 40;
 constexpr DWORD kCollectionGroupTabDwellDelayMs = 420;
 constexpr UINT_PTR kDockWindowPreviewHoverTimerId = 13;
 constexpr UINT kDockWindowPreviewHoverFallbackMs = 400;
+constexpr UINT_PTR kCompactCollectionHandoffDwellTimerId = 14;
+constexpr UINT kCompactCollectionHandoffDwellIntervalMs = 40;
+constexpr DWORD kCompactCollectionHandoffDwellDelayMs = 520;
 constexpr ULONGLONG kDockWindowClosePendingTimeoutMs = 3000;
 constexpr UINT_PTR kTaskbarRevealGuardTimerId = 15;
 constexpr UINT kTaskbarRevealGuardIntervalMs = 100;
@@ -233,7 +273,7 @@ constexpr float kIconBeautifyCornerRadiusRatio = 0.35f;
 constexpr float kIconBeautifyCornerExponent = 4.0f;
 
 // ── 组件刷新截止时间约束 ──────────────────────
-// manifest.refreshIntervalMs 与 widget.setTimer 均进入统一截止时间队列；
+// 旧 manifest.refreshIntervalMs 与 v2 schedule 均进入统一截止时间队列；
 // 这里仅保留公开计时语义原有的间隔上下限。
 constexpr UINT kWidgetRefreshMinIntervalMs = 16;      // 单组件声明刷新间隔下限
 constexpr UINT kWidgetRefreshMaxIntervalMs = 86400000; // 上限（24h）
@@ -250,6 +290,11 @@ constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
 // visiting another process.
 constexpr UINT_PTR kOleDragUiPumpTimerId = 21;
 constexpr UINT kOleDragUiPumpIntervalMs = USER_TIMER_MINIMUM;
+constexpr UINT_PTR kSettingsWindowRetryTimerId = 22;
+constexpr UINT kSettingsWindowRetryIntervalMs = 250;
+constexpr unsigned kSettingsWindowMaximumAutomaticRetries = 3;
+constexpr UINT_PTR kQuickNavigationEverythingSearchTimerId = 23;
+constexpr UINT kQuickNavigationEverythingSearchDebounceMs = 120;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

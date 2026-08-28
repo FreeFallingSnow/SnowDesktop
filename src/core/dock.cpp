@@ -18,8 +18,17 @@ DockRunningItem::DockRunningItem(
 
 std::wstring DockRunningItem::GetTitle() const
 {
-    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
-        ? app_->dockUnpinnedRunningApps_[runningIndex_].title : L"";
+    if (!app_ || runningIndex_ >= app_->dockUnpinnedRunningApps_.size())
+        return L"";
+    const DockRunningAppInfo& running =
+        app_->dockUnpinnedRunningApps_[runningIndex_];
+    if (!app_->generalSettings_.demoModeEnabled ||
+        !app_->demoIdentityAssetsAvailable_)
+        return running.title;
+    const std::wstring_view identity = running.identityKey.empty()
+        ? std::wstring_view(running.executablePath)
+        : std::wstring_view(running.identityKey);
+    return app_->GetDemoIdentityTitle(identity);
 }
 
 std::wstring DockRunningItem::GetPath() const
@@ -70,8 +79,15 @@ DockFrequentItem::DockFrequentItem(
 
 std::wstring DockFrequentItem::GetTitle() const
 {
-    return app_ && itemIndex_ < app_->items_.size()
-        ? app_->items_[itemIndex_].name : L"";
+    if (!app_ || itemIndex_ >= app_->items_.size())
+        return L"";
+    const DesktopItem& item = app_->items_[itemIndex_];
+    if (!app_->ShouldUseDemoIdentity(item))
+        return item.name;
+    const std::wstring_view identity = item.layoutKey.empty()
+        ? std::wstring_view(item.parsingName)
+        : std::wstring_view(item.layoutKey);
+    return app_->GetDemoIdentityTitle(identity);
 }
 
 std::wstring DockFrequentItem::GetPath() const
@@ -152,11 +168,23 @@ std::wstring DockEntryItem::GetTitle() const
     if (entry->type == DockEntryType::DesktopItem)
     {
         size_t index = app_->FindItemIndexByKey(entry->reference);
-        return index < app_->items_.size() ? app_->items_[index].name : L"";
+        if (index >= app_->items_.size()) return L"";
+        const DesktopItem& item = app_->items_[index];
+        if (!app_->ShouldUseDemoIdentity(item))
+            return item.name;
+        const std::wstring_view identity = item.layoutKey.empty()
+            ? std::wstring_view(item.parsingName)
+            : std::wstring_view(item.layoutKey);
+        return app_->GetDemoIdentityTitle(identity);
     }
     auto it = std::find_if(app_->widgets_.begin(), app_->widgets_.end(),
         [&](const DesktopWidget& widget) { return widget.id == entry->reference; });
-    return it != app_->widgets_.end() ? it->title : _LW("widget.collection");
+    if (it == app_->widgets_.end())
+        return _LW("widget.collection");
+    if (entry->type == DockEntryType::Collection &&
+        app_->ShouldUseDemoCollectionIdentity(&*it))
+        return app_->GetDemoCollectionCategoryTitle(*it);
+    return it->title;
 }
 
 std::wstring DockEntryItem::GetPath() const
@@ -242,6 +270,20 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
+
+void DockContainer::SetReservedArea(RECT area)
+{
+    if (area_.left == area.left && area_.top == area.top &&
+        area_.right == area.right && area_.bottom == area.bottom)
+        return;
+
+    area_ = area;
+    InvalidateSlots();
+    hoveredTitleBoundsCacheText_.clear();
+    hoveredTitleBoundsCacheAnchor_ = {};
+    hoveredTitleBoundsCache_ = {};
+    magnificationFocusRect_ = {};
+}
 
 RECT DockContainer::GetDesktopItemVisualRect(
     size_t itemIndex, POINT pointer) const
@@ -400,6 +442,15 @@ bool DockContainer::HasOnlyFolderDragSource() const
                     probe).kind !=
                         snowdesktop::item_location::FolderTargetKind::None;
             }
+            if (auto* folderEntry =
+                    dynamic_cast<FolderEntryIcon*>(source))
+            {
+                return snowdesktop::dock_drop_rules::
+                    IsFolderSourceTarget(
+                        snowdesktop::item_location::
+                            ResolveFolderTarget(
+                                folderEntry->GetPath()).kind);
+            }
             return false;
         });
 }
@@ -448,11 +499,7 @@ int DockContainer::EdgeMargin() const
         if (page)
             return app_->GetComponentEdgeMargin(*page, IsVertical());
     }
-    return snowdesktop::widget_spacing_rules::EffectiveComponentEdgeGap(
-        IsVertical() ? kGridMarginX : kGridMarginY,
-        0,
-        1.0f,
-        app_ ? app_->GetComponentSpacingScale() : 1.0f);
+    return IsVertical() ? kGridMarginX : kGridMarginY;
 }
 
 BarStyle DockContainer::GetInsertionStyle() const
@@ -627,9 +674,22 @@ std::vector<RECT> DockContainer::GetElementBaseRects() const
     return candidates;
 }
 
+bool DockContainer::IsMagnificationSuppressed() const
+{
+    if (!app_)
+        return true;
+    return snowdesktop::dock_magnification::
+        ShouldSuppressMagnification(
+            app_->dragSession_.IsActive(),
+            app_->widgetAction_ ==
+                DesktopApp::WidgetAction::Move,
+            app_->widgetAction_ ==
+                DesktopApp::WidgetAction::Resize);
+}
+
 RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
 {
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
     {
         magnificationFocusRect_ = {};
         return RECT{};
@@ -919,7 +979,7 @@ RECT DockContainer::GetElementVisualRect(
 RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
 {
     RECT panel = GetBounds();
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
         return panel;
 
     const RECT focus = ResolveMagnificationFocusRect(pointer);
@@ -1048,7 +1108,7 @@ RECT DockContainer::PositionTitleTooltipBounds(
 RECT DockContainer::GetHoveredTitleBounds(
     POINT pointer) const
 {
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
         return RECT{};
 
     std::wstring title;
@@ -1148,6 +1208,11 @@ bool DockContainer::IsFocusedElementRect(
 
 bool DockContainer::ContainsInteractivePoint(POINT pt) const
 {
+    if (!app_ ||
+        !app_->IsDockContainerInteractionVisible(this))
+    {
+        return false;
+    }
     const RECT bounds = GetInteractiveBounds();
     return PtInRect(&bounds, pt) != FALSE;
 }
@@ -1155,7 +1220,7 @@ bool DockContainer::ContainsInteractivePoint(POINT pt) const
 RECT DockContainer::GetInteractiveBounds() const
 {
     const RECT bounds = GetBounds();
-    if (!app_ || app_->dragSession_.IsActive())
+    if (IsMagnificationSuppressed())
         return bounds;
     return snowdesktop::dock_magnification::ExpandInteractionBounds(
         bounds, app_->dockSettings_.position, ItemIconSize());
@@ -1229,7 +1294,7 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 bool DockContainer::IsPointInScrollViewport(POINT point) const
 {
     RECT viewport = GetScrollViewport(GetBounds());
-    if (app_ && !app_->dragSession_.IsActive())
+    if (!IsMagnificationSuppressed())
     {
         viewport = snowdesktop::dock_magnification::
             ExpandPerpendicularBounds(viewport,
@@ -1559,12 +1624,10 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (!context) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
     PersonalizationSettings p = PersonalizationSettings::DarkPreset();
-    if (app_ && app_->settingsWindow_)
-        p = app_->settingsWindow_->GetPersonalization();
-    else if (app_ && app_->renderingFloatingDock_)
+    if (app_ && app_->renderingFloatingDock_)
         p = app_->floatingDockPersonalization_;
-    else
-        LoadPersonalization(GetPersonalizationPath().c_str(), p);
+    else if (app_)
+        p = app_->CurrentPersonalization();
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -1572,7 +1635,8 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
     if (app_)
         app_->DrawWidgetPanelBackground(context, bounds, panelRadius, fill,
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p);
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p, true,
+            reinterpret_cast<std::uintptr_t>(this));
 
     if (border.a > 0.0f)
     {
@@ -1699,7 +1763,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 logoLeft + paneSize + paneGap, logoTop + paneSize + paneGap,
                 logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
         }
-        if (hovered && !app_->dragSession_.IsActive())
+        if (hovered && !IsMagnificationSuppressed())
         {
             hoveredTitle = _LW("app.dock.start_menu");
         }
@@ -1897,7 +1961,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             return;
         const RECT visualBounds = visualRectFor(itemBounds);
         item->Draw(context, visualBounds, item->IsSelected() ? 2 : 0);
-        if (hovered && !app_->dragSession_.IsActive())
+        if (hovered && !IsMagnificationSuppressed())
         {
             hoveredTitle = item->GetTitle();
         }
@@ -2022,7 +2086,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 if (hovered != focusedPass) continue;
                 item->Draw(context, visualRectFor(itemBounds),
                     item->IsSelected() ? 2 : 0);
-                if (hovered && !app_->dragSession_.IsActive())
+                if (hovered && !IsMagnificationSuppressed())
                     hoveredTitle = item->GetTitle();
             }
         };
@@ -2115,7 +2179,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             const RECT recycleVisual = visualRectFor(recycleBounds);
             recycleBin->Draw(context, recycleVisual,
                 recycleBin->IsSelected() ? 2 : 0);
-            if (hovered && !app_->dragSession_.IsActive())
+            if (hovered && !IsMagnificationSuppressed())
             {
                 hoveredTitle = recycleBin->GetTitle();
             }
@@ -2174,7 +2238,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             brush.Get(), searchStroke, roundedStroke.Get());
     }
 
-    if (searchHovered && !app_->dragSession_.IsActive())
+    if (searchHovered && !IsMagnificationSuppressed())
     {
         hoveredTitle = _LW("app.dock.quick_search");
     }
@@ -2218,12 +2282,15 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     auto resetDwell = [&]() {
         if (!app_) return;
-        app_->dockHandoffDwellIndex_ = static_cast<size_t>(-1);
-        app_->dockHandoffDwellStartTick_ = 0;
-        app_->dockHandoffDwellReady_ = false;
-        if (app_->hwnd_) KillTimer(app_->hwnd_, kDockHandoffDwellTimerId);
+        app_->ResetDockHandoffDwell();
     };
     outSlot = nullptr;
+    if (!app_ ||
+        !app_->IsDockContainerInteractionVisible(this))
+    {
+        resetDwell();
+        return HitRegion::None;
+    }
     RECT dockBounds = GetBounds();
     if (!PtInRect(&dockBounds, pt))
     {
@@ -2285,9 +2352,6 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 targetItem) != sourceItems.end();
             return isDragSource ? HitRegion::None : HitRegion::Handoff;
         }
-        const bool dockMetadataReorder =
-            dynamic_cast<DockContainer*>(
-                app_->dragSession_.Source()) != nullptr;
         const auto* folderDockItem =
             dynamic_cast<DockEntryItem*>(
                 targetItem);
@@ -2299,11 +2363,25 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 app_->dockEntries_[
                     folderDockItem->
                         GetEntryIndex()]);
+        const bool dockMetadataReorder =
+            snowdesktop::dock_drop_rules::
+                ShouldPreferMetadataReorder(
+                    dynamic_cast<DockContainer*>(
+                        app_->dragSession_.Source()) != nullptr,
+                    HasOnlyFolderDragSource(),
+                    folderTarget);
+        const bool collectionTarget =
+            folderDockItem &&
+            folderDockItem->GetEntryType() ==
+                DockEntryType::Collection;
         const bool canHandoff = !dockMetadataReorder &&
             targetItem && !targetItem->IsSelected() &&
-            !(folderTarget &&
-                app_->dragSession_.SourceList().
-                    hasWidgets) &&
+            snowdesktop::dock_drop_rules::
+                SupportsHandoffTarget(
+                    app_->dragSession_.SourceList().
+                        hasWidgets,
+                    folderTarget,
+                    collectionTarget) &&
             PtInRect(&handoffRect, pt);
         if (canHandoff && app_)
         {

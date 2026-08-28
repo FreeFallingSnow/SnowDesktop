@@ -21,6 +21,7 @@ param(
     [ValidateSet("CurrentUser", "LocalMachine")]
     [string]$CertificateStoreLocation = "CurrentUser",
     [switch]$Development,
+    [switch]$ReloadShell,
     [switch]$Json,
     [switch]$Yes
 )
@@ -310,10 +311,20 @@ function Write-NewLogContent {
 function Invoke-BatchWithLiveLog {
     param(
         [Parameter(Mandatory = $true)][string]$BatchPath,
-        [Parameter(Mandatory = $true)][string]$LogPath
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [string[]]$BatchArguments = @()
     )
 
-    $commandLine = "call `"$BatchPath`" > `"$LogPath`" 2>&1"
+    foreach ($argument in $BatchArguments) {
+        if ($argument -notmatch "^[A-Za-z0-9_.:-]+$") {
+            throw "Unsafe batch argument: $argument"
+        }
+    }
+    $commandLine = "call `"$BatchPath`""
+    if ($BatchArguments.Count -ne 0) {
+        $commandLine += " " + ($BatchArguments -join " ")
+    }
+    $commandLine += " > `"$LogPath`" 2>&1"
     $process = Start-Process `
         -FilePath "cmd.exe" `
         -ArgumentList @("/d", "/c", $commandLine) `
@@ -336,6 +347,36 @@ function Invoke-BatchWithLiveLog {
     }
     finally {
         $process.Dispose()
+    }
+}
+
+function Get-BuildOccupancy {
+    $snowDesktopRunning =
+        @(Get-Process -Name "SnowDesktop" -ErrorAction SilentlyContinue).Count `
+            -ne 0
+    $explorerHookLoaded = $false
+    $buildHook = [System.IO.Path]::GetFullPath((Join-Path `
+        $repositoryRoot `
+        ".build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll"))
+    try {
+        $explorerHookLoaded = @(Get-Process `
+            -Name "explorer" -ErrorAction Stop |
+            ForEach-Object { $_.Modules } |
+            Where-Object {
+                [string]::Equals($_.FileName, $buildHook,
+                    [System.StringComparison]::OrdinalIgnoreCase)
+            }).Count -ne 0
+    }
+    catch {
+        # Fail safe if Explorer modules cannot be inspected. The caller can
+        # still opt into the documented Shell reload path.
+        $explorerHookLoaded = $true
+    }
+
+    return [pscustomobject]@{
+        SnowDesktopRunning = $snowDesktopRunning
+        ExplorerHookLoaded = $explorerHookLoaded
+        Occupied = $snowDesktopRunning -or $explorerHookLoaded
     }
 }
 
@@ -366,7 +407,10 @@ function Set-ReleaseState {
 }
 
 function Invoke-Package {
-    param([switch]$AskBeforeBuild)
+    param(
+        [switch]$AskBeforeBuild,
+        [switch]$ReloadShellBeforeBuild
+    )
 
     $context = Get-ReleaseContext
     New-Item -ItemType Directory `
@@ -375,12 +419,38 @@ function Invoke-Package {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $buildLog = Join-Path $logsDirectory "build-$timestamp.log"
     $packageLog = Join-Path $logsDirectory "package-$timestamp.log"
+    $occupancy = Get-BuildOccupancy
+    if ($occupancy.Occupied -and -not $ReloadShellBeforeBuild) {
+        if (-not $AskBeforeBuild) {
+            throw "Release build output is in use. Exit SnowDesktop normally, or retry with -ReloadShell to stop SnowDesktop and briefly restart Explorer."
+        }
+
+        Write-Host ""
+        Write-Host "Release 构建产物正在使用中：" -ForegroundColor Yellow
+        if ($occupancy.SnowDesktopRunning) {
+            Write-Host "  - SnowDesktop 正在运行"
+        }
+        if ($occupancy.ExplorerHookLoaded) {
+            Write-Host "  - Explorer 已加载任务栏 Hook"
+        }
+        if (-not (Confirm-Interactive `
+            "继续将终止 SnowDesktop 并短暂重启 Explorer，确认继续吗？")) {
+            Write-Host "已取消构建。"
+            return $false
+        }
+        $ReloadShellBeforeBuild = $true
+    }
+    $buildArguments = @()
+    if ($ReloadShellBeforeBuild) {
+        $buildArguments += "--reload-shell"
+    }
 
     Write-Host ""
     Write-Host "[1/2] 使用 scripts/build.bat 构建 Release" -ForegroundColor Cyan
     $buildExitCode = Invoke-BatchWithLiveLog `
         -BatchPath $buildScript `
-        -LogPath $buildLog
+        -LogPath $buildLog `
+        -BatchArguments $buildArguments
     if ($buildExitCode -ne 0) {
         throw "scripts/build.bat failed with exit code $buildExitCode. See $buildLog"
     }
@@ -515,9 +585,13 @@ function Sync-ReleaseRepository {
             -LiteralPath $portablePath `
             -DestinationPath $temporary `
             -Force
+        $logsDirectory = Get-LogsDirectory -Context $context
+        $syncLog = Join-Path $logsDirectory `
+            "release-sync-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
         foreach ($name in @(
                 "SnowDesktop.exe",
-                "SnowDesktopTaskbarHook.dll",
+                "snowwidget.exe",
+                "THIRD_PARTY_NOTICES.md",
                 "README.md",
                 "README.en.md")) {
             $source = Join-Path $temporary $name
@@ -529,6 +603,22 @@ function Sync-ReleaseRepository {
                 -Destination (Join-Path $releaseRepository $name) `
                 -Force
         }
+        Copy-MirroredDirectory `
+            -Source (Join-Path $temporary "SnowDesktop.Runtime") `
+            -Destination (Join-Path $releaseRepository `
+                "SnowDesktop.Runtime") `
+            -LogPath $syncLog
+        foreach ($legacyName in @(
+                "SnowDesktopTaskbarHook.dll",
+                "SnowDesktopWallpaperHook.dll",
+                "SnowDesktopWallpaperHook32.dll",
+                "SnowDesktopWallpaperInjector32.exe",
+                "SnowDesktopWorkshopManager.exe")) {
+            $legacyPath = Join-Path $releaseRepository $legacyName
+            if (Test-Path -LiteralPath $legacyPath -PathType Leaf) {
+                Remove-Item -LiteralPath $legacyPath -Force
+            }
+        }
         $license = Join-Path $temporary "LICENSE"
         if (Test-Path -LiteralPath $license -PathType Leaf) {
             Copy-Item `
@@ -536,10 +626,14 @@ function Sync-ReleaseRepository {
                 -Destination (Join-Path $releaseRepository "LICENSE") `
                 -Force
         }
+        $thirdPartyLicenses = Join-Path $temporary "licenses"
+        if (Test-Path -LiteralPath $thirdPartyLicenses -PathType Container) {
+            Copy-MirroredDirectory `
+                -Source $thirdPartyLicenses `
+                -Destination (Join-Path $releaseRepository "licenses") `
+                -LogPath $syncLog
+        }
 
-        $logsDirectory = Get-LogsDirectory -Context $context
-        $syncLog = Join-Path $logsDirectory `
-            "release-sync-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
         Copy-MirroredDirectory `
             -Source (Join-Path $temporary "widgets") `
             -Destination (Join-Path $releaseRepository "widgets") `
@@ -881,9 +975,14 @@ function Open-VersionDirectory {
 }
 
 function Invoke-Prepare {
-    param([switch]$AskBeforeBuild)
+    param(
+        [switch]$AskBeforeBuild,
+        [switch]$ReloadShellBeforeBuild
+    )
 
-    $packaged = Invoke-Package -AskBeforeBuild:$AskBeforeBuild
+    $packaged = Invoke-Package `
+        -AskBeforeBuild:$AskBeforeBuild `
+        -ReloadShellBeforeBuild:$ReloadShellBeforeBuild
     if (-not $packaged) {
         return
     }
@@ -910,7 +1009,9 @@ function Invoke-CommandAction {
             }
         }
         "package" {
-            [void](Invoke-Package -AskBeforeBuild:$isMenu)
+            [void](Invoke-Package `
+                -AskBeforeBuild:$isMenu `
+                -ReloadShellBeforeBuild:$ReloadShell)
         }
         "package-steam" {
             & $steamPackageScript
@@ -919,7 +1020,9 @@ function Invoke-CommandAction {
             [void](Sync-ReleaseRepository)
         }
         "prepare" {
-            Invoke-Prepare -AskBeforeBuild:$isMenu
+            Invoke-Prepare `
+                -AskBeforeBuild:$isMenu `
+                -ReloadShellBeforeBuild:$ReloadShell
         }
         "squash" {
             Invoke-LocalSquash

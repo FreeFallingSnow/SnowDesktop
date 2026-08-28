@@ -24,6 +24,7 @@ using Microsoft::WRL::ComPtr;
 
 class Container;
 class DesktopApp;
+struct DesktopWidget;
 
 /**
  * @class Item
@@ -79,6 +80,23 @@ public:
      */
     virtual void Draw(ID2D1DeviceContext* context, RECT rect, int state) = 0;
 
+    /**
+     * @brief 单独绘制标题，供跨单元格的选中标题前景层使用。
+     * @param demoCollection 可选的演示集合身份上下文。
+     */
+    virtual void DrawTitle(ID2D1RenderTarget* context, RECT rect,
+        bool selected, float opacity = 1.0f,
+        bool lightTheme = false,
+        const DesktopWidget* demoCollection = nullptr)
+    {
+        (void)context;
+        (void)rect;
+        (void)selected;
+        (void)opacity;
+        (void)lightTheme;
+        (void)demoCollection;
+    }
+
     /** @brief 创建用于拖拽操作的数据传输对象（OLE IDataObject） */
     virtual ComPtr<IDataObject> CreateDataObject() = 0;
 };
@@ -86,7 +104,6 @@ public:
 /** @struct DesktopItem
  *  @brief 桌面项数据模型（完整定义见 types.h） */
 struct DesktopItem;
-
 /** @struct FolderEntry
  *  @brief 文件夹条目数据模型（完整定义见 types.h） */
 struct FolderEntry;
@@ -116,8 +133,18 @@ public:
     void SetSelected(bool selected) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
-    void Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme = false,
-        bool drawText = true, bool quickNavLayout = false);
+    void Draw(ID2D1RenderTarget* context, RECT rect, int state,
+        bool lightTheme = false, bool drawText = true,
+        bool quickNavLayout = false,
+        const DesktopWidget* demoCollection = nullptr,
+        bool iconOnlyHighlight = false,
+        bool centerIconVertically = false,
+        int forcedIconSize = 0);
+    /** @brief 单独绘制标题，供选中标题前景层使用。 */
+    void DrawTitle(ID2D1RenderTarget* context, RECT rect,
+        bool selected, float opacity = 1.0f,
+        bool lightTheme = false,
+        const DesktopWidget* demoCollection = nullptr) override;
     ComPtr<IDataObject> CreateDataObject() override;
     DesktopItem* GetDesktopItem() const { return item_; }
     DesktopApp* GetApp() const { return app_; }
@@ -157,6 +184,10 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     void Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme = false,
         bool drawText = true, bool quickNavLayout = false);
+    void DrawTitle(ID2D1RenderTarget* context, RECT rect,
+        bool selected, float opacity = 1.0f,
+        bool lightTheme = false,
+        const DesktopWidget* demoCollection = nullptr) override;
     ComPtr<IDataObject> CreateDataObject() override;
     FolderEntry* GetFolderEntry() const { return entry_; }
     DesktopApp* GetApp() const { return app_; }
@@ -192,6 +223,8 @@ public:
     void SetSelected(bool) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext*, RECT, int) override;
+    void DrawTitle(ID2D1RenderTarget*, RECT, bool, float,
+        bool, const DesktopWidget*) override;
     ComPtr<IDataObject> CreateDataObject() override;
 
 private:

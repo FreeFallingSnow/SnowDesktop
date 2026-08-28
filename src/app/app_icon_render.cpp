@@ -1,13 +1,300 @@
 #include "app.h"
+#include "../demo_mode_rules.h"
+#include "../demo_collection_rules.h"
 #include <commoncontrols.h>
+#include <cstdlib>
 
 // Shell-icon decoration, privacy placeholders and quick-navigation icons.
+
+bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
+{
+    return snowdesktop::demo_mode_rules::ShouldMaskApplication(
+        generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_,
+        item.isApplicationShortcut);
+}
+
+bool DesktopApp::ShouldUseDemoCollectionIdentity(
+    const DesktopWidget* collection) const
+{
+    return generalSettings_.demoModeEnabled &&
+        demoIdentityAssetsAvailable_ && collection &&
+        collection->type == DesktopWidgetType::Collection;
+}
+
+namespace
+{
+template <typename Cache>
+const typename Cache::mapped_type& ResolveDemoCollectionIdentityCached(
+    const DesktopWidget& collection,
+    std::span<const DesktopWidget> widgets,
+    Cache& cache)
+{
+    const auto cached = cache.find(collection.id);
+    if (cached != cache.end() && cached->second.category)
+        return cached->second;
+
+    const auto* category = &snowdesktop::demo_collection_rules::
+        ResolveCategory(collection.demoIconCategory,
+            collection.title, collection.itemKeys);
+    std::uint64_t signature = snowdesktop::demo_mode_rules::
+        StableIdentityHash(category->id);
+    auto mix = [&](std::wstring_view value) {
+        signature ^= snowdesktop::demo_mode_rules::StableIdentityHash(value) +
+            0x9e3779b97f4a7c15ULL + (signature << 6U) +
+            (signature >> 2U);
+    };
+    mix(collection.title);
+    mix(collection.gridCell.pageId);
+    signature ^= static_cast<std::uint64_t>(collection.gridCell.column) << 8U;
+    signature ^= static_cast<std::uint64_t>(collection.gridCell.row) << 16U;
+    signature ^= static_cast<std::uint64_t>(collection.gridSpan.columns) << 24U;
+    signature ^= static_cast<std::uint64_t>(collection.gridSpan.rows) << 32U;
+    for (const auto& itemKey : collection.itemKeys)
+        mix(itemKey);
+
+    std::size_t subjectSlotOffset = 0;
+    for (const auto& peer : widgets)
+    {
+        if (peer.type != DesktopWidgetType::Collection ||
+            peer.gridCell.pageId != collection.gridCell.pageId)
+            continue;
+        const auto& peerCategory = snowdesktop::demo_collection_rules::
+            ResolveCategory(peer.demoIconCategory,
+                peer.title, peer.itemKeys);
+        if (peerCategory.id != category->id)
+            continue;
+
+        mix(peer.id);
+        signature ^= static_cast<std::uint64_t>(peer.itemKeys.size()) << 40U;
+        signature ^= static_cast<std::uint64_t>(peer.gridCell.column) << 48U;
+        signature ^= static_cast<std::uint64_t>(peer.gridCell.row) << 56U;
+
+        const bool precedes = peer.gridCell.row < collection.gridCell.row ||
+            (peer.gridCell.row == collection.gridCell.row &&
+                (peer.gridCell.column < collection.gridCell.column ||
+                    (peer.gridCell.column == collection.gridCell.column &&
+                        peer.id < collection.id)));
+        if (precedes)
+            subjectSlotOffset += snowdesktop::demo_collection_rules::
+                ExposedItemCount(peer.itemKeys.size(),
+                    peer.gridSpan.columns, peer.gridSpan.rows);
+    }
+
+    auto& entry = cache[collection.id];
+    entry.category = category;
+    entry.signature = signature;
+    entry.subjectSlotOffset = subjectSlotOffset;
+    entry.identitySlots.clear();
+    entry.identitySlots.reserve(collection.itemKeys.size());
+    for (std::size_t index = 0; index < collection.itemKeys.size(); ++index)
+        entry.identitySlots.try_emplace(
+            ToUpperInvariant(collection.itemKeys[index]), index);
+    return entry;
+}
+
+template <typename Entry>
+snowdesktop::demo_collection_rules::IdentityPresentation
+DemoCollectionPresentation(const Entry& entry,
+    std::wstring_view identity)
+{
+    const auto found = entry.identitySlots.find(
+        ToUpperInvariant(std::wstring(identity)));
+    const std::size_t slot = found != entry.identitySlots.end()
+        ? found->second
+        : static_cast<std::size_t>(
+            snowdesktop::demo_mode_rules::StableIdentityHash(identity));
+    return snowdesktop::demo_collection_rules::PresentationForSlot(
+        *entry.category, slot, entry.subjectSlotOffset);
+}
+}
+
+const std::filesystem::path& DesktopApp::GetDemoIdentityIconDirectory() const
+{
+    if (demoIdentityIconDirectoryResolved_)
+        return demoIdentityIconDirectory_;
+
+    demoIdentityIconDirectoryResolved_ = true;
+    std::filesystem::path configured;
+    if (const wchar_t* value = _wgetenv(
+            snowdesktop::demo_asset_paths::kEnvironmentVariable);
+        value && *value)
+        configured = value;
+    demoIdentityIconDirectory_ = snowdesktop::demo_asset_paths::
+        ResolveDirectory(GetExecutableDirectoryPath(), configured);
+    demoIdentityIconPaths_ = snowdesktop::demo_asset_paths::
+        EnumerateIcons<snowdesktop::demo_mode_rules::kDemoIconAssetCount>(
+            demoIdentityIconDirectory_);
+    demoIdentityAssetsAvailable_ = snowdesktop::demo_asset_paths::
+        HasRequiredIcons(demoIdentityIconPaths_);
+    return demoIdentityIconDirectory_;
+}
+
+bool DesktopApp::AreDemoIdentityAssetsAvailable() const
+{
+    GetDemoIdentityIconDirectory();
+    return demoIdentityAssetsAvailable_;
+}
+
+const std::filesystem::path& DesktopApp::GetDemoIdentityIconPath(
+    size_t visualIndex) const
+{
+    GetDemoIdentityIconDirectory();
+    static const std::filesystem::path empty;
+    return visualIndex < demoIdentityIconPaths_.size()
+        ? demoIdentityIconPaths_[visualIndex] : empty;
+}
+
+std::wstring DesktopApp::GetDemoIdentityTitle(
+    std::wstring_view identity) const
+{
+    const auto& visual = snowdesktop::demo_mode_rules::
+        ResolveVisualIdentity(identity);
+    return std::wstring(visual.title);
+}
+
+std::wstring DesktopApp::GetDemoCollectionIdentityTitle(
+    const DesktopWidget& collection, std::wstring_view identity) const
+{
+    const auto& entry = ResolveDemoCollectionIdentityCached(
+        collection, widgets_, demoCollectionIdentityCache_);
+    return std::wstring(DemoCollectionPresentation(
+        entry, identity).title);
+}
+
+std::wstring DesktopApp::GetDemoCollectionCategoryTitle(
+    const DesktopWidget& collection) const
+{
+    const auto& entry = ResolveDemoCollectionIdentityCached(
+        collection, widgets_, demoCollectionIdentityCache_);
+    return _LW(entry.category->titleKey);
+}
+
+ID2D1Bitmap1* DesktopApp::GetDemoIdentityBitmap(size_t visualIndex)
+{
+    if (!d2dContext_ || visualIndex >= demoIdentityIconBitmaps_.size())
+        return nullptr;
+
+    ComPtr<ID2D1Bitmap1>& cached =
+        demoIdentityIconBitmaps_[visualIndex];
+    if (cached)
+        return cached.Get();
+    QueueDemoIdentityBitmap(visualIndex);
+    return nullptr;
+}
+
+void DesktopApp::DrawDemoCollectionIdentityIcon(
+    ID2D1RenderTarget* context, const DesktopWidget& collection,
+    std::wstring_view identity, RECT iconRect, float opacity)
+{
+    if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
+        return;
+    const auto& entry = ResolveDemoCollectionIdentityCached(
+        collection, widgets_, demoCollectionIdentityCache_);
+    const auto presentation = DemoCollectionPresentation(
+        entry, identity);
+    if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(
+            presentation.visualIndex))
+    {
+        DrawIconBitmap(context, bitmap, iconRect, opacity);
+        DrawDemoIdentityVariantBadge(
+            context, presentation.variantIndex, iconRect, opacity);
+        return;
+    }
+    DrawDemoIdentityIcon(context, identity, iconRect, opacity);
+}
+
+void DesktopApp::DrawDemoIdentityVariantBadge(
+    ID2D1RenderTarget* context, size_t variantIndex,
+    RECT iconRect, float opacity)
+{
+    if (!context || variantIndex == 0 || opacity <= 0.0f ||
+        IsRectEmptyRect(iconRect))
+        return;
+
+    static constexpr std::array<std::wstring_view, 5> kVariantGlyphs{
+        L"", L"\uE73E", L"\uE73A", L"\uE8FB", L"\uE945" };
+    variantIndex %= kVariantGlyphs.size();
+    if (variantIndex == 0)
+        return;
+
+    const int shortSide = std::max(1L, std::min(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top));
+    const int badgeSize = std::clamp(
+        static_cast<int>(std::round(shortSide * 0.34f)),
+        10, std::max(10, shortSide));
+    const int inset = std::max(1,
+        static_cast<int>(std::round(shortSide * 0.03f)));
+    const RECT badgeRect = MakeRect(
+        iconRect.right - badgeSize - inset,
+        iconRect.bottom - badgeSize - inset,
+        iconRect.right - inset,
+        iconRect.bottom - inset);
+    DrawD2DRoundedRectangle(context, badgeRect, badgeSize * 0.34f,
+        D2D1::ColorF(0.96f, 0.97f, 0.99f, 0.96f * opacity),
+        D2D1::ColorF(0.13f, 0.18f, 0.28f, 0.30f * opacity),
+        std::max(1.0f, shortSide * 0.012f));
+    if (fluentIconTextFormat_)
+        DrawD2DText(context, std::wstring(kVariantGlyphs[variantIndex]),
+            badgeRect, fluentIconTextFormat_.Get(),
+            D2D1::ColorF(0.14f, 0.26f, 0.48f, 0.94f * opacity));
+}
+
+void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,
+    std::wstring_view identity, RECT iconRect, float opacity)
+{
+    if (!context || IsRectEmptyRect(iconRect) || opacity <= 0.0f)
+        return;
+
+    const size_t visualIndex = snowdesktop::demo_mode_rules::
+        VisualIdentityIndex(identity);
+    const auto& visual = snowdesktop::demo_mode_rules::
+        VisualIdentityAt(visualIndex);
+    if (ID2D1Bitmap1* bitmap = GetDemoIdentityBitmap(visualIndex))
+    {
+        DrawIconBitmap(context, bitmap, iconRect, opacity);
+        return;
+    }
+    const float red = static_cast<float>(
+        (visual.backgroundRgb >> 16U) & 0xFFU) / 255.0f;
+    const float green = static_cast<float>(
+        (visual.backgroundRgb >> 8U) & 0xFFU) / 255.0f;
+    const float blue = static_cast<float>(
+        visual.backgroundRgb & 0xFFU) / 255.0f;
+    const int shortSide = std::max(1L, std::min(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top));
+    const float radius = std::max(3.0f, shortSide * 0.22f);
+    DrawD2DRoundedRectangle(context, iconRect, radius,
+        D2D1::ColorF(red, green, blue, opacity),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * opacity),
+        std::max(1.0f, shortSide * 0.018f));
+
+    if (!fluentIconTextFormat_)
+        return;
+
+    D2D1_MATRIX_3X2_F previousTransform{};
+    context->GetTransform(&previousTransform);
+    const float glyphScale = std::clamp(
+        static_cast<float>(shortSide) * 0.50f / 14.0f,
+        0.72f, 3.0f);
+    const D2D1_POINT_2F center = D2D1::Point2F(
+        (iconRect.left + iconRect.right) * 0.5f,
+        (iconRect.top + iconRect.bottom) * 0.5f);
+    context->SetTransform(
+        D2D1::Matrix3x2F::Scale(glyphScale, glyphScale, center) *
+        previousTransform);
+    DrawD2DText(context, std::wstring(visual.glyph), iconRect,
+        fluentIconTextFormat_.Get(),
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f * opacity));
+    context->SetTransform(previousTransform);
+}
 
 void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha)
 {
     if (!ctx) return;
 
-    if (iconBeautifyEnabled_)
+    if (iconBeautifySettings_.enabled)
     {
         const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
         const float scale = static_cast<float>(iconHeight) / 64.0f;
@@ -136,12 +423,6 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
     ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-float DesktopApp::GetBeautifiedIconCornerRadius(int width, int height)
-{
-    return std::max(6.0f,
-        static_cast<float>(std::min(width, height)) * kIconBeautifyCornerRadiusRatio);
-}
-
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth)
 {
@@ -160,37 +441,22 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     const float top = static_cast<float>(rect.top);
     const float right = static_cast<float>(rect.right);
     const float bottom = static_cast<float>(rect.bottom);
-    const float radius = std::min(GetBeautifiedIconCornerRadius(
-        rect.right - rect.left, rect.bottom - rect.top),
-        std::min(right - left, bottom - top) * 0.5f);
-    constexpr int kCornerSegments = 12;
-    const float coordinatePower = 2.0f / kIconBeautifyCornerExponent;
-    auto cornerPoint = [&](float centerX, float centerY, float angle) {
-        const float cosine = std::cos(angle);
-        const float sine = std::sin(angle);
-        const float x = std::copysign(std::pow(std::abs(cosine), coordinatePower), cosine);
-        const float y = std::copysign(std::pow(std::abs(sine), coordinatePower), sine);
-        return D2D1::Point2F(centerX + radius * x, centerY + radius * y);
+    const float width = right - left;
+    const float height = bottom - top;
+    const auto shape = iconBeautifySettings_.enabled
+        ? iconBeautifySettings_.shape
+        : snowdesktop::IconBeautifyShape::LegacyRounded;
+    const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
+    if (outline.empty())
+        return;
+    const auto toPoint = [&](const snowdesktop::icon_beautify::ShapePoint& point) {
+        return D2D1::Point2F(
+            left + point.x * width,
+            top + point.y * height);
     };
-    auto addCorner = [&](float centerX, float centerY, float startAngle, float endAngle) {
-        for (int i = 1; i <= kCornerSegments; ++i)
-        {
-            const float t = static_cast<float>(i) / static_cast<float>(kCornerSegments);
-            sink->AddLine(cornerPoint(centerX, centerY,
-                startAngle + (endAngle - startAngle) * t));
-        }
-    };
-
-    constexpr float kPi = 3.14159265358979323846f;
-    sink->BeginFigure(D2D1::Point2F(left + radius, top), D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(D2D1::Point2F(right - radius, top));
-    addCorner(right - radius, top + radius, -kPi * 0.5f, 0.0f);
-    sink->AddLine(D2D1::Point2F(right, bottom - radius));
-    addCorner(right - radius, bottom - radius, 0.0f, kPi * 0.5f);
-    sink->AddLine(D2D1::Point2F(left + radius, bottom));
-    addCorner(left + radius, bottom - radius, kPi * 0.5f, kPi);
-    sink->AddLine(D2D1::Point2F(left, top + radius));
-    addCorner(left + radius, top + radius, kPi, kPi * 1.5f);
+    sink->BeginFigure(toPoint(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
+    for (size_t index = 1; index < outline.size(); ++index)
+        sink->AddLine(toPoint(outline[index]));
     sink->EndFigure(D2D1_FIGURE_END_CLOSED);
     if (FAILED(sink->Close())) return;
 
@@ -279,13 +545,17 @@ void DesktopApp::DrawPrivacyFaIcon(
         return;
     }
 
-    const float luminance = iconBeautifyBgStartR_ * 0.2126f +
-        iconBeautifyBgStartG_ * 0.7152f + iconBeautifyBgStartB_ * 0.0722f;
-    const D2D1_COLOR_F fill = D2D1::ColorF(iconBeautifyBgStartR_,
-        iconBeautifyBgStartG_, iconBeautifyBgStartB_, iconBeautifyBgOpacity_);
+    const float luminance = iconBeautifySettings_.backgroundStartR * 0.2126f +
+        iconBeautifySettings_.backgroundStartG * 0.7152f +
+        iconBeautifySettings_.backgroundStartB * 0.0722f;
+    const D2D1_COLOR_F fill = D2D1::ColorF(
+        iconBeautifySettings_.backgroundStartR,
+        iconBeautifySettings_.backgroundStartG,
+        iconBeautifySettings_.backgroundStartB,
+        iconBeautifySettings_.backgroundOpacity);
     const D2D1_COLOR_F border = luminance > 0.58f
-        ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifyBgOpacity_)
-        : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifyBgOpacity_);
+        ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifySettings_.backgroundOpacity)
+        : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifySettings_.backgroundOpacity);
     DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
     ComPtr<IDWriteTextFormat> format;
     format.Attach(CreateFaTextFormat(dwriteFactory_.Get(),
@@ -306,9 +576,16 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
         return;
     auto& cache = placeholderIconCache_;
-    const bool beautify = allowBeautify && iconBeautifyEnabled_;
+    const bool beautify = allowBeautify && iconBeautifySettings_.enabled;
+    const int targetSize = std::max(
+        iconRect.right - iconRect.left,
+        iconRect.bottom - iconRect.top);
+    const int sourceSize = snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
     const std::uint64_t cacheKey =
-        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sysIconIndex)) << 1) |
+        (static_cast<std::uint64_t>(
+            static_cast<std::uint32_t>(sysIconIndex)) << 32) |
+        (static_cast<std::uint64_t>(sourceSize) << 1) |
         static_cast<std::uint64_t>(beautify ? 1 : 0);
 
     auto cached = cache.find(cacheKey);
@@ -339,7 +616,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
 
         SIZE bitmapSize{};
         HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
-            icon, kIconBitmapSize, kIconBitmapSize, bitmapSize);
+            icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
         if (!alphaBitmap)
             return;
@@ -358,10 +635,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
         cached = cache.emplace(cacheKey, std::move(bitmap)).first;
     }
 
-    D2D1_RECT_F dst = D2D1::RectF(
-        static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-        static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-    ctx->DrawBitmap(cached->second.Get(), dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
 }
 
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
@@ -371,10 +645,20 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
     ComPtr<ID2D1DeviceContext> dc;
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&dc))) || !dc) return;
 
-    auto cached = quickNavSysIconCache_.find(sysIconIndex);
+    const int targetSize = std::max(
+        dstRect.right - dstRect.left,
+        dstRect.bottom - dstRect.top);
+    const int sourceSize = snowdesktop::icon_render_rules::
+        SourcePixelsForTarget(targetSize);
+    const std::uint64_t cacheKey =
+        (static_cast<std::uint64_t>(
+            static_cast<std::uint32_t>(sysIconIndex)) << 32) |
+        static_cast<std::uint64_t>(sourceSize);
+    auto cached = quickNavSysIconCache_.find(cacheKey);
     if (cached == quickNavSysIconCache_.end())
     {
-        // 用 EXTRALARGE(48px) 源：内容填满画布，避免 JUMBO 部分图标的透明留白导致缩放后偏小/偏角。
+        // EXTRALARGE avoids the transparent padding used by some JUMBO icons;
+        // DrawIconEx then rasterizes it into the layout-aware source bucket.
         ComPtr<IImageList> imageList;
         HRESULT hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
             reinterpret_cast<void**>(imageList.GetAddressOf()));
@@ -391,14 +675,14 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
                 ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
             return;
 
-        const int srcSize = 48;
         SIZE bitmapSize{};
-        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(icon, srcSize, srcSize, bitmapSize);
+        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
+            icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
         if (!alphaBitmap) return;
 
         ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(
-            alphaBitmap, iconBeautifyEnabled_);
+            alphaBitmap, iconBeautifySettings_.enabled);
         DeleteObject(alphaBitmap);
         if (!iconBitmap)
         {
@@ -409,13 +693,48 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
             return;
 
-        cached = quickNavSysIconCache_.emplace(sysIconIndex, std::move(bitmap)).first;
+        cached = quickNavSysIconCache_.emplace(
+            cacheKey, std::move(bitmap)).first;
     }
 
-    D2D1_RECT_F dst = D2D1::RectF(
-        static_cast<float>(dstRect.left), static_cast<float>(dstRect.top),
-        static_cast<float>(dstRect.right), static_cast<float>(dstRect.bottom));
-    ctx->DrawBitmap(cached->second.Get(), dst, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    DrawIconBitmap(ctx, cached->second.Get(), dstRect);
+}
+
+void DesktopApp::DrawQuickNavAppIcon(
+    ID2D1RenderTarget* ctx,
+    const QuickNavigationAppEntry& entry,
+    RECT dstRect)
+{
+    if (ctx && entry.iconBitmap &&
+        !entry.iconCacheIdentity.empty())
+    {
+        auto cached = quickNavAppIconCache_.find(
+            entry.iconCacheIdentity);
+        if (cached == quickNavAppIconCache_.end())
+        {
+            ComPtr<ID2D1Bitmap1> iconBitmap =
+                CreateD2DBitmapFromHBitmap(
+                    entry.iconBitmap,
+                    iconBeautifySettings_.enabled);
+            ComPtr<ID2D1Bitmap> bitmap;
+            if (iconBitmap &&
+                SUCCEEDED(iconBitmap.As(&bitmap)) && bitmap)
+            {
+                cached = quickNavAppIconCache_.emplace(
+                    entry.iconCacheIdentity,
+                    std::move(bitmap)).first;
+            }
+        }
+        if (cached != quickNavAppIconCache_.end())
+        {
+            DrawIconBitmap(
+                ctx, cached->second.Get(), dstRect);
+            return;
+        }
+    }
+
+    DrawQuickNavSysIcon(
+        ctx, entry.systemIconIndex, dstRect);
 }
 
 /**

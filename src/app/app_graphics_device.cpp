@@ -66,6 +66,7 @@ bool DesktopApp::InitGraphics()
         reinterpret_cast<IUnknown**>(dwriteFactory_.GetAddressOf()));
     if (FAILED(hr)) return false;
     RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
 
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &listItemTextFormat_);
@@ -134,7 +135,7 @@ void DesktopApp::RecreateItemTextFormat()
     if (!dwriteFactory_) return;
     itemTextLayoutCache_.clear();
     itemTextShadowCache_.clear();
-    float fontSize = itemFontSize_;
+    float fontSize = itemFontSizeCu_;
     float lineHeight = fontSize * 7.0f / 6.0f;
     float baseline = fontSize * 5.0f / 6.0f;
     dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, itemFontWeight_,
@@ -149,8 +150,36 @@ void DesktopApp::RecreateItemTextFormat()
     }
 }
 
+void DesktopApp::RecreateComponentListTextFormat()
+{
+    if (!dwriteFactory_) return;
+    componentListTextLayoutCache_.clear();
+    componentListTextShadowCache_.clear();
+    componentListTextFormat_.Reset();
+    const float lineHeight = listItemFontSizeCu_ * 7.0f / 6.0f;
+    const float baseline = listItemFontSizeCu_ * 5.0f / 6.0f;
+    dwriteFactory_->CreateTextFormat(
+        L"Segoe UI", nullptr, itemFontWeight_,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        listItemFontSizeCu_, L"", &componentListTextFormat_);
+    if (!componentListTextFormat_) return;
+    componentListTextFormat_->SetTextAlignment(
+        DWRITE_TEXT_ALIGNMENT_LEADING);
+    componentListTextFormat_->SetParagraphAlignment(
+        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    componentListTextFormat_->SetWordWrapping(
+        DWRITE_WORD_WRAPPING_NO_WRAP);
+    componentListTextFormat_->SetLineSpacing(
+        DWRITE_LINE_SPACING_METHOD_UNIFORM,
+        lineHeight, baseline);
+}
+
 void DesktopApp::ResetCompositionRenderCaches()
 {
+    ResetWidgetMarqueeComposition();
+    ResetDesktopWidgetComposition();
+    ResetDesktopForegroundComposition();
+    ResetDragPreviewCompositionResources();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();
@@ -161,10 +190,14 @@ void DesktopApp::ResetCompositionRenderCaches()
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     d2dIconCache_.clear();
+    ResetDemoIconLoader();
     placeholderIconCache_.clear();
+    quickNavSysIconCache_.clear();
+    quickNavAppIconCache_.clear();
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
+    componentListTextShadowCache_.clear();
     itemTextEffectContext_.Reset();
 }
 
@@ -194,7 +227,7 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
         const UINT height = static_cast<UINT>(std::max<LONG>(1, client.bottom - client.top));
         if (dcompSurface_ && compositionWidth_ == width && compositionHeight_ == height)
-            return S_OK;
+            return CreateOrResizeDesktopForegroundCompositionSurface();
 
         ComPtr<IDCompositionSurface> surface;
         HRESULT hr = dcompDevice_->CreateSurface(width, height,
@@ -227,5 +260,5 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         dcompSurface_ = surface;
         compositionWidth_ = width;
         compositionHeight_ = height;
-        return S_OK;
+        return CreateOrResizeDesktopForegroundCompositionSurface();
     }

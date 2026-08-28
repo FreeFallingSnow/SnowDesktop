@@ -19,6 +19,25 @@ inline constexpr wchar_t kApplyMessageName[] =
     L"SnowDesktop.TaskbarBackdrop.Apply.v5";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
+inline constexpr wchar_t kRegistryQueryMessageName[] =
+    L"SnowDesktop.RegistryOperation.Apply.v2";
+inline constexpr wchar_t kRegistryQueryMappingPrefix[] =
+    L"Local\\SnowDesktop.RegistryOperation.State.v2";
+
+inline constexpr std::uint32_t kRegistryQueryMagic = 0x53445251; // "SDRQ"
+inline constexpr std::uint32_t kRegistryQueryVersion = 2;
+inline constexpr std::size_t kMaximumRegistrySubKeyLength = 512;
+inline constexpr std::size_t kMaximumRegistryValueNameLength = 128;
+inline constexpr std::size_t kMaximumRegistryValueBytes = 1024;
+inline constexpr LONG kRegistryQueryPending = 0;
+inline constexpr LONG kRegistryQueryCompleted = 1;
+
+enum class RegistryOperation : std::uint32_t
+{
+    Query = 0,
+    DeleteValue = 1,
+    SetValue = 2,
+};
 
 inline constexpr LONG kStatusIdle = 0;
 inline constexpr LONG kStatusInjecting = 1;
@@ -75,6 +94,22 @@ struct SharedState
     volatile LONG status = kStatusIdle;
     volatile LONG lastError = ERROR_SUCCESS;
     volatile LONG diagnosticStage = 0;
+};
+
+struct SharedRegistryQueryState
+{
+    std::uint32_t magic = kRegistryQueryMagic;
+    std::uint32_t version = kRegistryQueryVersion;
+    std::uint32_t size = sizeof(SharedRegistryQueryState);
+    DWORD ownerProcessId = 0;
+    RegistryOperation operation = RegistryOperation::Query;
+    wchar_t subKey[kMaximumRegistrySubKeyLength]{};
+    wchar_t valueName[kMaximumRegistryValueNameLength]{};
+    volatile LONG status = kRegistryQueryPending;
+    LONG operationResult = ERROR_GEN_FAILURE;
+    DWORD valueType = REG_NONE;
+    DWORD valueSize = 0;
+    BYTE value[kMaximumRegistryValueBytes]{};
 };
 
 struct Snapshot

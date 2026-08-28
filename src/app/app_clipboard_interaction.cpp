@@ -348,18 +348,9 @@ bool DesktopApp::PasteClipboardToFolderPath(
             RefreshDockFolderPopup();
     };
 
-    if (action == DropAction::Link)
-    {
-        const bool succeeded = MaterializeFilesToFolder(
-            sourceList, targetFolderPath, action, {});
-        operationCompletion(succeeded);
-        return true;
-    }
-
-    (void)MaterializeFilesToFolder(
+    return MaterializeFilesToFolder(
         sourceList, targetFolderPath,
         action, std::move(operationCompletion));
-    return true;
 }
 
 bool DesktopApp::PasteClipboardToDesktop()

@@ -35,10 +35,8 @@ TryActivateDockPopupFromMenuPointerPress(
 {
     if (!HasActiveContextMenuSession())
         return false;
-    if (!floatingDockHwnd_ ||
-        !IsWindow(floatingDockHwnd_) ||
-        WindowFromPoint(screenPoint) !=
-            floatingDockHwnd_)
+    if (!IsPersistentDockHostWindow(
+            WindowFromPoint(screenPoint)))
     {
         return false;
     }
@@ -57,6 +55,8 @@ TryActivateDockPopupFromMenuPointerPress(
     if (entryIndex >= dockEntries_.size())
         return false;
     const DockEntry& entry = dockEntries_[entryIndex];
+    PersistentDockHost* requestedDockHost =
+        FindPersistentDockHost(dock);
     const bool collectionEntry =
         entry.type == DockEntryType::Collection;
     const bool folderEntry = IsFolderDockEntry(entry);
@@ -74,6 +74,7 @@ TryActivateDockPopupFromMenuPointerPress(
     }
 
     DismissActiveContextMenuForPopupTransition();
+    dockPressedClosedCollectionPopup_ = false;
     if (suppressPointerRelease)
         dockSuppressClickReleaseEntry_ = entryIndex;
 
@@ -83,7 +84,9 @@ TryActivateDockPopupFromMenuPointerPress(
             snowdesktop::floating_dock_rules::
                 ShouldCloseCollectionPopup(
                     popupWidgetIndex_,
-                    collectionWidgetIndex))
+                    collectionWidgetIndex,
+                    collectionPopupDockHost_ ==
+                        requestedDockHost))
         {
             CloseCollectionPopup();
         }
@@ -102,7 +105,8 @@ TryActivateDockPopupFromMenuPointerPress(
         L":" + ToUpperInvariant(entry.reference);
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId)
+        dockFolderPopupSourceId_ == sourceId &&
+        collectionPopupDockHost_ == requestedDockHost)
     {
         CloseCollectionPopup();
     }
@@ -121,18 +125,56 @@ void DesktopApp::OpenDockFolderPopupAt(
         !IsFolderDockEntry(dockEntries_[entryIndex]))
         return;
 
+    pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
 
+    if (DockContainer* dock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* dockItem =
+                dock->EntryAtPoint(anchorPoint);
+            dockItem &&
+            dockItem->GetEntryIndex() == entryIndex)
+        {
+            POINT anchorScreen = anchorPoint;
+            if (hwnd_ && IsWindow(hwnd_))
+                ClientToScreen(hwnd_, &anchorScreen);
+            else
+            {
+                anchorScreen.x += virtualLeft_;
+                anchorScreen.y += virtualTop_;
+            }
+            EnsureFloatingDockVisibleForAssociatedSurface(
+                anchorScreen);
+        }
+    }
+
     PreserveDockFolderPopupDragSourceForTransition();
+    ClearPopupDragTarget();
     const DockEntry entry = dockEntries_[entryIndex];
     const auto target = ResolveDockFolderTarget(entry);
     const std::wstring sourceId =
         std::to_wstring(static_cast<int>(entry.type)) +
         L":" + ToUpperInvariant(entry.reference);
+    PersistentDockHost* requestedDockHost = nullptr;
+    if (DockContainer* requestedDock =
+            GetDockContainerAtPoint(anchorPoint))
+    {
+        if (DockEntryItem* requestedItem =
+                requestedDock->EntryAtPoint(anchorPoint);
+            requestedItem &&
+            requestedItem->GetEntryIndex() == entryIndex)
+        {
+            requestedDockHost =
+                FindPersistentDockHost(requestedDock);
+        }
+    }
     const bool reverseClosingAnimation =
         popupAnimation_.IsClosing() &&
         dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId;
+        dockFolderPopupSourceId_ == sourceId &&
+        collectionPopupDockHost_ == requestedDockHost;
+    AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
     dockFolderPopupAvailable_ = target.available;
     dockFolderPopupSourceId_ = sourceId;
@@ -141,9 +183,12 @@ void DesktopApp::OpenDockFolderPopupAt(
     popupScrollOffset_ = 0;
     popupHasAnchor_ = true;
     popupAnchoredToDock_ = false;
+    collectionPopupDockHost_ = nullptr;
     popupAnchorPoint_ = anchorPoint;
     popupCategoryId_.clear();
 
+    CancelDockFolderPopupIconLoads();
+    ClearDockFolderPopupEntries();
     dockFolderPopupWidget_ = DesktopWidget{};
     dockFolderPopupWidget_.type =
         DesktopWidgetType::FolderMapping;
@@ -160,6 +205,31 @@ void DesktopApp::OpenDockFolderPopupAt(
             entry.folderSortAscending;
     dockFolderPopupWidget_.itemKeys =
         entry.folderItemKeys;
+    dockFolderPopupWidget_.listMode =
+        entry.listMode;
+    dockFolderPopupWidget_.detailShowModified =
+        entry.detailShowModified;
+    dockFolderPopupWidget_.detailShowType =
+        entry.detailShowType;
+    dockFolderPopupWidget_.detailShowSize =
+        entry.detailShowSize;
+    dockFolderPopupWidget_.detailModifiedPosition =
+        entry.detailModifiedPosition;
+    dockFolderPopupWidget_.detailTypePosition =
+        entry.detailTypePosition;
+    dockFolderPopupWidget_.detailSizePosition =
+        entry.detailSizePosition;
+    dockFolderPopupWidget_.showDetails =
+        snowdesktop::list_detail_rules::HasMetadataColumns(
+            entry.detailShowModified,
+            entry.detailShowType,
+            entry.detailShowSize);
+    dockFolderPopupWidget_.contentSortColumn =
+        snowdesktop::list_detail_rules::
+            FromLegacyFolderSortMode(
+                dockFolderPopupWidget_.folderSortMode);
+    dockFolderPopupWidget_.contentSortAscending =
+        dockFolderPopupWidget_.folderSortAscending;
     dockFolderPopupWidget_.gridCell =
         { kDockPageId, 0, 0 };
     if (entry.type == DockEntryType::FolderMapping)
@@ -183,6 +253,26 @@ void DesktopApp::OpenDockFolderPopupAt(
             dockFolderPopupWidget_.itemKeys =
                 widgets_[widgetIndex].
                     itemKeys;
+            dockFolderPopupWidget_.listMode =
+                widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.showDetails =
+                widgets_[widgetIndex].showDetails;
+            dockFolderPopupWidget_.detailShowModified =
+                widgets_[widgetIndex].detailShowModified;
+            dockFolderPopupWidget_.detailShowType =
+                widgets_[widgetIndex].detailShowType;
+            dockFolderPopupWidget_.detailShowSize =
+                widgets_[widgetIndex].detailShowSize;
+            dockFolderPopupWidget_.detailModifiedPosition =
+                widgets_[widgetIndex].detailModifiedPosition;
+            dockFolderPopupWidget_.detailTypePosition =
+                widgets_[widgetIndex].detailTypePosition;
+            dockFolderPopupWidget_.detailSizePosition =
+                widgets_[widgetIndex].detailSizePosition;
+            dockFolderPopupWidget_.contentSortColumn =
+                widgets_[widgetIndex].contentSortColumn;
+            dockFolderPopupWidget_.contentSortAscending =
+                widgets_[widgetIndex].contentSortAscending;
         }
     }
     else
@@ -225,6 +315,8 @@ void DesktopApp::OpenDockFolderPopupAt(
                     dockItem->GetBounds(), anchorPoint);
             popupDockPosition_ = dockSettings_.position;
             popupAnchoredToDock_ = true;
+            collectionPopupDockHost_ =
+                FindPersistentDockHost(dock);
             switch (popupDockPosition_)
             {
             case DockPosition::Top:
@@ -258,19 +350,21 @@ void DesktopApp::OpenDockFolderPopupAt(
     RefreshDockFolderPopup();
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
-    if (floatingDockVisible_)
+    if (popupAnchoredToDock_)
     {
-        floatingDockContainer_ =
-            GetDockContainerAtPoint(anchorPoint);
-        if (!floatingDockContainer_)
-            floatingDockContainer_ =
-                SelectFloatingDockContainerForMonitor(
-                    floatingDockMonitor_);
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
+        PersistentDockHost* host =
+            collectionPopupDockHost_;
+        if (host &&
+            IsPersistentDockHostEffectivelyFloating(*host))
+        {
+            SelectPersistentDockHost(host);
+            UpdateFloatingDockWindowBounds(*host);
+            InvalidateFloatingDockWindow(*host, true);
+        }
     }
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::StartCollectionPopupAnimation(
@@ -278,7 +372,6 @@ void DesktopApp::StartCollectionPopupAnimation(
 {
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
-    PrepareCollectionPopupAnimationCache();
     if (!snowdesktop::dock_launch_animation::
             SystemAnimationsEnabled())
     {
@@ -286,6 +379,12 @@ void DesktopApp::StartCollectionPopupAnimation(
         ResetCollectionPopupAnimationCache();
         return;
     }
+    // The snapshot visual belongs to the shared topmost popup host. Materialize
+    // and size that host before preparing the animation cache so the snapshot
+    // can be attached to the correct DComp tree instead of falling back to
+    // UI-thread frame rendering.
+    UpdateFloatingPopupWindowBounds(false);
+    PrepareCollectionPopupAnimationCache();
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
@@ -323,8 +422,9 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
                 InvalidateRect(hwnd_, &dirty, FALSE);
             }
         }
-        else if (!(popupAnchoredToDock_ &&
-                   floatingDockDesktopCopySuppressed_) &&
+        else if (!IsCollectionPopupHostedByFloatingWindow() &&
+                 !(popupAnchoredToDock_ &&
+                   persistentDockHostOwnsVisual_) &&
                  !IsRectEmptyRect(popupRect_))
         {
             RECT dirty = popupRect_;
@@ -333,15 +433,17 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
                 hwnd_, &dirty, FALSE);
         }
     }
-    // Animation frames may be coalesced when the UI thread is busy. Forcing
-    // UpdateWindow here would make every timer tick synchronously redraw the
-    // complete floating Dock surface and is the main source of frame stalls.
-    InvalidateFloatingDockWindow(
-        invalidateStaticScene);
+    // The popup owns an independent compact DComp surface. Animation frames
+    // therefore never repaint either the desktop foreground or floating Dock.
+    UpdateFloatingPopupWindowBounds(false);
+    InvalidateFloatingPopupWindow(true);
 }
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    auto pendingOpen =
+        std::move(pendingCollectionPopupOpen_);
+    pendingCollectionPopupOpen_.reset();
     RECT dirty = popupRect_;
     if (!IsRectEmptyRect(popupAnimationCacheRect_))
     {
@@ -357,6 +459,9 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_)
         return;
+    if (dockFolderPopupOpen_)
+        CancelDockFolderPopupIconLoads();
+    ClearPopupDragTarget();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     dockFolderPopupOpen_ = false;
     dockFolderPopupAvailable_ = false;
@@ -365,23 +470,16 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     dockFolderPopupContainer_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
-    dockFolderPopupWidget_.folderEntries.clear();
+    ClearDockFolderPopupEntries();
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
     popupHasAnchor_ = false;
     popupAnchoredToDock_ = false;
+    collectionPopupDockHost_ = nullptr;
     popupAnchorPoint_ = {};
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
-    if (floatingDockVisible_)
-    {
-        floatingDockContainer_ =
-            SelectFloatingDockContainerForMonitor(
-                floatingDockMonitor_);
-        UpdateFloatingDockWindowBounds();
-        InvalidateFloatingDockWindow(true);
-    }
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_) &&
         !IsRectEmptyRect(dirty))
@@ -389,6 +487,30 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         InflateRect(&dirty, 6, 6);
         InvalidateRect(hwnd_, &dirty, FALSE);
     }
+    UpdateFloatingPopupWindowBounds(true);
+    if (pendingOpen && hwnd_ && IsWindow(hwnd_))
+    {
+        const size_t widgetIndex =
+            FindWidgetIndexById(pendingOpen->widgetId);
+        if (widgetIndex < widgets_.size())
+        {
+            OpenCollectionPopupAt(
+                widgetIndex,
+                pendingOpen->anchorPoint,
+                pendingOpen->categoryId);
+        }
+    }
+}
+
+void DesktopApp::ClearDockFolderPopupEntries()
+{
+    // FolderEntry releases its HBITMAP in the destructor, while the shared
+    // D2D cache is keyed by that handle value. Remove both raw/beautified GPU
+    // entries first so repeated popup lifecycles cannot retain stale bitmaps
+    // or alias a newly allocated GDI handle to an old icon.
+    for (const auto& entry : dockFolderPopupWidget_.folderEntries)
+        EraseD2DIconCacheForBitmap(entry.iconBitmap);
+    dockFolderPopupWidget_.folderEntries.clear();
 }
 
 void DesktopApp::CloseCollectionPopup(
@@ -400,6 +522,8 @@ void DesktopApp::CloseCollectionPopup(
     if (popupAnimation_.IsClosing())
         return;
 
+    if (dockFolderPopupOpen_)
+        CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
     if (clearSelection)
     {
@@ -408,20 +532,23 @@ void DesktopApp::CloseCollectionPopup(
              dockFolderPopupWidget_.folderEntries)
             entry.selected = false;
     }
-    popupMouseDownItem_.reset();
-    popupDragTargetSlot_.reset();
+    ClearPopupMouseDownItem();
+    ClearPopupDragTarget();
     marqueeActive_ = false;
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    PrepareCollectionPopupAnimationCache();
     if (!snowdesktop::dock_launch_animation::
             SystemAnimationsEnabled())
     {
         FinalizeCloseCollectionPopup();
         return;
     }
-    if (popupAnimationOverlay_.active)
+    UpdateFloatingPopupWindowBounds(false);
+    PrepareCollectionPopupAnimationCache();
+    if (popupAnimationOverlay_.active &&
+        popupAnimationOverlay_.host ==
+            UiCompositionAnimationHost::Desktop)
     {
         ClearDesktopBehindCompositionAnimation(
             popupAnimationCacheRect_);

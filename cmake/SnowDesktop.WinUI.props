@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Preserve the normal per-user native build settings before applying the
+       target-scoped WinUI requirements. CMake imports this file through the
+       SnowDesktop target's VS_USER_PROPS property only. -->
+  <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props"
+          Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')"
+          Label="LocalAppDataPlatform" />
+
+  <!-- CMake emits a desktop vcxproj, so provide the native XAML properties
+       normally supplied by the Store project flavor without selecting that
+       flavor (which would require the optional UWP MSBuild workload). -->
+  <PropertyGroup>
+    <Language>C++</Language>
+    <XamlLanguage>CppWinRT</XamlLanguage>
+    <ManagedAssembly>false</ManagedAssembly>
+    <DefaultLanguageSourceExtension>.cpp</DefaultLanguageSourceExtension>
+    <XamlGeneratedOutputPath>$(ProjectDir)generated\xaml\$(Configuration)\</XamlGeneratedOutputPath>
+    <SnowDesktopNuGetPackageRoot Condition="'$(NuGetPackageRoot)' != ''">$(NuGetPackageRoot)</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(RestorePackagesPath)' != ''">$(RestorePackagesPath)</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</SnowDesktopNuGetPackageRoot>
+    <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == ''">$(UserProfile)\.nuget\packages</SnowDesktopNuGetPackageRoot>
+  </PropertyGroup>
+
+  <!-- Windows App SDK self-contained C++ applications use the hybrid CRT:
+       the VS runtime and STL are static while the inbox Universal CRT remains
+       dynamically linked. This keeps portable deployments independent of the
+       VC redistributable without duplicating the UCRT in the package. -->
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Debug'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries);libucrtd.lib</IgnoreSpecificDefaultLibraries>
+      <AdditionalOptions>%(AdditionalOptions) /defaultlib:ucrtd.lib</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)' != 'Debug'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries);libucrt.lib</IgnoreSpecificDefaultLibraries>
+      <AdditionalOptions>%(AdditionalOptions) /defaultlib:ucrt.lib</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <!-- C++/WinRT emits activation factories used by the compiled App.xaml.
+       The official Win32 Island sample includes this generated translation
+       unit explicitly; keeping it here avoids baking an MSBuild path into
+       CMake's filesystem source model. -->
+  <ItemGroup>
+    <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
+  </ItemGroup>
+
+  <!-- CMake's desktop vcxproj does not import the UWP preparation target that
+       normally creates C++/WinRT's intermediate WinMD folders before MIDL.
+       Create them explicitly while keeping every output inside IntDir. -->
+  <Target Name="SnowDesktopPrepareCppWinRTDirectories"
+          BeforeTargets="Midl">
+    <ItemGroup>
+      <!-- CMake sets Midl.OutputDirectory to ProjectDir/IntDir while
+           C++/WinRT already prefixes MetadataFileName with IntDir. Normalize
+           it here so mdmerge sees one, not two, IntDir segments. -->
+      <Midl>
+        <OutputDirectory>$(ProjectDir)</OutputDirectory>
+      </Midl>
+    </ItemGroup>
+    <MakeDir Directories="$(IntDir)Unmerged;$(IntDir)Merged;$(GeneratedFilesDir);$(XamlGeneratedOutputPath)" />
+  </Target>
+
+  <!-- AppContainerApplication.targets normally schedules this pass for a
+       XAML project.  SnowDesktop deliberately remains a desktop Win32
+       project, so attach the WinUI package's markup pass directly. -->
+  <Target Name="SnowDesktopMarkupCompilePass1"
+          BeforeTargets="FixupCLCompileOptions"
+          DependsOnTargets="MarkupCompilePass1;CppWinRTMakeProjections;CppWinRTSetXamlLocalAssembly;CppWinRTAddXamlReferences;MarkupCompilePass2"
+          Condition="'@(ApplicationDefinition)' != ''" />
+
+  <!-- Capture the exact self-contained payload selected by the restored
+       Windows App SDK targets. Packaging consumes this manifest instead of
+       globbing TargetDir, which also contains test and developer binaries. -->
+  <Target Name="SnowDesktopWriteDeploymentManifest"
+          AfterTargets="Build"
+          DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
+          Condition="'$(WindowsAppSDKSelfContained)' == 'true'">
+    <ItemGroup>
+      <_SnowDesktopSettingsIcon Include="$(SnowDesktopSourceDirectory)\assets\settings\icons\*.svg" />
+    </ItemGroup>
+    <MakeDir Directories="$(TargetDir)Assets\App;$(TargetDir)Assets\Fonts;$(TargetDir)Assets\Settings\Icons" />
+    <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\icon\icon_small.png"
+          DestinationFiles="$(TargetDir)Assets\App\SnowDesktop.png"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\FluentSystemIcons-Regular.ttf"
+          DestinationFiles="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\fa-solid-900.ttf"
+          DestinationFiles="$(TargetDir)Assets\Fonts\fa-solid-900.ttf"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SnowDesktopSettingsIcon)"
+          DestinationFolder="$(TargetDir)Assets\Settings\Icons"
+          SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <_SnowDesktopDeploymentFile Include="@(MicrosoftWindowsAppSDKFiles)">
+        <DeploymentPath>%(RecursiveDir)%(Filename)%(Extension)</DeploymentPath>
+        <SourcePackage>Microsoft.WindowsAppSDK</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="@(MicrosoftWindowsAppSDKFilesRes)">
+        <DeploymentPath>%(RecursiveDir)%(Filename)%(Extension)</DeploymentPath>
+        <SourcePackage>Microsoft.WindowsAppSDK</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(_WindowsMLLocalNativePath)\Microsoft.Windows.AI.MachineLearning.dll"
+          Condition="'$(WindowsAppSDKMLDeploymentMode)' == 'SelfContained' and Exists('$(_WindowsMLLocalNativePath)\Microsoft.Windows.AI.MachineLearning.dll')">
+        <DeploymentPath>Microsoft.Windows.AI.MachineLearning.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(_WindowsMLLocalNativePath)\onnxruntime.dll"
+          Condition="'$(WindowsAppSDKMLDeploymentMode)' == 'SelfContained' and Exists('$(_WindowsMLLocalNativePath)\onnxruntime.dll')">
+        <DeploymentPath>onnxruntime.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(_WindowsMLLocalNativePath)\DirectML.dll"
+          Condition="'$(WindowsAppSDKMLDeploymentMode)' == 'SelfContained' and Exists('$(_WindowsMLLocalNativePath)\DirectML.dll')">
+        <DeploymentPath>DirectML.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Windows.AI.MachineLearning</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(PkgMicrosoft_Web_WebView2)\runtimes\win-$(EffectivePlatform)\native_uap\Microsoft.Web.WebView2.Core.dll"
+          Condition="'$(WebView2UseWinRT)' == 'true' and Exists('$(PkgMicrosoft_Web_WebView2)\runtimes\win-$(EffectivePlatform)\native_uap\Microsoft.Web.WebView2.Core.dll')">
+        <DeploymentPath>Microsoft.Web.WebView2.Core.dll</DeploymentPath>
+        <SourcePackage>Microsoft.Web.WebView2</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile
+          Include="$(PkgMicrosoft_Web_WebView2)\lib\Microsoft.Web.WebView2.Core.winmd"
+          Condition="'$(WebView2UseWinRT)' == 'true' and Exists('$(PkgMicrosoft_Web_WebView2)\lib\Microsoft.Web.WebView2.Core.winmd')">
+        <DeploymentPath>Microsoft.Web.WebView2.Core.winmd</DeploymentPath>
+        <SourcePackage>Microsoft.Web.WebView2</SourcePackage>
+        <DeploymentKind>WindowsAppSDK</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)App.xbf">
+        <DeploymentPath>App.xbf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)SettingsShell.xbf">
+        <DeploymentPath>SettingsShell.xbf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)SnowDesktop.pri">
+        <DeploymentPath>SnowDesktop.pri</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)SnowDesktop.winmd">
+        <DeploymentPath>SnowDesktop.winmd</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Generated</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\App\SnowDesktop.png">
+        <DeploymentPath>Assets\App\SnowDesktop.png</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Asset</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\FluentSystemIcons-Regular.ttf">
+        <DeploymentPath>Assets\Fonts\FluentSystemIcons-Regular.ttf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Asset</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\fa-solid-900.ttf">
+        <DeploymentPath>Assets\Fonts\fa-solid-900.ttf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage>
+        <DeploymentKind>Asset</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+    </ItemGroup>
+    <WriteLinesToFile
+        File="$(IntDir)SnowDesktop.deployment.items"
+        Lines="@(_SnowDesktopDeploymentFile-&gt;'%(DeploymentPath)&#x9;%(SourcePackage)&#x9;%(DeploymentKind)');@(_SnowDesktopSettingsIcon-&gt;'Assets\Settings\Icons\%(Filename)%(Extension)&#x9;SnowDesktop&#x9;Asset')"
+        Overwrite="true"
+        Encoding="UTF-8" />
+    <WriteLinesToFile
+        File="$(IntDir)SnowDesktop.appxfragments.items"
+        Lines="@(MicrosoftWindowsAppSDKAppxFragmentFiles)"
+        Overwrite="true"
+        Encoding="UTF-8" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(SnowDesktopSourceDirectory)\scripts\write_deployment_manifest.ps1&quot; -TargetDirectory &quot;$(TargetDir).&quot; -FileList &quot;$(IntDir)SnowDesktop.deployment.items&quot; -FragmentList &quot;$(IntDir)SnowDesktop.appxfragments.items&quot; -WindowsAppSdkVersion &quot;$(SnowDesktopWindowsAppSdkPackageVersion)&quot; -CppWinRtVersion &quot;$(SnowDesktopCppWinRtPackageVersion)&quot; -WindowsAppSdkLicensePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\license.txt&quot; -WindowsAppSdkNoticePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windowsappsdk\$(SnowDesktopWindowsAppSdkPackageVersion)\NOTICE.txt&quot; -CppWinRtLicensePath &quot;$(SnowDesktopNuGetPackageRoot)\microsoft.windows.cppwinrt\$(SnowDesktopCppWinRtPackageVersion)\LICENSE&quot; -WindowsMlLicensePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\license.txt&quot; -WindowsMlNoticePath &quot;$(_WindowsMLLocalNativePath)\..\..\..\ThirdPartyNotices.txt&quot; -WebView2LicensePath &quot;$(PkgMicrosoft_Web_WebView2)\LICENSE.txt&quot; -WebView2NoticePath &quot;$(PkgMicrosoft_Web_WebView2)\NOTICE.txt&quot;" />
+  </Target>
+</Project>

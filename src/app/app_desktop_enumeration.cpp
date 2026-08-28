@@ -13,6 +13,7 @@ void DesktopApp::LoadDesktopItems()
         bool shortcutArrow = false;
         bool isShortcut = false;
         bool isApplicationShortcut = false;
+        bool iconIsMediaThumbnail = false;
         IconState iconState = IconState::Loading;
     };
     std::unordered_map<std::wstring, OldIcon> oldIconCache;
@@ -25,6 +26,7 @@ void DesktopApp::LoadDesktopItems()
             old.shortcutArrow = item.shortcutArrow;
             old.isShortcut = item.isShortcut;
             old.isApplicationShortcut = item.isApplicationShortcut;
+            old.iconIsMediaThumbnail = item.iconIsMediaThumbnail;
             old.iconState = item.iconState;
             oldIconCache.emplace(ToUpperInvariant(item.layoutKey), std::move(old));
             item.iconBitmap = nullptr;
@@ -34,6 +36,8 @@ items_.clear();
     itemIndexByKeyCache_.clear();
     itemTextLayoutCache_.clear();
     itemTextShadowCache_.clear();
+    componentListTextLayoutCache_.clear();
+    componentListTextShadowCache_.clear();
     WriteDiagnosticLogEntry(L"LoadItems start");
 
     HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
@@ -143,6 +147,23 @@ items_.clear();
         item.name = info.szDisplayName[0] ? info.szDisplayName
             : StrRetToString(desktopFolder_.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
         item.typeName = info.szTypeName;
+        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
+        if (!item.parsingName.empty() &&
+            GetFileAttributesExW(
+                item.parsingName.c_str(), GetFileExInfoStandard,
+                &fileAttributes))
+        {
+            item.modifiedTime = fileAttributes.ftLastWriteTime;
+            if ((fileAttributes.dwFileAttributes &
+                    FILE_ATTRIBUTE_DIRECTORY) == 0)
+            {
+                item.fileSize =
+                    (static_cast<std::uint64_t>(
+                        fileAttributes.nFileSizeHigh) << 32) |
+                    static_cast<std::uint64_t>(
+                        fileAttributes.nFileSizeLow);
+            }
+        }
         item.sysIconIndex = info.iIcon;
         item.layoutKey = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
 
@@ -153,6 +174,7 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
             item.shortcutArrow = oldIt->second.shortcutArrow;
             item.isShortcut = oldIt->second.isShortcut;
             item.isApplicationShortcut = oldIt->second.isApplicationShortcut;
+            item.iconIsMediaThumbnail = oldIt->second.iconIsMediaThumbnail;
             item.iconState = oldIt->second.iconState;
             oldIt->second.bitmap = nullptr;
             oldIconCache.erase(oldIt);
@@ -388,6 +410,14 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
     bool recreateExpandedOverlay = false;
     if (topologyChanged)
     {
+        snowdesktop::display_topology_refresh::PageIdSet
+            previousMappedPageIds;
+        for (const auto& page : gridPages_)
+        {
+            if (!page.id.empty())
+                previousMappedPageIds.insert(page.id);
+        }
+
         const int newVirtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
         const int newVirtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
         const int newVirtualWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -419,6 +449,18 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         // first synchronous paint.
         UpdateLayoutWorkArea();
         LayoutItems();
+
+        snowdesktop::display_topology_refresh::PageIdSet
+            currentMappedPageIds;
+        for (const auto& page : gridPages_)
+        {
+            if (!page.id.empty())
+                currentMappedPageIds.insert(page.id);
+        }
+        displayTopologyHiddenPageIds_ =
+            snowdesktop::display_topology_refresh::ReconcileHiddenPages(
+                displayTopologyHiddenPageIds_,
+                previousMappedPageIds, currentMappedPageIds);
     }
 
     if (recreateExpandedOverlay)
@@ -428,8 +470,8 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         // input allocation. Recreate the HWND and its DComp target exactly as
         // startup does so the added pixels participate in hit testing.
         // Scheduler deadlines are independent of HWND lifetime. Retire the
-        // old widget tokens before RebindHostTimers creates replacements for
-        // the recreated desktop host.
+        // old widget tokens before the common overlay-creation path creates
+        // replacements for the recreated desktop host.
         for (const auto& [timerId, _] : widgetTimerIds_)
             uiAnimationScheduler_.Cancel(timerId);
         widgetTimerIds_.clear();
@@ -443,8 +485,6 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
             ScheduleDisplayTopologyRefresh();
             return;
         }
-        if (widgetEngine_)
-            widgetEngine_->RebindHostTimers();
         HideExplorerIcons();
         UpdateHostInputImePosition();
     }
@@ -475,6 +515,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
 
         if (topologyChanged)
         {
+            ResetDesktopWidgetComposition();
             dcompSurface_.Reset();
             compositionWidth_ = 0;
             compositionHeight_ = 0;

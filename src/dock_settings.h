@@ -57,6 +57,8 @@ enum class SystemTaskbarThemeMode
 
 struct SystemTaskbarDynamicRule
 {
+    bool operator==(const SystemTaskbarDynamicRule&) const = default;
+
     bool enabled = false;
     SystemTaskbarThemeMode themeMode = SystemTaskbarThemeMode::Native;
     int contentTheme = -1; // -1=follow selected theme
@@ -74,6 +76,8 @@ struct SystemTaskbarTargetAppearance
 
 struct DockSettings
 {
+    bool operator==(const DockSettings&) const = default;
+
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
     // Legacy field name retained in the persisted format. This now controls
@@ -90,6 +94,8 @@ struct DockSettings
     bool showWindowPreviews = true;
     bool showFrequentItems = false;
     bool keepWhenDesktopHidden = false;
+    bool allowDesktopContentOverlap = false;
+    bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
     bool systemTaskbarAutoHide = false;
@@ -113,11 +119,11 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
 
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
-bool SetSystemTaskbarAutoHideEnabled(bool enabled);
+bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool IsSystemTaskbarAlignmentCentered();
-bool SetSystemTaskbarAlignmentCentered(bool centered);
+bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();
-bool SetWindowsSystemLightThemeEnabled(bool enabled);
+bool RequestWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();
 PersonalizationSettings MakeTransparentTaskbarAppearance();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();

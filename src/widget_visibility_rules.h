@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 namespace snowdesktop::widget_visibility_rules
 {
 constexpr bool ShouldRenderWidget(
@@ -8,6 +10,7 @@ constexpr bool ShouldRenderWidget(
     bool externalDragActive,
     bool widgetMoveActive,
     bool widgetSelected,
+    bool widgetFileSelected,
     bool interactionRetained,
     bool pointerInside)
 {
@@ -16,8 +19,48 @@ constexpr bool ShouldRenderWidget(
         externalDragActive ||
         widgetMoveActive ||
         widgetSelected ||
+        widgetFileSelected ||
         interactionRetained ||
         pointerInside;
+}
+
+constexpr bool ShouldRetainForKeyboardNavigation(
+    bool keyboardVisualFocus,
+    bool insideWidget,
+    std::size_t navigationWidgetIndex,
+    std::size_t widgetIndex)
+{
+    return keyboardVisualFocus && insideWidget &&
+        navigationWidgetIndex == widgetIndex;
+}
+
+constexpr bool IsDesktopSurfaceVisible(
+    bool desktopHidden,
+    bool keepWhenDesktopHidden,
+    bool hasDesktopBounds,
+    bool interactionVisible)
+{
+    return (!desktopHidden || keepWhenDesktopHidden) &&
+        hasDesktopBounds && interactionVisible;
+}
+
+constexpr bool ShouldKeepTopologyHiddenPageRuntimeActive(
+    bool desktopHidden,
+    bool desktopSurfaceVisible,
+    bool pageUnavailable,
+    bool hiddenByDisplayTopology)
+{
+    return !desktopHidden && !desktopSurfaceVisible &&
+        pageUnavailable && hiddenByDisplayTopology;
+}
+
+constexpr bool ShouldHideWidgetPreviewSource(
+    bool widgetMoveActive,
+    bool widgetResizeActive,
+    bool isPreviewSource)
+{
+    return isPreviewSource &&
+        (widgetMoveActive || widgetResizeActive);
 }
 
 }

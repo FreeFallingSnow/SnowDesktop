@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../widgets/lua_logical_slot.h"
 
 // Desktop-item layout and container rebuild.
 
@@ -51,7 +52,7 @@ void DesktopApp::LayoutItems()
                 page->columns, page->rows);
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
-            widget.cellScale = CalculateWidgetCellScale(page->cellWidth, page->cellHeight);
+            widget.cellScale = GetGridPageCuScale(*page);
         }
         else
             widget.cellScale = 1.0f;
@@ -69,6 +70,7 @@ void DesktopApp::LayoutItems()
  */
 void DesktopApp::RebuildContainersAndItems()
 {
+    demoCollectionIdentityCache_.clear();
     const bool wasDragging = dragSession_.IsActive();
     if (wasDragging)
         dragSession_.DetachRuntimeBindings();
@@ -77,12 +79,15 @@ void DesktopApp::RebuildContainersAndItems()
     // destroyed. Clear them before releasing containers and item wrappers.
     mouseDownHit_ = nullptr;
     pendingCtrlToggleWidgetItem_ = nullptr;
-    dockPressedContainer_ = nullptr;
+    ClearDockPressedState();
     widgetDockTargetContainer_ = nullptr;
-    popupDragTargetSlot_.reset();
-    popupMouseDownItem_.reset();
+    ClearPopupDragTarget();
+    ClearPopupMouseDownItem();
 
     floatingDockContainer_ = nullptr;
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            host->container = nullptr;
     containers_.clear();
     items_oo_.clear();
 
@@ -129,6 +134,33 @@ void DesktopApp::RebuildContainersAndItems()
         else if (!dockExclusive)
         {
             items_oo_.push_back(std::move(widget));
+            if (w.type == DesktopWidgetType::LuaScript && widgetEngine_ &&
+                widgetEngine_->EnsureWidgetLoaded(w.id, w.packageId))
+            {
+                const LuaWidgetManifest manifest =
+                    WidgetEngine::GetWidgetManifest(w.packageId);
+                for (const auto& [slotId, declaration] :
+                    manifest.logicalSlots)
+                {
+                    (void)declaration;
+                    const std::wstring widgetId = w.id;
+                    containers_.push_back(
+                        std::make_unique<LuaLogicalSlotContainer>(
+                            widgetId, slotId,
+                            [this, widgetId, slotId]() {
+                                return widgetEngine_
+                                    ? widgetEngine_->RuntimeLogicalSlotSurface(
+                                        widgetId, slotId)
+                                    : std::optional<LogicalSlotHostSurface>{};
+                            },
+                            [this, widgetId, slotId](
+                                const std::vector<Item*>& sourceItems,
+                                std::size_t targetIndex) {
+                                return CommitLuaLogicalSlotDrop(widgetId,
+                                    slotId, sourceItems, targetIndex);
+                            }));
+                }
+            }
         }
     }
 
@@ -141,21 +173,19 @@ void DesktopApp::RebuildContainersAndItems()
                     std::make_unique<DockContainer>(this, &dockEntries_, dockArea));
         }
     }
-    if (floatingDockVisible_)
-    {
-        floatingDockContainer_ =
-            SelectFloatingDockContainerForMonitor(
-                floatingDockMonitor_);
-        if (floatingDockContainer_)
-            UpdateFloatingDockWindowBounds();
-        else
-            CloseFloatingDock();
-    }
+    // Every Dock is rendered by its display's persistent top-level Host.
+    // Rebind after each runtime-tree rebuild because DockContainer pointers
+    // are invalidated even though the HWND and composition resources remain.
+    SyncPersistentDockHosts();
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {
         mouseDown_ = false;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        detailColumnResizeActive_ = false;
+        detailColumnResizePopup_ = false;
+        detailColumnResizeColumn_ =
+            snowdesktop::list_detail_rules::Column::None;
         HideDragHintWindow();
         ReleaseCapture();
     }

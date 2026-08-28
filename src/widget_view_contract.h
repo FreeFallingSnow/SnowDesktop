@@ -1,0 +1,278 @@
+#pragma once
+
+#include "widget_view_tree.h"
+
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string_view>
+#include <vector>
+
+namespace snowdesktop::widget_runtime
+{
+enum class ViewAccessibilityPattern : std::uint32_t
+{
+    None = 0,
+    Invoke = 1u << 0,
+    Toggle = 1u << 1,
+    Selection = 1u << 2,
+    SelectionItem = 1u << 3,
+    RangeValue = 1u << 4,
+    Value = 1u << 5,
+    ExpandCollapse = 1u << 6,
+    Scroll = 1u << 7,
+    Grid = 1u << 8,
+    GridItem = 1u << 9,
+};
+
+constexpr ViewAccessibilityPattern operator|(
+    ViewAccessibilityPattern left,
+    ViewAccessibilityPattern right) noexcept
+{
+    return static_cast<ViewAccessibilityPattern>(
+        static_cast<std::uint32_t>(left) |
+        static_cast<std::uint32_t>(right));
+}
+
+constexpr bool HasViewAccessibilityPattern(
+    ViewAccessibilityPattern value,
+    ViewAccessibilityPattern pattern) noexcept
+{
+    return (static_cast<std::uint32_t>(value) &
+        static_cast<std::uint32_t>(pattern)) != 0;
+}
+
+enum class ViewChildPolicy : std::uint8_t
+{
+    Any,
+    None,
+    Single,
+    Collection,
+    LogicalSlot,
+};
+
+struct ViewNodeContract
+{
+    ViewNodeType type = ViewNodeType::Box;
+    std::string_view name;
+    std::string_view category;
+    std::string_view feature;
+    std::string_view defaultAccessibilityRole;
+    std::string_view uiaControlType;
+    ViewChildPolicy childPolicy = ViewChildPolicy::Any;
+    ViewAccessibilityPattern uiaPatterns =
+        ViewAccessibilityPattern::None;
+    bool keyboardFocusable = false;
+};
+
+enum class ViewEventPayloadKind : std::uint8_t
+{
+    Pointer,
+    Wheel,
+    Key,
+    Action,
+    Change,
+    SelectionChange,
+    Focus,
+    Submit,
+    ScrollEnd,
+};
+
+struct ViewEventContract
+{
+    std::string_view name;
+    ViewEventPayloadKind payload = ViewEventPayloadKind::Action;
+};
+
+struct ViewValidationDiagnosticContract
+{
+    std::string_view code;
+    std::string_view stage;
+};
+
+enum class ViewPropertyValueKind : std::uint8_t
+{
+    String,
+    Boolean,
+    Number,
+    Integer,
+    StringOrNumber,
+    Length,
+    EdgeInsets,
+    Offset,
+    Resource,
+    Color,
+    StringArray,
+    NumberArray,
+    IndexArray,
+    Node,
+    NodeArray,
+    Enum,
+    Spans,
+    ChoiceOptions,
+    TextSelection,
+    Style,
+    Shadow,
+    Transform,
+    Transition,
+    PresenceTransition,
+    GridTracks,
+    Tooltip,
+    Accessibility,
+    Events,
+    Action,
+};
+
+enum class ViewPropertyEnumSet : std::uint8_t
+{
+    None,
+    NodeType,
+    IconFont,
+    ImageFit,
+    ImageAlignment,
+    ImageInterpolation,
+    Shape,
+    Orientation,
+    ValidationState,
+    Overflow,
+    SelectionMode,
+    FlexDirection,
+    FlexWrap,
+    ContentAlignment,
+    FontStyle,
+    TextDirection,
+    Visibility,
+    Alignment,
+    SelfAlignment,
+    Justification,
+    TextAlignment,
+    VerticalAlignment,
+    TextWrap,
+    TextOverflow,
+};
+
+enum class ViewPropertyEffect : std::uint8_t
+{
+    None = 0,
+    Layout = 1u << 0,
+    Paint = 1u << 1,
+    HitTest = 1u << 2,
+    Input = 1u << 3,
+    Accessibility = 1u << 4,
+    Resource = 1u << 5,
+    Tree = 1u << 6,
+};
+
+constexpr ViewPropertyEffect operator|(
+    ViewPropertyEffect left, ViewPropertyEffect right) noexcept
+{
+    return static_cast<ViewPropertyEffect>(
+        static_cast<std::uint8_t>(left) |
+        static_cast<std::uint8_t>(right));
+}
+
+constexpr bool HasViewPropertyEffect(
+    ViewPropertyEffect value, ViewPropertyEffect effect) noexcept
+{
+    return (static_cast<std::uint8_t>(value) &
+        static_cast<std::uint8_t>(effect)) != 0;
+}
+
+enum class ViewPropertyTransitionEffect : std::uint8_t
+{
+    None = 0,
+    Visual = 1u << 0,
+    Transform = 1u << 1,
+    Layout = 1u << 2,
+};
+
+constexpr ViewPropertyTransitionEffect operator|(
+    ViewPropertyTransitionEffect left,
+    ViewPropertyTransitionEffect right) noexcept
+{
+    return static_cast<ViewPropertyTransitionEffect>(
+        static_cast<std::uint8_t>(left) |
+        static_cast<std::uint8_t>(right));
+}
+
+constexpr bool HasViewPropertyTransitionEffect(
+    ViewPropertyTransitionEffect value,
+    ViewPropertyTransitionEffect effect) noexcept
+{
+    return (static_cast<std::uint8_t>(value) &
+        static_cast<std::uint8_t>(effect)) != 0;
+}
+
+struct ViewPropertyContract
+{
+    std::string_view name;
+    ViewPropertyValueKind valueKind = ViewPropertyValueKind::String;
+    ViewPropertyEnumSet enumSet = ViewPropertyEnumSet::None;
+    ViewPropertyEffect effects = ViewPropertyEffect::None;
+    ViewPropertyTransitionEffect transitionEffects =
+        ViewPropertyTransitionEffect::None;
+    bool hasNumericRange = false;
+    double numericMinimum = 0.0;
+    double numericMaximum = 0.0;
+};
+
+enum class ViewPropertyDefaultKind : std::uint8_t
+{
+    NotApplicable,
+    Required,
+    Literal,
+    Conditional,
+};
+
+struct ViewPropertyDefault
+{
+    ViewPropertyDefaultKind kind =
+        ViewPropertyDefaultKind::NotApplicable;
+    std::string_view expression;
+};
+
+std::span<const ViewNodeContract> ViewNodeContracts() noexcept;
+const ViewNodeContract* FindViewNodeContract(
+    ViewNodeType type) noexcept;
+const ViewNodeContract* FindViewNodeContract(
+    std::string_view name) noexcept;
+std::optional<ViewNodeType> FindViewNodeType(
+    std::string_view name) noexcept;
+
+std::span<const ViewPropertyContract> ViewPropertyContracts() noexcept;
+const ViewPropertyContract* FindViewPropertyContract(
+    std::string_view name) noexcept;
+std::string_view ViewPropertyValueKindName(
+    ViewPropertyValueKind kind) noexcept;
+std::span<const std::string_view> ViewPropertyEnumValues(
+    const ViewPropertyContract& contract) noexcept;
+bool ViewPropertyAllowsEnumValue(const ViewPropertyContract& contract,
+    std::string_view value) noexcept;
+bool ViewPropertyNumericValueInRange(
+    const ViewPropertyContract& contract, double value) noexcept;
+std::span<const std::string_view> ViewNodePropertyNames() noexcept;
+bool IsKnownViewNodeProperty(std::string_view property) noexcept;
+bool ViewNodeAllowsProperty(
+    ViewNodeType type, std::string_view property) noexcept;
+bool ViewNodeRequiresProperty(
+    ViewNodeType type, std::string_view property) noexcept;
+std::vector<std::string_view> ViewNodeAllowedProperties(
+    ViewNodeType type);
+std::vector<std::string_view> ViewNodeProhibitedProperties(
+    ViewNodeType type);
+std::vector<std::string_view> ViewNodeRequiredProperties(
+    ViewNodeType type);
+ViewPropertyDefault ViewNodePropertyDefault(
+    ViewNodeType type, std::string_view property) noexcept;
+
+std::span<const ViewEventContract> ViewEventContracts() noexcept;
+bool IsKnownViewEvent(std::string_view event) noexcept;
+bool ViewNodeAllowsEvent(
+    ViewNodeType type, std::string_view event) noexcept;
+std::vector<std::string_view> ViewNodeAllowedEvents(
+    ViewNodeType type);
+std::span<const ViewValidationDiagnosticContract>
+ViewValidationDiagnosticContracts() noexcept;
+bool IsKnownViewValidationDiagnosticCode(
+    std::string_view code) noexcept;
+}

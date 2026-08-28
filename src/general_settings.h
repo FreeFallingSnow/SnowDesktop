@@ -13,13 +13,30 @@
 
 struct GeneralSettings
 {
+    static constexpr int kAllAgentSkillTargetsMask = 0x3F;
+
+    // Runtime projection of SnowDesktop's unified per-user logon task. The
+    // scheduled task remains the source of truth; this field is deliberately
+    // not serialized into SnowDesktop.general.json.
+    bool autoStartEnabled = false;
     bool softwareDesktopEnabled = true;
+    bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     bool desktopPassthroughHotkeyEnabled = false;
     UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
+    bool pageNavigationKeyboardEnabled = true;
+    UINT pageNavigationPreviousModifiers = 0;
+    UINT pageNavigationPreviousVirtualKey = VK_PRIOR;
+    UINT pageNavigationNextModifiers = 0;
+    UINT pageNavigationNextVirtualKey = VK_NEXT;
     int quickNavTheme = 1;
+    // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
+    // Dark preserves the legacy collection-popup appearance when absent.
+    int collectionPopupTheme = 0;
     bool dockEnabled = false;
+    bool widgetDeveloperToolsEnabled = false;
+    int agentSkillTargetMask = kAllAgentSkillTargetsMask;
     char language[85] = "system";
 };
 
