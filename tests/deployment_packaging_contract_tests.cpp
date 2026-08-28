@@ -302,6 +302,13 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             wallpaperCapture.find("injector.parent_path().c_str()") !=
                 std::string::npos,
         "wallpaper hooks use injectable copies while the 32-bit injector resolves from the runtime directory");
+    Check(deploymentSource.find("try_get_activation_factory") !=
+            std::string::npos &&
+            deploymentSource.find("GetStartupTaskOnCurrentApartment") !=
+                std::string::npos &&
+            deploymentSource.find("StartupTask::GetAsync(") ==
+                std::string::npos,
+        "packaged StartupTask calls avoid caching a proxy beyond the short-lived MTA apartment");
     Check(releaseBuild.find(
               ".build\\Release\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
             std::string::npos &&

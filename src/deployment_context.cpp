@@ -188,6 +188,25 @@ bool IsStorePackageRegisteredForCurrentUser() noexcept
     return result == ERROR_INSUFFICIENT_BUFFER && packageCount > 0;
 }
 
+winrt::Windows::ApplicationModel::StartupTask
+GetStartupTaskOnCurrentApartment()
+{
+    using winrt::Windows::ApplicationModel::IStartupTaskStatics;
+    using winrt::Windows::ApplicationModel::StartupTask;
+
+    // This helper runs on a short-lived MTA. StartupTask::GetAsync uses the
+    // process-wide C++/WinRT activation-factory cache; after this apartment is
+    // uninitialized, that cache can retain a proxy whose backing stub has been
+    // unloaded. A later settings query then dereferences the stale proxy.
+    // Acquire an uncached factory so it is released on this apartment before
+    // RunStartupTaskOnMta calls uninit_apartment().
+    auto factory = winrt::try_get_activation_factory<IStartupTaskStatics>(
+        winrt::name_of<StartupTask>());
+    if (!factory)
+        throw winrt::hresult_error(REGDB_E_CLASSNOTREG);
+    return factory.GetAsync(kStartupTaskId).get();
+}
+
 template<typename Callback>
 snowdesktop::deployment::PackagedAutoStartState RunStartupTaskOnMta(
     Callback&& callback) noexcept
@@ -302,9 +321,7 @@ PackagedAutoStartState GetPackagedAutoStartState() noexcept
         return PackagedAutoStartState::Unavailable;
 
     return RunStartupTaskOnMta([] {
-        const auto task =
-            winrt::Windows::ApplicationModel::StartupTask::GetAsync(
-                kStartupTaskId).get();
+        const auto task = GetStartupTaskOnCurrentApartment();
         return task.State();
     });
 }
@@ -350,9 +367,7 @@ PackagedAutoStartState SetPackagedAutoStartEnabled(bool enable) noexcept
 
     return RunStartupTaskOnMta([enable] {
         using winrt::Windows::ApplicationModel::StartupTaskState;
-        const auto task =
-            winrt::Windows::ApplicationModel::StartupTask::GetAsync(
-                kStartupTaskId).get();
+        const auto task = GetStartupTaskOnCurrentApartment();
         auto state = task.State();
         if (enable)
         {
@@ -364,9 +379,7 @@ PackagedAutoStartState SetPackagedAutoStartEnabled(bool enable) noexcept
             task.Disable();
         }
 
-        const auto refreshedTask =
-            winrt::Windows::ApplicationModel::StartupTask::GetAsync(
-                kStartupTaskId).get();
+        const auto refreshedTask = GetStartupTaskOnCurrentApartment();
         return refreshedTask.State();
     });
 }
