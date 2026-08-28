@@ -238,14 +238,14 @@ int main(int argc, char** argv)
         "General JSON commits never mutate the Windows auto-start registration");
     Check(controllerHeader.find("SetAutoStartEnabled") !=
                 std::string::npos &&
-            controllerHeader.find("OpenStartupAppsSettings") !=
+            controllerHeader.find("OpenStartupAppsSettings") ==
                 std::string::npos &&
             controllerHeader.find("bool boolValue = false;") !=
                 std::string::npos,
-        "auto-start uses explicit structured host actions");
+        "auto-start uses one explicit host action without delegating state to Windows Startup Apps");
     const std::string_view autoStartAction = Between(source,
         "case Action::SetAutoStartEnabled:",
-        "case Action::OpenStartupAppsSettings:");
+        "case Action::CheckForUpdates:");
     Check(!autoStartAction.empty() &&
             AppearsBefore(autoStartAction,
                 "app_.ApplyAutoStartEnabled(request.boolValue)",
@@ -255,19 +255,19 @@ int main(int argc, char** argv)
         "auto-start publishes the authoritative Windows result even after a rejected request");
     Check(hostHeader.find("startupConflict") != std::string::npos &&
             host.find("general.setAutoStart") != std::string::npos &&
-            host.find("general.openStartupAppsSettings") !=
+            host.find("general.openStartupAppsSettings") ==
                 std::string::npos &&
             host.find("general.queryStartupConflict") !=
                 std::string::npos &&
             host.find("Action::SetAutoStartEnabled") !=
                 std::string::npos &&
-            host.find("Action::OpenStartupAppsSettings") !=
+            host.find("Action::OpenStartupAppsSettings") ==
                 std::string::npos,
-        "the General WinUI presenter is wired to the explicit auto-start host actions and runtime conflict provider");
+        "the General WinUI presenter owns auto-start changes and exposes only runtime ownership conflicts");
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&
-            run.find("HasActivePortableAutoStart(") !=
+            run.find("UnifiedAutoStartTaskState::Enabled") !=
                 std::string::npos &&
             run.find("PortableVersionOwnsStartup") != std::string::npos &&
             run.find("InstalledVersionOwnsStartup") != std::string::npos,

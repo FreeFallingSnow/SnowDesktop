@@ -42,6 +42,9 @@ struct State
 /** Change only the Enabled bit of an existing SnowDesktop-owned task. */
 [[nodiscard]] bool SetEnabled(bool enabled) noexcept;
 
+/** Delete the SnowDesktop-owned task, used only to roll back migration. */
+[[nodiscard]] bool Delete() noexcept;
+
 /** Test whether a queried task target belongs to the running deployment. */
 [[nodiscard]] bool IsCurrentDeploymentTarget(
     const Target& target) noexcept;

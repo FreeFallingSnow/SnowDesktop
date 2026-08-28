@@ -312,10 +312,12 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find(
               "installedStartupConflict.Visibility(showInstalledConflict") !=
                 std::string::npos &&
-            presenterHeader.find("openStartupAppsSettings") !=
+            presenterHeader.find("openStartupAppsSettings") ==
+                std::string::npos &&
+            presenter.find("auto_start_open_windows_settings") ==
                 std::string::npos &&
             presenter.find("general.autoStart") != std::string::npos,
-        "General projects host-owned startup state without committing it as JSON and preserves both ownership warnings");
+        "General projects the app-owned startup task without committing it as JSON or linking to Windows' independent startup state");
     Check(presenterHeader.find("RefreshRuntimeState() noexcept") !=
                 std::string::npos &&
             presenter.find(

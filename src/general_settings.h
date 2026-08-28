@@ -15,8 +15,8 @@ struct GeneralSettings
 {
     static constexpr int kAllAgentSkillTargetsMask = 0x3F;
 
-    // Runtime projection of the Windows startup registration. The registry or
-    // MSIX StartupTask remains the source of truth; this field is deliberately
+    // Runtime projection of SnowDesktop's unified per-user logon task. The
+    // scheduled task remains the source of truth; this field is deliberately
     // not serialized into SnowDesktop.general.json.
     bool autoStartEnabled = false;
     bool softwareDesktopEnabled = true;

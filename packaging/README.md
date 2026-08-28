@@ -92,8 +92,12 @@ artifacts\
 
 携带版和 MSIX 使用同一份 `SnowDesktop.exe` 与运行时载荷。程序在运行时检查包身份：
 
-- 携带版将数据写入 `exe\data`，通过注册表 Run 项管理开机自启；
-- MSIX 将数据写入 `LocalState\data`，通过 MSIX `StartupTask` 管理自启；
+- 携带版将数据写入 `exe\data`；
+- MSIX 将数据写入 `LocalState\data`；
+- 两种部署统一通过当前用户的 `\SnowDesktop\Startup` 登录计划任务管理自启，
+  同一时间只允许其中一个部署成为任务目标；1.0.4.0 仍保留旧 MSIX
+  `StartupTask` 清单声明作为一次性迁移输入，迁移后会禁用它并删除旧携带版
+  Run/StartupApproved 值；
 - 携带版直接使用程序目录的 `widgets`；
 - MSIX 将内置组件复制到可写的 `LocalState\data\widgets`。
 

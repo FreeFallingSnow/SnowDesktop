@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../atomic_file.h"
+#include "../auto_start_manager.h"
 #include "../deployment_context.h"
 #include "../http_runtime.h"
 #include "../layout_storage.h"
@@ -8,6 +9,7 @@
 
 #include <cstring>
 #include <cwctype>
+#include <mutex>
 
 namespace
 {
@@ -19,16 +21,6 @@ constexpr wchar_t kAutoStartApprovalSubKey[] =
     L"StartupApproved\\Run";
 constexpr wchar_t kSettingsUpdateRequestOwner[] =
     L"snowdesktop.settings.update";
-
-std::wstring CurrentExecutablePath() noexcept
-{
-    std::wstring path(32768, L'\0');
-    const DWORD length = GetModuleFileNameW(
-        nullptr, path.data(), static_cast<DWORD>(path.size()));
-    if (length == 0 || length >= path.size()) return {};
-    path.resize(length);
-    return path;
-}
 
 std::wstring RegisteredExecutablePath(std::wstring_view command) noexcept
 {
@@ -60,155 +52,334 @@ std::wstring RegisteredExecutablePath(std::wstring_view command) noexcept
     return path;
 }
 
-bool SameExecutablePath(
-    const std::wstring& left, const std::wstring& right) noexcept
-{
-    if (left.empty() || right.empty()) return false;
-    std::error_code error;
-    if (std::filesystem::equivalent(left, right, error)) return true;
-    error.clear();
-    const auto absoluteLeft = std::filesystem::absolute(left, error)
-                                  .lexically_normal().wstring();
-    if (error) return false;
-    const auto absoluteRight = std::filesystem::absolute(right, error)
-                                   .lexically_normal().wstring();
-    return !error && CompareStringOrdinal(
-        absoluteLeft.c_str(), static_cast<int>(absoluteLeft.size()),
-        absoluteRight.c_str(), static_cast<int>(absoluteRight.size()),
-        TRUE) == CSTR_EQUAL;
-}
-
 bool RegistryValueMissing(LONG result) noexcept
 {
     return result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND;
 }
 
-struct PortableAutoStartRegistration
+struct LegacyRegistrySnapshot
 {
-    snowdesktop::PortableAutoStartRegistrationOwner owner =
-        snowdesktop::PortableAutoStartRegistrationOwner::Error;
+    bool known = false;
+    bool exists = false;
+    snowdesktop::deployment::UnvirtualizedRegistryValue value;
+};
+
+LegacyRegistrySnapshot QueryLegacyRegistryValue(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    LegacyRegistrySnapshot snapshot;
+    snapshot.value = snowdesktop::deployment::
+        QueryUnvirtualizedCurrentUserValue(
+            subKey, valueName);
+    const LONG result = static_cast<LONG>(snapshot.value.win32Result);
+    if (RegistryValueMissing(result))
+    {
+        snapshot.known = true;
+        return snapshot;
+    }
+    snapshot.known = result == ERROR_SUCCESS &&
+        snapshot.value.size <= snapshot.value.data.size();
+    snapshot.exists = snapshot.known;
+    return snapshot;
+}
+
+bool ApplyLegacyRegistrySnapshot(const LegacyRegistrySnapshot& snapshot,
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    if (!snapshot.known)
+        return false;
+    const std::uint32_t result = snapshot.exists
+        ? snowdesktop::deployment::SetUnvirtualizedCurrentUserValue(
+            subKey, valueName, snapshot.value.type,
+            snapshot.value.data.data(), snapshot.value.size)
+        : snowdesktop::deployment::DeleteUnvirtualizedCurrentUserValue(
+            subKey, valueName);
+    return result == ERROR_SUCCESS || RegistryValueMissing(
+        static_cast<LONG>(result));
+}
+
+bool DeleteLegacyRegistryValue(const LegacyRegistrySnapshot& snapshot,
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    if (!snapshot.known)
+        return false;
+    if (!snapshot.exists)
+        return true;
+    const std::uint32_t result = snowdesktop::deployment::
+        DeleteUnvirtualizedCurrentUserValue(subKey, valueName);
+    return result == ERROR_SUCCESS || RegistryValueMissing(
+        static_cast<LONG>(result));
+}
+
+std::wstring DecodeLegacyRunCommand(
+    const LegacyRegistrySnapshot& snapshot) noexcept
+{
+    if (!snapshot.known || !snapshot.exists ||
+        (snapshot.value.type != REG_SZ &&
+            snapshot.value.type != REG_EXPAND_SZ) ||
+        snapshot.value.size <= sizeof(wchar_t) ||
+        snapshot.value.size % sizeof(wchar_t) != 0)
+    {
+        return {};
+    }
+    std::wstring command(
+        snapshot.value.size / sizeof(wchar_t), L'\0');
+    memcpy(command.data(), snapshot.value.data.data(),
+        snapshot.value.size);
+    while (!command.empty() && command.back() == L'\0')
+        command.pop_back();
+    return command;
+}
+
+bool IsSnowDesktopExecutable(std::wstring_view command) noexcept
+{
+    const std::wstring executable = RegisteredExecutablePath(command);
+    if (executable.empty())
+        return false;
+    const std::wstring filename =
+        std::filesystem::path(executable).filename().wstring();
+    return CompareStringOrdinal(filename.c_str(),
+        static_cast<int>(filename.size()), L"SnowDesktop.exe", -1,
+        TRUE) == CSTR_EQUAL;
+}
+
+snowdesktop::PortableAutoStartApprovalState DecodeLegacyApproval(
+    const LegacyRegistrySnapshot& snapshot) noexcept
+{
+    using snowdesktop::PortableAutoStartApprovalState;
+    if (!snapshot.known)
+        return PortableAutoStartApprovalState::Error;
+    if (!snapshot.exists)
+        return PortableAutoStartApprovalState::Missing;
+    if (snapshot.value.type != REG_BINARY || snapshot.value.size == 0)
+        return PortableAutoStartApprovalState::Error;
+    return snowdesktop::DecodePortableAutoStartApprovalState(
+        snapshot.value.data[0]);
+}
+
+struct LegacyPortableAutoStart
+{
+    snowdesktop::LegacyAutoStartState state =
+        snowdesktop::LegacyAutoStartState::Unavailable;
+    LegacyRegistrySnapshot run;
+    LegacyRegistrySnapshot approval;
+    snowdesktop::auto_start::Target target;
     std::wstring command;
 };
 
-PortableAutoStartRegistration QueryPortableAutoStartRegistration() noexcept
+LegacyPortableAutoStart QueryLegacyPortableAutoStart() noexcept
 {
-    using snowdesktop::PortableAutoStartRegistrationOwner;
-    const auto query = snowdesktop::deployment::
-        QueryUnvirtualizedCurrentUserValue(
-            kAutoStartRunSubKey, kAutoStartRunValue);
-    const LONG result = static_cast<LONG>(query.win32Result);
-    if (RegistryValueMissing(result))
-        return {PortableAutoStartRegistrationOwner::Missing, {}};
-    if (result != ERROR_SUCCESS ||
-        (query.type != REG_SZ && query.type != REG_EXPAND_SZ) ||
-        query.size <= sizeof(wchar_t) || query.size > query.data.size() ||
-        query.size % sizeof(wchar_t) != 0)
-    {
-        return {PortableAutoStartRegistrationOwner::Error, {}};
-    }
-
-    std::wstring command(query.size / sizeof(wchar_t), L'\0');
-    memcpy(command.data(), query.data.data(), query.size);
-    while (!command.empty() && command.back() == L'\0')
-        command.pop_back();
-    if (command.empty())
-        return {PortableAutoStartRegistrationOwner::Error, {}};
-
-    const bool owned = SameExecutablePath(
-        RegisteredExecutablePath(command), CurrentExecutablePath());
-    return {
-        owned ? PortableAutoStartRegistrationOwner::CurrentExecutable
-              : PortableAutoStartRegistrationOwner::OtherExecutable,
-        std::move(command)};
-}
-
-snowdesktop::PortableAutoStartApprovalState
-QueryPortableAutoStartApproval() noexcept
-{
+    using snowdesktop::LegacyAutoStartState;
     using snowdesktop::PortableAutoStartApprovalState;
-    const auto query = snowdesktop::deployment::
-        QueryUnvirtualizedCurrentUserValue(
-            kAutoStartApprovalSubKey, kAutoStartRunValue);
-    const LONG result = static_cast<LONG>(query.win32Result);
-    if (RegistryValueMissing(result))
-        return PortableAutoStartApprovalState::Missing;
-    if (result != ERROR_SUCCESS || query.type != REG_BINARY ||
-        query.size == 0 || query.size > query.data.size())
-        return PortableAutoStartApprovalState::Error;
-    return snowdesktop::DecodePortableAutoStartApprovalState(query.data[0]);
+    LegacyPortableAutoStart result;
+    result.run = QueryLegacyRegistryValue(
+        kAutoStartRunSubKey, kAutoStartRunValue);
+    result.approval = QueryLegacyRegistryValue(
+        kAutoStartApprovalSubKey, kAutoStartRunValue);
+    if (!result.run.known || !result.approval.known)
+        return result;
+    if (!result.run.exists)
+    {
+        result.state = LegacyAutoStartState::Missing;
+        return result;
+    }
+    result.command = DecodeLegacyRunCommand(result.run);
+    if (result.command.empty() ||
+        !IsSnowDesktopExecutable(result.command))
+    {
+        return result;
+    }
+    result.target = snowdesktop::auto_start::
+        PortableTargetFromLegacyCommand(result.command);
+    if (result.target.executable.empty())
+        return result;
+    const PortableAutoStartApprovalState approval =
+        DecodeLegacyApproval(result.approval);
+    if (approval == PortableAutoStartApprovalState::Error)
+        return result;
+    result.state = snowdesktop::IsPortableAutoStartApprovalActive(approval)
+        ? LegacyAutoStartState::Enabled
+        : LegacyAutoStartState::Disabled;
+    return result;
 }
 
-bool WritePortableAutoStartApproval(bool enabled) noexcept
+snowdesktop::LegacyAutoStartState QueryLegacyPackagedAutoStart() noexcept
 {
-    std::uint64_t disabledAtFileTime = 0;
-    if (!enabled)
+    using snowdesktop::LegacyAutoStartState;
+    using snowdesktop::deployment::PackagedAutoStartState;
+    const bool packaged = snowdesktop::deployment::IsPackaged();
+    if (!packaged && !snowdesktop::deployment::
+            IsInstalledPackageRegisteredForCurrentUser())
     {
-        FILETIME fileTime{};
-        GetSystemTimeAsFileTime(&fileTime);
-        ULARGE_INTEGER timestamp{};
-        timestamp.LowPart = fileTime.dwLowDateTime;
-        timestamp.HighPart = fileTime.dwHighDateTime;
-        disabledAtFileTime = timestamp.QuadPart;
+        return LegacyAutoStartState::Missing;
     }
-    const auto payload = snowdesktop::BuildPortableAutoStartApprovalPayload(
-        enabled, disabledAtFileTime);
-
-    HKEY key = nullptr;
-    const LONG openResult = RegCreateKeyExW(HKEY_CURRENT_USER,
-        kAutoStartApprovalSubKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr,
-        &key, nullptr);
-    if (openResult != ERROR_SUCCESS) return false;
-    const LONG result = RegSetValueExW(key, kAutoStartRunValue, 0,
-        REG_BINARY, payload.data(), static_cast<DWORD>(payload.size()));
-    RegCloseKey(key);
-    return result == ERROR_SUCCESS;
+    const PackagedAutoStartState state = packaged
+        ? snowdesktop::deployment::GetPackagedAutoStartState()
+        : snowdesktop::deployment::GetInstalledPackagedAutoStartState();
+    if (state == PackagedAutoStartState::Unavailable)
+        return LegacyAutoStartState::Unavailable;
+    return snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state)
+        ? LegacyAutoStartState::Enabled
+        : LegacyAutoStartState::Disabled;
 }
 
-bool WritePortableAutoStart(bool enabled) noexcept
+bool SetLegacyPackagedAutoStart(bool enabled) noexcept
 {
-    using snowdesktop::PortableAutoStartRegistrationOwner;
+    const auto state = snowdesktop::deployment::IsPackaged()
+        ? snowdesktop::deployment::SetPackagedAutoStartEnabled(enabled)
+        : snowdesktop::deployment::
+            SetInstalledPackagedAutoStartEnabled(enabled);
+    return state != snowdesktop::deployment::
+            PackagedAutoStartState::Unavailable &&
+        snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state) ==
+            enabled;
+}
 
-    const PortableAutoStartRegistration existing =
-        QueryPortableAutoStartRegistration();
-    if (existing.owner == PortableAutoStartRegistrationOwner::Error)
-        return false;
-    if (existing.owner ==
-        PortableAutoStartRegistrationOwner::OtherExecutable)
-    {
-        return !enabled;
-    }
-    if (!enabled)
-    {
-        // Keep the Run registration so Windows Settings and Task Manager
-        // continue to represent the same portable startup item. Only its
-        // StartupApproved state changes during normal settings operations.
-        return existing.owner ==
-                PortableAutoStartRegistrationOwner::Missing ||
-            WritePortableAutoStartApproval(false);
-    }
-
-    HKEY key = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, kAutoStartRunSubKey, 0,
-            nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) !=
-        ERROR_SUCCESS)
+bool RemoveLegacyPortableAutoStart(
+    const LegacyPortableAutoStart& legacy) noexcept
+{
+    if (!DeleteLegacyRegistryValue(
+            legacy.run, kAutoStartRunSubKey, kAutoStartRunValue))
     {
         return false;
     }
-
-    const std::wstring executable = CurrentExecutablePath();
-    const std::wstring command = L"\"" + executable + L"\"";
-    // Windows limits Run/RunOnce command lines to MAX_PATH characters.
-    if (executable.empty() || command.size() >= MAX_PATH)
+    if (DeleteLegacyRegistryValue(legacy.approval,
+            kAutoStartApprovalSubKey, kAutoStartRunValue))
     {
-        RegCloseKey(key);
-        return false;
+        return true;
     }
-    const LONG result = RegSetValueExW(key, kAutoStartRunValue, 0, REG_SZ,
-        reinterpret_cast<const BYTE*>(command.c_str()),
-        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
-    RegCloseKey(key);
-    if (result != ERROR_SUCCESS) return false;
-    return WritePortableAutoStartApproval(true);
+    (void)ApplyLegacyRegistrySnapshot(
+        legacy.run, kAutoStartRunSubKey, kAutoStartRunValue);
+    return false;
+}
+
+void RestoreLegacyPortableAutoStart(
+    const LegacyPortableAutoStart& legacy) noexcept
+{
+    (void)ApplyLegacyRegistrySnapshot(
+        legacy.run, kAutoStartRunSubKey, kAutoStartRunValue);
+    (void)ApplyLegacyRegistrySnapshot(
+        legacy.approval, kAutoStartApprovalSubKey, kAutoStartRunValue);
+}
+
+struct ReconciledAutoStart
+{
+    bool known = false;
+    snowdesktop::auto_start::State task;
+};
+
+ReconciledAutoStart ReconcileAutoStart() noexcept
+{
+    using snowdesktop::LegacyAutoStartState;
+    using snowdesktop::UnifiedAutoStartOwner;
+    using snowdesktop::UnifiedAutoStartTaskState;
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+
+    ReconciledAutoStart result;
+    result.task = snowdesktop::auto_start::Query();
+    if (result.task.status == UnifiedAutoStartTaskState::Foreign ||
+        result.task.status == UnifiedAutoStartTaskState::Unavailable)
+    {
+        return result;
+    }
+
+    const LegacyPortableAutoStart portable =
+        QueryLegacyPortableAutoStart();
+    const LegacyAutoStartState packaged =
+        QueryLegacyPackagedAutoStart();
+    if (portable.state == LegacyAutoStartState::Unavailable ||
+        packaged == LegacyAutoStartState::Unavailable)
+    {
+        return result;
+    }
+
+    if (result.task.status == UnifiedAutoStartTaskState::Missing)
+    {
+        const UnifiedAutoStartOwner currentOwner =
+            snowdesktop::deployment::IsPackaged()
+                ? UnifiedAutoStartOwner::Packaged
+                : UnifiedAutoStartOwner::Portable;
+        const snowdesktop::AutoStartMigrationDecision decision =
+            snowdesktop::SelectAutoStartMigration(
+                currentOwner, portable.state, packaged);
+        if (!decision.canMigrate)
+            return result;
+
+        snowdesktop::auto_start::Target target;
+        if (decision.owner == currentOwner)
+            target = snowdesktop::auto_start::CurrentDeploymentTarget();
+        else if (decision.owner == UnifiedAutoStartOwner::Portable)
+            target = portable.target;
+        else if (decision.owner == UnifiedAutoStartOwner::Packaged)
+            target = snowdesktop::auto_start::PackagedDeploymentTarget();
+        if (target.executable.empty() ||
+            !snowdesktop::auto_start::Configure(target, false))
+        {
+            return result;
+        }
+
+        const bool packagedWasEnabled =
+            packaged == LegacyAutoStartState::Enabled;
+        const bool packagedRemoved = !packagedWasEnabled ||
+            SetLegacyPackagedAutoStart(false);
+        const bool portableRemoved = packagedRemoved &&
+            RemoveLegacyPortableAutoStart(portable);
+        const bool unifiedEnabled = portableRemoved &&
+            (!decision.enableUnifiedTask ||
+                snowdesktop::auto_start::SetEnabled(true));
+        if (!unifiedEnabled)
+        {
+            RestoreLegacyPortableAutoStart(portable);
+            if (packagedWasEnabled)
+                (void)SetLegacyPackagedAutoStart(true);
+            (void)snowdesktop::auto_start::Delete();
+            return result;
+        }
+        result.task = snowdesktop::auto_start::Query();
+        result.known = result.task.status ==
+                UnifiedAutoStartTaskState::Enabled ||
+            result.task.status == UnifiedAutoStartTaskState::Disabled;
+        return result;
+    }
+
+    const bool taskWasEnabled = result.task.status ==
+        UnifiedAutoStartTaskState::Enabled;
+    const bool legacyActive = portable.state ==
+            LegacyAutoStartState::Enabled ||
+        packaged == LegacyAutoStartState::Enabled;
+    bool taskTemporarilyDisabled = false;
+    if (taskWasEnabled && legacyActive)
+    {
+        if (!snowdesktop::auto_start::SetEnabled(false))
+            return result;
+        taskTemporarilyDisabled = true;
+    }
+
+    const bool packagedWasEnabled =
+        packaged == LegacyAutoStartState::Enabled;
+    const bool packagedRemoved = !packagedWasEnabled ||
+        SetLegacyPackagedAutoStart(false);
+    const bool portableRemoved = packagedRemoved &&
+        RemoveLegacyPortableAutoStart(portable);
+    const bool taskRestored = portableRemoved &&
+        (!taskTemporarilyDisabled ||
+            snowdesktop::auto_start::SetEnabled(true));
+    if (!taskRestored)
+    {
+        RestoreLegacyPortableAutoStart(portable);
+        if (packagedWasEnabled)
+            (void)SetLegacyPackagedAutoStart(true);
+        if (taskTemporarilyDisabled)
+            (void)snowdesktop::auto_start::SetEnabled(true);
+        return result;
+    }
+
+    result.task = snowdesktop::auto_start::Query();
+    result.known = result.task.status ==
+            UnifiedAutoStartTaskState::Enabled ||
+        result.task.status == UnifiedAutoStartTaskState::Disabled;
+    return result;
 }
 } // namespace
 
@@ -217,58 +388,19 @@ bool WritePortableAutoStart(bool enabled) noexcept
 snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
     const noexcept
 {
-    using snowdesktop::PortableAutoStartApprovalState;
-    using snowdesktop::PortableAutoStartRegistrationOwner;
-    using snowdesktop::deployment::PackagedAutoStartState;
-
     snowdesktop::AutoStartQueryResult result;
     result.packaged = snowdesktop::deployment::IsPackaged();
-    const PortableAutoStartRegistration portable =
-        QueryPortableAutoStartRegistration();
-    result.portableOwner = portable.owner;
-    result.portableCommand = portable.command;
-    result.portableApproval = QueryPortableAutoStartApproval();
-
-    if (result.packaged)
-    {
-        PackagedAutoStartState state =
-            snowdesktop::deployment::GetPackagedAutoStartState();
-        if (lastObservedPackagedAutoStartState_ &&
-            snowdesktop::deployment::
-                ShouldFinalizePackagedAutoStartUserEnable(
-                    *lastObservedPackagedAutoStartState_, state))
-        {
-            // Windows Startup Apps changed an explicit user block back into
-            // an app-configurable state. Complete that user-authored enable
-            // request through the public API so both settings surfaces agree.
-            state = snowdesktop::deployment::
-                SetPackagedAutoStartEnabled(true);
-        }
-        lastObservedPackagedAutoStartState_ = state;
-        result.stateKnown = state != PackagedAutoStartState::Unavailable;
-        result.enabled = result.stateKnown &&
-            snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state);
-        return result;
-    }
-
-    result.installedPackageEnabled =
-        snowdesktop::deployment::IsPackagedAutoStartStateEnabled(
-            snowdesktop::deployment::GetInstalledPackagedAutoStartState());
-    if (result.portableOwner ==
-        PortableAutoStartRegistrationOwner::CurrentExecutable)
-    {
-        result.stateKnown = result.portableApproval !=
-            PortableAutoStartApprovalState::Error;
-        result.enabled = result.stateKnown &&
-            snowdesktop::IsPortableAutoStartApprovalActive(
-                result.portableApproval);
-    }
-    else
-    {
-        result.stateKnown = result.portableOwner !=
-            PortableAutoStartRegistrationOwner::Error;
-        result.enabled = false;
-    }
+    const ReconciledAutoStart reconciled = ReconcileAutoStart();
+    result.stateKnown = reconciled.known;
+    result.taskStatus = reconciled.task.status;
+    result.taskOwner = reconciled.task.target.owner;
+    result.taskOwnedByCurrentDeployment = result.stateKnown &&
+        snowdesktop::auto_start::IsCurrentDeploymentTarget(
+            reconciled.task.target);
+    result.enabled = result.taskOwnedByCurrentDeployment &&
+        result.taskStatus ==
+            snowdesktop::UnifiedAutoStartTaskState::Enabled;
+    result.ownerCommand = reconciled.task.target.executable;
     return result;
 }
 
@@ -283,9 +415,6 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
 {
     using snowdesktop::AutoStartApplyResult;
     using snowdesktop::AutoStartApplyStatus;
-    using snowdesktop::PortableAutoStartApprovalState;
-    using snowdesktop::PortableAutoStartRegistrationOwner;
-    using snowdesktop::deployment::PackagedAutoStartState;
 
     const auto finish = [this](AutoStartApplyStatus status,
                             std::wstring message = {})
@@ -298,97 +427,29 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     };
 
     const snowdesktop::AutoStartQueryResult before = QueryAutoStartState();
-    if (before.packaged)
-    {
-        if (enabled && before.portableOwner !=
-                PortableAutoStartRegistrationOwner::Missing)
-        {
-            if (before.portableOwner ==
-                    PortableAutoStartRegistrationOwner::Error ||
-                before.portableApproval ==
-                    PortableAutoStartApprovalState::Error)
-            {
-                return finish(AutoStartApplyStatus::StateUnavailable,
-                    _LW("app.settings.auto_start_enable_failed"));
-            }
-            if (snowdesktop::HasActivePortableAutoStart(
-                    before.portableOwner, before.portableApproval))
-            {
-                return finish(
-                    AutoStartApplyStatus::PortableRegistrationConflict,
-                    _LFW("app.settings.auto_start_portable_conflict",
-                        before.portableCommand));
-            }
-        }
-
-        const PackagedAutoStartState state =
-            snowdesktop::deployment::SetPackagedAutoStartEnabled(enabled);
-        const bool actual =
-            snowdesktop::deployment::IsPackagedAutoStartStateEnabled(state);
-        if (state != PackagedAutoStartState::Unavailable &&
-            actual == enabled)
-            return finish(AutoStartApplyStatus::Applied);
-
-        const char* key = nullptr;
-        AutoStartApplyStatus status = AutoStartApplyStatus::Failed;
-        if (enabled && state == PackagedAutoStartState::DisabledByUser)
-        {
-            key = "app.settings.auto_start_manual_required";
-            status = AutoStartApplyStatus::ManualEnableRequired;
-        }
-        else if (state == PackagedAutoStartState::DisabledByPolicy ||
-            state == PackagedAutoStartState::EnabledByPolicy)
-        {
-            key = enabled ? "app.settings.auto_start_policy_disabled"
-                          : "app.settings.auto_start_policy_enabled";
-            status = AutoStartApplyStatus::BlockedByPolicy;
-        }
-        else
-        {
-            key = enabled
-                ? "app.settings.auto_start_enable_failed"
-                : "app.settings.auto_start_disable_failed";
-            status = state == PackagedAutoStartState::Unavailable
-                ? AutoStartApplyStatus::StateUnavailable
-                : AutoStartApplyStatus::Failed;
-        }
-        return finish(status, _LW(key));
-    }
-
-    if (before.portableOwner ==
-        PortableAutoStartRegistrationOwner::Error)
+    if (!before.stateKnown)
     {
         return finish(AutoStartApplyStatus::StateUnavailable,
             _LW(enabled
                 ? "app.settings.auto_start_enable_failed"
                 : "app.settings.auto_start_disable_failed"));
     }
-    if (enabled && before.portableOwner ==
-            PortableAutoStartRegistrationOwner::OtherExecutable)
+
+    bool applied = false;
+    if (enabled)
     {
-        // Even a Task Manager-disabled entry belongs to the other executable.
-        // Never overwrite it merely because it is currently inactive.
-        return finish(AutoStartApplyStatus::PortableRegistrationConflict,
-            _LFW("app.settings.auto_start_portable_conflict",
-                before.portableCommand));
+        applied = snowdesktop::auto_start::Configure(
+            snowdesktop::auto_start::CurrentDeploymentTarget(), true);
     }
-    if (enabled && before.portableApproval ==
-            PortableAutoStartApprovalState::Error)
+    else if (!before.taskOwnedByCurrentDeployment)
     {
-        return finish(AutoStartApplyStatus::StateUnavailable,
-            _LW("app.settings.auto_start_enable_failed"));
+        applied = true;
     }
-    if (enabled && before.installedPackageEnabled)
+    else
     {
-        return finish(AutoStartApplyStatus::InstalledRegistrationConflict,
-            _LW("app.settings.auto_start_installed_conflict"));
+        applied = snowdesktop::auto_start::SetEnabled(false);
     }
-    if (!enabled && before.portableOwner ==
-            PortableAutoStartRegistrationOwner::OtherExecutable)
-    {
-        return finish(AutoStartApplyStatus::Applied);
-    }
-    if (!WritePortableAutoStart(enabled))
+    if (!applied)
     {
         return finish(AutoStartApplyStatus::Failed,
             _LW(enabled
@@ -396,7 +457,8 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
                 : "app.settings.auto_start_disable_failed"));
     }
     const snowdesktop::AutoStartQueryResult after = QueryAutoStartState();
-    if (after.stateKnown && after.enabled == enabled)
+    if (after.stateKnown && after.enabled == enabled &&
+        (!enabled || after.taskOwnedByCurrentDeployment))
         return finish(AutoStartApplyStatus::Applied);
     return finish(
         after.stateKnown ? AutoStartApplyStatus::Failed
@@ -1061,10 +1123,10 @@ public:
             const snowdesktop::AutoStartApplyResult result =
                 app_.ApplyAutoStartEnabled(request.boolValue);
 
-            // The registry/MSIX StartupTask is authoritative. Publish the
+            // The unified per-user logon task is authoritative. Publish the
             // actual state even when Windows rejected the requested value so
             // the toggle never remains optimistically out of sync and the
-            // General JSON domain never becomes dirty for a system setting.
+            // General JSON domain never becomes dirty for a runtime setting.
             app_.generalSettings_.autoStartEnabled =
                 result.state.stateKnown && result.state.enabled;
             if (app_.settingsController_)
@@ -1079,15 +1141,6 @@ public:
             }
             break;
         }
-        case Action::OpenStartupAppsSettings:
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
-                    app_.controlHwnd_, L"open", L"ms-settings:startupapps",
-                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-            {
-                return snowdesktop::SettingsActionResult::Failure(
-                    _LW("app.settings.auto_start_enable_failed"));
-            }
-            break;
         case Action::CheckForUpdates:
             return app_.StartSettingsUpdateCheck();
         case Action::CancelUpdateCheck:

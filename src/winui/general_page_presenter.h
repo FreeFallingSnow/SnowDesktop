@@ -53,8 +53,6 @@ struct GeneralPageActions
     /** Auto-start is a Windows/MSIX projection, not a GeneralSettings edit. */
     std::function<void(std::uint64_t generation, bool enabled)>
         setAutoStart;
-    std::function<void(std::uint64_t generation)>
-        openStartupAppsSettings;
     std::function<GeneralStartupConflict()> queryStartupConflict;
 
     std::function<void(

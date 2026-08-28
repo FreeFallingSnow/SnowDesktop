@@ -153,12 +153,11 @@ struct AutoStartQueryResult
     bool packaged = false;
     bool stateKnown = false;
     bool enabled = false;
-    bool installedPackageEnabled = false;
-    PortableAutoStartRegistrationOwner portableOwner =
-        PortableAutoStartRegistrationOwner::Missing;
-    PortableAutoStartApprovalState portableApproval =
-        PortableAutoStartApprovalState::Missing;
-    std::wstring portableCommand;
+    bool taskOwnedByCurrentDeployment = false;
+    UnifiedAutoStartTaskState taskStatus =
+        UnifiedAutoStartTaskState::Unavailable;
+    UnifiedAutoStartOwner taskOwner = UnifiedAutoStartOwner::Unknown;
+    std::wstring ownerCommand;
 };
 
 enum class AutoStartApplyStatus : std::uint8_t
@@ -3129,9 +3128,6 @@ private:
     std::atomic<bool> steamWorkshopWatcherActive_{ false };
     NavigationSettings navigationSettings_;
     GeneralSettings generalSettings_;
-    mutable std::optional<
-        snowdesktop::deployment::PackagedAutoStartState>
-        lastObservedPackagedAutoStartState_;
     DockSettings dockSettings_;
     PersonalizationSettings personalizationSettings_ =
         PersonalizationSettings::DarkPreset();

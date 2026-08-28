@@ -606,16 +606,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         GeneralStartupConflict conflict;
         const snowdesktop::AutoStartQueryResult state =
             QueryAutoStartState();
-        const bool activePortable =
-            snowdesktop::HasActivePortableAutoStart(
-                state.portableOwner, state.portableApproval);
-        if (state.packaged && activePortable)
+        const bool otherOwnerActive = state.stateKnown &&
+            state.taskStatus ==
+                snowdesktop::UnifiedAutoStartTaskState::Enabled &&
+            !state.taskOwnedByCurrentDeployment;
+        if (state.packaged && otherOwnerActive &&
+            state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Portable)
         {
             conflict.kind =
                 GeneralStartupConflictKind::PortableVersionOwnsStartup;
-            conflict.ownerCommand = state.portableCommand;
+            conflict.ownerCommand = state.ownerCommand;
         }
-        else if (!state.packaged && state.installedPackageEnabled)
+        else if (!state.packaged && otherOwnerActive &&
+            state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Packaged)
         {
             conflict.kind =
                 GeneralStartupConflictKind::InstalledVersionOwnsStartup;

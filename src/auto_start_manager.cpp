@@ -534,6 +534,29 @@ bool SetEnabled(bool enabled) noexcept
         : UnifiedAutoStartTaskState::Disabled);
 }
 
+bool Delete() noexcept
+{
+    const State before = Query();
+    if (before.status == UnifiedAutoStartTaskState::Missing)
+        return true;
+    if (before.status == UnifiedAutoStartTaskState::Foreign ||
+        before.status == UnifiedAutoStartTaskState::Unavailable)
+    {
+        return false;
+    }
+
+    ComPtr<ITaskService> service;
+    if (FAILED(ConnectTaskService(service)))
+        return false;
+    ComPtr<ITaskFolder> folder;
+    if (FAILED(OpenTaskFolder(service.Get(), folder)))
+        return false;
+    const ScopedBstr name(kTaskName);
+    if (!name.valid() || FAILED(folder->DeleteTask(name.get(), 0)))
+        return false;
+    return Query().status == UnifiedAutoStartTaskState::Missing;
+}
+
 bool IsCurrentDeploymentTarget(const Target& target) noexcept
 {
     return SameTarget(target, CurrentDeploymentTarget());

@@ -221,7 +221,6 @@ public:
         ExitApplication,
         OpenDataDirectory,
         SetAutoStartEnabled,
-        OpenStartupAppsSettings,
         CheckForUpdates,
         CancelUpdateCheck,
         OpenProject,

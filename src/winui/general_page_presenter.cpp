@@ -129,8 +129,6 @@ struct GeneralPagePresenter::Impl
     HotkeySettingRow floatingDockHotkeyRow;
     muxc::InfoBar portableStartupConflict{nullptr};
     muxc::InfoBar installedStartupConflict{nullptr};
-    muxc::Button openPortableStartupSettings{nullptr};
-    muxc::Button openInstalledStartupSettings{nullptr};
 
     std::vector<SettingsLanguageOption> languageOptions;
     std::string selectedLanguage = "system";
@@ -152,8 +150,6 @@ struct GeneralPagePresenter::Impl
     winrt::event_token pageNavigationToken{};
     winrt::event_token desktopPassthroughToken{};
     winrt::event_token floatingDockToken{};
-    winrt::event_token openPortableStartupSettingsToken{};
-    winrt::event_token openInstalledStartupSettingsToken{};
 
     [[nodiscard]] std::wstring L(std::string_view key) const
     {
@@ -180,14 +176,10 @@ struct GeneralPagePresenter::Impl
         portableStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
         portableStartupConflict.IsClosable(false);
         portableStartupConflict.IsOpen(false);
-        openPortableStartupSettings = muxc::Button{};
-        portableStartupConflict.ActionButton(openPortableStartupSettings);
         installedStartupConflict = muxc::InfoBar{};
         installedStartupConflict.Severity(muxc::InfoBarSeverity::Warning);
         installedStartupConflict.IsClosable(false);
         installedStartupConflict.IsOpen(false);
-        openInstalledStartupSettings = muxc::Button{};
-        installedStartupConflict.ActionButton(openInstalledStartupSettings);
         startupCard.content.Children().Append(portableStartupConflict);
         startupCard.content.Children().Append(installedStartupConflict);
 
@@ -322,17 +314,6 @@ struct GeneralPagePresenter::Impl
                 const bool enabled = autoStartToggle.IsOn();
                 actions.setAutoStart(generation, enabled);
             });
-        const auto openStartupApps = [this](const auto&, const auto&) {
-            if (!closed && active && hasSnapshot &&
-                actions.openStartupAppsSettings)
-            {
-                actions.openStartupAppsSettings(generation);
-            }
-        };
-        openPortableStartupSettingsToken =
-            openPortableStartupSettings.Click(openStartupApps);
-        openInstalledStartupSettingsToken =
-            openInstalledStartupSettings.Click(openStartupApps);
         softwareDesktopToken = softwareDesktopToggle.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = softwareDesktopToggle.IsOn();
@@ -710,15 +691,6 @@ struct GeneralPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             languageCombo, L("app.settings.language"));
 
-        const auto openStartupSettings = winrt::box_value(
-            L("app.settings.auto_start_open_windows_settings"));
-        openPortableStartupSettings.Content(openStartupSettings);
-        openInstalledStartupSettings.Content(openStartupSettings);
-        muxa::AutomationProperties::SetName(openPortableStartupSettings,
-            L("app.settings.auto_start_open_windows_settings"));
-        muxa::AutomationProperties::SetName(openInstalledStartupSettings,
-            L("app.settings.auto_start_open_windows_settings"));
-
         RebuildLanguageOptions();
         RefreshStartupConflict();
         UpdateConditionalHintVisibility();
@@ -826,10 +798,6 @@ struct GeneralPagePresenter::Impl
             pageNavigationToggle.Toggled(pageNavigationToken);
             desktopPassthroughToggle.Toggled(desktopPassthroughToken);
             floatingDockToggle.Toggled(floatingDockToken);
-            openPortableStartupSettings.Click(
-                openPortableStartupSettingsToken);
-            openInstalledStartupSettings.Click(
-                openInstalledStartupSettingsToken);
         }
         catch (...)
         {

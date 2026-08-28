@@ -207,37 +207,27 @@ int main(int argc, char** argv)
             taskbarHook.find("RegistryOperation::SetValue") !=
                 std::string::npos,
         "legacy portable startup values can be migrated through the same unvirtualized registry bridge");
-    const std::string_view portableRegistration = FunctionBody(settingsApply,
-        "PortableAutoStartRegistration QueryPortableAutoStartRegistration()",
-        "snowdesktop::PortableAutoStartApprovalState");
-    const std::string_view portableApproval = FunctionBody(settingsApply,
-        "QueryPortableAutoStartApproval() noexcept",
-        "bool WritePortableAutoStartApproval(bool enabled) noexcept");
-    const std::string_view portableApprovalWrite = FunctionBody(settingsApply,
-        "bool WritePortableAutoStartApproval(bool enabled) noexcept",
-        "bool WritePortableAutoStart(bool enabled) noexcept");
-    const std::string_view portableAutoStartWrite = FunctionBody(settingsApply,
-        "bool WritePortableAutoStart(bool enabled) noexcept",
+    const std::string_view portableLegacy = FunctionBody(settingsApply,
+        "LegacyPortableAutoStart QueryLegacyPortableAutoStart() noexcept",
+        "snowdesktop::LegacyAutoStartState QueryLegacyPackagedAutoStart() noexcept");
+    const std::string_view reconciliation = FunctionBody(settingsApply,
+        "ReconciledAutoStart ReconcileAutoStart() noexcept",
         "} // namespace");
-    Check(portableRegistration.find(
-              "QueryUnvirtualizedCurrentUserValue(") !=
+    Check(portableLegacy.find("QueryLegacyRegistryValue(") !=
                 std::string_view::npos &&
-            portableApproval.find(
-              "QueryUnvirtualizedCurrentUserValue(") !=
+            settingsApply.find("RegOpenKeyExW") == std::string::npos &&
+            settingsApply.find("RegSetValueExW") == std::string::npos &&
+            settingsApply.find("RegDeleteValueW") == std::string::npos,
+        "legacy portable startup state uses only the real registry-view bridge");
+    Check(reconciliation.find("auto_start::Configure(target, false)") !=
                 std::string_view::npos &&
-            portableRegistration.find("RegOpenKeyExW") ==
+            reconciliation.find("SetLegacyPackagedAutoStart(false)") !=
                 std::string_view::npos &&
-            portableApproval.find("RegOpenKeyExW") ==
+            reconciliation.find("RemoveLegacyPortableAutoStart(portable)") !=
+                std::string_view::npos &&
+            reconciliation.find("auto_start::Delete()") !=
                 std::string_view::npos,
-        "portable Run registration and approval state use the same real registry view");
-    Check(portableApprovalWrite.find("RegSetValueExW") !=
-                std::string_view::npos &&
-            portableAutoStartWrite.find(
-              "WritePortableAutoStartApproval(false)") !=
-                std::string_view::npos &&
-            portableAutoStartWrite.find("RegDeleteValueW") ==
-                std::string_view::npos,
-        "portable auto-start toggles StartupApproved without deleting its Run registration");
+        "migration stages the unified task disabled, removes legacy sources, and rolls back on failure");
 
     Check(settingsWindow.find("ImGui") == std::string::npos &&
             settingsWindow.find("ID3D11") == std::string::npos &&
