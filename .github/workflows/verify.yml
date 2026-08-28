@@ -1,11 +1,7 @@
 name: Verify
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
-      - "release/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
