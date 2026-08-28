@@ -191,6 +191,17 @@ int main(int argc, char** argv)
                 std::string_view::npos,
         "window reopen and in-window Taskbar navigation share one external-state reconciliation path");
 
+    const std::string_view generalReload = Between(source,
+        "void DesktopApp::LoadGeneralSettingsAndApply()",
+        "void DesktopApp::ApplyQuickNavigationAppearance()");
+    Check(AppearsBefore(generalReload,
+              "const bool autoStartEnabled = generalSettings_.autoStartEnabled;",
+              "LoadGeneralSettings(") &&
+            AppearsBefore(generalReload,
+              "generalSettings_ = settings;",
+              "generalSettings_.autoStartEnabled = autoStartEnabled;"),
+        "persisted General reloads preserve the Windows-owned auto-start projection");
+
     const std::string_view general = Between(commit,
         "if (HasSettingsDomain(domains, SettingsDomain::General))",
         "if (HasSettingsDomain(domains, SettingsDomain::Category))");

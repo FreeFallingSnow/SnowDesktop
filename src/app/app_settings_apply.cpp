@@ -1594,11 +1594,17 @@ void DesktopApp::ApplyDesktopPassthroughHotkey()
 
 void DesktopApp::LoadGeneralSettingsAndApply()
 {
+    // autoStartEnabled is a runtime projection of Windows state and is not
+    // serialized. Preserve the authoritative value populated by
+    // InitializeSettingsController instead of replacing it with the default
+    // from a freshly constructed GeneralSettings instance.
+    const bool autoStartEnabled = generalSettings_.autoStartEnabled;
     const bool dockEnabled = generalSettings_.dockEnabled;
     const bool demoModeEnabled = generalSettings_.demoModeEnabled;
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    generalSettings_.autoStartEnabled = autoStartEnabled;
     if (std::strcmp(generalSettings_.language, "system") != 0 &&
         !Locale::Instance().HasLanguage(generalSettings_.language))
     {
