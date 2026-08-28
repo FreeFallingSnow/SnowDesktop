@@ -188,12 +188,18 @@ void TestPackagers(const std::string& module,
             module.find("$pathNode.InnerText = $relativePath") !=
                 std::string::npos,
         "MSIX merges official activatable-class package fragments with private runtime paths");
-    Check(release.find("Disable-InputPriMerging") != std::string::npos &&
-            release.find("Where-Object { $_.type -eq \"PRI\" }") !=
+    Check(release.find("New-SnowDesktopPackageResourceIndex") !=
                 std::string::npos &&
-            release.find("Disable-InputPriMerging -Path $priConfig") !=
-                std::string::npos,
-        "MSIX package resources do not remerge self-contained component PRI files");
+            release.find(
+                "$relativeInputs = @(\"SnowDesktop.pri\", \"Microsoft.UI.Xaml\")") !=
+                std::string::npos &&
+            release.find("Move-Item -LiteralPath $source") !=
+                std::string::npos &&
+            release.find("Microsoft.UI.Xaml\",") != std::string::npos &&
+            release.find("Microsoft.WindowsAppRuntime\"") !=
+                std::string::npos &&
+            release.find("Disable-InputPriMerging") == std::string::npos,
+        "MSIX temporarily hides duplicate app inputs while merging and validating Windows App SDK component PRI maps");
     Check(module.find("Get-ChildItem") == std::string::npos &&
             release.find("$buildOutput + \"*\"") == std::string::npos &&
             steam.find("$buildOutput + \"*\"") == std::string::npos,

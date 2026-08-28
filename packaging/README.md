@@ -127,8 +127,10 @@ Engine 的 32/64 位 Hook 也复用同一部署机制，避免目标进程无法
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过
 Windows SDK `makepri.exe` 创建 `resources.pri`。16–48 像素使用简化图标，
-60–256 像素使用完整图标。Windows App SDK 自带的组件 PRI 会原样保留，
-但不会再次合入包级 PRI，以免 WinUI 的散装资源和现有 PRI 被重复索引。
+60–256 像素使用完整图标。MSIX 的包级 PRI 会合入 Windows App SDK 自带的
+`Microsoft.UI`、`Microsoft.UI.Xaml` 和运行时资源图，使安装态 WinUI 能加载主题
+字典。生成索引时只暂时排除已经由应用 PRI 或组件 PRI 覆盖的重复输入，完成后会
+恢复 `SnowDesktop.pri` 与 WinUI 根目录资源，并校验上述组件资源图确实存在。
 
 包清单中的支持语言由 `lang\*.json` 文件名自动生成。文件名必须是有效的
 BCP-47 语言标签，例如 `en-US.json`、`zh-CN.json`。默认语言 `en-US`（如果

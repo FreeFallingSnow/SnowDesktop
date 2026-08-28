@@ -255,26 +255,72 @@ function Get-MakeAppxPath {
     throw "makeappx.exe was not found in the Windows SDK."
 }
 
-function Disable-InputPriMerging {
-    param([Parameter(Mandatory = $true)][string]$Path)
+function New-SnowDesktopPackageResourceIndex {
+    param(
+        [Parameter(Mandatory = $true)][string]$MakePri,
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$HoldingRoot
+    )
 
-    [xml]$config = Get-Content -LiteralPath $Path -Encoding UTF8 -Raw
-    $priIndexers = @($config.resources.index.'indexer-config' |
-        Where-Object { $_.type -eq "PRI" })
-    if ($priIndexers.Count -ne 1) {
-        throw "Expected one PRI indexer in the generated MakePri config, found $($priIndexers.Count)."
-    }
-
-    [void]$config.resources.index.RemoveChild($priIndexers[0])
-    $settings = [System.Xml.XmlWriterSettings]::new()
-    $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
-    $settings.Indent = $true
-    $writer = [System.Xml.XmlWriter]::Create($Path, $settings)
+    # Keep the Windows App SDK component PRIs visible so MakePri merges their
+    # Microsoft.UI and Microsoft.UI.Xaml resource maps into the package graph.
+    # SnowDesktop.pri already indexes the app XBF files, while the executable-
+    # root WinUI assets duplicate entries supplied by the component PRI. Hide
+    # only those two inputs during indexing, then restore the package payload.
+    $relativeInputs = @("SnowDesktop.pri", "Microsoft.UI.Xaml")
+    New-Item -ItemType Directory -Path $HoldingRoot -Force | Out-Null
+    $movedInputs = @()
     try {
-        $config.Save($writer)
+        foreach ($relativeInput in $relativeInputs) {
+            $source = Join-Path $PackageRoot $relativeInput
+            if (-not (Test-Path -LiteralPath $source)) {
+                throw "Required package PRI input was not found: $source"
+            }
+            $destination = Join-Path $HoldingRoot $relativeInput
+            Move-Item -LiteralPath $source -Destination $destination
+            $movedInputs += [pscustomobject]@{
+                Source = $source
+                Destination = $destination
+            }
+        }
+
+        & $MakePri new `
+            /pr $PackageRoot `
+            /cf $ConfigPath `
+            /mn (Join-Path $PackageRoot "AppxManifest.xml") `
+            /of (Join-Path $PackageRoot "resources.pri") `
+            /o /v
+        $makePriExitCode = $LASTEXITCODE
     }
     finally {
-        $writer.Dispose()
+        [array]::Reverse($movedInputs)
+        foreach ($movedInput in $movedInputs) {
+            Move-Item -LiteralPath $movedInput.Destination `
+                -Destination $movedInput.Source
+        }
+    }
+    if ($makePriExitCode -ne 0) {
+        throw "MakePri new failed with exit code $makePriExitCode."
+    }
+
+    $dumpPath = Join-Path $HoldingRoot "resources.xml"
+    & $MakePri dump `
+        /if (Join-Path $PackageRoot "resources.pri") `
+        /of $dumpPath /o
+    if ($LASTEXITCODE -ne 0) {
+        throw "MakePri dump failed with exit code $LASTEXITCODE."
+    }
+    [xml]$dump = Get-Content -LiteralPath $dumpPath -Encoding UTF8 -Raw
+    $componentMaps = @($dump.PriInfo.ResourceMap.ResourceMapSubtree |
+        ForEach-Object { $_.name })
+    foreach ($requiredMap in @(
+            "Microsoft.UI",
+            "Microsoft.UI.Xaml",
+            "Microsoft.WindowsAppRuntime")) {
+        if ($componentMaps -cnotcontains $requiredMap) {
+            throw "Package resources.pri is missing the $requiredMap component resource map."
+        }
     }
 }
 
@@ -539,20 +585,11 @@ $priConfig = Join-Path $stagingRoot "priconfig.xml"
 if ($LASTEXITCODE -ne 0) {
     throw "MakePri createconfig failed with exit code $LASTEXITCODE."
 }
-# The self-contained Windows App SDK payload already contains component PRI
-# files next to their loose resources. Merging those PRIs here would index the
-# same resources twice (for example Microsoft.UI.Xaml/Assets/NoiseAsset...),
-# while the package-level resources.pri only needs to index manifest assets.
-Disable-InputPriMerging -Path $priConfig
-& $makePri new `
-    /pr $msixStage `
-    /cf $priConfig `
-    /mn (Join-Path $msixStage "AppxManifest.xml") `
-    /of (Join-Path $msixStage "resources.pri") `
-    /o /v
-if ($LASTEXITCODE -ne 0) {
-    throw "MakePri new failed with exit code $LASTEXITCODE."
-}
+New-SnowDesktopPackageResourceIndex `
+    -MakePri $makePri `
+    -PackageRoot $msixStage `
+    -ConfigPath $priConfig `
+    -HoldingRoot (Join-Path $stagingRoot "pri-input-hold")
 
 $msixPath = Join-Path $OutputDirectory `
     "SnowDesktop-Store-x64-$version.msix"
