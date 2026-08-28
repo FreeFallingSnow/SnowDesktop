@@ -267,6 +267,11 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     }
     case WM_LBUTTONDOWN:
+        // Persistent Dock Hosts deliberately use WS_EX_NOACTIVATE, so a
+        // pointer press on their empty surface does not deactivate the
+        // foreground modern menu. Dismiss the current menu explicitly before
+        // routing the same press through the normal Dock interaction path.
+        DismissActiveContextMenuForPopupTransition();
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;

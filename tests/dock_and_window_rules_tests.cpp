@@ -7019,6 +7019,32 @@ int main(int argc, char** argv)
                   "popupAnimation_.IsClosing()))") !=
                     std::string::npos,
             "Dock collection release must preserve a down-phase close and queue the latest switch target");
+        const std::size_t floatingDockLeftDownBegin =
+            floatingDockRenderSource.find(
+                "case WM_LBUTTONDOWN:");
+        const std::size_t floatingDockLeftUpBegin =
+            floatingDockRenderSource.find(
+                "case WM_LBUTTONUP:",
+                floatingDockLeftDownBegin);
+        const std::string floatingDockLeftDownHandler =
+            floatingDockLeftDownBegin == std::string::npos ||
+                    floatingDockLeftUpBegin == std::string::npos
+                ? std::string{}
+                : floatingDockRenderSource.substr(
+                    floatingDockLeftDownBegin,
+                    floatingDockLeftUpBegin -
+                        floatingDockLeftDownBegin);
+        const std::size_t dismissDockContextMenu =
+            floatingDockLeftDownHandler.find(
+                "DismissActiveContextMenuForPopupTransition();");
+        const std::size_t dispatchDockPointerDown =
+            floatingDockLeftDownHandler.find(
+                "OnLeftButtonDown(wp, desktopLParam());");
+        Check(!floatingDockLeftDownHandler.empty() &&
+                dismissDockContextMenu != std::string::npos &&
+                dispatchDockPointerDown != std::string::npos &&
+                dismissDockContextMenu < dispatchDockPointerDown,
+            "a no-activate Dock press must dismiss the active context menu before routing the underlying click");
         const std::size_t floatingDockDoubleClickBegin =
             floatingDockRenderSource.find(
                 "case WM_LBUTTONDBLCLK:");
