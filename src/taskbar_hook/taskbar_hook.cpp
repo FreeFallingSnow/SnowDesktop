@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cwchar>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -66,7 +67,65 @@ SharedState* g_sharedState = nullptr;
 UINT g_applyMessage = 0;
 std::atomic<DWORD> g_watchedOwnerProcessId{0};
 std::atomic_bool g_forceRestore{false};
+std::atomic_bool g_taskbarTapStarted{false};
 UINT g_taskViewStateMessage = 0;
+UINT g_registryQueryMessage = 0;
+
+std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
+{
+    return std::wstring(kRegistryQueryMappingPrefix) + L"." +
+        std::to_wstring(ownerProcessId);
+}
+
+void ProcessRegistryQuery(DWORD ownerProcessId)
+{
+    if (!ownerProcessId)
+        return;
+    const std::wstring mappingName =
+        RegistryQueryMappingName(ownerProcessId);
+    HANDLE mapping = OpenFileMappingW(
+        FILE_MAP_ALL_ACCESS, FALSE, mappingName.c_str());
+    if (!mapping)
+        return;
+    auto* state = static_cast<SharedRegistryQueryState*>(MapViewOfFile(
+        mapping, FILE_MAP_ALL_ACCESS, 0, 0,
+        sizeof(SharedRegistryQueryState)));
+    if (!state)
+    {
+        CloseHandle(mapping);
+        return;
+    }
+    if (state->magic != kRegistryQueryMagic ||
+        state->version != kRegistryQueryVersion ||
+        state->size != sizeof(SharedRegistryQueryState) ||
+        state->ownerProcessId != ownerProcessId ||
+        state->status != kRegistryQueryPending ||
+        !state->subKey[0] || !state->valueName[0])
+    {
+        UnmapViewOfFile(state);
+        CloseHandle(mapping);
+        return;
+    }
+
+    HKEY key = nullptr;
+    LONG result = RegOpenKeyExW(HKEY_CURRENT_USER, state->subKey, 0,
+        KEY_QUERY_VALUE, &key);
+    DWORD valueType = REG_NONE;
+    DWORD valueSize = static_cast<DWORD>(std::size(state->value));
+    if (result == ERROR_SUCCESS)
+    {
+        result = RegQueryValueExW(key, state->valueName, nullptr,
+            &valueType, state->value, &valueSize);
+        RegCloseKey(key);
+    }
+    state->queryResult = result;
+    state->valueType = valueType;
+    state->valueSize = valueSize;
+    MemoryBarrier();
+    InterlockedExchange(&state->status, kRegistryQueryCompleted);
+    UnmapViewOfFile(state);
+    CloseHandle(mapping);
+}
 
 bool PostTaskViewState(bool visible)
 {
@@ -1261,11 +1320,50 @@ bool IsExplorerProcess()
     }
     return _wcsicmp(fileName, L"explorer.exe") == 0;
 }
+
+void StartTaskbarTapIfNeeded()
+{
+    if (!IsExplorerProcess())
+        return;
+    bool expected = false;
+    if (!g_taskbarTapStarted.compare_exchange_strong(expected, true))
+        return;
+    HANDLE thread = CreateThread(
+        nullptr, 0, InstallTaskbarTap, nullptr, 0, nullptr);
+    if (!thread)
+    {
+        g_taskbarTapStarted.store(false);
+        SetHookStatus(kStatusFailed, GetLastError());
+        SignalReady();
+        return;
+    }
+    CloseHandle(thread);
+}
 }
 
 extern "C" __declspec(dllexport) LRESULT CALLBACK
 SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
 {
+    if (code >= 0)
+        StartTaskbarTapIfNeeded();
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK
+SnowDesktopRegistryQueryHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && lParam)
+    {
+        if (!g_registryQueryMessage)
+            g_registryQueryMessage =
+                RegisterWindowMessageW(kRegistryQueryMessageName);
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (g_registryQueryMessage &&
+            message->message == g_registryQueryMessage)
+        {
+            ProcessRegistryQuery(static_cast<DWORD>(message->wParam));
+        }
+    }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
@@ -1292,14 +1390,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
     {
         g_module = instance;
         DisableThreadLibraryCalls(instance);
-        if (IsExplorerProcess())
-        {
-            HANDLE thread = CreateThread(nullptr, 0, InstallTaskbarTap,
-                nullptr, 0, nullptr);
-            if (!thread)
-                return FALSE;
-            CloseHandle(thread);
-        }
     }
     return TRUE;
 }

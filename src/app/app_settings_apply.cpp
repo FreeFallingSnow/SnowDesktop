@@ -142,26 +142,16 @@ snowdesktop::PortableAutoStartApprovalState
 QueryPortableAutoStartApproval() noexcept
 {
     using snowdesktop::PortableAutoStartApprovalState;
-
-    HKEY key = nullptr;
-    const LONG openResult = RegOpenKeyExW(HKEY_CURRENT_USER,
-        kAutoStartApprovalSubKey, 0, KEY_QUERY_VALUE, &key);
-    if (RegistryValueMissing(openResult))
-        return PortableAutoStartApprovalState::Missing;
-    if (openResult != ERROR_SUCCESS)
-        return PortableAutoStartApprovalState::Error;
-
-    std::array<BYTE, 32> data{};
-    DWORD type = 0;
-    DWORD size = static_cast<DWORD>(data.size());
-    const LONG result = RegQueryValueExW(key, kAutoStartRunValue, nullptr,
-        &type, data.data(), &size);
-    RegCloseKey(key);
+    const auto query = snowdesktop::deployment::
+        QueryUnvirtualizedCurrentUserBinaryValue(
+            kAutoStartApprovalSubKey, kAutoStartRunValue);
+    const LONG result = static_cast<LONG>(query.win32Result);
     if (RegistryValueMissing(result))
         return PortableAutoStartApprovalState::Missing;
-    if (result != ERROR_SUCCESS || type != REG_BINARY || size == 0)
+    if (result != ERROR_SUCCESS || query.type != REG_BINARY ||
+        query.size == 0 || query.size > query.data.size())
         return PortableAutoStartApprovalState::Error;
-    return snowdesktop::DecodePortableAutoStartApprovalState(data[0]);
+    return snowdesktop::DecodePortableAutoStartApprovalState(query.data[0]);
 }
 
 bool ClearPortableAutoStartApproval() noexcept

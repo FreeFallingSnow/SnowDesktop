@@ -609,17 +609,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         const bool activePortable =
             snowdesktop::HasActivePortableAutoStart(
                 state.portableOwner, state.portableApproval);
-        wchar_t startupProbe[768]{};
-        swprintf_s(startupProbe,
-            L"Auto-start conflict probe packaged=%d owner=%u approval=%u "
-            L"activePortable=%d installedPackageEnabled=%d command=%ls",
-            state.packaged ? 1 : 0,
-            static_cast<unsigned>(state.portableOwner),
-            static_cast<unsigned>(state.portableApproval),
-            activePortable ? 1 : 0,
-            state.installedPackageEnabled ? 1 : 0,
-            state.portableCommand.c_str());
-        WriteDiagnosticLogEntry(startupProbe, DiagnosticLogLevel::Debug);
         if (state.packaged && activePortable)
         {
             conflict.kind =

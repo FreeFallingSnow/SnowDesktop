@@ -59,6 +59,8 @@ int main(int argc, char** argv)
         root / "src" / "dock_settings.cpp");
     const std::string taskbarHook = ReadFile(
         root / "src" / "taskbar_hook" / "taskbar_hook.cpp");
+    const std::string deploymentContext = ReadFile(
+        root / "src" / "deployment_context.cpp");
     const std::string settingsWindow = ReadFile(
         root / "src" / "settings_window.cpp");
     const std::string settingsHost = ReadFile(
@@ -73,6 +75,7 @@ int main(int argc, char** argv)
         root / "src" / "app" / "app_desktop_reload.cpp");
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
             !dockSettings.empty() && !taskbarHook.empty() &&
+            !deploymentContext.empty() &&
             !settingsWindow.empty() &&
             !settingsHost.empty() && !dockPresenter.empty() &&
             !presenterControls.empty() &&
@@ -161,6 +164,38 @@ int main(int argc, char** argv)
             "PostMessageW(info.taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);") !=
                 std::string::npos,
         "taskbar hook restores Explorer's theme value and requests native recomposition");
+
+    const std::string_view taskbarHookProc = FunctionBody(taskbarHook,
+        "SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)",
+        "SnowDesktopRegistryQueryHookProc(int code, WPARAM wParam, LPARAM lParam)");
+    const std::string_view registryHookProc = FunctionBody(taskbarHook,
+        "SnowDesktopRegistryQueryHookProc(int code, WPARAM wParam, LPARAM lParam)",
+        "_Use_decl_annotations_ STDAPI DllGetClassObject");
+    const std::size_t dllMainPosition = taskbarHook.find(
+        "BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)");
+    const std::string_view hookDllMain = dllMainPosition == std::string::npos
+        ? std::string_view{}
+        : std::string_view(taskbarHook).substr(dllMainPosition);
+    Check(taskbarHookProc.find("StartTaskbarTapIfNeeded();") !=
+                std::string_view::npos &&
+            registryHookProc.find("ProcessRegistryQuery(") !=
+                std::string_view::npos &&
+            registryHookProc.find("StartTaskbarTapIfNeeded();") ==
+                std::string_view::npos &&
+            hookDllMain.find("CreateThread") == std::string_view::npos,
+        "registry queries reuse the hook DLL without starting the taskbar TAP");
+    Check(deploymentContext.find(
+              "QueryCurrentUserBinaryValueThroughExplorer(") !=
+                std::string::npos &&
+            deploymentContext.find(
+              "\"SnowDesktopRegistryQueryHookProc\"") !=
+                std::string::npos &&
+            deploymentContext.find("SetWindowsHookExW(WH_CALLWNDPROC") !=
+                std::string::npos &&
+            settingsApply.find(
+              "QueryUnvirtualizedCurrentUserBinaryValue(") !=
+                std::string::npos,
+        "packaged startup approval is queried from Explorer's unvirtualized registry view");
 
     Check(settingsWindow.find("ImGui") == std::string::npos &&
             settingsWindow.find("ID3D11") == std::string::npos &&

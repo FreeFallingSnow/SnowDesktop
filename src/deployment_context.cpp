@@ -5,14 +5,17 @@
 
 #include "deployment_context.h"
 #include "data_paths.h"
+#include "taskbar_hook/taskbar_hook_protocol.h"
 
 #include <windows.h>
 #include <appmodel.h>
 #include <shlobj.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <future>
 #include <iterator>
+#include <cwchar>
 #include <mutex>
 #include <system_error>
 #include <utility>
@@ -61,6 +64,150 @@ bool IsBareFilename(const wchar_t* filename) noexcept
         }
     }
     return true;
+}
+
+snowdesktop::deployment::UnvirtualizedRegistryBinaryValue
+QueryCurrentUserBinaryValueDirect(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    snowdesktop::deployment::UnvirtualizedRegistryBinaryValue result;
+    HKEY key = nullptr;
+    const LONG opened = RegOpenKeyExW(
+        HKEY_CURRENT_USER, subKey, 0, KEY_QUERY_VALUE, &key);
+    if (opened != ERROR_SUCCESS)
+    {
+        result.win32Result = static_cast<std::uint32_t>(opened);
+        return result;
+    }
+    DWORD type = REG_NONE;
+    DWORD size = static_cast<DWORD>(result.data.size());
+    const LONG queried = RegQueryValueExW(key, valueName, nullptr,
+        &type, result.data.data(), &size);
+    RegCloseKey(key);
+    result.win32Result = static_cast<std::uint32_t>(queried);
+    result.type = type;
+    result.size = size;
+    return result;
+}
+
+std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
+{
+    return std::wstring(
+        snowdesktop::taskbar_hook::kRegistryQueryMappingPrefix) + L"." +
+        std::to_wstring(ownerProcessId);
+}
+
+snowdesktop::deployment::UnvirtualizedRegistryBinaryValue
+QueryCurrentUserBinaryValueThroughExplorer(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    using namespace snowdesktop::taskbar_hook;
+    snowdesktop::deployment::UnvirtualizedRegistryBinaryValue result;
+    result.win32Result = ERROR_INVALID_PARAMETER;
+    if (!subKey || !valueName || !*subKey || !*valueName ||
+        wcslen(subKey) >= kMaximumRegistrySubKeyLength ||
+        wcslen(valueName) >= kMaximumRegistryValueNameLength)
+    {
+        return result;
+    }
+
+    static std::mutex queryMutex;
+    std::lock_guard queryLock(queryMutex);
+    const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    DWORD explorerProcessId = 0;
+    const DWORD taskbarThreadId = taskbar
+        ? GetWindowThreadProcessId(taskbar, &explorerProcessId) : 0;
+    if (!taskbar || !taskbarThreadId || !explorerProcessId)
+    {
+        result.win32Result = ERROR_NOT_READY;
+        return result;
+    }
+
+    const std::wstring hookPath =
+        snowdesktop::deployment::GetTaskbarHookPath();
+    HMODULE module = hookPath.empty()
+        ? nullptr : LoadLibraryW(hookPath.c_str());
+    if (!module)
+    {
+        result.win32Result = GetLastError();
+        return result;
+    }
+    auto hookProcedure = reinterpret_cast<HOOKPROC>(GetProcAddress(
+        module, "SnowDesktopRegistryQueryHookProc"));
+    if (!hookProcedure)
+    {
+        result.win32Result = GetLastError();
+        FreeLibrary(module);
+        return result;
+    }
+
+    const DWORD ownerProcessId = GetCurrentProcessId();
+    const std::wstring mappingName =
+        RegistryQueryMappingName(ownerProcessId);
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
+        PAGE_READWRITE, 0, sizeof(SharedRegistryQueryState),
+        mappingName.c_str());
+    if (!mapping)
+    {
+        result.win32Result = GetLastError();
+        FreeLibrary(module);
+        return result;
+    }
+    auto* state = static_cast<SharedRegistryQueryState*>(MapViewOfFile(
+        mapping, FILE_MAP_ALL_ACCESS, 0, 0,
+        sizeof(SharedRegistryQueryState)));
+    if (!state)
+    {
+        result.win32Result = GetLastError();
+        CloseHandle(mapping);
+        FreeLibrary(module);
+        return result;
+    }
+    *state = SharedRegistryQueryState{};
+    state->ownerProcessId = ownerProcessId;
+    wcscpy_s(state->subKey, subKey);
+    wcscpy_s(state->valueName, valueName);
+    MemoryBarrier();
+
+    HHOOK hook = SetWindowsHookExW(WH_CALLWNDPROC, hookProcedure,
+        module, taskbarThreadId);
+    if (!hook)
+    {
+        result.win32Result = GetLastError();
+    }
+    else
+    {
+        const UINT message = RegisterWindowMessageW(
+            kRegistryQueryMessageName);
+        DWORD_PTR ignored = 0;
+        if (!message || !SendMessageTimeoutW(taskbar, message,
+                ownerProcessId, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                2000, &ignored))
+        {
+            result.win32Result = GetLastError();
+            if (result.win32Result == ERROR_SUCCESS)
+                result.win32Result = ERROR_TIMEOUT;
+        }
+        else if (state->status != kRegistryQueryCompleted)
+        {
+            result.win32Result = ERROR_RETRY;
+        }
+        else
+        {
+            result.win32Result =
+                static_cast<std::uint32_t>(state->queryResult);
+            result.type = state->valueType;
+            result.size = state->valueSize;
+            const std::size_t copySize = std::min<std::size_t>(
+                result.data.size(), state->valueSize);
+            std::copy_n(state->value, copySize, result.data.begin());
+        }
+        UnhookWindowsHookEx(hook);
+    }
+    UnmapViewOfFile(state);
+    CloseHandle(mapping);
+    FreeLibrary(module);
+    return result;
 }
 
 std::filesystem::path GetTemporaryDirectory()
@@ -305,6 +452,20 @@ std::wstring GetTaskbarHookPath()
     static const std::wstring deployedPath =
         GetInjectableRuntimeFilePath(kTaskbarHookFilename);
     return deployedPath;
+}
+
+UnvirtualizedRegistryBinaryValue QueryUnvirtualizedCurrentUserBinaryValue(
+    const wchar_t* subKey, const wchar_t* valueName) noexcept
+{
+    if (!subKey || !valueName)
+    {
+        UnvirtualizedRegistryBinaryValue result;
+        result.win32Result = ERROR_INVALID_PARAMETER;
+        return result;
+    }
+    if (!IsPackaged())
+        return QueryCurrentUserBinaryValueDirect(subKey, valueName);
+    return QueryCurrentUserBinaryValueThroughExplorer(subKey, valueName);
 }
 
 std::wstring GetStoreProductPageUri()
