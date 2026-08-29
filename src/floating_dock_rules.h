@@ -119,10 +119,10 @@ inline bool ShouldSummonForDockSurface(
 
 inline bool ShouldDispatchDockContextMenu(
     bool persistentDockHostActive,
-    bool inputFromMatchingPersistentDockHost)
+    bool pressBeganOnMatchingPersistentDockHost)
 {
     return !persistentDockHostActive ||
-        inputFromMatchingPersistentDockHost;
+        pressBeganOnMatchingPersistentDockHost;
 }
 
 inline bool ShouldUseFloatingDockLogicalForeground(

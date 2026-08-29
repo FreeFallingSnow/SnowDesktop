@@ -1119,6 +1119,10 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     case WM_MBUTTONUP:
         OnMiddleButtonUpAt(wp, desktopPoint());
         return 0;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        OnRightButtonDown(nullptr);
+        return 0;
     case WM_RBUTTONUP:
         OnRightButtonUp(desktopLParam());
         UpdateFloatingPopupWindowBounds();

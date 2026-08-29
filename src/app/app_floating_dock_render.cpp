@@ -269,6 +269,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         if (floatingDockHoverHandoffPending_ &&
             !host.active)
         {
+            if (rightButtonDownDockHost_ == &host)
+                rightButtonDownDockHost_ = nullptr;
             floatingDockHoverHandoffPending_ = false;
             floatingDockHoverHandoffRect_ = {};
             return 0;
@@ -295,6 +297,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 return 0;
             }
         }
+        if (rightButtonDownDockHost_ == &host)
+            rightButtonDownDockHost_ = nullptr;
         OnMouseLeave();
         return 0;
     }
@@ -329,6 +333,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             !IsOwnedPointerCaptureWindow(
                 reinterpret_cast<HWND>(lp)))
         {
+            if (rightButtonDownDockHost_ == &host)
+                rightButtonDownDockHost_ = nullptr;
             if (CanCancelPointerPressAfterCaptureLoss())
             {
                 CancelPointerPressWithoutCaptureRelease();
@@ -355,6 +361,11 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_MBUTTONUP:
         SelectPersistentDockHost(&host);
         OnMiddleButtonUpAt(wp, desktopPoint());
+        return 0;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        SelectPersistentDockHost(&host);
+        OnRightButtonDown(&host);
         return 0;
     case WM_RBUTTONUP:
         SelectPersistentDockHost(&host);
@@ -386,6 +397,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         CloseFloatingDock(host);
         return 0;
     case WM_DESTROY:
+        if (rightButtonDownDockHost_ == &host)
+            rightButtonDownDockHost_ = nullptr;
         host.hwnd = nullptr;
         if (floatingDockHost_ == &host)
             SelectPersistentDockHost(nullptr);

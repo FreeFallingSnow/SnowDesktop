@@ -194,11 +194,26 @@ bool DesktopApp::ShowHostInputContextMenu(
 }
 
 /**
+ * @brief 记录鼠标右键按下所属的输入表面。
+ * @param dockHost 按下发生于 Dock 时为对应 Host，否则为空。
+ */
+void DesktopApp::OnRightButtonDown(
+    PersistentDockHost* dockHost)
+{
+    rightButtonDownDockHost_ = dockHost;
+    // Right-click menu interaction is never an edge-swipe gesture. Cancel an
+    // already armed stroke synchronously instead of waiting for the sampler.
+    floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+}
+
+/**
  * @brief 处理鼠标右键释放事件（显示上下文菜单）
  * @param lp LPARAM（含鼠标坐标）
  */
 void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
+    PersistentDockHost* const rightButtonPressDockHost =
+        std::exchange(rightButtonDownDockHost_, nullptr);
     if (renameEdit_ != nullptr) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -242,18 +257,24 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     PersistentDockHost* contextDockHost = dock
         ? FindPersistentDockHost(dock)
         : nullptr;
-    // A desktop or floating-popup input message can geometrically overlap a
-    // desktop-band Dock. Once a persistent DockHost owns that Dock visual,
-    // only an input message dispatched by the matching Host may claim its
-    // context menu and promote it to the floating band.
+    // A menu can dismiss between button-down and button-up, allowing the up
+    // message to land on an overlapping desktop-band DockHost. Only a press
+    // that began on the matching Host may claim that Dock's context menu and
+    // promote it to the floating band.
     const bool dockOwnsContextInput =
         dock &&
         snowdesktop::floating_dock_rules::
             ShouldDispatchDockContextMenu(
                 contextDockHost && contextDockHost->active,
                 contextDockHost &&
-                    handlingPersistentDockHost_ ==
+                    rightButtonPressDockHost ==
                         contextDockHost);
+    if (dock && contextDockHost && contextDockHost->active &&
+        !dockOwnsContextInput)
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating Dock context summon ignored: right-button press did not begin on matching DockHost");
+    }
     if (dockOwnsContextInput)
     {
         EnsureFloatingDockVisibleForAssociatedSurface(

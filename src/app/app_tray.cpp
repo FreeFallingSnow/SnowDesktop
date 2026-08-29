@@ -59,6 +59,7 @@ void DesktopApp::OnTrayCallback(LPARAM lParam)
     {
     case TrayCallbackAction::ShowContextMenu:
     {
+        OnRightButtonDown(nullptr);
         POINT pt{};
         GetCursorPos(&pt);
         ShowTrayMenu(pt);

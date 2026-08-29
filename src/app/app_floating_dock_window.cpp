@@ -219,6 +219,8 @@ void DesktopApp::SelectPersistentDockHost(
 void DesktopApp::DestroyPersistentDockHost(
     PersistentDockHost& host)
 {
+    if (rightButtonDownDockHost_ == &host)
+        rightButtonDownDockHost_ = nullptr;
     if (collectionPopupDockHost_ == &host)
         collectionPopupDockHost_ = nullptr;
     if (quickNavigationDockHost_ == &host)

@@ -1593,6 +1593,8 @@ private:
     void OnMiddleButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 处理中键释放，完成组件移动。 */
     void OnMiddleButtonUpAt(WPARAM wp, POINT point);
+    /** @brief 记录鼠标右键按下所属的 Dock 输入宿主，并取消边缘手势候选。 */
+    void OnRightButtonDown(PersistentDockHost* dockHost);
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
@@ -3382,6 +3384,7 @@ private:
     std::vector<std::unique_ptr<PersistentDockHost>>
         persistentDockHosts_;
     PersistentDockHost* floatingDockHost_ = nullptr;
+    PersistentDockHost* rightButtonDownDockHost_ = nullptr;
     PersistentDockHost* handlingPersistentDockHost_ = nullptr;
     PersistentDockHost* renderingPersistentDockHost_ = nullptr;
     bool floatingDockHoverHandoffPending_ = false;

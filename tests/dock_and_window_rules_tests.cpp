@@ -1951,7 +1951,7 @@ int main(int argc, char** argv)
               true, true) &&
             !floatingDock::ShouldDispatchDockContextMenu(
               true, false),
-        "an active persistent DockHost must exclusively own its Dock context-menu dispatch while the desktop fallback remains usable");
+        "an active persistent DockHost must require a right-button press that began on the same Host while the desktop fallback remains usable");
     const DockWindowPreviewZOrderPolicy floatingPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(true, false);
     Check(floatingPreviewZOrder.insertAfter == nullptr &&
@@ -6099,13 +6099,23 @@ int main(int argc, char** argv)
         const std::size_t dockContextHit =
             pointerContextSource.find(
                 "DockContainer* dock = GetDockContainerAtPoint(pt);");
+        const std::size_t rightButtonDownHandler =
+            pointerContextSource.find(
+                "void DesktopApp::OnRightButtonDown(");
+        const std::size_t synchronousGestureCancel =
+            pointerContextSource.find(
+                "SuppressUntilEdgeLeave();",
+                rightButtonDownHandler);
+        const std::size_t rightButtonPressConsume =
+            pointerContextSource.find(
+                "std::exchange(rightButtonDownDockHost_, nullptr)");
         const std::size_t dockContextSourceGate =
             pointerContextSource.find(
                 "ShouldDispatchDockContextMenu(",
                 dockContextHit);
         const std::size_t dockContextHostMatch =
             pointerContextSource.find(
-                "handlingPersistentDockHost_ ==",
+                "rightButtonPressDockHost ==",
                 dockContextSourceGate);
         const std::size_t dockContextBranch =
             pointerContextSource.find(
@@ -6120,6 +6130,9 @@ int main(int argc, char** argv)
                 "const size_t standaloneInputWidget",
                 dockContextHit);
         Check(dockContextHit != std::string::npos &&
+                rightButtonDownHandler != std::string::npos &&
+                synchronousGestureCancel != std::string::npos &&
+                rightButtonPressConsume != std::string::npos &&
                 dockContextSourceGate != std::string::npos &&
                 dockContextHostMatch != std::string::npos &&
                 dockContextBranch != std::string::npos &&
@@ -6130,10 +6143,46 @@ int main(int argc, char** argv)
                 dockContextHostMatch < dockContextBranch &&
                 dockContextBranch < dockContextSummon &&
                 dockContextSummon < dockContextEnd &&
+                rightButtonDownHandler < synchronousGestureCancel &&
+                rightButtonPressConsume < dockContextHit &&
                 pointerContextSource.find(
                   "EnsureFloatingDockVisibleForAssociatedSurface(",
                   dockContextSummon + 1) == std::string::npos,
-            "only context menus dispatched by the persistent Host that owns a Dock hit may summon its floating host");
+            "only a right-button press that began on the persistent Host owning a Dock hit may summon its floating host, and every press cancels an armed edge gesture synchronously");
+        const std::size_t dockRightButtonDown =
+            floatingDockRenderSource.find(
+                "case WM_RBUTTONDOWN:");
+        const std::size_t dockRightButtonPressRecord =
+            floatingDockRenderSource.find(
+                "OnRightButtonDown(&host);",
+                dockRightButtonDown);
+        const std::size_t dockRightButtonDoubleClick =
+            floatingDockRenderSource.find(
+                "case WM_RBUTTONDBLCLK:",
+                dockRightButtonDown);
+        const std::size_t dockRightButtonUp =
+            floatingDockRenderSource.find(
+                "case WM_RBUTTONUP:",
+                dockRightButtonPressRecord);
+        Check(dockRightButtonDown != std::string::npos &&
+                dockRightButtonDoubleClick != std::string::npos &&
+                dockRightButtonPressRecord != std::string::npos &&
+                dockRightButtonUp != std::string::npos &&
+                dockRightButtonDown < dockRightButtonPressRecord &&
+                dockRightButtonDoubleClick <
+                    dockRightButtonPressRecord &&
+                dockRightButtonPressRecord < dockRightButtonUp &&
+                messageDispatchSource.find(
+                  "case WM_RBUTTONDOWN:\n"
+                  "    case WM_RBUTTONDBLCLK:\n"
+                  "        OnRightButtonDown(nullptr);") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "case WM_RBUTTONDOWN:\n"
+                  "    case WM_RBUTTONDBLCLK:\n"
+                  "        OnRightButtonDown(nullptr);") !=
+                    std::string::npos,
+            "Dock, desktop and floating-popup surfaces must record right-button press ownership for single and double clicks before release dispatch");
         Check(pointerContextSource.find(
                   "if (mouseDownHit_ == popupItem)") !=
                     std::string::npos &&

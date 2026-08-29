@@ -488,6 +488,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnMouseWheel(wp, lp);
         return 0;
     }
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        OnRightButtonDown(nullptr);
+        return 0;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
