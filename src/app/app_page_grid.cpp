@@ -599,7 +599,19 @@ void DesktopApp::SetIconBeautifySettings(
     InvalidateDragStaticScene();
     if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)
         SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    // Dock entries share the icon bitmap cache but may render in independent
+    // persistent host windows. Invalidating only the desktop leaves those
+    // surfaces on the previous style until pointer input happens to repaint
+    // them. Queue every Dock surface explicitly before presenting a preview.
+    InvalidateDockRects(TRUE);
+    if (hwnd_ &&
+        updateKind == snowdesktop::IconBeautifyUpdateKind::Preview)
+    {
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
     if (quickNavigationOpen_)
         InvalidateQuickNavigationWindow();
 }

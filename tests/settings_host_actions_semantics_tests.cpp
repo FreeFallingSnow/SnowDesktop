@@ -63,6 +63,8 @@ int main(int argc, char** argv)
     const std::filesystem::path root(argv[1]);
     const std::string source = ReadFile(
         root / "src" / "app" / "app_settings_apply.cpp");
+    const std::string pageGrid = ReadFile(
+        root / "src" / "app" / "app_page_grid.cpp");
     const std::string run = ReadFile(
         root / "src" / "app" / "app_run.cpp");
     const std::string controllerHeader = ReadFile(
@@ -71,7 +73,8 @@ int main(int argc, char** argv)
         root / "src" / "winui" / "settings_window_host.h");
     const std::string host = ReadFile(
         root / "src" / "winui" / "settings_window_host.cpp");
-    Check(!source.empty() && !run.empty() && !controllerHeader.empty() &&
+    Check(!source.empty() && !pageGrid.empty() && !run.empty() &&
+            !controllerHeader.empty() &&
             !hostHeader.empty() && !host.empty(),
         "settings host action sources are readable");
 
@@ -122,6 +125,21 @@ int main(int argc, char** argv)
             preview.find("app_.PreviewItemFontWeight(") !=
                 std::string_view::npos,
         "desktop typography sliders repaint without persisting each drag step");
+
+    const std::string_view iconBeautifyUpdate = Between(pageGrid,
+        "void DesktopApp::SetIconBeautifySettings(",
+        "size_t DesktopApp::FirstMonitorOrderIndex() const");
+    Check(iconBeautifyUpdate.find("InvalidateDockRects(TRUE);") !=
+                std::string_view::npos,
+        "icon beautification changes invalidate embedded and persistent Dock surfaces");
+    Check(iconBeautifyUpdate.find(
+              "snowdesktop::IconBeautifyUpdateKind::Preview") !=
+                std::string_view::npos &&
+            iconBeautifyUpdate.find("PresentDesktopPointerUpdate();") !=
+                std::string_view::npos &&
+            iconBeautifyUpdate.find("FlushPendingCompositionCommit();") !=
+                std::string_view::npos,
+        "icon beautification previews present without waiting for desktop pointer input");
 
     const std::size_t dockAssignment = commit.find(
         "app_.dockSettings_ = requestedDockSettings;");
