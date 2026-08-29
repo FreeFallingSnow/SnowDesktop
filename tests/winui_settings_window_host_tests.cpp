@@ -830,7 +830,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             queueTrim.find("settingsSessionWorkingSetBaseline") !=
                 std::string_view::npos &&
-            queueTrim.find("kWorkingSetTrimMinimumGrowth") !=
+            queueTrim.find("HasSignificantWorkingSetGrowth") !=
                 std::string_view::npos &&
             queueTrim.find("kWorkingSetTrimCooldownMs") !=
                 std::string_view::npos &&
@@ -880,7 +880,7 @@ void TestHostContract(const std::filesystem::path& repository)
     Check(source.find("case WM_TIMER:") != std::string::npos &&
             source.find("static_cast<UINT_PTR>(wParam)") !=
                 std::string::npos &&
-            source.find("self->HandleWorkingSetTrimTimer()") !=
+            source.find("self->HandleWorkingSetTrimTimer(") !=
                 std::string::npos,
         "the settings HWND owns and dispatches the delayed working-set timer");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
