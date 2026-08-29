@@ -307,11 +307,21 @@ inline bool HasNewPointerButtonPress(
 
 inline bool HasPointerButtonActivity(
     UINT buttonsDown, UINT previousButtonsDown,
-    UINT pressedSinceLastSample)
+    UINT pressedSinceLastSample,
+    bool observedPointerButtonActivity = false)
 {
-    return buttonsDown != 0 ||
+    return observedPointerButtonActivity ||
+        buttonsDown != 0 ||
         previousButtonsDown != 0 ||
         pressedSinceLastSample != 0;
+}
+
+inline bool IsGuiMenuModeActive(DWORD guiThreadFlags)
+{
+    return (guiThreadFlags &
+        (GUI_INMENUMODE |
+         GUI_SYSTEMMENUMODE |
+         GUI_POPUPMENUMODE)) != 0;
 }
 
 /**

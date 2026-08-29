@@ -2,8 +2,58 @@
 
 // Floating-Dock hotkey and edge-swipe lifecycle.
 
+LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(
+    int code, WPARAM message, LPARAM data)
+{
+    if (code == HC_ACTION &&
+        (message == WM_LBUTTONDOWN ||
+         message == WM_LBUTTONUP ||
+         message == WM_RBUTTONDOWN ||
+         message == WM_RBUTTONUP ||
+         message == WM_MBUTTONDOWN ||
+         message == WM_MBUTTONUP ||
+         message == WM_XBUTTONDOWN ||
+         message == WM_XBUTTONUP))
+    {
+        floatingDockEdgeSwipeMouseActivity_.store(
+            true, std::memory_order_relaxed);
+    }
+    return CallNextHookEx(nullptr, code, message, data);
+}
+
+bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()
+{
+    if (floatingDockEdgeSwipeMouseHook_)
+        return true;
+
+    floatingDockEdgeSwipeMouseActivity_.store(
+        false, std::memory_order_relaxed);
+    floatingDockEdgeSwipeMouseHook_ = SetWindowsHookExW(
+        WH_MOUSE_LL,
+        &DesktopApp::FloatingDockEdgeSwipeMouseHookProc,
+        instance_, 0);
+    if (floatingDockEdgeSwipeMouseHook_)
+        return true;
+
+    WriteDiagnosticLogEntry(
+        L"Floating Dock edge-swipe mouse hook FAILED");
+    return false;
+}
+
+void DesktopApp::StopFloatingDockEdgeSwipeMouseMonitor()
+{
+    if (floatingDockEdgeSwipeMouseHook_)
+    {
+        UnhookWindowsHookEx(floatingDockEdgeSwipeMouseHook_);
+        floatingDockEdgeSwipeMouseHook_ = nullptr;
+    }
+    floatingDockEdgeSwipeMouseActivity_.store(
+        false, std::memory_order_relaxed);
+}
+
 void DesktopApp::UnregisterFloatingDockHotkey()
 {
+    StopFloatingDockEdgeSwipeMouseMonitor();
     if (floatingDockHotkeyRegistered_ && floatingDockHotkeyHwnd_)
         UnregisterHotKey(
             floatingDockHotkeyHwnd_, kFloatingDockHotkeyId);
@@ -24,6 +74,12 @@ void DesktopApp::UnregisterFloatingDockHotkey()
 void DesktopApp::ApplyFloatingDockHotkey()
 {
     UnregisterFloatingDockHotkey();
+
+    const bool edgeSwipeEnabled =
+        snowdesktop::dock_settings_rules::
+            IsFloatingEdgeSwipeEnabled(
+                dockSettings_.showOnlyWhenSummoned,
+                dockSettings_.floatingEdgeSwipeEnabled);
 
     // Passive drag reveal belongs only to summon-only mode. Clearing it here
     // keeps a settings toggle from leaving a Host effectively floating after
@@ -53,10 +109,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
             !snowdesktop::floating_dock_rules::
                 HasAnySummonTrigger(
                     dockSettings_.floatingShortcutMode,
-                    snowdesktop::dock_settings_rules::
-                        IsFloatingEdgeSwipeEnabled(
-                            dockSettings_.showOnlyWhenSummoned,
-                            dockSettings_.floatingEdgeSwipeEnabled))))
+                    edgeSwipeEnabled)))
     {
         CloseAllFloatingDocks();
         return;
@@ -118,6 +171,8 @@ void DesktopApp::ApplyFloatingDockHotkey()
             nullptr) != 0)
     {
         floatingDockEdgeSwipeHwnd_ = target;
+        if (edgeSwipeEnabled)
+            StartFloatingDockEdgeSwipeMouseMonitor();
     }
 }
 
@@ -337,12 +392,6 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 buttonsDown,
                 previousButtonsDown,
                 pressedSinceLastSample);
-    const bool pointerButtonActivity =
-        snowdesktop::floating_dock_rules::
-            HasPointerButtonActivity(
-                buttonsDown,
-                previousButtonsDown,
-                pressedSinceLastSample);
     const bool leftButtonPressed =
         ((buttonsDown & leftButtonBit) != 0 &&
             (previousButtonsDown &
@@ -463,9 +512,26 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     // A click can finish before a context menu enters its nested input loop.
     // Keep that click from becoming the first half of a buttonless edge swipe,
     // and require a real edge leave before gestures become eligible again.
+    const bool pointerButtonActivity =
+        snowdesktop::floating_dock_rules::
+            HasPointerButtonActivity(
+                buttonsDown,
+                previousButtonsDown,
+                pressedSinceLastSample,
+                floatingDockEdgeSwipeMouseActivity_.exchange(
+                    false, std::memory_order_relaxed));
+    GUITHREADINFO foregroundGuiThreadInfo{
+        sizeof(foregroundGuiThreadInfo)
+    };
+    const bool foregroundGuiMenuActive =
+        GetGUIThreadInfo(0, &foregroundGuiThreadInfo) &&
+        snowdesktop::floating_dock_rules::
+            IsGuiMenuModeActive(
+                foregroundGuiThreadInfo.flags);
     const bool suppressEdgeSwipeUntilLeave =
         pointerButtonActivity ||
         HasActiveContextMenuSession() ||
+        foregroundGuiMenuActive ||
         dragSession_.IsActive() ||
         dragDropController_.IsTransportActive();
     if (suppressEdgeSwipeUntilLeave)

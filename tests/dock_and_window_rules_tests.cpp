@@ -676,6 +676,13 @@ int main(int argc, char** argv)
             !snowdesktop::dock_settings_rules::
               ShouldReserveDesktopWorkArea(true, false),
         "desktop work-area reservation must use effective overlap while summon-only display is active");
+    Check(snowdesktop::dock_settings_rules::
+              IsFloatingEdgeSwipeEnabled(false, true) &&
+            snowdesktop::dock_settings_rules::
+              IsFloatingEdgeSwipeEnabled(true, false) &&
+            !snowdesktop::dock_settings_rules::
+              IsFloatingEdgeSwipeEnabled(false, false),
+        "the low-level edge observer must follow effective edge-swipe enablement, including summon-only mode");
 
     namespace itemVisual = snowdesktop;
     namespace gridSpacing = snowdesktop::grid_spacing_rules;
@@ -2313,6 +2320,18 @@ int main(int argc, char** argv)
             !floatingDock::HasPointerButtonActivity(
               0, 0, 0),
         "edge gestures must exclude pointer press, hold, release and between-sample click activity");
+    Check(floatingDock::HasPointerButtonActivity(
+              0, 0, 0, true) &&
+            !floatingDock::HasPointerButtonActivity(
+              0, 0, 0, false),
+        "a low-level mouse event must preserve pointer-button activity even when every sampled key state is idle");
+    Check(floatingDock::IsGuiMenuModeActive(GUI_INMENUMODE) &&
+            floatingDock::IsGuiMenuModeActive(
+              GUI_SYSTEMMENUMODE) &&
+            floatingDock::IsGuiMenuModeActive(
+              GUI_POPUPMENUMODE) &&
+            !floatingDock::IsGuiMenuModeActive(0),
+        "native menu, system-menu and popup-menu loops must suspend edge gestures");
     Check(floatingDock::IsPointInVisibleLayer(
             POINT{ 150, 930 },
             floatingDockRect,
@@ -5085,6 +5104,167 @@ int main(int argc, char** argv)
                   "dockAssociatedPopupPointerPressClaimed_") ==
                     std::string::npos,
             "popup and floating Dock lifecycles must observe one outside press independently without ownership claims or cross-close calls");
+        const std::size_t edgeMouseHookCallbackBegin =
+            floatingDockLifecycleSource.find(
+                "LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(");
+        const std::size_t edgeMouseHookStartBegin =
+            floatingDockLifecycleSource.find(
+                "bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()",
+                edgeMouseHookCallbackBegin);
+        const std::size_t edgeMouseHookStopBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::StopFloatingDockEdgeSwipeMouseMonitor()",
+                edgeMouseHookStartBegin);
+        const std::size_t floatingDockUnregisterBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::UnregisterFloatingDockHotkey()",
+                edgeMouseHookStopBegin);
+        const std::size_t floatingDockApplyBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::ApplyFloatingDockHotkey()",
+                floatingDockUnregisterBegin);
+        const std::size_t floatingDockPassiveRevealBegin =
+            floatingDockLifecycleSource.find(
+                "bool DesktopApp::UpdatePassiveDragRevealHosts(",
+                floatingDockApplyBegin);
+        const std::string edgeMouseHookCallbackSource =
+            edgeMouseHookCallbackBegin != std::string::npos &&
+                    edgeMouseHookStartBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    edgeMouseHookCallbackBegin,
+                    edgeMouseHookStartBegin - edgeMouseHookCallbackBegin)
+                : std::string{};
+        const std::string edgeMouseHookStartSource =
+            edgeMouseHookStartBegin != std::string::npos &&
+                    edgeMouseHookStopBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    edgeMouseHookStartBegin,
+                    edgeMouseHookStopBegin - edgeMouseHookStartBegin)
+                : std::string{};
+        const std::string edgeMouseHookStopSource =
+            edgeMouseHookStopBegin != std::string::npos &&
+                    floatingDockUnregisterBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    edgeMouseHookStopBegin,
+                    floatingDockUnregisterBegin - edgeMouseHookStopBegin)
+                : std::string{};
+        const std::string floatingDockUnregisterSource =
+            floatingDockUnregisterBegin != std::string::npos &&
+                    floatingDockApplyBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    floatingDockUnregisterBegin,
+                    floatingDockApplyBegin - floatingDockUnregisterBegin)
+                : std::string{};
+        const std::string floatingDockApplySource =
+            floatingDockApplyBegin != std::string::npos &&
+                    floatingDockPassiveRevealBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    floatingDockApplyBegin,
+                    floatingDockPassiveRevealBegin - floatingDockApplyBegin)
+                : std::string{};
+        Check(!edgeMouseHookCallbackSource.empty() &&
+                edgeMouseHookCallbackSource.find("WM_LBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_LBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_RBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_RBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_MBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_MBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_XBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_XBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find(
+                  "floatingDockEdgeSwipeMouseActivity_.store(") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find(
+                  "CallNextHookEx(nullptr, code, message, data)") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("PostMessage") ==
+                    std::string::npos,
+            "the edge-swipe mouse hook must only record low-level L/R/M/X button down/up activity and continue the hook chain");
+        const std::size_t edgeMouseHookInstall =
+            edgeMouseHookStartSource.find("SetWindowsHookExW(");
+        const std::size_t edgeMouseHookKind =
+            edgeMouseHookStartSource.find(
+                "WH_MOUSE_LL", edgeMouseHookInstall);
+        const std::size_t edgeMouseHookUninstall =
+            edgeMouseHookStopSource.find("UnhookWindowsHookEx(");
+        const std::size_t edgeMouseHookClear =
+            edgeMouseHookStopSource.find(
+                "floatingDockEdgeSwipeMouseActivity_.store(",
+                edgeMouseHookUninstall);
+        Check(!edgeMouseHookStartSource.empty() &&
+                !edgeMouseHookStopSource.empty() &&
+                edgeMouseHookInstall != std::string::npos &&
+                edgeMouseHookKind != std::string::npos &&
+                edgeMouseHookUninstall != std::string::npos &&
+                edgeMouseHookClear != std::string::npos &&
+                edgeMouseHookInstall < edgeMouseHookKind &&
+                edgeMouseHookUninstall < edgeMouseHookClear &&
+                appHeaderSource.find(
+                  "HHOOK floatingDockEdgeSwipeMouseHook_ = nullptr;") !=
+                    std::string::npos &&
+                appHeaderSource.find(
+                  "floatingDockEdgeSwipeMouseActivity_{ false };") !=
+                    std::string::npos,
+            "the edge-swipe activity observer must be a lightweight WH_MOUSE_LL hook with explicit handle and activity cleanup");
+        const std::size_t repeatedApplyCleanup =
+            floatingDockApplySource.find(
+                "UnregisterFloatingDockHotkey();");
+        const std::size_t effectiveEdgeState =
+            floatingDockApplySource.find(
+                "const bool edgeSwipeEnabled =",
+                repeatedApplyCleanup);
+        const std::size_t effectiveEdgeRule =
+            floatingDockApplySource.find(
+                "IsFloatingEdgeSwipeEnabled(", effectiveEdgeState);
+        const std::size_t edgeSamplerTimerInstall =
+            floatingDockApplySource.find(
+                "SetTimer(", effectiveEdgeRule);
+        const std::size_t effectiveEdgeHookGuard =
+            floatingDockApplySource.find(
+                "if (edgeSwipeEnabled)", edgeSamplerTimerInstall);
+        const std::size_t effectiveEdgeHookStart =
+            floatingDockApplySource.find(
+                "StartFloatingDockEdgeSwipeMouseMonitor();",
+                effectiveEdgeHookGuard);
+        Check(!floatingDockApplySource.empty() &&
+                repeatedApplyCleanup != std::string::npos &&
+                effectiveEdgeState != std::string::npos &&
+                effectiveEdgeRule != std::string::npos &&
+                edgeSamplerTimerInstall != std::string::npos &&
+                effectiveEdgeHookGuard != std::string::npos &&
+                effectiveEdgeHookStart != std::string::npos &&
+                repeatedApplyCleanup < effectiveEdgeState &&
+                effectiveEdgeState < effectiveEdgeRule &&
+                effectiveEdgeRule < edgeSamplerTimerInstall &&
+                edgeSamplerTimerInstall < effectiveEdgeHookGuard &&
+                effectiveEdgeHookGuard < effectiveEdgeHookStart &&
+                CountOccurrences(
+                  floatingDockApplySource,
+                  "StartFloatingDockEdgeSwipeMouseMonitor();") == 1 &&
+                floatingDockUnregisterSource.find(
+                  "StopFloatingDockEdgeSwipeMouseMonitor();") !=
+                    std::string::npos &&
+                lifecycleSource.find(
+                  "DesktopApp::~DesktopApp()") !=
+                    std::string::npos &&
+                lifecycleSource.find(
+                  "UnregisterFloatingDockHotkey();",
+                  lifecycleSource.find(
+                    "DesktopApp::~DesktopApp()")) !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                  "UnregisterFloatingDockHotkey();",
+                  messageDispatchSource.find("case WM_DESTROY:")) !=
+                    std::string::npos,
+            "effective edge-swipe setup must install one observer after timer setup while repeated apply, unregister and destruction tear it down first");
         const std::size_t dockPointerSamplerBegin =
             floatingDockLifecycleSource.find(
                 "void DesktopApp::UpdateFloatingDockEdgeSwipe()");
@@ -5124,14 +5304,34 @@ int main(int argc, char** argv)
         const std::size_t passiveDragSamplerCall =
             dockPointerSamplerSource.find(
                 "UpdatePassiveDragRevealHosts(cursor)");
+        const std::size_t pointerActivityReducer =
+            dockPointerSamplerSource.find(
+                "const bool pointerButtonActivity =",
+                passiveDragSamplerCall);
+        const std::size_t edgeMouseHookActivityConsume =
+            dockPointerSamplerSource.find(
+                "floatingDockEdgeSwipeMouseActivity_.exchange(",
+                pointerActivityReducer);
+        const std::size_t foregroundGuiMenuQuery =
+            dockPointerSamplerSource.find(
+                "GetGUIThreadInfo(0, &foregroundGuiThreadInfo)",
+                edgeMouseHookActivityConsume);
+        const std::size_t foregroundGuiMenuRule =
+            dockPointerSamplerSource.find(
+                "IsGuiMenuModeActive(",
+                foregroundGuiMenuQuery);
         const std::size_t edgeSwipeSuppressionState =
             dockPointerSamplerSource.find(
                 "const bool suppressEdgeSwipeUntilLeave =",
-                passiveDragSamplerCall);
+                foregroundGuiMenuRule);
         const std::size_t contextMenuGestureGuard =
             dockPointerSamplerSource.find(
                 "HasActiveContextMenuSession() ||",
                 edgeSwipeSuppressionState);
+        const std::size_t foregroundGuiMenuGuard =
+            dockPointerSamplerSource.find(
+                "foregroundGuiMenuActive ||",
+                contextMenuGestureGuard);
         const std::size_t edgeSwipeSuppressionCall =
             dockPointerSamplerSource.find(
                 "SuppressUntilEdgeLeave();",
@@ -5148,6 +5348,30 @@ int main(int argc, char** argv)
             dockPointerSamplerSource.find(
                 "ShowFloatingDock(monitor);",
                 edgeSwipeTriggerBranch);
+        Check(passiveDragSamplerCall != std::string::npos &&
+                pointerActivityReducer != std::string::npos &&
+                edgeMouseHookActivityConsume != std::string::npos &&
+                foregroundGuiMenuQuery != std::string::npos &&
+                foregroundGuiMenuRule != std::string::npos &&
+                edgeSwipeSuppressionState != std::string::npos &&
+                contextMenuGestureGuard != std::string::npos &&
+                foregroundGuiMenuGuard != std::string::npos &&
+                edgeSwipeSuppressionCall != std::string::npos &&
+                edgeSwipeDetectorUpdate != std::string::npos &&
+                passiveDragSamplerCall < pointerActivityReducer &&
+                pointerActivityReducer < edgeMouseHookActivityConsume &&
+                edgeMouseHookActivityConsume <
+                    foregroundGuiMenuQuery &&
+                foregroundGuiMenuQuery < foregroundGuiMenuRule &&
+                foregroundGuiMenuRule <
+                    edgeSwipeSuppressionState &&
+                edgeSwipeSuppressionState <
+                    contextMenuGestureGuard &&
+                contextMenuGestureGuard < foregroundGuiMenuGuard &&
+                foregroundGuiMenuGuard <
+                    edgeSwipeSuppressionCall &&
+                edgeSwipeSuppressionCall < edgeSwipeDetectorUpdate,
+            "the sampler must preserve passive drag reveal ordering, consume low-level button activity, hold suppression throughout native menu loops, and suppress before edge detection");
         const std::string edgeSwipeTriggerSource =
             edgeSwipeTriggerBranch != std::string::npos &&
                     edgeSwipeSummon != std::string::npos

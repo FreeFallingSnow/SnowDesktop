@@ -1107,6 +1107,10 @@ private:
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();
     void UnregisterFloatingDockHotkey();
+    bool StartFloatingDockEdgeSwipeMouseMonitor();
+    void StopFloatingDockEdgeSwipeMouseMonitor();
+    static LRESULT CALLBACK FloatingDockEdgeSwipeMouseHookProc(
+        int code, WPARAM message, LPARAM data);
     bool UpdatePassiveDragRevealHosts(
         POINT cursorScreen);
     void UpdateFloatingDockEdgeSwipe();
@@ -3344,6 +3348,9 @@ private:
     HWND floatingDockHotkeyHwnd_ = nullptr;
     HWND desktopPassthroughHotkeyHwnd_ = nullptr;
     HWND floatingDockEdgeSwipeHwnd_ = nullptr;
+    HHOOK floatingDockEdgeSwipeMouseHook_ = nullptr;
+    inline static std::atomic<bool>
+        floatingDockEdgeSwipeMouseActivity_{ false };
     snowdesktop::floating_dock_rules::EdgeSwipeDetector
         floatingDockEdgeSwipeDetector_;
     UINT floatingDockPointerButtonsDown_ = 0;
