@@ -757,7 +757,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             releaseSession.find("SetSystemBackdropEnabled(false)") ==
                 std::string_view::npos,
-        "ordinary close releases route controls, backends, search data, and inactive physical pages while retaining the Shell, Island, and backdrop roots");
+        "ordinary close releases route controls, backends, and search data before optionally scheduling conservative working-set reclamation while retaining the Shell, Island, and backdrop roots");
 
     const std::size_t releasePresenters = releaseSession.find(
         "shell->ReleaseSessionResources()");
@@ -774,9 +774,15 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)") !=
                 std::string::npos &&
+            source.find("kWorkingSetTrimMinimumGrowth") !=
+                std::string::npos &&
+            source.find("kWorkingSetTrimCooldownMs") !=
+                std::string::npos &&
+            source.find("kWorkingSetTrimDelayMs") !=
+                std::string::npos &&
             source.find("HeapOptimizeResources") == std::string::npos &&
             source.find("EmptyWorkingSet(") == std::string::npos,
-        "session close requests the documented working-set trim only after synchronous session resources are released");
+        "session close can request a delayed, growth-gated, rate-limited working-set trim only after synchronous session resources are released");
 
     const std::size_t queueReleaseBegin = source.find(
         "void QueueViewRelease() noexcept");
@@ -808,15 +814,25 @@ void TestHostContract(const std::filesystem::path& repository)
             ? std::string_view(source).substr(
                   queueTrimBegin, queueTrimEnd - queueTrimBegin)
             : std::string_view{};
-    Check(queueTrim.find("mud::DispatcherQueuePriority::Low") !=
+    Check(queueTrim.find("SetTimer(window, kWorkingSetTrimTimerId") !=
+                std::string_view::npos &&
+            queueTrim.find("kWorkingSetTrimDelayMs") !=
+                std::string_view::npos &&
+            queueTrim.find("KillTimer(window, kWorkingSetTrimTimerId)") !=
+                std::string_view::npos &&
+            queueTrim.find("settingsSessionWorkingSetBaseline") !=
+                std::string_view::npos &&
+            queueTrim.find("kWorkingSetTrimMinimumGrowth") !=
+                std::string_view::npos &&
+            queueTrim.find("kWorkingSetTrimCooldownMs") !=
                 std::string_view::npos &&
             queueTrim.find("expectedEpoch") != std::string_view::npos &&
-            queueTrim.find("owner->Visible()") != std::string_view::npos &&
-            queueTrim.find("owner->viewEpoch != expectedEpoch") !=
+            queueTrim.find("Visible()") != std::string_view::npos &&
+            queueTrim.find("viewEpoch != expectedEpoch") !=
                 std::string_view::npos &&
-            queueTrim.find("TrimInactiveProcessWorkingSet()") !=
+            queueTrim.find("TrimProcessWorkingSet()") !=
                 std::string_view::npos,
-        "working-set trimming waits for a low-priority dispatcher turn and is cancelled by reopen or shutdown");
+        "working-set trimming waits on an idle window timer, rechecks growth and cooldown, and rejects stale or reopened sessions");
     const std::size_t reopenWindowBegin = source.find(
         "bool SettingsWindowHost::Open(");
     const std::size_t reopenWindowEnd = source.find(
@@ -838,6 +854,10 @@ void TestHostContract(const std::filesystem::path& repository)
     const std::size_t showReopenedWindow = reopenWindow.find(
         "ShowWindow(impl_->window");
     Check(recreateView != std::string_view::npos &&
+            reopenWindow.find("impl_->CancelWorkingSetTrim()") !=
+                std::string_view::npos &&
+            reopenWindow.find("QueryCurrentProcessWorkingSet()") !=
+                std::string_view::npos &&
             missingTitleBarGuard != std::string_view::npos &&
             reconfigureTitleBar != std::string_view::npos &&
             refreshTitleBarInsets != std::string_view::npos &&
@@ -846,7 +866,13 @@ void TestHostContract(const std::filesystem::path& repository)
             missingTitleBarGuard < reconfigureTitleBar &&
             reconfigureTitleBar < refreshTitleBarInsets &&
             refreshTitleBarInsets < showReopenedWindow,
-        "reopening reuses the retained XAML root when available and rebuilds caption customization on the settings HWND");
+        "reopening cancels stale working-set work, records its closed baseline, reuses the retained XAML root when available, and rebuilds caption customization on the settings HWND");
+    Check(source.find("case WM_TIMER:") != std::string::npos &&
+            source.find("wParam == kWorkingSetTrimTimerId") !=
+                std::string::npos &&
+            source.find("self->HandleWorkingSetTrimTimer()") !=
+                std::string::npos,
+        "the settings HWND owns and dispatches the delayed working-set timer");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&

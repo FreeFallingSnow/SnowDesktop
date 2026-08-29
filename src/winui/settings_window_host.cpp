@@ -8,6 +8,7 @@
 
 #include <shobjidl.h>
 #include <dwmapi.h>
+#include <psapi.h>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Windowing.h>
@@ -46,14 +47,31 @@ constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
 constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
+constexpr UINT_PTR kWorkingSetTrimTimerId = 0x5344;
+constexpr UINT kWorkingSetTrimDelayMs = 2000;
+constexpr ULONGLONG kWorkingSetTrimCooldownMs = 30000;
+constexpr SIZE_T kWorkingSetTrimMinimumGrowth =
+    static_cast<SIZE_T>(64) * 1024 * 1024;
 
-void TrimInactiveProcessWorkingSet() noexcept
+std::optional<SIZE_T> QueryCurrentProcessWorkingSet() noexcept
+{
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (!K32GetProcessMemoryInfo(
+            GetCurrentProcess(), &counters, sizeof(counters)))
+    {
+        return std::nullopt;
+    }
+    return counters.WorkingSetSize;
+}
+
+bool TrimProcessWorkingSet() noexcept
 {
     // This releases pageable physical memory, not committed virtual memory.
-    // Active desktop surfaces fault their pages back on demand; settings-only
-    // pages remain non-resident after their presenters have been destroyed.
-    (void)SetProcessWorkingSetSize(GetCurrentProcess(),
-        static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1));
+    // The caller delays and rate-limits the process-wide operation so routine
+    // settings visits do not evict active desktop, Dock, or widget pages.
+    return SetProcessWorkingSetSize(GetCurrentProcess(),
+               static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)) != FALSE;
 }
 
 bool QueryHighContrastEnabled(bool& enabled) noexcept
@@ -664,6 +682,9 @@ struct SettingsWindowHost::Impl
     bool darkTheme = false;
     bool viewReleaseQueued = false;
     bool workingSetTrimQueued = false;
+    std::uint64_t workingSetTrimEpoch = 0;
+    std::optional<SIZE_T> settingsSessionWorkingSetBaseline;
+    ULONGLONG lastWorkingSetTrimTick = 0;
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
@@ -2490,6 +2511,13 @@ struct SettingsWindowHost::Impl
             }
             return 0;
         }
+        case WM_TIMER:
+            if (wParam == kWorkingSetTrimTimerId)
+            {
+                self->HandleWorkingSetTrimTimer();
+                return 0;
+            }
+            break;
         case WM_NCMOUSELEAVE:
         {
             // The integrated title bar keeps Windows-owned caption buttons.
@@ -2564,6 +2592,7 @@ struct SettingsWindowHost::Impl
             self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         case WM_NCDESTROY:
+            self->CancelWorkingSetTrim();
             self->systemBackdropUpdateQueued = false;
             self->integratedTitleBarInsetsUpdateQueued = false;
             self->externalStateRefreshQueued = false;
@@ -2632,7 +2661,8 @@ struct SettingsWindowHost::Impl
     void ReleaseView() noexcept
     {
         viewReleaseQueued = false;
-        workingSetTrimQueued = false;
+        CancelWorkingSetTrim();
+        settingsSessionWorkingSetBaseline.reset();
         systemBackdropUpdateQueued = false;
         integratedTitleBarInsetsUpdateQueued = false;
         externalStateRefreshQueued = false;
@@ -2712,39 +2742,78 @@ struct SettingsWindowHost::Impl
     void QueueWorkingSetTrim() noexcept
     {
         if (workingSetTrimQueued || shuttingDown || Visible() ||
-            !callbacks || !callbacks->alive.load())
+            !window || !IsWindow(window) ||
+            !settingsSessionWorkingSetBaseline)
+        {
+            return;
+        }
+
+        const auto current = QueryCurrentProcessWorkingSet();
+        if (!current ||
+            *current <= *settingsSessionWorkingSetBaseline +
+                kWorkingSetTrimMinimumGrowth)
+        {
+            return;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (lastWorkingSetTrimTick != 0 &&
+            now - lastWorkingSetTrimTick < kWorkingSetTrimCooldownMs)
         {
             return;
         }
 
         workingSetTrimQueued = true;
-        const std::uint64_t expectedEpoch = viewEpoch;
-        const std::weak_ptr<CallbackState> weak = callbacks;
-        try
+        workingSetTrimEpoch = viewEpoch;
+        if (SetTimer(window, kWorkingSetTrimTimerId,
+                kWorkingSetTrimDelayMs, nullptr) != 0)
         {
-            if (callbacks->dispatcher.TryEnqueue(
-                    mud::DispatcherQueuePriority::Low,
-                    [weak, expectedEpoch]() {
-                        const auto state = weak.lock();
-                        if (!state || !state->alive.load() || !state->owner)
-                            return;
-                        auto* owner = state->owner;
-                        owner->workingSetTrimQueued = false;
-                        if (owner->shuttingDown || owner->Visible() ||
-                            owner->viewEpoch != expectedEpoch)
-                        {
-                            return;
-                        }
-                        TrimInactiveProcessWorkingSet();
-                    }))
-            {
-                return;
-            }
-        }
-        catch (...)
-        {
+            return;
         }
         workingSetTrimQueued = false;
+        workingSetTrimEpoch = 0;
+    }
+
+    void CancelWorkingSetTrim() noexcept
+    {
+        if (window && IsWindow(window))
+            KillTimer(window, kWorkingSetTrimTimerId);
+        workingSetTrimQueued = false;
+        workingSetTrimEpoch = 0;
+    }
+
+    void HandleWorkingSetTrimTimer() noexcept
+    {
+        if (window && IsWindow(window))
+            KillTimer(window, kWorkingSetTrimTimerId);
+
+        const std::uint64_t expectedEpoch = workingSetTrimEpoch;
+        workingSetTrimQueued = false;
+        workingSetTrimEpoch = 0;
+        if (shuttingDown || Visible() || expectedEpoch == 0 ||
+            viewEpoch != expectedEpoch ||
+            !settingsSessionWorkingSetBaseline)
+        {
+            return;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (lastWorkingSetTrimTick != 0 &&
+            now - lastWorkingSetTrimTick < kWorkingSetTrimCooldownMs)
+        {
+            return;
+        }
+
+        const auto current = QueryCurrentProcessWorkingSet();
+        if (!current ||
+            *current <= *settingsSessionWorkingSetBaseline +
+                kWorkingSetTrimMinimumGrowth)
+        {
+            return;
+        }
+
+        if (TrimProcessWorkingSet())
+            lastWorkingSetTrimTick = GetTickCount64();
     }
 
     [[nodiscard]] bool CreateView()
@@ -3019,16 +3088,18 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
 
     ++impl_->viewEpoch;
     impl_->viewReleaseQueued = false;
-    impl_->workingSetTrimQueued = false;
+    impl_->CancelWorkingSetTrim();
     const bool reopening = !impl_->Visible();
     SettingsActionResult reloadResult = SettingsActionResult::Success();
     if (reopening)
     {
+        const auto closedWorkingSet = QueryCurrentProcessWorkingSet();
         if ((!impl_->shell || !impl_->runtime.IsAttached()) &&
             !impl_->CreateView())
         {
             return false;
         }
+        impl_->settingsSessionWorkingSetBaseline = closedWorkingSet;
         if (!impl_->appWindowTitleBar)
         {
             if (!impl_->ConfigureIntegratedTitleBar())
