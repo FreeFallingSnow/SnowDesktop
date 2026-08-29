@@ -20,12 +20,16 @@ DismissActiveContextMenuForPopupTransition()
         activeContextMenu2_.Get() != nullptr ||
         activeContextMenu3_.Get() != nullptr)
     {
-        // Native Shell menus are tracked on a dedicated thread. Per Win32's
-        // EndMenu fallback contract, sending WM_CANCELMODE to the owner asks
-        // that thread's menu loop to unwind while the UI pump stays live.
-        const HWND owner = ShellDialogOwnerHwnd();
-        if (owner && IsWindow(owner))
-            SendMessageW(owner, WM_CANCELMODE, 0, 0);
+        // The tracker thread owns the native menu window. Remember an early
+        // cancellation request until that window exists, then ask its menu
+        // loop to unwind without blocking the desktop UI pump.
+        shellPopupTrackerCancelRequested_.store(
+            true, std::memory_order_release);
+        const HWND trackerOwner =
+            shellPopupTrackerOwnerHwnd_.load(
+                std::memory_order_acquire);
+        if (trackerOwner && IsWindow(trackerOwner))
+            SendMessageW(trackerOwner, WM_CANCELMODE, 0, 0);
     }
 }
 

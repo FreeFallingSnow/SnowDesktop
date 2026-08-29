@@ -4,6 +4,55 @@
 
 // Shell New menu, desktop host restoration and protected-icon handling.
 
+namespace
+{
+struct ShellMenuTrackerWindowContext
+{
+    HWND forwardingOwner = nullptr;
+    WNDPROC originalProcedure = nullptr;
+};
+
+bool IsShellMenuOwnerMessage(UINT message)
+{
+    return message == WM_INITMENUPOPUP ||
+        message == WM_DRAWITEM ||
+        message == WM_MEASUREITEM ||
+        message == WM_MENUCHAR;
+}
+
+LRESULT CALLBACK ShellMenuTrackerWindowProc(
+    HWND hwnd,
+    UINT message,
+    WPARAM wParam,
+    LPARAM lParam)
+{
+    auto* context = reinterpret_cast<ShellMenuTrackerWindowContext*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (context &&
+        IsShellMenuOwnerMessage(message) &&
+        context->forwardingOwner &&
+        IsWindow(context->forwardingOwner))
+    {
+        return SendMessageW(
+            context->forwardingOwner,
+            message,
+            wParam,
+            lParam);
+    }
+
+    if (context && context->originalProcedure)
+    {
+        return CallWindowProcW(
+            context->originalProcedure,
+            hwnd,
+            message,
+            wParam,
+            lParam);
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+}
+
 DesktopApp::ShellPopupMenuLayerGuard::
 ShellPopupMenuLayerGuard(DesktopApp& app)
     : app_(app)
@@ -31,25 +80,90 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     if (!completedEvent)
     {
         WriteDiagnosticLogEntry(
-            L"Native menu tracker event unavailable; using synchronous fallback");
-        return TrackPopupMenuEx(
-            menu, flags, screenPoint.x, screenPoint.y,
-            owner, nullptr);
+            L"Native menu tracker event unavailable; menu was not opened");
+        return 0;
     }
 
     std::atomic<UINT> selectedCommand{ 0 };
+    shellPopupTrackerCancelRequested_.store(
+        false, std::memory_order_release);
     std::thread tracker;
     try
     {
-        tracker = std::thread([
+        tracker = std::thread([this,
             menu, flags, screenPoint, owner,
             completedEvent, &selectedCommand]() {
             const HRESULT comResult = CoInitializeEx(
                 nullptr, COINIT_APARTMENTTHREADED);
-            const UINT command = TrackPopupMenuEx(
-                menu, flags,
-                screenPoint.x, screenPoint.y,
-                owner, nullptr);
+
+            ShellMenuTrackerWindowContext windowContext{};
+            windowContext.forwardingOwner = owner;
+            HWND trackerOwner = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                L"STATIC",
+                L"SnowDesktop Shell Menu Tracker",
+                WS_POPUP,
+                -32000,
+                -32000,
+                1,
+                1,
+                nullptr,
+                nullptr,
+                GetModuleHandleW(nullptr),
+                nullptr);
+            if (trackerOwner)
+            {
+                SetWindowLongPtrW(
+                    trackerOwner,
+                    GWLP_USERDATA,
+                    reinterpret_cast<LONG_PTR>(&windowContext));
+                SetLastError(ERROR_SUCCESS);
+                const LONG_PTR originalProcedure = SetWindowLongPtrW(
+                    trackerOwner,
+                    GWLP_WNDPROC,
+                    reinterpret_cast<LONG_PTR>(
+                        ShellMenuTrackerWindowProc));
+                if (originalProcedure ||
+                    GetLastError() == ERROR_SUCCESS)
+                {
+                    windowContext.originalProcedure =
+                        reinterpret_cast<WNDPROC>(originalProcedure);
+                }
+                else
+                {
+                    SetWindowLongPtrW(
+                        trackerOwner,
+                        GWLP_USERDATA,
+                        0);
+                    DestroyWindow(trackerOwner);
+                    trackerOwner = nullptr;
+                }
+            }
+
+            UINT command = 0;
+            if (trackerOwner)
+            {
+                shellPopupTrackerOwnerHwnd_.store(
+                    trackerOwner, std::memory_order_release);
+                ShowWindow(trackerOwner, SW_SHOWNA);
+                SetForegroundWindow(trackerOwner);
+                if (!shellPopupTrackerCancelRequested_.load(
+                        std::memory_order_acquire))
+                {
+                    command = TrackPopupMenuEx(
+                        menu, flags,
+                        screenPoint.x, screenPoint.y,
+                        trackerOwner, nullptr);
+                }
+                shellPopupTrackerOwnerHwnd_.store(
+                    nullptr, std::memory_order_release);
+                DestroyWindow(trackerOwner);
+            }
+            else
+            {
+                WriteDiagnosticLogEntry(
+                    L"Native menu tracker owner window unavailable; menu was not opened");
+            }
             selectedCommand.store(
                 command, std::memory_order_release);
             SetEvent(completedEvent);
@@ -61,10 +175,8 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     {
         CloseHandle(completedEvent);
         WriteDiagnosticLogEntry(
-            L"Native menu tracker thread unavailable; using synchronous fallback");
-        return TrackPopupMenuEx(
-            menu, flags, screenPoint.x, screenPoint.y,
-            owner, nullptr);
+            L"Native menu tracker thread unavailable; menu was not opened");
+        return 0;
     }
 
     bool quitPending = false;
@@ -89,7 +201,13 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
         if (waitResult == WAIT_FAILED)
         {
             waitFailed = true;
-            SendMessageW(owner, WM_CANCELMODE, 0, 0);
+            shellPopupTrackerCancelRequested_.store(
+                true, std::memory_order_release);
+            const HWND trackerOwner =
+                shellPopupTrackerOwnerHwnd_.load(
+                    std::memory_order_acquire);
+            if (trackerOwner && IsWindow(trackerOwner))
+                SendMessageW(trackerOwner, WM_CANCELMODE, 0, 0);
             break;
         }
         if (waitResult == WAIT_OBJECT_0)
@@ -108,7 +226,16 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
             {
                 quitPending = true;
                 quitCode = message.wParam;
-                SendMessageW(owner, WM_CANCELMODE, 0, 0);
+                shellPopupTrackerCancelRequested_.store(
+                    true, std::memory_order_release);
+                const HWND trackerOwner =
+                    shellPopupTrackerOwnerHwnd_.load(
+                        std::memory_order_acquire);
+                if (trackerOwner && IsWindow(trackerOwner))
+                {
+                    SendMessageW(
+                        trackerOwner, WM_CANCELMODE, 0, 0);
+                }
                 ++processedMessages;
                 continue;
             }
@@ -147,6 +274,8 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     tracker.join();
     const UINT command = selectedCommand.load(
         std::memory_order_acquire);
+    shellPopupTrackerCancelRequested_.store(
+        false, std::memory_order_release);
     CloseHandle(completedEvent);
     PostMessageW(owner, WM_NULL, 0, 0);
     if (quitPending)

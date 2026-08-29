@@ -4297,7 +4297,16 @@ int main(int argc, char** argv)
                 liveNativeMenuPumpSource.find(
                     "std::thread") != std::string::npos &&
                 liveNativeMenuPumpSource.find(
-                    "TrackPopupMenuEx(") != std::string::npos &&
+                    "CreateWindowExW(") != std::string::npos &&
+                shellMenuSource.find(
+                    "ShellMenuTrackerWindowProc") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "SetForegroundWindow(trackerOwner);") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "trackerOwner, nullptr);") !=
+                    std::string::npos &&
                 liveNativeMenuPumpSource.find(
                     "MsgWaitForMultipleObjectsEx(") !=
                     std::string::npos &&
@@ -4318,18 +4327,36 @@ int main(int argc, char** argv)
                 CountOccurrences(
                     shellMenuSource,
                     "TrackPopupMenuEx(") ==
-                    CountOccurrences(
-                        liveNativeMenuPumpSource,
-                        "TrackPopupMenuEx(") &&
+                    1 &&
                 CountOccurrences(
                     itemMenuSource,
                     "TrackPopupMenuEx(") == 0 &&
                 popupLifecycleSource.find(
-                    "SendMessageW(owner, WM_CANCELMODE") !=
+                    "shellPopupTrackerOwnerHwnd_.load(") !=
                     std::string::npos &&
                 popupLifecycleSource.find(
+                    "SendMessageW(trackerOwner, WM_CANCELMODE") !=
+                    std::string::npos &&
+                appHeaderSource.find(
+                    "std::atomic<HWND> shellPopupTrackerOwnerHwnd_") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_INITMENUPOPUP") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_DRAWITEM") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_MEASUREITEM") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_MENUCHAR") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "synchronous fallback") == std::string::npos &&
+                popupLifecycleSource.find(
                     "EndMenu();") == std::string::npos,
-            "native Shell menu tracking must leave the desktop message, paint, and animation pump live");
+            "native Shell menus must use a tracker-thread-owned window while leaving the desktop pump live");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"

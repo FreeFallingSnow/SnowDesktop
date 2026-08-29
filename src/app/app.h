@@ -3371,6 +3371,8 @@ private:
     bool floatingDockKeyboardSessionActive_ = false;
     HWND floatingDockLogicalForegroundWindow_ = nullptr;
     int shellPopupMenuLayerDepth_ = 0;
+    std::atomic<HWND> shellPopupTrackerOwnerHwnd_{ nullptr };
+    std::atomic<bool> shellPopupTrackerCancelRequested_{ false };
     static constexpr size_t kShellHoverTraceCapacity = 2048;
     std::array<ShellHoverTraceEntry,
         kShellHoverTraceCapacity> shellHoverTrace_{};
