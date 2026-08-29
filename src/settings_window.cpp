@@ -102,7 +102,26 @@ bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
     {
         canonical.page = snowdesktop::SettingsPage::General;
     }
-    return impl_->EnsureInitialized() && impl_->host->Open(canonical);
+    if (!impl_->EnsureInitialized())
+        return false;
+    if (impl_->host->Open(canonical))
+        return true;
+
+    // A failed Open can leave an initialized XAML host in a state that no
+    // later request can repair. Recreate it once here so every entry point,
+    // including tray exit confirmation, can recover without a process restart.
+    const std::wstring firstError = impl_->host->LastError();
+    impl_->host->Shutdown();
+    impl_->host.reset();
+    if (!impl_->EnsureInitialized())
+        return false;
+    if (impl_->host->Open(canonical))
+        return true;
+
+    impl_->lastError = impl_->host->LastError();
+    if (impl_->lastError.empty())
+        impl_->lastError = firstError;
+    return false;
 }
 
 bool SettingsWindow::Show()

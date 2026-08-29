@@ -1305,6 +1305,8 @@ private:
         snowdesktop::SettingsRoute route =
             snowdesktop::SettingsRoute::ForPage(
                 snowdesktop::SettingsPage::General));
+    /** Open settings through the recoverable path, then show exit confirmation. */
+    void ShowSettingsExitConfirmation();
     /** Treat the settings host and its owned XAML surfaces as an app window. */
     [[nodiscard]] bool IsSettingsApplicationWindow(
         HWND window) const noexcept;

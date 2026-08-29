@@ -29,6 +29,7 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
+    using snowdesktop::settings_window_open_rules::PostOpenAction;
     using snowdesktop::settings_window_open_rules::RequestState;
 
     RequestState state;
@@ -56,11 +57,21 @@ int main(int argc, char** argv)
         "a new user request restores the retry budget");
     Check(state.Route() == widgetRoute,
         "a replacement request retains its typed route across retries");
-    state.MarkShown();
+    Check(state.MarkShown() == PostOpenAction::None,
+        "ordinary completion has no post-open action");
     Check(!state.Pending() && state.RetryCount() == 0,
         "successful display clears pending state and retries");
     Check(!state.RecordFailure(3),
         "completed requests cannot schedule retries");
+
+    state.Request({}, PostOpenAction::ShowExitConfirmation);
+    Check(state.RecordFailure(3),
+        "post-open actions survive an automatic open retry");
+    Check(state.MarkShown() == PostOpenAction::ShowExitConfirmation,
+        "successful display returns its deferred exit confirmation action");
+    state.Request();
+    Check(state.MarkShown() == PostOpenAction::None,
+        "a later ordinary request cannot inherit a consumed action");
 
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
@@ -185,14 +196,31 @@ int main(int argc, char** argv)
                 markSettingsShown < refreshDockAfterShow &&
                 refreshDockAfterShow < logSettingsShown,
             "showing settings refreshes the Dock immediately after the window becomes visible");
+        const std::size_t firstHostOpen = source.find(
+            "if (impl_->host->Open(canonical))");
+        const std::size_t failedHostShutdown = source.find(
+            "impl_->host->Shutdown();", firstHostOpen);
+        const std::size_t failedHostReset = source.find(
+            "impl_->host.reset();", failedHostShutdown);
+        const std::size_t recoverInitialization = source.find(
+            "if (!impl_->EnsureInitialized())", failedHostReset);
+        const std::size_t recoveredHostOpen = source.find(
+            "if (impl_->host->Open(canonical))", recoverInitialization);
         Check(source.find("bool EnsureInitialized()") !=
                     std::string::npos &&
                 source.find("auto candidate =") != std::string::npos &&
                 source.find("host = std::move(candidate)") !=
                     std::string::npos &&
-                source.find("return impl_->EnsureInitialized() &&") !=
-                    std::string::npos,
-            "each failed lazy initialization is retried with a newly constructed WinUI host");
+                firstHostOpen != std::string::npos &&
+                failedHostShutdown != std::string::npos &&
+                failedHostReset != std::string::npos &&
+                recoverInitialization != std::string::npos &&
+                recoveredHostOpen != std::string::npos &&
+                firstHostOpen < failedHostShutdown &&
+                failedHostShutdown < failedHostReset &&
+                failedHostReset < recoverInitialization &&
+                recoverInitialization < recoveredHostOpen,
+            "failed lazy initialization and failed Open each retry with a newly constructed WinUI host");
         Check(host.find("shell->ReleaseSessionResources();") !=
                     std::string::npos &&
                 host.find("QueueViewRelease();") != std::string::npos &&
@@ -207,11 +235,27 @@ int main(int argc, char** argv)
                 appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=
                     std::string::npos,
             "the application supplies persisted instance loading before widget settings navigation");
+        const std::size_t exitCase = tray.find(
+            "case kTrayExitCommand:");
+        const std::size_t exitCaseEnd = tray.find("break;", exitCase);
+        const std::string exitCommand = exitCase == std::string::npos ||
+                exitCaseEnd == std::string::npos
+            ? std::string{}
+            : tray.substr(exitCase, exitCaseEnd - exitCase);
         Check(!tray.empty() &&
-                tray.find("!settingsWindow_->ShowExitConfirm()") !=
+                exitCommand.find("ShowSettingsExitConfirmation();") !=
                     std::string::npos &&
-                tray.find("RequestExit();") != std::string::npos,
-            "tray exit falls back safely when the WinUI confirmation cannot be shown");
+                exitCommand.find("RequestExit();") == std::string::npos &&
+                appSettings.find(
+                    "PostOpenAction::\n            ShowExitConfirmation") !=
+                    std::string::npos &&
+                appSettings.find(
+                    "settingsWindowOpenRequest_.MarkShown()") !=
+                    std::string::npos &&
+                appSettings.find(
+                    "!settingsWindow_->ShowExitConfirm()") !=
+                    std::string::npos,
+            "tray exit uses the recoverable settings-open request and shows confirmation only after the window opens");
         Check(host.find("controller->CloseSession()") !=
                     std::string::npos &&
                 appRun.find("settingsWindow_->PreTranslateMessage(&msg)") !=

@@ -1476,6 +1476,16 @@ void DesktopApp::ShowSettingsWindow(snowdesktop::SettingsRoute route)
     TryShowPendingSettingsWindow();
 }
 
+void DesktopApp::ShowSettingsExitConfirmation()
+{
+    settingsWindowOpenRequest_.Request(
+        snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::General),
+        snowdesktop::settings_window_open_rules::PostOpenAction::
+            ShowExitConfirmation);
+    TryShowPendingSettingsWindow();
+}
+
 bool DesktopApp::IsSettingsApplicationWindow(HWND window) const noexcept
 {
     if (!window || !settingsWindow_)
@@ -1504,11 +1514,20 @@ void DesktopApp::TryShowPendingSettingsWindow()
     const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {
-        settingsWindowOpenRequest_.MarkShown();
+        const auto postOpenAction =
+            settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
             KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
         RefreshDockRunningWindows();
         WriteDiagnosticLogEntry(L"SettingsWindow shown");
+        if (postOpenAction ==
+                snowdesktop::settings_window_open_rules::PostOpenAction::
+                    ShowExitConfirmation &&
+            !settingsWindow_->ShowExitConfirm())
+        {
+            WriteDiagnosticLogEntry(
+                L"SettingsWindow exit confirmation failed after show");
+        }
         return;
     }
 

@@ -183,8 +183,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
-        if (!settingsWindow_ || !settingsWindow_->ShowExitConfirm())
-            RequestExit();
+        ShowSettingsExitConfirmation();
         break;
     case kTrayDesktopIconThisPC:
     case kTrayDesktopIconUserFiles:
