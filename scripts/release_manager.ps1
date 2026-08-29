@@ -6,6 +6,8 @@ param(
         "status",
         "package",
         "package-steam",
+        "steam-preview",
+        "steam-upload-dev",
         "sync-release",
         "prepare",
         "squash",
@@ -18,6 +20,8 @@ param(
     [string]$ConfirmVersion = "",
     [string]$CertificatePath = "",
     [string]$CertificateThumbprint = "",
+    [string]$SteamCmdPath = "",
+    [string]$ConfirmPrivateBranch = "",
     [ValidateSet("CurrentUser", "LocalMachine")]
     [string]$CertificateStoreLocation = "CurrentUser",
     [switch]$Development,
@@ -36,6 +40,7 @@ $releaseRepository = Join-Path $repositoryRoot "release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
 $packageScript = Join-Path $scriptDirectory "package_release.ps1"
 $steamPackageScript = Join-Path $scriptDirectory "package_steam.ps1"
+$steamPipeScript = Join-Path $scriptDirectory "steam_pipe.ps1"
 $buildScript = Join-Path $scriptDirectory "build.bat"
 $squashScript = Join-Path $scriptDirectory "squash_release_to_main.bat"
 $sourceRemote = "https://github.com/FreeFallingSnow/SnowDesktop.git"
@@ -974,6 +979,54 @@ function Open-VersionDirectory {
     Start-Process explorer.exe -ArgumentList $context.VersionDirectory
 }
 
+function Get-PrivateSteamDevelopmentBranch {
+    $configurationPath = Join-Path $repositoryRoot `
+        "packaging\steam-pipe.json"
+    $configuration = Get-Content -LiteralPath $configurationPath `
+        -Encoding UTF8 -Raw | ConvertFrom-Json
+    $branch = [string]$configuration.privateDevelopmentBranch
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+        throw "packaging\steam-pipe.json does not define a private development branch."
+    }
+    return $branch
+}
+
+function Invoke-SteamPipeAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Preview", "UploadDev")]
+        [string]$Mode
+    )
+
+    $arguments = @{
+        Mode = $Mode
+        ReloadShell = $ReloadShell
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SteamCmdPath)) {
+        $arguments["SteamCmdPath"] = $SteamCmdPath
+    }
+
+    if ($Mode -eq "UploadDev") {
+        $version = Get-Version
+        $branch = Get-PrivateSteamDevelopmentBranch
+        $confirmedVersion = $ConfirmVersion
+        $confirmedBranch = $ConfirmPrivateBranch
+        $confirmed = $Yes
+        if ($isMenu) {
+            $confirmedVersion = Read-Host `
+                "上传只允许私有开发分支。请输入版本 $version"
+            $confirmedBranch = Read-Host `
+                "请确认 Steamworks 中已为分支设置密码，再输入分支名 $branch"
+            $confirmed = $true
+        }
+        $arguments["Yes"] = $confirmed
+        $arguments["ConfirmVersion"] = $confirmedVersion
+        $arguments["ConfirmPrivateBranch"] = $confirmedBranch
+    }
+
+    & $steamPipeScript @arguments
+}
+
 function Invoke-Prepare {
     param(
         [switch]$AskBeforeBuild,
@@ -1014,7 +1067,13 @@ function Invoke-CommandAction {
                 -ReloadShellBeforeBuild:$ReloadShell)
         }
         "package-steam" {
-            & $steamPackageScript
+            & $steamPackageScript -ReloadShell:$ReloadShell
+        }
+        "steam-preview" {
+            Invoke-SteamPipeAction -Mode "Preview"
+        }
+        "steam-upload-dev" {
+            Invoke-SteamPipeAction -Mode "UploadDev"
         }
         "sync-release" {
             [void](Sync-ReleaseRepository)
@@ -1048,6 +1107,8 @@ function Start-ReleaseMenu {
         Write-Host ""
         Write-Host "[1] 构建并生成全部发行包"
         Write-Host "[S] 构建并生成 Steam 专属包"
+        Write-Host "[V] SteamPipe 安全预览（不上传）"
+        Write-Host "[U] 上传并设为私有 Steam 开发分支"
         Write-Host "[2] 同步二进制 Release 仓库（不提交）"
         Write-Host "[3] 发布准备（构建打包 + 同步 Release 仓库）"
         Write-Host "[4] 压缩合并版本分支到本地 main，并创建标签"
@@ -1065,6 +1126,8 @@ function Start-ReleaseMenu {
             switch ($selection) {
                 "1" { Invoke-CommandAction -Name "package" }
                 "S" { Invoke-CommandAction -Name "package-steam" }
+                "V" { Invoke-CommandAction -Name "steam-preview" }
+                "U" { Invoke-CommandAction -Name "steam-upload-dev" }
                 "2" { Invoke-CommandAction -Name "sync-release" }
                 "3" { Invoke-CommandAction -Name "prepare" }
                 "4" { Invoke-CommandAction -Name "squash" }

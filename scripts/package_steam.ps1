@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
+    [switch]$ReloadShell,
     [string]$OutputDirectory = ""
 )
 
@@ -53,8 +54,15 @@ if (-not $OutputDirectory.StartsWith(
     throw "Steam artifacts must remain under artifacts\v$version\."
 }
 
+if ($SkipBuild -and $ReloadShell) {
+    throw "-ReloadShell cannot be combined with -SkipBuild."
+}
 if (-not $SkipBuild) {
-    & cmd.exe /d /c "call `"$repositoryRoot\scripts\build.bat`""
+    $buildCommand = "call `"$repositoryRoot\scripts\build.bat`""
+    if ($ReloadShell) {
+        $buildCommand += " --reload-shell"
+    }
+    & cmd.exe /d /c $buildCommand
     if ($LASTEXITCODE -ne 0) {
         throw "scripts/build.bat failed with exit code $LASTEXITCODE."
     }
@@ -227,20 +235,26 @@ if (-not (Test-Path -LiteralPath $payloadSkillCli -PathType Leaf) -or
     throw "The Steam payload contains an unavailable or stale Agent Skill CLI."
 }
 
+$payloadFileMetadata = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
+    ForEach-Object {
+        [pscustomobject][ordered]@{
+            path = $_.FullName.Substring($payload.Length + 1).Replace("\", "/")
+            size = [uint64]$_.Length
+            sha256 = Get-Sha256 -Path $_.FullName
+        }
+    } | Sort-Object path)
 $manifest = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     version = $version
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     steamAppId = $steamAppId
     windowsDepotId = $windowsDepotId
     steamworksRedistributable = "$runtimeDirectory/steam_api64.dll"
     sdkMaterialsIncluded = $false
-    files = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
-        ForEach-Object {
-            $_.FullName.Substring($payload.Length + 1).Replace("\", "/")
-        } | Sort-Object)
+    files = @($payloadFileMetadata | ForEach-Object { $_.path })
+    fileMetadata = $payloadFileMetadata
 }
-$manifest | ConvertTo-Json -Depth 4 |
+$manifest | ConvertTo-Json -Depth 5 |
     Set-Content -LiteralPath (Join-Path $OutputDirectory "manifest.json") `
         -Encoding utf8
 

@@ -183,6 +183,11 @@ void TestPackagers(const std::string& module,
             steam.find("SnowDesktopWorkshopManager.exe") !=
                 std::string::npos,
         "only the Steam payload includes the Workshop manager while every release keeps the Agent Skill tool");
+    Check(steam.find("schemaVersion = 2") != std::string::npos &&
+            steam.find("fileMetadata = $payloadFileMetadata") !=
+                std::string::npos &&
+            steam.find("sha256 = Get-Sha256") != std::string::npos,
+        "Steam packages retain compatible file paths plus size and SHA-256 metadata");
     Check(release.find("$runtimeDestination") != std::string::npos &&
             release.find("SnowDesktopWallpaperInjector32.exe") !=
                 std::string::npos &&
@@ -301,6 +306,76 @@ void TestReleaseManagerShellReload(const std::string& manager,
         "release documentation describes shell reload for package and prepare");
 }
 
+void TestSteamPipeAutomation(const std::string& steamPipe,
+    const std::string& steamPipeConfiguration,
+    const std::string& manager,
+    const std::string& scriptDocumentation,
+    const std::string& packagingDocumentation)
+{
+    Check(steamPipe.find("ValidateSet(\"Preview\", \"UploadDev\")") !=
+                std::string::npos &&
+            steamPipe.find("\"Preview\" \"1\"") != std::string::npos &&
+            steamPipe.find("SetLive") != std::string::npos &&
+            steamPipe.find("(\"default\", \"public\", \"release\", \"live\")") !=
+                std::string::npos,
+        "SteamPipe exposes preview and a denylisted private-development upload mode only");
+    Check(steamPipe.find("SNOWDESKTOP_STEAMCMD_PATH") !=
+                std::string::npos &&
+            steamPipe.find("SNOWDESKTOP_STEAM_BUILD_ACCOUNT") !=
+                std::string::npos &&
+            steamPipe.find("+@NoPromptForPassword") !=
+                std::string::npos &&
+            steamPipe.find("+run_app_build") != std::string::npos &&
+            steamPipe.find("[string]$Password") == std::string::npos &&
+            steamPipe.find("-betapassword") == std::string::npos,
+        "SteamPipe uses a pre-authenticated build account without accepting password arguments");
+    Check(steamPipe.find("-not $Yes") != std::string::npos &&
+            steamPipe.find("$ConfirmVersion -ne $version") !=
+                std::string::npos &&
+            steamPipe.find("$ConfirmPrivateBranch -cne $privateBranch") !=
+                std::string::npos &&
+            steamPipe.find("Assert-SteamPayloadManifest") !=
+                std::string::npos &&
+            steamPipe.find("Compare-Object -ReferenceObject $listed") !=
+                std::string::npos &&
+            steamPipe.find("Steam payload metadata mismatch") !=
+                std::string::npos,
+        "Steam development uploads require explicit version and branch confirmation over a current payload manifest");
+    Check(steamPipe.find("FileExclusion\" \"steam_appid.txt") !=
+                std::string::npos &&
+            steamPipe.find("FileExclusion\" \"data\\*") !=
+                std::string::npos &&
+            steamPipe.find("FileExclusion\" \"runtime\\*") !=
+                std::string::npos &&
+            steamPipe.find("artifacts\\v$version") !=
+                std::string::npos &&
+            steamPipe.find("\"steampipe\"") != std::string::npos,
+        "SteamPipe keeps generated state out of the depot and stores upload state beside version artifacts");
+    Check(manager.find("\"steam-preview\"") != std::string::npos &&
+            manager.find("\"steam-upload-dev\"") != std::string::npos &&
+            manager.find("Invoke-SteamPipeAction") != std::string::npos &&
+            manager.find("ConfirmPrivateBranch") != std::string::npos,
+        "the shared release manager exposes preview and explicitly confirmed private upload commands");
+    Check(steamPipeConfiguration.find("\"privateDevelopmentBranch\"") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("internal-dev") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("password") == std::string::npos &&
+            steamPipeConfiguration.find("account") == std::string::npos &&
+            steamPipeConfiguration.find("token") == std::string::npos,
+        "committed SteamPipe configuration contains a branch but no credentials");
+    Check(scriptDocumentation.find("steam-preview") != std::string::npos &&
+            scriptDocumentation.find("steam-upload-dev") !=
+                std::string::npos &&
+            packagingDocumentation.find("@NoPromptForPassword") !=
+                std::string::npos &&
+            packagingDocumentation.find("Preview \"1\"") !=
+                std::string::npos &&
+            packagingDocumentation.find("不会上传内容") !=
+                std::string::npos,
+        "SteamPipe documentation distinguishes preview safety from private branch upload");
+}
+
 void TestRuntimeResolution(const std::string& deploymentHeader,
     const std::string& deploymentSource,
     const std::string& mainSource,
@@ -410,6 +485,12 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/test.bat"));
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
+            ReadText(root / "packaging/README.md"));
+        TestSteamPipeAutomation(
+            ReadText(root / "scripts/steam_pipe.ps1"),
+            ReadText(root / "packaging/steam-pipe.json"),
+            ReadText(root / "scripts/release_manager.ps1"),
+            ReadText(root / "scripts/README.md"),
             ReadText(root / "packaging/README.md"));
         TestRuntimeResolution(
             ReadText(root / "src/deployment_context.h"),

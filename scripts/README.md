@@ -12,6 +12,7 @@
 - `release_manager.ps1`：统一发布状态、打包、仓库同步、合并及发布流程；
 - `package_release.ps1`：生成携带版、MSIX、符号包和商店上传包；
 - `package_steam.ps1`：生成 Steam 专属载荷，只允许在 `SnowDesktop.Runtime` 中携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
+- `steam_pipe.ps1`：为 Steam 专属载荷生成 SteamPipe VDF，支持不上传的 Preview 以及仅面向固定私有开发分支的上传；
 - `write_deployment_manifest.ps1`：由 MSBuild 调用，生成确定性的 WinAppSDK 自包含部署清单；
 - `deployment_payload.psm1`：供携带版、MSIX 与 Steam 打包共用的清单校验、第三方运行时隔离、复制和 AppX fragment 合并模块；
 - `squash_release_to_main.bat`：只执行本地 squash、提交和标签；
@@ -31,6 +32,9 @@ scripts\release.bat
 scripts\release.bat status -Json
 scripts\release.bat package
 scripts\release.bat package -ReloadShell
+scripts\release.bat package-steam
+scripts\release.bat steam-preview
+scripts\release.bat steam-upload-dev -Yes -ConfirmVersion 1.0.5.0 -ConfirmPrivateBranch internal-dev
 ```
 
 构建入口默认不会关闭 SnowDesktop 或重启 Explorer。任务栏与 Wallpaper Engine Hook 均从
@@ -48,6 +52,14 @@ SnowDesktop 以发现组件；开发候选默认不覆盖已安装版本，需�
 SnowDesktop 开发许可的 Steam 客户端。脚本从 `packaging\steam-identity.json`
 读取正式 App ID，只在 `.build\Release\` 临时创建 `steam_appid.txt`；若该文件原本
 存在则校验但不删除。正式 Steam 包始终拒绝携带此开发文件。
+
+SteamPipe 操作需要将 `SNOWDESKTOP_STEAMCMD_PATH` 指向 `steamcmd.exe`，并在
+`SNOWDESKTOP_STEAM_BUILD_ACCOUNT` 中提供仅具备所需应用权限的构建账号名。脚本不接受
+密码、Steam Guard 代码或分支密码；先人工运行一次 SteamCMD 完成登录与 Steam Guard，
+之后自动化只使用 SteamCMD 自身缓存的登录状态，并关闭密码提示。`steam-preview` 使用
+SteamPipe 的 Preview 模式，不上传 depot 内容，也不改变任何分支；`steam-upload-dev`
+只能上传并 `SetLive` 到 `packaging\steam-pipe.json` 中的私有开发分支，且必须同时确认
+当前版本和分支名。配置禁止使用 `default`、`public`、`release` 或 `live`。
 
 组件创建流程位于 SnowDesktop 主程序的“组件开发工具”页。该页可将开放 Agent
 Skill 一键同步到共享目录及 Codex、Claude Code、Cursor、GitHub Copilot、Gemini
