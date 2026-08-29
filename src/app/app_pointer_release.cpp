@@ -37,6 +37,18 @@ void DesktopApp::OnMouseLeave()
 {
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
+    if (snowdesktop::desktop_hover_rules::
+            ShouldHoldHoverDuringNativeShellPopup(
+                shellPopupMenuLayerDepth_ > 0))
+    {
+        // A native Shell menu owns mouse capture while its modal session is
+        // active. Preserve the complete Dock hover frame so its content and
+        // paired backdrop cannot diverge; EndShellPopupMenuLayer reconciles
+        // once against the real pointer location.
+        RecordShellHoverTrace(
+            ShellHoverTraceEvent::MouseLeaveEnd);
+        return;
+    }
     POINT cursorScreen{};
     GetCursorPos(&cursorScreen);
     const bool pointerStillInteractsWithDockPreview =

@@ -285,9 +285,9 @@ constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
 constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
 constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
-// DoDragDrop and TrackPopupMenuEx own nested message loops, so the waitable
-// animation timer in the outer application pump needs a WM_TIMER bridge while
-// either modal interaction is active.
+// DoDragDrop owns a nested message loop, so the waitable animation timer in
+// the outer application pump needs a WM_TIMER bridge while a local drag is
+// visiting another process.
 constexpr UINT_PTR kOleDragUiPumpTimerId = 21;
 constexpr UINT kOleDragUiPumpIntervalMs = USER_TIMER_MINIMUM;
 constexpr UINT_PTR kSettingsWindowRetryTimerId = 22;
@@ -295,8 +295,6 @@ constexpr UINT kSettingsWindowRetryIntervalMs = 250;
 constexpr unsigned kSettingsWindowMaximumAutomaticRetries = 3;
 constexpr UINT_PTR kQuickNavigationEverythingSearchTimerId = 23;
 constexpr UINT kQuickNavigationEverythingSearchDebounceMs = 120;
-constexpr UINT_PTR kShellPopupMenuUiPumpTimerId = 24;
-constexpr UINT kShellPopupMenuUiPumpIntervalMs = USER_TIMER_MINIMUM;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

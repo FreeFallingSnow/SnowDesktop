@@ -705,6 +705,10 @@ void TestDesktopHoverDeactivation()
             ReconcileMode::DeactivateOnly,
         "closing a Shell popup must not reactivate hover from the menu's last cursor position");
     Check(
+        hoverRules::ShouldHoldHoverDuringNativeShellPopup(true) &&
+            !hoverRules::ShouldHoldHoverDuringNativeShellPopup(false),
+        "native Shell popup capture must hold the complete hover frame until the menu closes");
+    Check(
         hoverRules::ShouldRetainHoverAcrossMouseLeave(
             true, false) &&
             hoverRules::ShouldRetainHoverAcrossMouseLeave(

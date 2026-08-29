@@ -4276,42 +4276,6 @@ int main(int argc, char** argv)
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
-        const std::size_t beginNativeMenuLayer =
-            shellMenuSource.find(
-                "void DesktopApp::BeginShellPopupMenuLayer()");
-        const std::size_t endNativeMenuLayer =
-            shellMenuSource.find(
-                "void DesktopApp::EndShellPopupMenuLayer()",
-                beginNativeMenuLayer);
-        const std::string beginNativeMenuLayerSource =
-            beginNativeMenuLayer != std::string::npos &&
-                    endNativeMenuLayer != std::string::npos
-                ? shellMenuSource.substr(
-                    beginNativeMenuLayer,
-                    endNativeMenuLayer - beginNativeMenuLayer)
-                : std::string{};
-        const std::string endNativeMenuLayerSource =
-            endNativeMenuLayer != std::string::npos
-                ? shellMenuSource.substr(endNativeMenuLayer)
-                : std::string{};
-        Check(!beginNativeMenuLayerSource.empty() &&
-                beginNativeMenuLayerSource.find(
-                    "kShellPopupMenuUiPumpTimerId") !=
-                    std::string::npos &&
-                beginNativeMenuLayerSource.find(
-                    "SetTimer(") != std::string::npos &&
-                endNativeMenuLayerSource.find(
-                    "kShellPopupMenuUiPumpTimerId") !=
-                    std::string::npos &&
-                endNativeMenuLayerSource.find(
-                    "KillTimer(") != std::string::npos &&
-                timerDispatchSource.find(
-                    "timerId == kShellPopupMenuUiPumpTimerId") !=
-                    std::string::npos &&
-                timerDispatchSource.find(
-                    "uiAnimationScheduler_.DispatchDue();") !=
-                    std::string::npos,
-            "native Shell menus must bridge their modal loop to the unified UI scheduler");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"
@@ -7183,6 +7147,9 @@ int main(int argc, char** argv)
         const std::size_t clearPointer =
             onMouseLeaveHandler.find(
                 "lastMousePoint_ = { LONG_MIN, LONG_MIN };");
+        const std::size_t holdNativeMenuHover =
+            onMouseLeaveHandler.find(
+                "ShouldHoldHoverDuringNativeShellPopup(");
         const std::size_t shrinkFloatingRegion =
             onMouseLeaveHandler.find(
                 "UpdateFloatingDockWindowBounds(false);");
@@ -7190,12 +7157,14 @@ int main(int argc, char** argv)
             onMouseLeaveHandler.find(
                 "PresentPassiveHoverVisualChange();");
         Check(!onMouseLeaveHandler.empty() &&
+                holdNativeMenuHover != std::string::npos &&
                 clearPointer != std::string::npos &&
                 shrinkFloatingRegion != std::string::npos &&
                 presentClearedHover != std::string::npos &&
+                holdNativeMenuHover < clearPointer &&
                 clearPointer < shrinkFloatingRegion &&
                 shrinkFloatingRegion < presentClearedHover,
-            "clearing hover must remove the floating title input region before presenting its empty frame");
+            "native menu capture must hold the paired hover frame before ordinary leave clears and presents it");
         Check(oleDropRoutingSource.find(
                   "bool DesktopApp::IsBaseDesktopHoverSurfaceWindow(") !=
                     std::string::npos &&

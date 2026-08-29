@@ -311,27 +311,18 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
-    if (timerId == kOleDragUiPumpTimerId ||
-        timerId == kShellPopupMenuUiPumpTimerId)
+    if (timerId == kOleDragUiPumpTimerId)
     {
-        const bool shellMenuPump =
-            timerId == kShellPopupMenuUiPumpTimerId;
-        const bool nestedLoopActive = shellMenuPump
-            ? shellPopupMenuLayerDepth_ > 0
-            : dragDropController_.IsSelfDragActive();
-        HWND timerWindow = shellMenuPump
-            ? ShellDialogOwnerHwnd()
-            : hwnd_;
-        if (!nestedLoopActive)
+        if (!dragDropController_.IsSelfDragActive())
         {
-            if (timerWindow && IsWindow(timerWindow))
-                KillTimer(timerWindow, timerId);
+            if (hwnd_ && IsWindow(hwnd_))
+                KillTimer(hwnd_, kOleDragUiPumpTimerId);
             return;
         }
 
-        // Native modal APIs dispatch window messages but do not return control
-        // to DesktopApp::Run. Bridge their nested loops to the waitable
-        // scheduler so popup/hit animations and completion callbacks advance.
+        // DoDragDrop dispatches window messages but does not return control to
+        // DesktopApp::Run. Bridge its nested loop to the waitable scheduler so
+        // popup/hit animations and their completion callbacks keep advancing.
         HANDLE animationWait = uiAnimationScheduler_.WaitHandle();
         if (animationWait &&
             WaitForSingleObject(animationWait, 0) == WAIT_OBJECT_0)
