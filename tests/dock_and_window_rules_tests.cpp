@@ -1945,6 +1945,13 @@ int main(int argc, char** argv)
             !floatingDock::ShouldSummonForDockSurface(
                 false, false),
         "a Dock-associated popup must summon only a hidden floating Dock");
+    Check(floatingDock::ShouldDispatchDockContextMenu(
+              false, false) &&
+            floatingDock::ShouldDispatchDockContextMenu(
+              true, true) &&
+            !floatingDock::ShouldDispatchDockContextMenu(
+              true, false),
+        "an active persistent DockHost must exclusively own its Dock context-menu dispatch while the desktop fallback remains usable");
     const DockWindowPreviewZOrderPolicy floatingPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(true, false);
     Check(floatingPreviewZOrder.insertAfter == nullptr &&
@@ -6091,24 +6098,42 @@ int main(int argc, char** argv)
             "taskbar document proxies must activate directly without showing the hidden helper window");
         const std::size_t dockContextHit =
             pointerContextSource.find(
-                "if (DockContainer* dock = GetDockContainerAtPoint(pt))");
+                "DockContainer* dock = GetDockContainerAtPoint(pt);");
+        const std::size_t dockContextSourceGate =
+            pointerContextSource.find(
+                "ShouldDispatchDockContextMenu(",
+                dockContextHit);
+        const std::size_t dockContextHostMatch =
+            pointerContextSource.find(
+                "handlingPersistentDockHost_ ==",
+                dockContextSourceGate);
+        const std::size_t dockContextBranch =
+            pointerContextSource.find(
+                "if (dockOwnsContextInput)",
+                dockContextHostMatch);
         const std::size_t dockContextSummon =
             pointerContextSource.find(
                 "EnsureFloatingDockVisibleForAssociatedSurface(",
-                dockContextHit);
+                dockContextBranch);
         const std::size_t dockContextEnd =
             pointerContextSource.find(
                 "const size_t standaloneInputWidget",
                 dockContextHit);
         Check(dockContextHit != std::string::npos &&
+                dockContextSourceGate != std::string::npos &&
+                dockContextHostMatch != std::string::npos &&
+                dockContextBranch != std::string::npos &&
                 dockContextSummon != std::string::npos &&
                 dockContextEnd != std::string::npos &&
-                dockContextHit < dockContextSummon &&
+                dockContextHit < dockContextSourceGate &&
+                dockContextSourceGate < dockContextHostMatch &&
+                dockContextHostMatch < dockContextBranch &&
+                dockContextBranch < dockContextSummon &&
                 dockContextSummon < dockContextEnd &&
                 pointerContextSource.find(
                   "EnsureFloatingDockVisibleForAssociatedSurface(",
                   dockContextSummon + 1) == std::string::npos,
-            "only context menus dispatched from a Dock hit must summon its floating host");
+            "only context menus dispatched by the persistent Host that owns a Dock hit may summon its floating host");
         Check(pointerContextSource.find(
                   "if (mouseDownHit_ == popupItem)") !=
                     std::string::npos &&

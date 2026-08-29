@@ -117,6 +117,14 @@ inline bool ShouldSummonForDockSurface(
     return sourceBelongsToDock && !floatingDockVisible;
 }
 
+inline bool ShouldDispatchDockContextMenu(
+    bool persistentDockHostActive,
+    bool inputFromMatchingPersistentDockHost)
+{
+    return !persistentDockHostActive ||
+        inputFromMatchingPersistentDockHost;
+}
+
 inline bool ShouldUseFloatingDockLogicalForeground(
     bool keyboardSessionActive,
     bool actualWindowOwnedByCurrentProcess,

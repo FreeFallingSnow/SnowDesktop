@@ -238,7 +238,23 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
     }
 
-    if (DockContainer* dock = GetDockContainerAtPoint(pt))
+    DockContainer* dock = GetDockContainerAtPoint(pt);
+    PersistentDockHost* contextDockHost = dock
+        ? FindPersistentDockHost(dock)
+        : nullptr;
+    // A desktop or floating-popup input message can geometrically overlap a
+    // desktop-band Dock. Once a persistent DockHost owns that Dock visual,
+    // only an input message dispatched by the matching Host may claim its
+    // context menu and promote it to the floating band.
+    const bool dockOwnsContextInput =
+        dock &&
+        snowdesktop::floating_dock_rules::
+            ShouldDispatchDockContextMenu(
+                contextDockHost && contextDockHost->active,
+                contextDockHost &&
+                    handlingPersistentDockHost_ ==
+                        contextDockHost);
+    if (dockOwnsContextInput)
     {
         EnsureFloatingDockVisibleForAssociatedSurface(
             screenPt);
