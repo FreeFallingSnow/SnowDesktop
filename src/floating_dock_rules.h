@@ -297,6 +297,15 @@ inline bool HasNewPointerButtonPress(
         (buttonsDown & ~previousButtonsDown) != 0;
 }
 
+inline bool HasPointerButtonActivity(
+    UINT buttonsDown, UINT previousButtonsDown,
+    UINT pressedSinceLastSample)
+{
+    return buttonsDown != 0 ||
+        previousButtonsDown != 0 ||
+        pressedSinceLastSample != 0;
+}
+
 /**
  * @brief Detects a quick pointer stroke that remains on the Dock-facing edge.
  *
@@ -357,6 +366,15 @@ public:
     {
         tracking_ = false;
         awaitingEdgeLeave_ = false;
+        monitorRect_ = {};
+        startPoint_ = {};
+        startTick_ = 0;
+    }
+
+    void SuppressUntilEdgeLeave()
+    {
+        tracking_ = false;
+        awaitingEdgeLeave_ = true;
         monitorRect_ = {};
         startPoint_ = {};
         startTick_ = 0;

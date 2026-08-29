@@ -2293,6 +2293,17 @@ int main(int argc, char** argv)
     Check(!floatingDock::HasNewPointerButtonPress(
             1, 1, 0),
         "a held pointer button must not repeatedly dismiss");
+    Check(floatingDock::HasPointerButtonActivity(
+              1, 0, 0) &&
+            floatingDock::HasPointerButtonActivity(
+              1, 1, 0) &&
+            floatingDock::HasPointerButtonActivity(
+              0, 1, 0) &&
+            floatingDock::HasPointerButtonActivity(
+              0, 0, 1) &&
+            !floatingDock::HasPointerButtonActivity(
+              0, 0, 0),
+        "edge gestures must exclude pointer press, hold, release and between-sample click activity");
     Check(floatingDock::IsPointInVisibleLayer(
             POINT{ 150, 930 },
             floatingDockRect,
@@ -2470,6 +2481,41 @@ int main(int argc, char** argv)
             DockPosition::Bottom,
             430, 4, 72),
         "along-edge swipes must work in either direction");
+
+    floatingDock::EdgeSwipeDetector buttonSuppressedSwipe;
+    buttonSuppressedSwipe.SuppressUntilEdgeLeave();
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1500, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              100, 4, 72) &&
+            buttonSuppressedSwipe.IsAwaitingEdgeLeave(),
+        "a pointer-button interaction at the edge must suppress swipe arming");
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1400, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              180, 4, 72) &&
+            buttonSuppressedSwipe.IsAwaitingEdgeLeave(),
+        "movement along the same edge must not clear button suppression");
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1400, 1060 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              200, 4, 72) &&
+            !buttonSuppressedSwipe.IsAwaitingEdgeLeave(),
+        "leaving the edge must clear pointer-button suppression");
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1500, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              220, 4, 72) &&
+            buttonSuppressedSwipe.Update(
+              POINT{ -1400, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              300, 4, 72),
+        "a fresh buttonless edge stroke must work after leaving and returning");
 
     floatingDock::EdgeSwipeDetector timedOutSwipe;
     Check(!timedOutSwipe.Update(
@@ -5066,19 +5112,22 @@ int main(int argc, char** argv)
         const std::size_t passiveDragSamplerCall =
             dockPointerSamplerSource.find(
                 "UpdatePassiveDragRevealHosts(cursor)");
-        const std::size_t legacyDragButtonGuard =
+        const std::size_t edgeSwipeSuppressionState =
             dockPointerSamplerSource.find(
-                "dragSession_.IsActive() ||\n"
-                "        dragDropController_.IsTransportActive() ||\n"
-                "        buttonsDown != 0");
+                "const bool suppressEdgeSwipeUntilLeave =",
+                passiveDragSamplerCall);
         const std::size_t contextMenuGestureGuard =
             dockPointerSamplerSource.find(
                 "HasActiveContextMenuSession() ||",
-                passiveDragSamplerCall);
+                edgeSwipeSuppressionState);
+        const std::size_t edgeSwipeSuppressionCall =
+            dockPointerSamplerSource.find(
+                "SuppressUntilEdgeLeave();",
+                contextMenuGestureGuard);
         const std::size_t edgeSwipeDetectorUpdate =
             dockPointerSamplerSource.find(
                 "floatingDockEdgeSwipeDetector_.Update(",
-                legacyDragButtonGuard);
+                edgeSwipeSuppressionCall);
         const std::size_t edgeSwipeTriggerBranch =
             dockPointerSamplerSource.find(
                 "if (triggered &&",
@@ -5203,7 +5252,8 @@ int main(int argc, char** argv)
                   "                dockSettings_.floatingEdgeSwipeEnabled)") !=
                     std::string::npos &&
                 contextMenuGestureGuard != std::string::npos &&
-                legacyDragButtonGuard != std::string::npos &&
+                edgeSwipeSuppressionState != std::string::npos &&
+                edgeSwipeSuppressionCall != std::string::npos &&
                 edgeSwipeDetectorUpdate != std::string::npos &&
                 edgeSwipeTriggerBranch != std::string::npos &&
                 edgeSwipeSummon != std::string::npos &&
@@ -5213,12 +5263,13 @@ int main(int argc, char** argv)
                 edgeSwipeTriggerSource.find(
                   "showOnlyWhenSummoned") ==
                     std::string::npos &&
-                passiveDragSamplerCall < contextMenuGestureGuard &&
-                contextMenuGestureGuard < legacyDragButtonGuard &&
-                legacyDragButtonGuard < edgeSwipeDetectorUpdate &&
+                passiveDragSamplerCall < edgeSwipeSuppressionState &&
+                edgeSwipeSuppressionState < contextMenuGestureGuard &&
+                contextMenuGestureGuard < edgeSwipeSuppressionCall &&
+                edgeSwipeSuppressionCall < edgeSwipeDetectorUpdate &&
                 edgeSwipeDetectorUpdate < edgeSwipeTriggerBranch &&
                 edgeSwipeTriggerBranch < edgeSwipeSummon,
-            "ordinary edge swipe must keep the manual summon path while context menus, internal drags and OLE drags are excluded after passive reveal sampling");
+            "ordinary edge swipe must keep the manual summon path while pointer-button activity, context menus, internal drags and OLE drags remain suppressed until the pointer leaves the edge");
         const std::size_t containsPointBegin =
             dockContainerSource.find(
                 "bool DockContainer::ContainsInteractivePoint(");

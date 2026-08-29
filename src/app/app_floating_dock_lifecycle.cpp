@@ -329,15 +329,23 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         ((leftState & 1) ? leftButtonBit : 0) |
         ((rightState & 1) ? rightButtonBit : 0) |
         ((middleState & 1) ? middleButtonBit : 0);
+    const UINT previousButtonsDown =
+        floatingDockPointerButtonsDown_;
     const bool pointerPressed =
         snowdesktop::floating_dock_rules::
             HasNewPointerButtonPress(
                 buttonsDown,
-                floatingDockPointerButtonsDown_,
+                previousButtonsDown,
+                pressedSinceLastSample);
+    const bool pointerButtonActivity =
+        snowdesktop::floating_dock_rules::
+            HasPointerButtonActivity(
+                buttonsDown,
+                previousButtonsDown,
                 pressedSinceLastSample);
     const bool leftButtonPressed =
         ((buttonsDown & leftButtonBit) != 0 &&
-            (floatingDockPointerButtonsDown_ &
+            (previousButtonsDown &
                 leftButtonBit) == 0) ||
         (pressedSinceLastSample & leftButtonBit) != 0;
     floatingDockPointerButtonsDown_ = buttonsDown;
@@ -383,7 +391,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 cursor,
                 (buttonsDown & leftButtonBit) != 0))
         {
-            floatingDockEdgeSwipeDetector_.Reset();
+            floatingDockEdgeSwipeDetector_.
+                SuppressUntilEdgeLeave();
             return;
         }
         // The thumbnail preview panel belongs to the Dock's interactive
@@ -435,7 +444,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             // source changes through the shared close handoff.
             CloseAllFloatingDocks(
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
-            floatingDockEdgeSwipeDetector_.Reset();
+            floatingDockEdgeSwipeDetector_.
+                SuppressUntilEdgeLeave();
             return;
         }
     }
@@ -444,15 +454,24 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         !snowdesktop::dock_settings_rules::
             IsFloatingEdgeSwipeEnabled(
                 dockSettings_.showOnlyWhenSummoned,
-                dockSettings_.floatingEdgeSwipeEnabled) ||
-        // Context menus run a nested input loop. Pointer travel inside any
-        // menu is menu interaction, not an intentional Dock edge gesture.
-        HasActiveContextMenuSession() ||
-        dragSession_.IsActive() ||
-        dragDropController_.IsTransportActive() ||
-        buttonsDown != 0)
+                dockSettings_.floatingEdgeSwipeEnabled))
     {
         floatingDockEdgeSwipeDetector_.Reset();
+        return;
+    }
+
+    // A click can finish before a context menu enters its nested input loop.
+    // Keep that click from becoming the first half of a buttonless edge swipe,
+    // and require a real edge leave before gestures become eligible again.
+    const bool suppressEdgeSwipeUntilLeave =
+        pointerButtonActivity ||
+        HasActiveContextMenuSession() ||
+        dragSession_.IsActive() ||
+        dragDropController_.IsTransportActive();
+    if (suppressEdgeSwipeUntilLeave)
+    {
+        floatingDockEdgeSwipeDetector_.
+            SuppressUntilEdgeLeave();
         return;
     }
 
