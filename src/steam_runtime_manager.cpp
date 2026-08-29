@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -36,6 +37,7 @@ constexpr wchar_t kRuntimeManifestFilename[] =
     L".snowdesktop-runtime-manifest.json";
 constexpr wchar_t kUpdateLockFilename[] = L"update.lock";
 constexpr std::uint64_t kMaximumManifestBytes = 16ULL * 1024ULL * 1024ULL;
+constexpr double kMaximumExactJsonInteger = 9007199254740991.0;
 
 struct DistributionFile
 {
@@ -353,6 +355,38 @@ bool IsReservedRuntimePath(std::wstring_view path) noexcept
         path == L"snowdesktop.runtime-context.json";
 }
 
+bool ValidatePlainDirectoryNoReparse(const std::filesystem::path& path,
+    std::string_view label, std::string& error)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (attributes & FILE_ATTRIBUTE_DEVICE) != 0)
+    {
+        error = std::string(label) +
+            " is missing, is not a directory, or is a reparse point";
+        return false;
+    }
+    return true;
+}
+
+bool EnsurePlainDirectoryNoReparse(const std::filesystem::path& path,
+    std::string_view label, std::string& error)
+{
+    if (!CreateDirectoryW(path.c_str(), nullptr))
+    {
+        const DWORD createError = GetLastError();
+        if (createError != ERROR_ALREADY_EXISTS)
+        {
+            error = "cannot create " + std::string(label) +
+                " (Win32 error " + std::to_string(createError) + ')';
+            return false;
+        }
+    }
+    return ValidatePlainDirectoryNoReparse(path, label, error);
+}
+
 const JsonValue* RequiredField(const JsonValue& object,
     std::string_view name, JsonValue::Type type) noexcept
 {
@@ -424,8 +458,7 @@ std::optional<DistributionManifest> ReadManifest(
         if (!pathValue || !sizeValue || !hashValue ||
             sizeValue->number < 0 || !std::isfinite(sizeValue->number) ||
             std::floor(sizeValue->number) != sizeValue->number ||
-            sizeValue->number > static_cast<double>(
-                std::numeric_limits<std::uint64_t>::max()) ||
+            sizeValue->number > kMaximumExactJsonInteger ||
             !IsLowerHexSha256(hashValue->string))
         {
             error = "distribution manifest contains an invalid file entry";
@@ -494,31 +527,120 @@ bool ValidateFile(const std::filesystem::path& path,
     return true;
 }
 
-bool WriteTextAtomically(const std::filesystem::path& path,
-    std::string_view value, std::string& error)
+bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
+    std::string_view label, std::string& error);
+
+bool FlushPlainFile(const std::filesystem::path& path,
+    std::string_view label, std::string& error)
 {
-    const std::filesystem::path temporary = path.wstring() + L".tmp." +
-        std::to_wstring(GetCurrentProcessId());
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE)
     {
-        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        if (!stream || !stream.write(value.data(),
-                static_cast<std::streamsize>(value.size())) || !stream.flush())
-        {
-            std::error_code cleanupError;
-            std::filesystem::remove(temporary, cleanupError);
-            error = "cannot write state file: " + path.string();
-            return false;
-        }
+        error = "cannot open " + std::string(label) +
+            " for durable publication (Win32 error " +
+            std::to_string(GetLastError()) + ')';
+        return false;
     }
-    if (!MoveFileExW(temporary.c_str(), path.c_str(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+
+    FILE_ATTRIBUTE_TAG_INFO attributes{};
+    const bool regular = GetFileInformationByHandleEx(file,
+        FileAttributeTagInfo, &attributes, sizeof(attributes)) &&
+        (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+        (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
+        (attributes.FileAttributes & FILE_ATTRIBUTE_DEVICE) == 0;
+    const bool flushed = regular && FlushFileBuffers(file) != FALSE;
+    const DWORD flushError = flushed ? ERROR_SUCCESS : GetLastError();
+    const bool closed = CloseHandle(file) != FALSE;
+    if (!flushed || !closed)
     {
-        std::error_code cleanupError;
-        std::filesystem::remove(temporary, cleanupError);
-        error = "cannot publish state file: " + path.string();
+        error = "cannot durably flush " + std::string(label) +
+            " (Win32 error " + std::to_string(
+                !flushed ? flushError : GetLastError()) + ')';
         return false;
     }
     return true;
+}
+
+bool WriteTextAtomically(const std::filesystem::path& path,
+    std::string_view value, std::string& error)
+{
+    std::filesystem::path temporary;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    for (unsigned attempt = 0; attempt < 64; ++attempt)
+    {
+        std::array<UCHAR, 8> randomBytes{};
+        if (BCryptGenRandom(nullptr, randomBytes.data(),
+                static_cast<ULONG>(randomBytes.size()),
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+        {
+            error = "cannot create a random temporary state filename";
+            return false;
+        }
+
+        std::wostringstream suffix;
+        suffix << std::hex << std::setfill(L'0');
+        for (const UCHAR byte : randomBytes)
+            suffix << std::setw(2) << static_cast<unsigned>(byte);
+        temporary = path.wstring() + L".tmp." + suffix.str();
+        file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr,
+            CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+            nullptr);
+        if (file != INVALID_HANDLE_VALUE)
+            break;
+        const DWORD createError = GetLastError();
+        if (createError != ERROR_FILE_EXISTS &&
+            createError != ERROR_ALREADY_EXISTS)
+        {
+            error = "cannot create a temporary state file (Win32 error " +
+                std::to_string(createError) + ')';
+            return false;
+        }
+    }
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        error = "cannot allocate a unique temporary state file";
+        return false;
+    }
+
+    std::size_t offset = 0;
+    bool wrote = true;
+    while (offset < value.size())
+    {
+        const DWORD request = static_cast<DWORD>(std::min<std::size_t>(
+            value.size() - offset,
+            static_cast<std::size_t>(std::numeric_limits<DWORD>::max())));
+        DWORD written = 0;
+        if (!WriteFile(file, value.data() + offset, request,
+                &written, nullptr) || written != request)
+        {
+            wrote = false;
+            break;
+        }
+        offset += written;
+    }
+    const bool flushed = wrote && FlushFileBuffers(file) != FALSE;
+    const DWORD writeError = flushed ? ERROR_SUCCESS : GetLastError();
+    const bool closed = CloseHandle(file) != FALSE;
+    if (!flushed || !closed)
+    {
+        DeleteFileW(temporary.c_str());
+        error = "cannot durably write state file: " + path.string() +
+            " (Win32 error " + std::to_string(
+                !flushed ? writeError : GetLastError()) + ')';
+        return false;
+    }
+
+    if (!MoveFileExW(temporary.c_str(), path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        DeleteFileW(temporary.c_str());
+        error = "cannot publish state file: " + path.string();
+        return false;
+    }
+    return ValidatePlainFileNoReparse(path,
+        "published Steam state file", error);
 }
 
 std::string RuntimeContextJson()
@@ -532,12 +654,9 @@ std::string RuntimeContextJson()
         "}\n";
 }
 
-std::wstring PathKey(const std::filesystem::path& path)
+std::wstring ExactPathKey(const std::filesystem::path& path)
 {
-    std::wstring key = path.generic_wstring();
-    std::transform(key.begin(), key.end(), key.begin(),
-        [](wchar_t value) { return static_cast<wchar_t>(towlower(value)); });
-    return key;
+    return path.generic_wstring();
 }
 
 bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
@@ -560,31 +679,26 @@ bool ValidateExactPayloadTree(const std::filesystem::path& root,
     const DistributionManifest& manifest, bool includeRuntimeMetadata,
     std::string& error)
 {
-    const DWORD rootAttributes = GetFileAttributesW(root.c_str());
-    if (rootAttributes == INVALID_FILE_ATTRIBUTES ||
-        (rootAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-        (rootAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-    {
-        error = "Steam payload root is missing, is not a directory, or is a reparse point";
+    if (!ValidatePlainDirectoryNoReparse(
+            root, "Steam payload root", error))
         return false;
-    }
 
     std::set<std::wstring> expectedFiles;
     std::set<std::wstring> expectedDirectories;
     for (const DistributionFile& file : manifest.files)
     {
-        expectedFiles.insert(PathKey(file.relativePath));
+        expectedFiles.insert(ExactPathKey(file.relativePath));
         for (std::filesystem::path parent = file.relativePath.parent_path();
              !parent.empty(); parent = parent.parent_path())
         {
-            expectedDirectories.insert(PathKey(parent));
+            expectedDirectories.insert(ExactPathKey(parent));
         }
     }
     if (includeRuntimeMetadata)
     {
-        expectedFiles.insert(PathKey(kCompleteFilename));
-        expectedFiles.insert(PathKey(kRuntimeManifestFilename));
-        expectedFiles.insert(PathKey(
+        expectedFiles.insert(ExactPathKey(kCompleteFilename));
+        expectedFiles.insert(ExactPathKey(kRuntimeManifestFilename));
+        expectedFiles.insert(ExactPathKey(
             snowdesktop::deployment::kSteamRuntimeContextFilename));
     }
 
@@ -604,7 +718,7 @@ bool ValidateExactPayloadTree(const std::filesystem::path& root,
         const std::filesystem::path entryPath = iterator->path();
         const std::filesystem::path relative =
             entryPath.lexically_relative(root);
-        const std::wstring key = PathKey(relative);
+        const std::wstring key = ExactPathKey(relative);
         const DWORD attributes = GetFileAttributesW(entryPath.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES ||
             (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
@@ -671,9 +785,12 @@ bool DirectoryIdMatchesManifest(std::string_view directoryId,
         directoryId.substr(recoveryPrefix.size() + 1);
     if (suffix.front() < '1' || suffix.front() > '9')
         return false;
-    return std::all_of(suffix.begin(), suffix.end(), [](unsigned char value) {
-            return value >= '0' && value <= '9';
-        });
+    std::uint64_t attempt = 0;
+    const auto parsed = std::from_chars(
+        suffix.data(), suffix.data() + suffix.size(), attempt, 10);
+    return parsed.ec == std::errc{} &&
+        parsed.ptr == suffix.data() + suffix.size() && attempt != 0 &&
+        std::to_string(attempt) == suffix;
 }
 
 bool SameManifest(const DistributionManifest& left,
@@ -789,15 +906,18 @@ std::optional<RuntimeDestination> SelectRecoveryDestination(
             base + "-" + std::to_string(attempt);
         const std::filesystem::path candidate = runtimeRoot /
             Utf8ToWide(directoryId);
-        std::error_code fileError;
-        const bool exists = std::filesystem::exists(candidate, fileError);
-        if (fileError)
+        const DWORD attributes = GetFileAttributesW(candidate.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
         {
+            const DWORD inspectError = GetLastError();
+            if (inspectError == ERROR_FILE_NOT_FOUND ||
+                inspectError == ERROR_PATH_NOT_FOUND)
+            {
+                return RuntimeDestination{candidate, directoryId, false};
+            }
             error = "cannot inspect a Steam runtime recovery directory";
             return std::nullopt;
         }
-        if (!exists)
-            return RuntimeDestination{candidate, directoryId, false};
 
         std::string validationError;
         if (ValidatePublishedRuntime(candidate, &manifest, validationError))
@@ -838,6 +958,23 @@ std::optional<std::filesystem::path> CreateUniqueStagingDirectory(
     }
 }
 
+void RemoveStagingDirectorySafely(const std::filesystem::path& staging,
+    const std::filesystem::path& runtimeRoot) noexcept
+{
+    if (staging.parent_path() != runtimeRoot)
+        return;
+    std::string boundaryError;
+    if (!ValidatePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", boundaryError) ||
+        !ValidatePlainDirectoryNoReparse(
+            staging, "staged Steam runtime", boundaryError))
+    {
+        return;
+    }
+    std::error_code cleanupError;
+    std::filesystem::remove_all(staging, cleanupError);
+}
+
 ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
 {
     const auto deadline = std::chrono::steady_clock::now() +
@@ -846,9 +983,21 @@ ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
     {
         HANDLE value = CreateFileW(lockPath.c_str(),
             GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
-            FILE_ATTRIBUTE_HIDDEN, nullptr);
+            FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (value != INVALID_HANDLE_VALUE)
-            return ExclusiveFile(value);
+        {
+            FILE_ATTRIBUTE_TAG_INFO attributes{};
+            if (GetFileInformationByHandleEx(value, FileAttributeTagInfo,
+                    &attributes, sizeof(attributes)) &&
+                (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+                (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
+                (attributes.FileAttributes & FILE_ATTRIBUTE_DEVICE) == 0)
+            {
+                return ExclusiveFile(value);
+            }
+            CloseHandle(value);
+            break;
+        }
         if (GetLastError() != ERROR_SHARING_VIOLATION &&
             GetLastError() != ERROR_LOCK_VIOLATION)
         {
@@ -863,9 +1012,24 @@ std::optional<std::pair<std::filesystem::path, std::string>>
 ReadFallback(const std::filesystem::path& stateRoot,
     const std::filesystem::path& runtimeRoot, std::string& validationError)
 {
+    if (!ValidatePlainDirectoryNoReparse(
+            stateRoot, "Steam runtime state directory", validationError) ||
+        !ValidatePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", validationError))
+    {
+        return std::nullopt;
+    }
+
     std::string error;
-    std::string directoryId = ReadFile(
-        stateRoot / kCurrentRuntimeFilename, 256, error);
+    const std::filesystem::path pointer =
+        stateRoot / kCurrentRuntimeFilename;
+    if (!ValidatePlainFileNoReparse(
+            pointer, "active Steam runtime selection", error))
+    {
+        validationError = std::move(error);
+        return std::nullopt;
+    }
+    std::string directoryId = ReadFile(pointer, 256, error);
     while (!directoryId.empty() &&
         (directoryId.back() == '\r' || directoryId.back() == '\n'))
     {
@@ -919,20 +1083,26 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
 {
     const std::filesystem::path stateRoot = installRoot / kStateDirectory;
     const std::filesystem::path runtimeRoot = stateRoot / kRuntimeDirectory;
-    std::error_code fileError;
-    std::filesystem::create_directories(runtimeRoot, fileError);
-    if (fileError)
+    std::string rootError;
+    if (!ValidatePlainDirectoryNoReparse(
+            installRoot, "Steam install root", rootError) ||
+        !EnsurePlainDirectoryNoReparse(
+            stateRoot, "Steam runtime state directory", rootError) ||
+        !EnsurePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", rootError))
     {
         ApplyResult result;
-        result.error = "cannot create the Steam runtime state directory";
+        result.error = std::move(rootError);
         return result;
     }
     // User data is deliberately outside every versioned runtime, but remains
     // inside Steam's install directory as required by this distribution.
-    std::filesystem::create_directories(installRoot / L"data", fileError);
-    if (fileError)
+    if (!EnsurePlainDirectoryNoReparse(
+            installRoot / L"data", "Steam data directory", rootError))
         return FailureOrFallback(stateRoot, runtimeRoot,
-            "cannot create the Steam data directory");
+            std::move(rootError));
+
+    std::error_code fileError;
 
     ExclusiveFile lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename);
     if (!lock.valid())
@@ -952,6 +1122,13 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
 
     auto activate = [&](const RuntimeDestination& selected) {
+        if (!ValidatePlainDirectoryNoReparse(
+                stateRoot, "Steam runtime state directory", error) ||
+            !ValidatePlainDirectoryNoReparse(
+                runtimeRoot, "Steam runtime directory", error))
+        {
+            return FailureOrFallback(stateRoot, runtimeRoot, error);
+        }
         if (!WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
                 selected.directoryId + "\n", error))
         {
@@ -966,11 +1143,18 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
 
     RuntimeDestination destination{
         runtimeRoot / Utf8ToWide(manifest->buildId), manifest->buildId, false};
-    const bool primaryExists =
-        std::filesystem::exists(destination.path, fileError);
-    if (fileError)
-        return FailureOrFallback(stateRoot, runtimeRoot,
-            "cannot inspect the Steam runtime target");
+    const DWORD primaryAttributes = GetFileAttributesW(destination.path.c_str());
+    const bool primaryExists = primaryAttributes != INVALID_FILE_ATTRIBUTES;
+    if (!primaryExists)
+    {
+        const DWORD inspectError = GetLastError();
+        if (inspectError != ERROR_FILE_NOT_FOUND &&
+            inspectError != ERROR_PATH_NOT_FOUND)
+        {
+            return FailureOrFallback(stateRoot, runtimeRoot,
+                "cannot inspect the Steam runtime target");
+        }
+    }
     if (primaryExists)
     {
         std::string validationError;
@@ -1007,6 +1191,13 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
+    if (!ValidatePlainDirectoryNoReparse(
+            stateRoot, "Steam runtime state directory", error) ||
+        !ValidatePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", error))
+    {
+        return FailureOrFallback(stateRoot, runtimeRoot, error);
+    }
     const auto stagingValue = CreateUniqueStagingDirectory(
         runtimeRoot, error);
     if (!stagingValue)
@@ -1024,7 +1215,9 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             fileDestination.parent_path(), fileError);
         if (fileError || !CopyFileW(
                 source.c_str(), fileDestination.c_str(), FALSE) ||
-            !ValidateFile(fileDestination, file, error))
+            !ValidateFile(fileDestination, file, error) ||
+            !FlushPlainFile(fileDestination,
+                "staged Steam runtime file", error))
         {
             if (error.empty())
                 error = "cannot stage Steam runtime file: " +
@@ -1058,14 +1251,14 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     }
     if (!staged)
     {
-        std::filesystem::remove_all(staging, fileError);
+        RemoveStagingDirectorySafely(staging, runtimeRoot);
         return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
     if (!MoveFileExW(staging.c_str(), destination.path.c_str(),
             MOVEFILE_WRITE_THROUGH))
     {
-        std::filesystem::remove_all(staging, fileError);
+        RemoveStagingDirectorySafely(staging, runtimeRoot);
         return FailureOrFallback(stateRoot, runtimeRoot,
             "cannot publish the staged Steam runtime");
     }

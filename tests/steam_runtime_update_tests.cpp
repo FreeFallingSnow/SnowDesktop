@@ -147,6 +147,13 @@ bool CreateFileSymlink(const std::filesystem::path& link,
     return false;
 }
 
+bool CreateFileHardLink(const std::filesystem::path& link,
+    const std::filesystem::path& target)
+{
+    std::filesystem::create_directories(link.parent_path());
+    return CreateHardLinkW(link.c_str(), target.c_str(), nullptr) != FALSE;
+}
+
 std::filesystem::path FindRepositoryFile(
     const std::filesystem::path& relativePath)
 {
@@ -659,11 +666,47 @@ void TestRuntimeDirectoryIdValidation(const std::filesystem::path& root)
             std::string_view(recoveryFallback.buildId) == buildId,
         "fallback accepts a validated recovery-digest directory ID");
 
-    const auto arbitraryRuntime = recovered.executable.parent_path()
-        .parent_path() / L"arbitrary-runtime-copy";
+    const auto runtimeRoot = recovered.executable.parent_path().parent_path();
+    std::filesystem::path currentRuntime = recovered.executable.parent_path();
+    const std::wstring recoveryBase = currentRuntime.filename().wstring();
+    const auto verifyRecoverySuffix = [&](std::wstring_view suffix,
+                                          bool accepted,
+                                          const char* message) {
+        const std::filesystem::path renamed = runtimeRoot /
+            (recoveryBase + L"-" + std::wstring(suffix));
+        std::error_code renameError;
+        std::filesystem::rename(currentRuntime, renamed, renameError);
+        Check(!renameError,
+            "the recovery runtime can be renamed for numeric suffix validation");
+        if (renameError)
+            return;
+        currentRuntime = renamed;
+        WriteText(root / L".snowdesktop" / kCurrentRuntimeFilename,
+            currentRuntime.filename().string() + "\n");
+        const auto fallback =
+            snowdesktop::steam_runtime::ApplyDistribution(root);
+        if (accepted)
+        {
+            Check(fallback.ok && fallback.usedFallback &&
+                    fallback.executable.parent_path() == currentRuntime,
+                message);
+        }
+        else
+        {
+            CheckFallbackRejected(fallback, message);
+        }
+    };
+
+    verifyRecoverySuffix(L"18446744073709551615", true,
+        "fallback accepts the maximum uint64 recovery attempt suffix");
+    verifyRecoverySuffix(L"18446744073709551616", false,
+        "fallback rejects a recovery attempt suffix above uint64");
+    verifyRecoverySuffix(L"01", false,
+        "fallback rejects a recovery attempt suffix with a leading zero");
+
+    const auto arbitraryRuntime = runtimeRoot / L"arbitrary-runtime-copy";
     std::error_code renameError;
-    std::filesystem::rename(
-        recovered.executable.parent_path(), arbitraryRuntime, renameError);
+    std::filesystem::rename(currentRuntime, arbitraryRuntime, renameError);
     Check(!renameError,
         "the valid recovery runtime can be renamed for the directory-ID rejection fixture");
     if (renameError)
@@ -799,6 +842,183 @@ void TestRuntimeReparseFallbacks(const std::filesystem::path& root)
             }
         }
     }
+}
+
+void TestManagedRootReparseBoundaries(const std::filesystem::path& root)
+{
+    const auto verifyRejected = [&](std::wstring_view caseName,
+                                    const std::filesystem::path& relativeLink,
+                                    bool moveExisting,
+                                    const char* message) {
+        const auto caseRoot = root / caseName;
+        WriteText(caseRoot /
+                snowdesktop::deployment::kSteamLauncherFilename,
+            "launcher");
+        WriteDistribution(caseRoot, "1.0.5.0", "ancestor-boundary",
+            "host boundary", "dll boundary");
+
+        const auto link = caseRoot / relativeLink;
+        const auto backing = root / L"external-backing" /
+            std::filesystem::path(caseName);
+        std::error_code fileError;
+        if (moveExisting)
+        {
+            std::filesystem::create_directories(backing.parent_path());
+            std::filesystem::rename(link, backing, fileError);
+            Check(!fileError,
+                "the managed-root boundary fixture can move its backing directory");
+            if (fileError)
+                return;
+        }
+        else
+        {
+            std::filesystem::create_directories(backing);
+        }
+        WriteText(backing / L"outside-sentinel.txt", "outside unchanged");
+        const DirectorySnapshot before = SnapshotDirectory(backing);
+        const bool created = CreateDirectoryJunction(link, backing);
+        Check(created,
+            "managed-root ancestor junction fixtures must be available");
+        if (!created)
+            return;
+
+        const auto result =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        CheckFallbackRejected(result, message);
+        Check(SnapshotDirectory(backing) == before,
+            "a rejected managed-root junction leaves its outside backing tree unchanged");
+        Check(RemoveDirectoryW(link.c_str()) != FALSE,
+            "the managed-root junction fixture is detached without traversing it");
+    };
+
+    verifyRejected(L"state-root", L".snowdesktop", false,
+        "Steam apply rejects a .snowdesktop ancestor junction");
+    verifyRejected(L"runtime-root", L".snowdesktop/runtime", false,
+        "Steam apply rejects a .snowdesktop/runtime ancestor junction");
+    verifyRejected(L"data-root", L"data", false,
+        "Steam apply rejects a data directory junction");
+    verifyRejected(L"distribution-root", L"distribution", true,
+        "Steam apply rejects a distribution directory junction");
+}
+
+void TestAtomicStateTemporaryIsolation(const std::filesystem::path& root)
+{
+    const auto prepare = [](const std::filesystem::path& caseRoot,
+                            std::string_view buildId) {
+        WriteText(caseRoot /
+                snowdesktop::deployment::kSteamLauncherFilename,
+            "launcher");
+        WriteDistribution(caseRoot, "1.0.5.0", buildId,
+            "host atomic", "dll atomic");
+        std::filesystem::create_directories(
+            caseRoot / L".snowdesktop" / L"runtime");
+    };
+    const auto legacyTemporary = [](const std::filesystem::path& caseRoot) {
+        return caseRoot / L".snowdesktop" /
+            (std::wstring(kCurrentRuntimeFilename) + L".tmp." +
+                std::to_wstring(GetCurrentProcessId()));
+    };
+
+    {
+        const auto caseRoot = root / L"ordinary-precreated";
+        prepare(caseRoot, "atomic-ordinary");
+        const auto precreated = legacyTemporary(caseRoot);
+        WriteText(precreated, "precreated temporary must not be reused");
+        const auto result =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        Check(result.ok && !result.usedFallback,
+            "a precreated legacy temporary filename cannot block Steam activation");
+        Check(ReadText(precreated) ==
+                "precreated temporary must not be reused",
+            "atomic state publication never truncates or reuses a precreated temporary file");
+    }
+
+    {
+        const auto caseRoot = root / L"hardlink-precreated";
+        prepare(caseRoot, "atomic-hardlink");
+        const auto sentinel = root / L"outside-hardlink-sentinel.txt";
+        WriteText(sentinel, "outside hardlink sentinel unchanged");
+        const auto precreated = legacyTemporary(caseRoot);
+        const bool linked = CreateFileHardLink(precreated, sentinel);
+        Check(linked,
+            "the hardlink temporary-file regression fixture must be available");
+        if (linked)
+        {
+            const auto result =
+                snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+            Check(result.ok && !result.usedFallback,
+                "a precreated hardlink at the legacy temporary name cannot block activation");
+            Check(ReadText(sentinel) ==
+                    "outside hardlink sentinel unchanged" &&
+                    ReadText(precreated) ==
+                    "outside hardlink sentinel unchanged",
+                "atomic state publication never follows or truncates a precreated hardlink");
+            const auto pointer = caseRoot / L".snowdesktop" /
+                kCurrentRuntimeFilename;
+            Check(!IsReparsePoint(pointer) &&
+                    ReadText(pointer) == "atomic-hardlink\n",
+                "the final active-runtime pointer is a new plain state file");
+        }
+    }
+
+    {
+        const auto caseRoot = root / L"symlink-precreated";
+        prepare(caseRoot, "atomic-symlink");
+        const auto sentinel = root / L"outside-symlink-sentinel.txt";
+        WriteText(sentinel, "outside symlink sentinel unchanged");
+        const auto precreated = legacyTemporary(caseRoot);
+        DWORD linkError = ERROR_SUCCESS;
+        if (CreateFileSymlink(precreated, sentinel, linkError))
+        {
+            const auto result =
+                snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+            Check(result.ok && !result.usedFallback &&
+                    ReadText(sentinel) ==
+                    "outside symlink sentinel unchanged" &&
+                    IsReparsePoint(precreated),
+                "atomic state publication never follows or replaces a precreated symlink");
+        }
+        else
+        {
+            Skip("temporary-file symlink regression fixture could not be created",
+                linkError);
+        }
+    }
+}
+
+void TestManifestSizeBoundaries(const std::filesystem::path& root)
+{
+    const auto verifyRejected = [&](std::wstring_view caseName,
+                                    std::string_view sizeToken,
+                                    const char* message) {
+        const auto caseRoot = root / caseName;
+        WriteText(caseRoot /
+                snowdesktop::deployment::kSteamLauncherFilename,
+            "launcher");
+        WriteDistribution(caseRoot, "1.0.5.0", "manifest-size",
+            "host size", "dll size");
+        const auto manifestPath = caseRoot /
+            snowdesktop::steam_runtime::kDistributionManifestFilename;
+        std::string manifest = ReadText(manifestPath);
+        const std::size_t begin = manifest.find("\"size\":");
+        const std::size_t valueBegin = begin == std::string::npos ?
+            begin : begin + std::string_view("\"size\":").size();
+        const std::size_t end = valueBegin == std::string::npos ?
+            valueBegin : manifest.find(',', valueBegin);
+        Check(begin != std::string::npos && end != std::string::npos,
+            "the manifest-size fixture can locate its first size token");
+        if (begin == std::string::npos || end == std::string::npos)
+            return;
+        manifest.replace(valueBegin, end - valueBegin, sizeToken);
+        WriteText(manifestPath, manifest);
+        CheckFallbackRejected(
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot), message);
+    };
+
+    verifyRejected(L"beyond-exact-json", "9007199254740992",
+        "manifest file sizes beyond exact JSON integer range are rejected");
+    verifyRejected(L"uint64-overflow", "18446744073709551616",
+        "manifest file sizes at 2^64 are rejected without conversion overflow");
 }
 
 void TestCompletionMarkerIsFinalFence()
@@ -949,6 +1169,9 @@ int main()
         TestInvalidRuntimeFallbacks(root / L"invalid-fallbacks");
         TestRuntimeDirectoryIdValidation(root / L"directory-id-validation");
         TestRuntimeReparseFallbacks(root / L"reparse-fallbacks");
+        TestManagedRootReparseBoundaries(root / L"managed-root-boundaries");
+        TestAtomicStateTemporaryIsolation(root / L"atomic-state");
+        TestManifestSizeBoundaries(root / L"manifest-size-boundaries");
         TestCompletionMarkerIsFinalFence();
         TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
         TestSteamAutoStartRules();
