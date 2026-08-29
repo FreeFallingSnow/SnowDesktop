@@ -705,12 +705,12 @@ void TestHostContract(const std::filesystem::path& repository)
             hideWindow.find("runtime.Detach()") == std::string_view::npos &&
             hideReusableWindow < resetHiddenTitleBar &&
             resetHiddenTitleBar < queueViewRelease,
-        "WM_CLOSE hides the reusable HWND and defers XAML view teardown beyond its input stack");
+        "WM_CLOSE hides the reusable HWND and defers route-resource teardown beyond its input stack");
 
     const std::size_t releaseViewBegin = source.find(
         "void ReleaseView() noexcept");
     const std::size_t releaseViewEnd = source.find(
-        "void QueueViewRelease() noexcept", releaseViewBegin);
+        "void ReleaseSessionView() noexcept", releaseViewBegin);
     const std::string_view releaseView =
         releaseViewBegin != std::string::npos &&
                 releaseViewEnd != std::string::npos
@@ -730,7 +730,32 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             releaseView.find("shell->Close()") <
                 releaseView.find("runtime.Detach()"),
-        "deferred view teardown releases the Shell, Island, and search index while preserving the HWND, callbacks, and process runtime");
+        "final view teardown releases the Shell, Island, and search index before process runtime shutdown");
+
+    const std::size_t releaseSessionBegin = source.find(
+        "void ReleaseSessionView() noexcept", releaseViewEnd);
+    const std::size_t releaseSessionEnd = source.find(
+        "void QueueViewRelease() noexcept", releaseSessionBegin);
+    const std::string_view releaseSession =
+        releaseSessionBegin != std::string::npos &&
+                releaseSessionEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  releaseSessionBegin,
+                  releaseSessionEnd - releaseSessionBegin)
+            : std::string_view{};
+    Check(releaseSession.find("shell->ReleaseSessionResources()") !=
+                std::string_view::npos &&
+            releaseSession.find("DisposePageBackends()") !=
+                std::string_view::npos &&
+            releaseSession.find("searchIndex = {}") !=
+                std::string_view::npos &&
+            releaseSession.find("shell->Close()") ==
+                std::string_view::npos &&
+            releaseSession.find("runtime.Detach()") ==
+                std::string_view::npos &&
+            releaseSession.find("SetSystemBackdropEnabled(false)") ==
+                std::string_view::npos,
+        "ordinary close releases route controls, backends, and search data while retaining the Shell, Island, and backdrop roots");
 
     const std::size_t queueReleaseBegin = source.find(
         "void QueueViewRelease() noexcept");
@@ -748,9 +773,9 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             queueRelease.find("owner->Visible()") !=
                 std::string_view::npos &&
-            queueRelease.find("owner->ReleaseView()") !=
+            queueRelease.find("owner->ReleaseSessionView()") !=
                 std::string_view::npos,
-        "view teardown runs on a later owner DispatcherQueue turn and rejects stale or reopened sessions");
+        "session teardown runs on a later owner DispatcherQueue turn and rejects stale or reopened sessions");
     const std::size_t reopenWindowBegin = source.find(
         "bool SettingsWindowHost::Open(");
     const std::size_t reopenWindowEnd = source.find(
@@ -780,7 +805,7 @@ void TestHostContract(const std::filesystem::path& repository)
             missingTitleBarGuard < reconfigureTitleBar &&
             reconfigureTitleBar < refreshTitleBarInsets &&
             refreshTitleBarInsets < showReopenedWindow,
-        "reopening rebuilds the XAML view and caption customization on the retained settings HWND");
+        "reopening reuses the retained XAML root when available and rebuilds caption customization on the settings HWND");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&
@@ -877,6 +902,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             detachFunction.find("xamlSource.SystemBackdrop(") <
                 detachFunction.find("xamlSource.Content(nullptr)") &&
+            Count(detachFunction, "catch (...)") >= 4 &&
             source.find("DWMWA_SYSTEMBACKDROP_TYPE") !=
                 std::string::npos &&
             source.find("DWMSBT_MAINWINDOW") != std::string::npos &&
@@ -884,6 +910,32 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("DwmExtendFrameIntoClientArea") ==
                 std::string::npos,
         "Detach clears the Island material while the integrated top-level frame uses the matching DWM system backdrop with a contrast fallback");
+
+    const std::size_t navigationIconsBegin = shell.find(
+        "void SettingsShell::ApplyNavigationIcons()");
+    const std::size_t navigationIconsEnd = shell.find(
+        "void SettingsShell::RenderPageHeaderIcon()", navigationIconsBegin);
+    const std::string_view navigationIcons =
+        navigationIconsBegin != std::string::npos &&
+                navigationIconsEnd != std::string::npos
+            ? std::string_view(shell).substr(
+                  navigationIconsBegin,
+                  navigationIconsEnd - navigationIconsBegin)
+            : std::string_view{};
+    Check(shellHeader.find("navigationIconsHighContrast_") !=
+                std::string::npos &&
+            navigationIcons.find("navigationIconsHighContrast_ &&") !=
+                std::string_view::npos &&
+            navigationIcons.find(
+                "*navigationIconsHighContrast_ == highContrast") !=
+                std::string_view::npos &&
+            navigationIcons.find(
+                "navigationIconsHighContrast_ = highContrast") !=
+                std::string_view::npos &&
+            navigationIcons.find(
+                "navigationIconsHighContrast_ = highContrast") >
+                navigationIcons.find("for (const auto& descriptor"),
+        "navigation SVG sources are rebuilt only when high-contrast mode changes, not on every reopen or localization refresh");
     const std::size_t shutdownBegin = source.find(
         "void SettingsWindowHost::Shutdown() noexcept");
     const std::size_t openBegin = source.find(

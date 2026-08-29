@@ -196,11 +196,12 @@ int main(int argc, char** argv)
         Check(host.find("shell->ReleaseSessionResources();") !=
                     std::string::npos &&
                 host.find("QueueViewRelease();") != std::string::npos &&
-                host.find("owner->ReleaseView();") != std::string::npos &&
+                host.find("owner->ReleaseSessionView();") !=
+                    std::string::npos &&
                 host.find("runtime.Detach();") != std::string::npos &&
                 host.find("releaseAfterClose") == std::string::npos &&
                 source.find("ReleaseClosedHost") == std::string::npos,
-            "a successful close asynchronously releases the XAML view without restarting the process WinUI runtime or host");
+            "a successful close asynchronously releases route resources while retaining the process WinUI runtime, root view, and host");
         Check(appRun.find("ensureWidgetSettingsInstance") !=
                     std::string::npos &&
                 appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=

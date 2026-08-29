@@ -313,6 +313,7 @@ private:
     bool focusSearchWhenPaneOpens_ = false;
     bool sessionActive_ = false;
     bool closed_ = false;
+    std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};

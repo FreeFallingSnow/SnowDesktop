@@ -2644,6 +2644,23 @@ struct SettingsWindowHost::Impl
         searchIndex = {};
     }
 
+    void ReleaseSessionView() noexcept
+    {
+        viewReleaseQueued = false;
+        systemBackdropUpdateQueued = false;
+        integratedTitleBarInsetsUpdateQueued = false;
+        externalStateRefreshQueued = false;
+        interactionSuspended = true;
+
+        // Keep one process-lifetime Shell and Island. WinUI retains SVG file,
+        // mapping, and composition handles when either root is reconstructed;
+        // route presenters and their controls remain safe to release here.
+        if (shell)
+            shell->ReleaseSessionResources();
+        DisposePageBackends();
+        searchIndex = {};
+    }
+
     void QueueViewRelease() noexcept
     {
         if (viewReleaseQueued || shuttingDown || Visible() || !callbacks ||
@@ -2668,7 +2685,7 @@ struct SettingsWindowHost::Impl
                     {
                         return;
                     }
-                    owner->ReleaseView();
+                    owner->ReleaseSessionView();
                 }))
             {
                 return;
@@ -2788,17 +2805,15 @@ struct SettingsWindowHost::Impl
         }
         if (widgetSettingsService)
             widgetSettingsService->CloseAll();
-        if (shell)
-            shell->ReleaseSessionResources();
         ShowWindow(window, SW_HIDE);
         // AppWindow keeps caption-button interaction state with its customized
         // title bar even while the HWND is hidden. Reset only that platform
         // object after hiding; the XAML runtime and settings host stay alive.
         ResetIntegratedTitleBar();
-        // Releasing the Shell or XAML Island from WM_CLOSE can
-        // unwind controls that are still on the XAML input stack. Defer the
-        // complete view teardown to the next DispatcherQueue turn. A newer
-        // Open advances viewEpoch and cancels this stale release safely.
+        // Releasing route controls from WM_CLOSE can unwind controls that are
+        // still on the XAML input stack. Defer session cleanup to the next
+        // DispatcherQueue turn. A newer Open advances viewEpoch and cancels
+        // this stale release safely.
         QueueViewRelease();
         return true;
     }

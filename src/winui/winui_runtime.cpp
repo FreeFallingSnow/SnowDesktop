@@ -307,15 +307,29 @@ void WinUiRuntime::Detach() noexcept
         }
         impl_->systemBackdropEnabled = false;
 
-        try
+        if (impl_->takeFocusRequestedToken.value != 0)
         {
-            if (impl_->takeFocusRequestedToken.value != 0)
+            try
             {
                 impl_->xamlSource.TakeFocusRequested(
                     impl_->takeFocusRequestedToken);
             }
-            impl_->takeFocusRequestedToken = {};
+            catch (...)
+            {
+            }
+        }
+        impl_->takeFocusRequestedToken = {};
+
+        try
+        {
             impl_->xamlSource.Content(nullptr);
+        }
+        catch (...)
+        {
+        }
+
+        try
+        {
             impl_->xamlSource.Close();
         }
         catch (...)

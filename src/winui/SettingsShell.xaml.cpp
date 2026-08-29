@@ -543,6 +543,9 @@ void SettingsShell::ReleaseSessionResources() noexcept
         if (activeDialog_)
             activeDialog_.Hide();
         ClearSearch();
+        PageHeaderIconHost().Content(nullptr);
+        PageHeaderIconHost().Visibility(mux::Visibility::Collapsed);
+        PageBreadcrumb().ItemsSource(nullptr);
     }
     catch (...)
     {
@@ -1763,6 +1766,11 @@ void SettingsShell::ApplyNavigationIcons()
     };
 
     const bool highContrast = IsHighContrastEnabled();
+    if (navigationIconsHighContrast_ &&
+        *navigationIconsHighContrast_ == highContrast)
+    {
+        return;
+    }
     for (const auto& descriptor : descriptors)
     {
         if (highContrast)
@@ -1776,6 +1784,7 @@ void SettingsShell::ApplyNavigationIcons()
                 descriptor.asset));
         }
     }
+    navigationIconsHighContrast_ = highContrast;
 }
 
 void SettingsShell::RenderPageHeaderIcon()
