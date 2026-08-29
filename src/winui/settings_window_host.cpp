@@ -2795,7 +2795,7 @@ struct SettingsWindowHost::Impl
         // title bar even while the HWND is hidden. Reset only that platform
         // object after hiding; the XAML runtime and settings host stay alive.
         ResetIntegratedTitleBar();
-        // Releasing the Shell or DesktopWindowXamlSource from WM_CLOSE can
+        // Releasing the Shell or XAML Island from WM_CLOSE can
         // unwind controls that are still on the XAML input stack. Defer the
         // complete view teardown to the next DispatcherQueue turn. A newer
         // Open advances viewEpoch and cancels this stale release safely.
