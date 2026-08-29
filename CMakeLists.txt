@@ -947,6 +947,7 @@ if (BUILD_TESTING)
             src/widget_permission_state.cpp
             src/portable_data_migration.cpp
             src/single_instance.cpp
+            src/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt ole32 shell32 user32 version
         LABELS core integration data)
