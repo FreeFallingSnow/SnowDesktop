@@ -195,9 +195,12 @@ int main(int argc, char** argv)
             "each failed lazy initialization is retried with a newly constructed WinUI host");
         Check(host.find("shell->ReleaseSessionResources();") !=
                     std::string::npos &&
+                host.find("QueueViewRelease();") != std::string::npos &&
+                host.find("owner->ReleaseView();") != std::string::npos &&
+                host.find("runtime.Detach();") != std::string::npos &&
                 host.find("releaseAfterClose") == std::string::npos &&
                 source.find("ReleaseClosedHost") == std::string::npos,
-            "a successful close releases route-specific resources without restarting the process WinUI runtime");
+            "a successful close asynchronously releases the XAML view without restarting the process WinUI runtime or host");
         Check(appRun.find("ensureWidgetSettingsInstance") !=
                     std::string::npos &&
                 appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=
@@ -216,7 +219,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 appRun.find("settingsWindow_->Render()") ==
                     std::string::npos,
-            "the reusable WinUI session flushes on close and participates in the native message pump");
+            "the reusable WinUI host flushes on close and participates in the native message pump");
 
         const std::string pageGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /

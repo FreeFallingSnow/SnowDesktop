@@ -696,10 +696,61 @@ void TestHostContract(const std::filesystem::path& repository)
         "ShowWindow(window, SW_HIDE)");
     const std::size_t resetHiddenTitleBar = hideWindow.find(
         "ResetIntegratedTitleBar()");
+    const std::size_t queueViewRelease = hideWindow.find(
+        "QueueViewRelease()");
     Check(hideReusableWindow != std::string_view::npos &&
             resetHiddenTitleBar != std::string_view::npos &&
-            hideReusableWindow < resetHiddenTitleBar,
-        "a hidden reusable settings HWND discards its customized caption state");
+            queueViewRelease != std::string_view::npos &&
+            hideWindow.find("shell->Close()") == std::string_view::npos &&
+            hideWindow.find("runtime.Detach()") == std::string_view::npos &&
+            hideReusableWindow < resetHiddenTitleBar &&
+            resetHiddenTitleBar < queueViewRelease,
+        "WM_CLOSE hides the reusable HWND and defers XAML view teardown beyond its input stack");
+
+    const std::size_t releaseViewBegin = source.find(
+        "void ReleaseView() noexcept");
+    const std::size_t releaseViewEnd = source.find(
+        "void QueueViewRelease() noexcept", releaseViewBegin);
+    const std::string_view releaseView =
+        releaseViewBegin != std::string::npos &&
+                releaseViewEnd != std::string::npos
+            ? std::string_view(source).substr(
+                releaseViewBegin, releaseViewEnd - releaseViewBegin)
+            : std::string_view{};
+    Check(releaseView.find("shell->Close()") != std::string_view::npos &&
+            releaseView.find("runtime.Detach()") !=
+                std::string_view::npos &&
+            releaseView.find("searchIndex = {}") !=
+                std::string_view::npos &&
+            releaseView.find("runtime.Shutdown()") ==
+                std::string_view::npos &&
+            releaseView.find("DestroyWindow(") ==
+                std::string_view::npos &&
+            releaseView.find("callbacks->alive.store(false)") ==
+                std::string_view::npos &&
+            releaseView.find("shell->Close()") <
+                releaseView.find("runtime.Detach()"),
+        "deferred view teardown releases the Shell, Island, and search index while preserving the HWND, callbacks, and process runtime");
+
+    const std::size_t queueReleaseBegin = source.find(
+        "void QueueViewRelease() noexcept");
+    const std::size_t queueReleaseEnd = source.find(
+        "[[nodiscard]] bool CreateView()", queueReleaseBegin);
+    const std::string_view queueRelease =
+        queueReleaseBegin != std::string::npos &&
+                queueReleaseEnd != std::string::npos
+            ? std::string_view(source).substr(
+                queueReleaseBegin, queueReleaseEnd - queueReleaseBegin)
+            : std::string_view{};
+    Check(queueRelease.find("dispatcher.TryEnqueue") !=
+                std::string_view::npos &&
+            queueRelease.find("expectedEpoch") !=
+                std::string_view::npos &&
+            queueRelease.find("owner->Visible()") !=
+                std::string_view::npos &&
+            queueRelease.find("owner->ReleaseView()") !=
+                std::string_view::npos,
+        "view teardown runs on a later owner DispatcherQueue turn and rejects stale or reopened sessions");
     const std::size_t reopenWindowBegin = source.find(
         "bool SettingsWindowHost::Open(");
     const std::size_t reopenWindowEnd = source.find(
@@ -712,20 +763,24 @@ void TestHostContract(const std::filesystem::path& repository)
             : std::string_view{};
     const std::size_t missingTitleBarGuard = reopenWindow.find(
         "!impl_->appWindowTitleBar");
+    const std::size_t recreateView = reopenWindow.find(
+        "impl_->CreateView()");
     const std::size_t reconfigureTitleBar = reopenWindow.find(
         "impl_->ConfigureIntegratedTitleBar()");
     const std::size_t refreshTitleBarInsets = reopenWindow.find(
         "impl_->QueueIntegratedTitleBarInsetsUpdate()");
     const std::size_t showReopenedWindow = reopenWindow.find(
         "ShowWindow(impl_->window");
-    Check(missingTitleBarGuard != std::string_view::npos &&
+    Check(recreateView != std::string_view::npos &&
+            missingTitleBarGuard != std::string_view::npos &&
             reconfigureTitleBar != std::string_view::npos &&
             refreshTitleBarInsets != std::string_view::npos &&
             showReopenedWindow != std::string_view::npos &&
+            recreateView < missingTitleBarGuard &&
             missingTitleBarGuard < reconfigureTitleBar &&
             reconfigureTitleBar < refreshTitleBarInsets &&
             refreshTitleBarInsets < showReopenedWindow,
-        "reopening rebuilds caption customization while the settings HWND remains hidden");
+        "reopening rebuilds the XAML view and caption customization on the retained settings HWND");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&
@@ -760,8 +815,10 @@ void TestHostContract(const std::filesystem::path& repository)
             shutdown.find("impl_->FlushPendingChanges()") !=
                 std::string::npos &&
             source.find("shell->ReleaseSessionResources();") !=
+                std::string::npos &&
+            shutdown.find("impl_->ReleaseView();") !=
                 std::string::npos,
-        "ordinary shutdown flushes pending settings while close releases only route-specific session resources");
+        "ordinary shutdown flushes pending settings and reuses the same view-release boundary before process runtime shutdown");
     Check(source.find("viewEpoch") != std::string::npos &&
             source.find("expectedEpoch") != std::string::npos &&
             source.find("DispatcherQueue") != std::string::npos &&
@@ -836,27 +893,27 @@ void TestHostContract(const std::filesystem::path& repository)
         ? std::string_view(source).substr(
             shutdownBegin, openBegin - shutdownBegin)
         : std::string_view{};
-    Check(shutdownFunction.find("ResetIntegratedTitleBar()") !=
-                std::string_view::npos &&
-            shutdownFunction.find("SetActualThemeChangedCallback({})") !=
+    Check(shutdownFunction.find("SetActualThemeChangedCallback({})") !=
                 std::string_view::npos &&
             shutdownFunction.find("callbacks->alive.store(false)") !=
                 std::string_view::npos &&
-            shutdownFunction.find("shell->Close()") !=
-                std::string_view::npos &&
-            shutdownFunction.find("runtime.Detach()") !=
+            shutdownFunction.find("impl_->ReleaseView();") !=
                 std::string_view::npos &&
             shutdownFunction.find("DestroyWindow(") !=
                 std::string_view::npos &&
+            shutdownFunction.find("impl_->runtime.Shutdown()") !=
+                std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") <
                 shutdownFunction.find("callbacks->alive.store(false)") &&
-            shutdownFunction.find("shell->Close()") <
-                shutdownFunction.find("runtime.Detach()") &&
-            shutdownFunction.find("runtime.Detach()") <
-                shutdownFunction.find("ResetIntegratedTitleBar()") &&
-            shutdownFunction.find("ResetIntegratedTitleBar()") <
-                shutdownFunction.find("DestroyWindow("),
-        "the Shell theme callback closes before the Island detaches and AppWindow title-bar state resets ahead of HWND destruction");
+            shutdownFunction.find("callbacks->alive.store(false)") <
+                shutdownFunction.find("impl_->ReleaseView();") &&
+            shutdownFunction.find("impl_->ReleaseView();") <
+                shutdownFunction.find("DestroyWindow(") &&
+            shutdownFunction.find("DestroyWindow(") <
+                shutdownFunction.find("impl_->runtime.Shutdown()") &&
+            releaseView.find("ResetIntegratedTitleBar()") !=
+                std::string_view::npos,
+        "final shutdown invalidates callbacks, releases the view, destroys the HWND, and only then stops the process WinUI runtime");
     Check(source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
             source.find("SupportsMicaBackdrop()") != std::string::npos &&

@@ -653,6 +653,7 @@ struct SettingsWindowHost::Impl
     bool shuttingDown = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
+    bool viewReleaseQueued = false;
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
@@ -1115,6 +1116,11 @@ struct SettingsWindowHost::Impl
 
     void RebuildSearchIndex()
     {
+        if (!shell)
+        {
+            searchIndex = {};
+            return;
+        }
         try
         {
             SettingsSearchIndexInput input = BuildSearchInput();
@@ -2613,6 +2619,155 @@ struct SettingsWindowHost::Impl
         return true;
     }
 
+    void ReleaseView() noexcept
+    {
+        viewReleaseQueued = false;
+        systemBackdropUpdateQueued = false;
+        integratedTitleBarInsetsUpdateQueued = false;
+        externalStateRefreshQueued = false;
+        interactionSuspended = true;
+
+        if (shell)
+            shell->SetActualThemeChangedCallback({});
+        if (shell)
+            shell->SetWidgetSettingsService(nullptr);
+        DisposePageBackends();
+        if (shell)
+            shell->SetSystemBackdropActive(false);
+        if (shell)
+        {
+            shell->Close();
+            shell = nullptr;
+        }
+        runtime.Detach();
+        ResetIntegratedTitleBar();
+        searchIndex = {};
+    }
+
+    void QueueViewRelease() noexcept
+    {
+        if (viewReleaseQueued || shuttingDown || Visible() || !callbacks ||
+            !callbacks->alive.load())
+        {
+            return;
+        }
+
+        viewReleaseQueued = true;
+        const std::uint64_t expectedEpoch = viewEpoch;
+        const std::weak_ptr<CallbackState> weak = callbacks;
+        try
+        {
+            if (callbacks->dispatcher.TryEnqueue([weak, expectedEpoch]() {
+                    const auto state = weak.lock();
+                    if (!state || !state->alive.load() || !state->owner)
+                        return;
+                    auto* owner = state->owner;
+                    owner->viewReleaseQueued = false;
+                    if (owner->shuttingDown || owner->Visible() ||
+                        owner->viewEpoch != expectedEpoch)
+                    {
+                        return;
+                    }
+                    owner->ReleaseView();
+                }))
+            {
+                return;
+            }
+        }
+        catch (...)
+        {
+        }
+        viewReleaseQueued = false;
+    }
+
+    [[nodiscard]] bool CreateView()
+    {
+        if (shell && runtime.IsAttached())
+            return true;
+        if (!window || !IsWindow(window) || !runtime.IsInitialized() ||
+            !callbacks)
+        {
+            SetError(L"Create settings view before host initialization");
+            return false;
+        }
+
+        // A partial view cannot be repaired in place. Keep the process-level
+        // XAML runtime and stable top-level HWND, then rebuild only the Island
+        // and its complete visual tree.
+        ReleaseView();
+        if (!ConfigureIntegratedTitleBar())
+            return false;
+
+        try
+        {
+            shell = winrt::make_self<shell_impl::SettingsShell>();
+            const std::weak_ptr<CallbackState> weak = callbacks;
+            shell->SetLocalizer([weak](std::string_view key) {
+                const auto state = weak.lock();
+                return state && state->alive.load() && state->owner
+                    ? state->owner->L(key)
+                    : std::wstring{};
+            });
+            shell->SetRouteRequestedCallback(
+                [weak](const SettingsRoute& route) {
+                    if (const auto state = weak.lock();
+                        state && state->alive.load() && state->owner)
+                    {
+                        state->owner->RequestRoute(route);
+                    }
+                });
+            shell->SetSearchRequestedCallback(
+                [weak](std::wstring query, std::uint64_t generation,
+                       std::uint64_t requestId) {
+                    if (const auto state = weak.lock();
+                        state && state->alive.load() && state->owner)
+                    {
+                        state->owner->RequestSearch(
+                            std::move(query), generation, requestId);
+                    }
+                });
+            shell->SetCancelOperationCallback([](std::uint64_t) {});
+            shell->SetWidgetSettingsService(widgetSettingsService);
+            ConfigurePageActions();
+            RebuildSearchIndex();
+
+            if (!runtime.Attach(window, shell.as<mux::UIElement>()))
+            {
+                SetError(runtime.LastError());
+                ReleaseView();
+                return false;
+            }
+            shell->SetSystemBackdropActive(false);
+            shell->SetActualThemeChangedCallback(
+                [weak](bool isDark) {
+                    if (const auto state = weak.lock();
+                        state && state->alive.load() && state->owner)
+                    {
+                        state->owner->ApplyActualTheme(isDark);
+                    }
+                });
+            QueueIntegratedTitleBarInsetsUpdate();
+            QueueSystemBackdropUpdate();
+            interactionSuspended = true;
+            return true;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(
+                L"Initialize WinUI settings shell (" +
+                std::to_wstring(
+                    static_cast<unsigned int>(error.code().value)) +
+                L")");
+        }
+        catch (...)
+        {
+            SetError(L"Initialize WinUI settings shell failed");
+        }
+
+        ReleaseView();
+        return false;
+    }
+
     [[nodiscard]] bool HideWindow()
     {
         if (!controller || !window || shuttingDown)
@@ -2640,6 +2795,11 @@ struct SettingsWindowHost::Impl
         // title bar even while the HWND is hidden. Reset only that platform
         // object after hiding; the XAML runtime and settings host stay alive.
         ResetIntegratedTitleBar();
+        // Releasing the Shell or DesktopWindowXamlSource from WM_CLOSE can
+        // unwind controls that are still on the XAML input stack. Defer the
+        // complete view teardown to the next DispatcherQueue turn. A newer
+        // Open advances viewEpoch and cancels this stale release safely.
+        QueueViewRelease();
         return true;
     }
 };
@@ -2676,7 +2836,7 @@ bool SettingsWindowHost::Initialize(
     impl_->lastError.clear();
 
     if (!impl_->runtime.Initialize() || !impl_->RegisterWindowClass() ||
-        !impl_->CreateHostWindow() || !impl_->ConfigureIntegratedTitleBar())
+        !impl_->CreateHostWindow())
     {
         if (impl_->lastError.empty())
             impl_->lastError = impl_->runtime.LastError();
@@ -2686,7 +2846,6 @@ bool SettingsWindowHost::Initialize(
 
     try
     {
-        impl_->shell = winrt::make_self<shell_impl::SettingsShell>();
         impl_->callbacks =
             std::make_shared<Impl::CallbackState>();
         impl_->callbacks->owner = impl_.get();
@@ -2694,56 +2853,13 @@ bool SettingsWindowHost::Initialize(
             mud::DispatcherQueue::GetForCurrentThread();
         if (!impl_->callbacks->dispatcher)
             winrt::throw_hresult(E_UNEXPECTED);
-
-        const std::weak_ptr<Impl::CallbackState> weak = impl_->callbacks;
-        impl_->shell->SetLocalizer([weak](std::string_view key) {
-            const auto state = weak.lock();
-            return state && state->alive.load() && state->owner
-                ? state->owner->L(key)
-                : std::wstring{};
-        });
-        impl_->shell->SetRouteRequestedCallback(
-            [weak](const SettingsRoute& route) {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->RequestRoute(route);
-                }
-            });
-        impl_->shell->SetSearchRequestedCallback(
-            [weak](std::wstring query, std::uint64_t generation,
-                   std::uint64_t requestId) {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->RequestSearch(
-                        std::move(query), generation, requestId);
-                }
-            });
-        impl_->shell->SetCancelOperationCallback([](std::uint64_t) {});
-        impl_->shell->SetWidgetSettingsService(widgetSettingsService);
-        impl_->ConfigurePageActions();
-        impl_->RebuildSearchIndex();
-
-        if (!impl_->runtime.Attach(impl_->window,
-                impl_->shell.as<mux::UIElement>()))
+        if (!impl_->CreateView())
         {
-            impl_->SetError(impl_->runtime.LastError());
             Shutdown();
             return false;
         }
-        impl_->shell->SetSystemBackdropActive(false);
-        impl_->shell->SetActualThemeChangedCallback(
-            [weak](bool darkTheme) {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->ApplyActualTheme(darkTheme);
-                }
-            });
-        impl_->QueueIntegratedTitleBarInsetsUpdate();
-        impl_->QueueSystemBackdropUpdate();
 
+        const std::weak_ptr<Impl::CallbackState> weak = impl_->callbacks;
         controller.SetSnapshotChangedCallback(
             [weak](SettingsController::SnapshotPtr snapshot) {
                 if (const auto state = weak.lock();
@@ -2813,17 +2929,7 @@ void SettingsWindowHost::Shutdown() noexcept
         }
     }
 
-    impl_->systemBackdropUpdateQueued = false;
-    impl_->externalStateRefreshQueued = false;
-    if (impl_->shell)
-        impl_->shell->SetSystemBackdropActive(false);
-    if (impl_->shell)
-    {
-        impl_->shell->Close();
-        impl_->shell = nullptr;
-    }
-    impl_->runtime.Detach();
-    impl_->ResetIntegratedTitleBar();
+    impl_->ReleaseView();
     impl_->DiscardPostedOwnerTasks();
     if (impl_->window && IsWindow(impl_->window))
         DestroyWindow(impl_->window);
@@ -2847,10 +2953,16 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         return false;
 
     ++impl_->viewEpoch;
+    impl_->viewReleaseQueued = false;
     const bool reopening = !impl_->Visible();
     SettingsActionResult reloadResult = SettingsActionResult::Success();
     if (reopening)
     {
+        if ((!impl_->shell || !impl_->runtime.IsAttached()) &&
+            !impl_->CreateView())
+        {
+            return false;
+        }
         if (!impl_->appWindowTitleBar)
         {
             if (!impl_->ConfigureIntegratedTitleBar())
