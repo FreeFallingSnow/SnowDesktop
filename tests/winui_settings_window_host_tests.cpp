@@ -749,18 +749,41 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             releaseSession.find("searchIndex = {}") !=
                 std::string_view::npos &&
+            releaseSession.find("QueueHeapOptimization()") !=
+                std::string_view::npos &&
             releaseSession.find("shell->Close()") ==
                 std::string_view::npos &&
             releaseSession.find("runtime.Detach()") ==
                 std::string_view::npos &&
             releaseSession.find("SetSystemBackdropEnabled(false)") ==
                 std::string_view::npos,
-        "ordinary close releases route controls, backends, and search data while retaining the Shell, Island, and backdrop roots");
+        "ordinary close releases route controls, backends, search data, and LFH caches while retaining the Shell, Island, and backdrop roots");
+
+    const std::size_t releasePresenters = releaseSession.find(
+        "shell->ReleaseSessionResources()");
+    const std::size_t releaseBackends = releaseSession.find(
+        "DisposePageBackends()");
+    const std::size_t releaseSearch = releaseSession.find(
+        "searchIndex = {}");
+    const std::size_t queueHeapOptimization = releaseSession.find(
+        "QueueHeapOptimization()");
+    Check(releasePresenters < releaseBackends &&
+            releaseBackends < releaseSearch &&
+            releaseSearch < queueHeapOptimization &&
+            source.find("HEAP_OPTIMIZE_RESOURCES_INFORMATION information{}") !=
+                std::string::npos &&
+            source.find(
+                "information.Version = HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION") !=
+                std::string::npos &&
+            source.find("HeapSetInformation(nullptr, HeapOptimizeResources") !=
+                std::string::npos &&
+            source.find("EmptyWorkingSet(") == std::string::npos,
+        "session close optimizes documented LFH caches only after all page-owned allocations are released without evicting the process working set");
 
     const std::size_t queueReleaseBegin = source.find(
         "void QueueViewRelease() noexcept");
     const std::size_t queueReleaseEnd = source.find(
-        "[[nodiscard]] bool CreateView()", queueReleaseBegin);
+        "void QueueHeapOptimization() noexcept", queueReleaseBegin);
     const std::string_view queueRelease =
         queueReleaseBegin != std::string::npos &&
                 queueReleaseEnd != std::string::npos
@@ -776,6 +799,26 @@ void TestHostContract(const std::filesystem::path& repository)
             queueRelease.find("owner->ReleaseSessionView()") !=
                 std::string_view::npos,
         "session teardown runs on a later owner DispatcherQueue turn and rejects stale or reopened sessions");
+
+    const std::size_t queueHeapBegin = source.find(
+        "void QueueHeapOptimization() noexcept", queueReleaseEnd);
+    const std::size_t queueHeapEnd = source.find(
+        "[[nodiscard]] bool CreateView()", queueHeapBegin);
+    const std::string_view queueHeap =
+        queueHeapBegin != std::string::npos &&
+                queueHeapEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  queueHeapBegin, queueHeapEnd - queueHeapBegin)
+            : std::string_view{};
+    Check(queueHeap.find("mud::DispatcherQueuePriority::Low") !=
+                std::string_view::npos &&
+            queueHeap.find("expectedEpoch") != std::string_view::npos &&
+            queueHeap.find("owner->Visible()") != std::string_view::npos &&
+            queueHeap.find("owner->viewEpoch != expectedEpoch") !=
+                std::string_view::npos &&
+            queueHeap.find("OptimizeReleasedHeapResources()") !=
+                std::string_view::npos,
+        "LFH cache optimization waits for a low-priority dispatcher turn and is cancelled by reopen or shutdown");
     const std::size_t reopenWindowBegin = source.find(
         "bool SettingsWindowHost::Open(");
     const std::size_t reopenWindowEnd = source.find(

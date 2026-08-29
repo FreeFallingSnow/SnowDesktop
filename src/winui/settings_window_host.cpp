@@ -47,6 +47,18 @@ constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
 constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
 
+void OptimizeReleasedHeapResources() noexcept
+{
+    // Presenter destruction returns thousands of small XAML allocations to
+    // LFH caches. Ask the documented heap manager to decommit unused cache
+    // pages after a settings session closes; unlike EmptyWorkingSet this does
+    // not evict the still-running desktop, Dock, or widget working sets.
+    HEAP_OPTIMIZE_RESOURCES_INFORMATION information{};
+    information.Version = HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION;
+    (void)HeapSetInformation(nullptr, HeapOptimizeResources,
+        &information, sizeof(information));
+}
+
 bool QueryHighContrastEnabled(bool& enabled) noexcept
 {
     HIGHCONTRASTW state{};
@@ -654,6 +666,7 @@ struct SettingsWindowHost::Impl
     bool interactionSuspended = true;
     bool darkTheme = false;
     bool viewReleaseQueued = false;
+    bool heapOptimizationQueued = false;
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
@@ -2622,6 +2635,7 @@ struct SettingsWindowHost::Impl
     void ReleaseView() noexcept
     {
         viewReleaseQueued = false;
+        heapOptimizationQueued = false;
         systemBackdropUpdateQueued = false;
         integratedTitleBarInsetsUpdateQueued = false;
         externalStateRefreshQueued = false;
@@ -2659,6 +2673,7 @@ struct SettingsWindowHost::Impl
             shell->ReleaseSessionResources();
         DisposePageBackends();
         searchIndex = {};
+        QueueHeapOptimization();
     }
 
     void QueueViewRelease() noexcept
@@ -2695,6 +2710,44 @@ struct SettingsWindowHost::Impl
         {
         }
         viewReleaseQueued = false;
+    }
+
+    void QueueHeapOptimization() noexcept
+    {
+        if (heapOptimizationQueued || shuttingDown || Visible() ||
+            !callbacks || !callbacks->alive.load())
+        {
+            return;
+        }
+
+        heapOptimizationQueued = true;
+        const std::uint64_t expectedEpoch = viewEpoch;
+        const std::weak_ptr<CallbackState> weak = callbacks;
+        try
+        {
+            if (callbacks->dispatcher.TryEnqueue(
+                    mud::DispatcherQueuePriority::Low,
+                    [weak, expectedEpoch]() {
+                        const auto state = weak.lock();
+                        if (!state || !state->alive.load() || !state->owner)
+                            return;
+                        auto* owner = state->owner;
+                        owner->heapOptimizationQueued = false;
+                        if (owner->shuttingDown || owner->Visible() ||
+                            owner->viewEpoch != expectedEpoch)
+                        {
+                            return;
+                        }
+                        OptimizeReleasedHeapResources();
+                    }))
+            {
+                return;
+            }
+        }
+        catch (...)
+        {
+        }
+        heapOptimizationQueued = false;
     }
 
     [[nodiscard]] bool CreateView()
@@ -2969,6 +3022,7 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
 
     ++impl_->viewEpoch;
     impl_->viewReleaseQueued = false;
+    impl_->heapOptimizationQueued = false;
     const bool reopening = !impl_->Visible();
     SettingsActionResult reloadResult = SettingsActionResult::Success();
     if (reopening)
