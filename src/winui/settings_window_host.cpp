@@ -47,11 +47,18 @@ constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
 constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
-constexpr UINT_PTR kWorkingSetTrimTimerId = 0x5344;
+constexpr UINT_PTR kWorkingSetTrimTimerIdSeed = 0x53440000;
 constexpr UINT kWorkingSetTrimDelayMs = 2000;
 constexpr ULONGLONG kWorkingSetTrimCooldownMs = 30000;
 constexpr SIZE_T kWorkingSetTrimMinimumGrowth =
     static_cast<SIZE_T>(64) * 1024 * 1024;
+
+bool HasSignificantWorkingSetGrowth(
+    SIZE_T current, SIZE_T baseline) noexcept
+{
+    return current >= baseline &&
+        current - baseline >= kWorkingSetTrimMinimumGrowth;
+}
 
 std::optional<SIZE_T> QueryCurrentProcessWorkingSet() noexcept
 {
@@ -683,6 +690,8 @@ struct SettingsWindowHost::Impl
     bool viewReleaseQueued = false;
     bool workingSetTrimQueued = false;
     std::uint64_t workingSetTrimEpoch = 0;
+    UINT_PTR nextWorkingSetTrimTimerId = kWorkingSetTrimTimerIdSeed;
+    UINT_PTR activeWorkingSetTrimTimerId = 0;
     std::optional<SIZE_T> settingsSessionWorkingSetBaseline;
     ULONGLONG lastWorkingSetTrimTick = 0;
     /** Legacy five-click About unlock; retained for this host lifetime. */
@@ -2512,9 +2521,9 @@ struct SettingsWindowHost::Impl
             return 0;
         }
         case WM_TIMER:
-            if (wParam == kWorkingSetTrimTimerId)
+            if (self->HandleWorkingSetTrimTimer(
+                    static_cast<UINT_PTR>(wParam)))
             {
-                self->HandleWorkingSetTrimTimer();
                 return 0;
             }
             break;
@@ -2749,9 +2758,8 @@ struct SettingsWindowHost::Impl
         }
 
         const auto current = QueryCurrentProcessWorkingSet();
-        if (!current ||
-            *current <= *settingsSessionWorkingSetBaseline +
-                kWorkingSetTrimMinimumGrowth)
+        if (!current || !HasSignificantWorkingSetGrowth(
+                *current, *settingsSessionWorkingSetBaseline))
         {
             return;
         }
@@ -2763,57 +2771,76 @@ struct SettingsWindowHost::Impl
             return;
         }
 
-        workingSetTrimQueued = true;
-        workingSetTrimEpoch = viewEpoch;
-        if (SetTimer(window, kWorkingSetTrimTimerId,
-                kWorkingSetTrimDelayMs, nullptr) != 0)
+        do
         {
+            ++nextWorkingSetTrimTimerId;
+        } while (nextWorkingSetTrimTimerId == 0);
+        const UINT_PTR timerId = SetTimer(window,
+            nextWorkingSetTrimTimerId, kWorkingSetTrimDelayMs, nullptr);
+        if (timerId != 0)
+        {
+            workingSetTrimQueued = true;
+            workingSetTrimEpoch = viewEpoch;
+            activeWorkingSetTrimTimerId = timerId;
             return;
         }
         workingSetTrimQueued = false;
         workingSetTrimEpoch = 0;
+        activeWorkingSetTrimTimerId = 0;
     }
 
     void CancelWorkingSetTrim() noexcept
     {
-        if (window && IsWindow(window))
-            KillTimer(window, kWorkingSetTrimTimerId);
+        if (activeWorkingSetTrimTimerId != 0 &&
+            window && IsWindow(window))
+        {
+            KillTimer(window, activeWorkingSetTrimTimerId);
+        }
         workingSetTrimQueued = false;
         workingSetTrimEpoch = 0;
+        activeWorkingSetTrimTimerId = 0;
     }
 
-    void HandleWorkingSetTrimTimer() noexcept
+    bool HandleWorkingSetTrimTimer(UINT_PTR timerId) noexcept
     {
+        // KillTimer does not remove an already-posted WM_TIMER. Ignore stale
+        // request IDs without touching a newer timer scheduled after reopen.
+        if (!workingSetTrimQueued || timerId == 0 ||
+            timerId != activeWorkingSetTrimTimerId)
+        {
+            return false;
+        }
         if (window && IsWindow(window))
-            KillTimer(window, kWorkingSetTrimTimerId);
+            KillTimer(window, timerId);
 
         const std::uint64_t expectedEpoch = workingSetTrimEpoch;
         workingSetTrimQueued = false;
         workingSetTrimEpoch = 0;
+        activeWorkingSetTrimTimerId = 0;
         if (shuttingDown || Visible() || expectedEpoch == 0 ||
             viewEpoch != expectedEpoch ||
             !settingsSessionWorkingSetBaseline)
         {
-            return;
+            return true;
         }
 
         const ULONGLONG now = GetTickCount64();
         if (lastWorkingSetTrimTick != 0 &&
             now - lastWorkingSetTrimTick < kWorkingSetTrimCooldownMs)
         {
-            return;
+            return true;
         }
 
         const auto current = QueryCurrentProcessWorkingSet();
-        if (!current ||
-            *current <= *settingsSessionWorkingSetBaseline +
-                kWorkingSetTrimMinimumGrowth)
+        if (!current || !HasSignificantWorkingSetGrowth(
+                *current, *settingsSessionWorkingSetBaseline))
         {
-            return;
+            return true;
         }
 
         if (TrimProcessWorkingSet())
             lastWorkingSetTrimTick = GetTickCount64();
+        return true;
     }
 
     [[nodiscard]] bool CreateView()
@@ -3093,13 +3120,15 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     SettingsActionResult reloadResult = SettingsActionResult::Success();
     if (reopening)
     {
-        const auto closedWorkingSet = QueryCurrentProcessWorkingSet();
         if ((!impl_->shell || !impl_->runtime.IsAttached()) &&
             !impl_->CreateView())
         {
             return false;
         }
-        impl_->settingsSessionWorkingSetBaseline = closedWorkingSet;
+        // Sample only after any stable Shell/Island recovery so retained root
+        // pages are not mistaken for settings-session growth.
+        impl_->settingsSessionWorkingSetBaseline =
+            QueryCurrentProcessWorkingSet();
         if (!impl_->appWindowTitleBar)
         {
             if (!impl_->ConfigureIntegratedTitleBar())

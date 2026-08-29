@@ -776,6 +776,8 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("kWorkingSetTrimMinimumGrowth") !=
                 std::string::npos &&
+            source.find("current - baseline >= kWorkingSetTrimMinimumGrowth") !=
+                std::string::npos &&
             source.find("kWorkingSetTrimCooldownMs") !=
                 std::string::npos &&
             source.find("kWorkingSetTrimDelayMs") !=
@@ -814,11 +816,17 @@ void TestHostContract(const std::filesystem::path& repository)
             ? std::string_view(source).substr(
                   queueTrimBegin, queueTrimEnd - queueTrimBegin)
             : std::string_view{};
-    Check(queueTrim.find("SetTimer(window, kWorkingSetTrimTimerId") !=
+    Check(queueTrim.find("SetTimer(window,") !=
+                std::string_view::npos &&
+            queueTrim.find("nextWorkingSetTrimTimerId") !=
                 std::string_view::npos &&
             queueTrim.find("kWorkingSetTrimDelayMs") !=
                 std::string_view::npos &&
-            queueTrim.find("KillTimer(window, kWorkingSetTrimTimerId)") !=
+            queueTrim.find("activeWorkingSetTrimTimerId") !=
+                std::string_view::npos &&
+            queueTrim.find("timerId != activeWorkingSetTrimTimerId") !=
+                std::string_view::npos &&
+            queueTrim.find("KillTimer(window, timerId)") !=
                 std::string_view::npos &&
             queueTrim.find("settingsSessionWorkingSetBaseline") !=
                 std::string_view::npos &&
@@ -853,22 +861,24 @@ void TestHostContract(const std::filesystem::path& repository)
         "impl_->QueueIntegratedTitleBarInsetsUpdate()");
     const std::size_t showReopenedWindow = reopenWindow.find(
         "ShowWindow(impl_->window");
+    const std::size_t sampleWorkingSet = reopenWindow.find(
+        "QueryCurrentProcessWorkingSet()");
     Check(recreateView != std::string_view::npos &&
             reopenWindow.find("impl_->CancelWorkingSetTrim()") !=
                 std::string_view::npos &&
-            reopenWindow.find("QueryCurrentProcessWorkingSet()") !=
-                std::string_view::npos &&
+            sampleWorkingSet != std::string_view::npos &&
             missingTitleBarGuard != std::string_view::npos &&
             reconfigureTitleBar != std::string_view::npos &&
             refreshTitleBarInsets != std::string_view::npos &&
             showReopenedWindow != std::string_view::npos &&
+            recreateView < sampleWorkingSet &&
             recreateView < missingTitleBarGuard &&
             missingTitleBarGuard < reconfigureTitleBar &&
             reconfigureTitleBar < refreshTitleBarInsets &&
             refreshTitleBarInsets < showReopenedWindow,
         "reopening cancels stale working-set work, records its closed baseline, reuses the retained XAML root when available, and rebuilds caption customization on the settings HWND");
     Check(source.find("case WM_TIMER:") != std::string::npos &&
-            source.find("wParam == kWorkingSetTrimTimerId") !=
+            source.find("static_cast<UINT_PTR>(wParam)") !=
                 std::string::npos &&
             source.find("self->HandleWorkingSetTrimTimer()") !=
                 std::string::npos,
