@@ -651,10 +651,9 @@ std::optional<RuntimeDestination> SelectRecoveryDestination(
 }
 
 std::optional<std::filesystem::path> CreateUniqueStagingDirectory(
-    const std::filesystem::path& runtimeRoot, std::string_view directoryId,
-    std::string& error)
+    const std::filesystem::path& runtimeRoot, std::string& error)
 {
-    const std::wstring prefix = Utf8ToWide(directoryId) + L".staging." +
+    const std::wstring prefix = L".staging." +
         std::to_wstring(GetCurrentProcessId()) + L"." +
         std::to_wstring(GetTickCount64());
     for (std::uint32_t attempt = 0;; ++attempt)
@@ -832,7 +831,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     }
 
     const auto stagingValue = CreateUniqueStagingDirectory(
-        runtimeRoot, destination.directoryId, error);
+        runtimeRoot, error);
     if (!stagingValue)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
     const std::filesystem::path staging = *stagingValue;
