@@ -123,11 +123,20 @@ std::wstring GetExecutableDirectoryPath()
 
 std::wstring GetDataDirectoryPath()
 {
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (context.kind ==
+            snowdesktop::deployment::RuntimeDeploymentKind::Invalid)
+    {
+        return {};
+    }
     const std::wstring packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
     std::wstring dataDir;
     if (!packageLocalState.empty())
         dataDir = JoinPathLocal(packageLocalState, L"data");
+    else if (snowdesktop::deployment::IsSteamDeployment(context.kind))
+        dataDir = context.dataRoot.wstring();
     else
         dataDir = JoinPathLocal(GetExecutableDirectoryPath(), L"data");
     EnsureDirectoryLocal(dataDir);
@@ -141,6 +150,13 @@ std::wstring GetDataFilePath(const wchar_t* filename)
 
     std::wstring legacyDir =
         snowdesktop::deployment::GetPackageLocalStatePath();
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (legacyDir.empty() &&
+        snowdesktop::deployment::IsSteamDeployment(context.kind))
+    {
+        legacyDir = context.installRoot.wstring();
+    }
     if (legacyDir.empty())
         legacyDir = GetExecutableDirectoryPath();
     const std::wstring dataDir = GetDataDirectoryPath();
@@ -157,6 +173,13 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
 
     std::wstring legacyDir =
         snowdesktop::deployment::GetPackageLocalStatePath();
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (legacyDir.empty() &&
+        snowdesktop::deployment::IsSteamDeployment(context.kind))
+    {
+        legacyDir = context.installRoot.wstring();
+    }
     if (legacyDir.empty())
         legacyDir = GetExecutableDirectoryPath();
     const std::wstring dataDir = GetDataDirectoryPath();
@@ -171,6 +194,13 @@ void MigrateLegacyDataPaths()
 {
     std::filesystem::path stateRoot =
         snowdesktop::deployment::GetPackageLocalStatePath();
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (stateRoot.empty() &&
+        snowdesktop::deployment::IsSteamDeployment(context.kind))
+    {
+        stateRoot = context.installRoot;
+    }
     if (stateRoot.empty())
         stateRoot = GetExecutableDirectoryPath();
     const auto portableMigration =

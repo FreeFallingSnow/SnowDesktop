@@ -349,10 +349,19 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
 
     if (result.task.status == UnifiedAutoStartTaskState::Missing)
     {
+        const auto deploymentKind = snowdesktop::deployment::
+            GetRuntimeDeploymentContext().kind;
         const UnifiedAutoStartOwner currentOwner =
-            snowdesktop::deployment::IsPackaged()
+            deploymentKind == snowdesktop::deployment::
+                    RuntimeDeploymentKind::Packaged
                 ? UnifiedAutoStartOwner::Packaged
-                : UnifiedAutoStartOwner::Portable;
+                : deploymentKind == snowdesktop::deployment::
+                        RuntimeDeploymentKind::SteamManaged
+                    ? UnifiedAutoStartOwner::Steam
+                    : deploymentKind == snowdesktop::deployment::
+                            RuntimeDeploymentKind::Portable
+                        ? UnifiedAutoStartOwner::Portable
+                        : UnifiedAutoStartOwner::Unknown;
         const snowdesktop::AutoStartMigrationDecision decision =
             snowdesktop::SelectAutoStartMigration(
                 currentOwner, portable.state, packaged);

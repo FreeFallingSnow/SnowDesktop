@@ -588,6 +588,32 @@ bool IsPackaged() noexcept
     return packaged;
 }
 
+const RuntimeDeploymentContext& GetRuntimeDeploymentContext() noexcept
+{
+    static const RuntimeDeploymentContext context = [] {
+        std::wstring executable(32768, L'\0');
+        const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+            static_cast<DWORD>(executable.size()));
+        if (length == 0 || length >= executable.size())
+        {
+            RuntimeDeploymentContext failed;
+            failed.kind = RuntimeDeploymentKind::Invalid;
+            failed.explicitContext = true;
+            failed.error = "Current executable path is unavailable";
+            return failed;
+        }
+        executable.resize(length);
+        return ResolveRuntimeDeploymentContext(executable, IsPackaged());
+    }();
+    return context;
+}
+
+bool HasInvalidRuntimeDeploymentContext() noexcept
+{
+    return GetRuntimeDeploymentContext().kind ==
+        RuntimeDeploymentKind::Invalid;
+}
+
 std::wstring GetPackageLocalStatePath()
 {
     if (!IsPackaged())

@@ -12,6 +12,7 @@ enum class UnifiedAutoStartOwner : std::uint8_t
     None,
     Portable,
     Packaged,
+    Steam,
     Unknown,
 };
 
@@ -48,7 +49,8 @@ SelectAutoStartMigration(
     if (portable == LegacyAutoStartState::Unavailable ||
         packaged == LegacyAutoStartState::Unavailable ||
         (currentDeployment != UnifiedAutoStartOwner::Portable &&
-            currentDeployment != UnifiedAutoStartOwner::Packaged))
+            currentDeployment != UnifiedAutoStartOwner::Packaged &&
+            currentDeployment != UnifiedAutoStartOwner::Steam))
     {
         return {};
     }

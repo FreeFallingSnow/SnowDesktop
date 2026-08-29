@@ -16,7 +16,8 @@ std::wstring GetExecutableDirectoryPath();
 /**
  * @brief 获取 SnowDesktop 用户数据目录。
  * @details 便携版使用可执行文件目录下的 data 子目录；MSIX 版使用包的
- * LocalState\data 目录。调用时会尽量创建目录。
+ * LocalState\data 目录；Steam runtime 使用稳定安装根下的 data。调用时会
+ * 尽量创建目录。
  * @return 当前部署模式对应的可写数据目录绝对路径。
  */
 std::wstring GetDataDirectoryPath();

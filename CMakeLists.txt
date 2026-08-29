@@ -96,6 +96,18 @@ configure_file(
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
     @ONLY)
 
+set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop Steam launcher")
+set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktopLauncher.exe")
+set(SNOWDESKTOP_FILE_TYPE "VFT_APP")
+set(SNOWDESKTOP_LEGAL_COPYRIGHT
+    "Copyright (c) SnowDesktop contributors")
+set(SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE
+    "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktopLauncher.version.rc")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}"
+    @ONLY)
+
 set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop taskbar hook")
 set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktopTaskbarHook.dll")
 set(SNOWDESKTOP_FILE_TYPE "VFT_DLL")
@@ -241,6 +253,8 @@ set(SNOWDESKTOP_SOURCES
     src/core/container.cpp
     src/core/desktop.cpp
     src/data_paths.cpp
+    src/steam_runtime_context.cpp
+    src/steam_runtime_context.h
     src/calendar_service.cpp
     src/full_data_backup.cpp
     src/portable_data_migration.cpp
@@ -644,6 +658,29 @@ add_executable(SnowDesktop WIN32
     src/resource.rc
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+
+add_executable(SnowDesktopLauncher WIN32
+    src/steam_launcher_main.cpp
+    src/steam_runtime_manager.cpp
+    src/steam_runtime_manager.h
+    src/steam_runtime_context.h
+    "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
+target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopLauncher PRIVATE src)
+target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32)
+if (MSVC)
+    set_property(TARGET SnowDesktopLauncher PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopLauncher PRIVATE
+        /W4 /permissive- /EHsc /utf-8)
+    target_compile_definitions(SnowDesktopLauncher PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+else()
+    target_compile_options(SnowDesktopLauncher PRIVATE
+        -Wall -Wextra -pedantic)
+    target_compile_definitions(SnowDesktopLauncher PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 # Pin the complete WinUI toolchain on the executable so NuGet restore,
 # C++/WinRT projection generation, XAML compilation, and self-contained
@@ -1247,6 +1284,17 @@ if (BUILD_TESTING)
         SOURCES tests/deployment_packaging_contract_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS build contract packaging winui)
+
+    snowdesktop_add_test(
+        SnowDesktopSteamRuntimeUpdateTests
+        steam_runtime_update
+        SOURCES
+            tests/steam_runtime_update_tests.cpp
+            src/steam_runtime_context.cpp
+            src/steam_runtime_manager.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt
+        LABELS contract deployment integration steam update)
     add_test(
         NAME deployment_manifest_integration
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass

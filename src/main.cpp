@@ -16,6 +16,7 @@
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
 #include "data_paths.h"
+#include "deployment_context.h"
 #include "general_settings.h"
 #include "l10n.h"
 #include "single_instance.h"
@@ -324,6 +325,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
 {
     if (snowdesktop::deployment::TryHandlePackagedAutoStartQueryCommand())
         return 0;
+
+    if (snowdesktop::deployment::HasInvalidRuntimeDeploymentContext())
+    {
+        const auto& context =
+            snowdesktop::deployment::GetRuntimeDeploymentContext();
+        OutputDebugStringA(("SnowDesktop: invalid runtime deployment "
+            "context: " + context.error + "\n").c_str());
+        return ERROR_INVALID_DATA;
+    }
 
     bool previewCommandHandled = false;
     const int previewCommandResult = snowdesktop::widget_authoring::

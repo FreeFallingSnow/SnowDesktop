@@ -611,7 +611,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 snowdesktop::UnifiedAutoStartTaskState::Enabled &&
             !state.taskOwnedByCurrentDeployment;
         if (state.packaged && otherOwnerActive &&
-            state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Portable)
+            (state.taskOwner ==
+                    snowdesktop::UnifiedAutoStartOwner::Portable ||
+                state.taskOwner ==
+                    snowdesktop::UnifiedAutoStartOwner::Steam))
         {
             conflict.kind =
                 GeneralStartupConflictKind::NonPackagedVersionOwnsStartup;
