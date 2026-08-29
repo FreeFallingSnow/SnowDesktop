@@ -69,15 +69,19 @@ constexpr Handle ResolveMenuZOrderOwner(
     bool popupHostVisible,
     Handle popupHost,
     bool dockHostVisible,
+    bool dockHostEffectivelyFloating,
     Handle dockHost)
 {
     // Menus opened from the shared popup are routed through the desktop input
     // window, so their focus owner does not describe the surface they must
     // outrank. Prefer the active popup host, then retain the floating Dock as
-    // the fallback for menus opened from that host.
+    // the fallback for menus opened from that host. A persistent DockHost can
+    // also be visible in the desktop band; using that window as an owner would
+    // let an ordinary menu raise the Dock even though no summon occurred.
     if (popupHostVisible && popupHost != Handle{})
         return popupHost;
-    if (dockHostVisible && dockHost != Handle{})
+    if (dockHostVisible && dockHostEffectivelyFloating &&
+        dockHost != Handle{})
         return dockHost;
     return Handle{};
 }

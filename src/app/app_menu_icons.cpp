@@ -658,17 +658,29 @@ UINT DesktopApp::ShowModernMenu(
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_) &&
         IsWindowVisible(floatingPopupHwnd_);
-    const bool floatingDockHostVisible =
-        floatingDockHostActive_ &&
+    const bool floatingDockHostWindowVisible =
+        floatingDockHost_ &&
         floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_);
+        IsWindow(floatingDockHwnd_) &&
+        IsWindowVisible(floatingDockHwnd_);
+    const bool floatingDockHostEffectivelyFloating =
+        floatingDockHost_ &&
+        IsPersistentDockHostEffectivelyFloating(
+            *floatingDockHost_);
     const HWND zOrderOwner =
         snowdesktop::floating_popup_rules::
             ResolveMenuZOrderOwner(
                 floatingPopupHostVisible,
                 floatingPopupHwnd_,
-                floatingDockHostVisible,
+                floatingDockHostWindowVisible,
+                floatingDockHostEffectivelyFloating,
                 floatingDockHwnd_);
+    if (floatingDockHostWindowVisible &&
+        !floatingDockHostEffectivelyFloating)
+    {
+        WriteDiagnosticLogEntry(
+            L"Desktop-band Dock excluded from modern menu Z-order ownership");
+    }
     if (zOrderOwner)
     {
         // The shared popup host and floating Dock live in the topmost band.

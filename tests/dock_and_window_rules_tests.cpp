@@ -2139,14 +2139,16 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldBeTopmost(false, 0),
         "native menus must temporarily outrank the shared popup host");
     Check(floatingPopup::ResolveMenuZOrderOwner(
-              true, 101, true, 202) == 101 &&
+              true, 101, true, false, 202) == 101 &&
             floatingPopup::ResolveMenuZOrderOwner(
-              false, 101, true, 202) == 202 &&
+              false, 101, true, true, 202) == 202 &&
             floatingPopup::ResolveMenuZOrderOwner(
-              true, 0, true, 202) == 202 &&
+              true, 0, true, true, 202) == 202 &&
             floatingPopup::ResolveMenuZOrderOwner(
-              false, 101, false, 202) == 0,
-        "modern menus must prefer the shared popup as their Z-order owner and fall back to the floating Dock");
+              false, 101, true, false, 202) == 0 &&
+            floatingPopup::ResolveMenuZOrderOwner(
+              false, 101, false, true, 202) == 0,
+        "modern menus must prefer the shared popup as their Z-order owner, fall back only to an effectively floating visible Dock, and exclude desktop-band or hidden DockHosts");
     const POINT popupAnimationOffset =
         floatingPopup::AnimationVisualOffset(
             RECT{ 460, 280, 1260, 880 },
@@ -4065,6 +4067,9 @@ int main(int argc, char** argv)
         const std::string pointerContextSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_context.cpp");
+        const std::string menuIconsSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_menu_icons.cpp");
         const std::string pointerDownSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_down.cpp");
@@ -6107,6 +6112,64 @@ int main(int argc, char** argv)
                 proxyForegroundRequest < proxyActivationReturn &&
                 proxyActivationReturn < ordinaryActivationRequest,
             "taskbar document proxies must activate directly without showing the hidden helper window");
+        const std::size_t modernMenuBegin =
+            menuIconsSource.find(
+                "UINT DesktopApp::ShowModernMenu(");
+        const std::size_t dockMenuOwnerWindowVisible =
+            menuIconsSource.find(
+                "const bool floatingDockHostWindowVisible =",
+                modernMenuBegin);
+        const std::size_t dockMenuOwnerPhysicalVisibility =
+            menuIconsSource.find(
+                "IsWindowVisible(floatingDockHwnd_)",
+                dockMenuOwnerWindowVisible);
+        const std::size_t dockMenuOwnerEffectiveFloating =
+            menuIconsSource.find(
+                "IsPersistentDockHostEffectivelyFloating(",
+                dockMenuOwnerPhysicalVisibility);
+        const std::size_t dockMenuOwnerResolve =
+            menuIconsSource.find(
+                "ResolveMenuZOrderOwner(",
+                dockMenuOwnerEffectiveFloating);
+        const std::size_t dockMenuOwnerVisibleArgument =
+            menuIconsSource.find(
+                "floatingDockHostWindowVisible,",
+                dockMenuOwnerResolve);
+        const std::size_t dockMenuOwnerFloatingArgument =
+            menuIconsSource.find(
+                "floatingDockHostEffectivelyFloating,",
+                dockMenuOwnerVisibleArgument);
+        const std::size_t modernMenuEnd =
+            menuIconsSource.find(
+                "void DesktopApp::ConfigureModernMenuEventPump(",
+                modernMenuBegin);
+        const std::string modernMenuSource =
+            modernMenuBegin != std::string::npos &&
+                    modernMenuEnd != std::string::npos
+                ? menuIconsSource.substr(
+                    modernMenuBegin,
+                    modernMenuEnd - modernMenuBegin)
+                : std::string{};
+        Check(!modernMenuSource.empty() &&
+                dockMenuOwnerWindowVisible != std::string::npos &&
+                dockMenuOwnerPhysicalVisibility != std::string::npos &&
+                dockMenuOwnerEffectiveFloating != std::string::npos &&
+                dockMenuOwnerResolve != std::string::npos &&
+                dockMenuOwnerVisibleArgument != std::string::npos &&
+                dockMenuOwnerFloatingArgument != std::string::npos &&
+                dockMenuOwnerWindowVisible <
+                    dockMenuOwnerPhysicalVisibility &&
+                dockMenuOwnerPhysicalVisibility <
+                    dockMenuOwnerEffectiveFloating &&
+                dockMenuOwnerEffectiveFloating <
+                    dockMenuOwnerResolve &&
+                dockMenuOwnerResolve <
+                    dockMenuOwnerVisibleArgument &&
+                dockMenuOwnerVisibleArgument <
+                    dockMenuOwnerFloatingArgument &&
+                modernMenuSource.find(
+                  "floatingDockHostActive_") == std::string::npos,
+            "modern menus must never use an active desktop-band or hidden DockHost as their Z-order owner; only the selected visible, effectively floating Host is eligible");
         const std::size_t dockContextHit =
             pointerContextSource.find(
                 "DockContainer* dock = GetDockContainerAtPoint(pt);");
