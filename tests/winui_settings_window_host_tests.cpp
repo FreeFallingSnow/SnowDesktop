@@ -862,7 +862,7 @@ void TestHostContract(const std::filesystem::path& repository)
     const std::size_t showReopenedWindow = reopenWindow.find(
         "ShowWindow(impl_->window");
     const std::size_t raiseReopenedWindow = reopenWindow.find(
-        "SetWindowPos(impl_->window, HWND_TOP");
+        "ActivateSettingsWindow(impl_->window)");
     const std::size_t validateShownWindow = reopenWindow.find(
         "IsWindowVisible(impl_->window)");
     const std::size_t sampleWorkingSet = reopenWindow.find(
@@ -885,6 +885,28 @@ void TestHostContract(const std::filesystem::path& repository)
             showReopenedWindow < raiseReopenedWindow &&
             raiseReopenedWindow < validateShownWindow,
         "reopening cancels stale working-set work, records its closed baseline, reuses the retained XAML root, rebuilds caption customization, raises the requested app window, and verifies that it became visible");
+    const std::size_t activateSettingsBegin = source.find(
+        "bool ActivateSettingsWindow(HWND window) noexcept");
+    const std::size_t activateSettingsEnd = source.find(
+        "bool QueryHighContrastEnabled", activateSettingsBegin);
+    const std::string_view activateSettings =
+        activateSettingsBegin != std::string::npos &&
+                activateSettingsEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  activateSettingsBegin,
+                  activateSettingsEnd - activateSettingsBegin)
+            : std::string_view{};
+    Check(activateSettings.find("GetForegroundWindow() == window") !=
+                std::string_view::npos &&
+            activateSettings.find("AttachThreadInput(") !=
+                std::string_view::npos &&
+            activateSettings.find("TRUE") != std::string_view::npos &&
+            activateSettings.find("FALSE") != std::string_view::npos &&
+            activateSettings.find("SetWindowPos(window, HWND_TOP") !=
+                std::string_view::npos &&
+            activateSettings.find("SetForegroundWindow(window)") !=
+                std::string_view::npos,
+        "settings activation retries with a short-lived foreground input-queue attachment and always detaches after raising only its own window");
     Check(source.find("case WM_TIMER:") != std::string::npos &&
             source.find("static_cast<UINT_PTR>(wParam)") !=
                 std::string::npos &&

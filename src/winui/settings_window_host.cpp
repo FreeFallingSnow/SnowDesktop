@@ -81,6 +81,41 @@ bool TrimProcessWorkingSet() noexcept
                static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)) != FALSE;
 }
 
+bool ActivateSettingsWindow(HWND window) noexcept
+{
+    if (!window || !IsWindow(window))
+        return false;
+
+    const auto requestActivation = [window]() {
+        (void)SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(window);
+        SetActiveWindow(window);
+    };
+    requestActivation();
+    if (GetForegroundWindow() == window)
+        return true;
+
+    // The tray and single-instance messages can be dispatched after Windows
+    // has transferred foreground ownership to another process. Match the
+    // existing Dock activation policy: briefly share input queues only for a
+    // retry against SnowDesktop's own responsive window, then always detach.
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground
+        ? GetWindowThreadProcessId(foreground, nullptr)
+        : 0;
+    const DWORD currentThread = GetCurrentThreadId();
+    const bool attached = foregroundThread != 0 &&
+        foregroundThread != currentThread &&
+        AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
+    if (attached)
+    {
+        requestActivation();
+        AttachThreadInput(currentThread, foregroundThread, FALSE);
+    }
+    return GetForegroundWindow() == window;
+}
+
 bool QueryHighContrastEnabled(bool& enabled) noexcept
 {
     HIGHCONTRASTW state{};
@@ -3177,14 +3212,7 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         ShowWindow(impl_->window, SW_RESTORE);
     else
         ShowWindow(impl_->window, SW_SHOWNORMAL);
-    // A tray or secondary-instance request can arrive after Windows has moved
-    // foreground activation to another process. Put the already-requested
-    // application window at the top of the normal band before asking Windows
-    // to activate it, without using a persistent topmost state.
-    (void)SetWindowPos(impl_->window, HWND_TOP, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    SetForegroundWindow(impl_->window);
-    SetActiveWindow(impl_->window);
+    (void)ActivateSettingsWindow(impl_->window);
 
     if (!IsWindowVisible(impl_->window))
     {
