@@ -3110,8 +3110,27 @@ void SettingsWindowHost::Shutdown() noexcept
 
 bool SettingsWindowHost::Open(const SettingsRoute& route)
 {
-    if (!impl_->initialized || !impl_->OnOwnerThread() || !route.IsValid())
+    impl_->lastError.clear();
+    if (!impl_->initialized)
+    {
+        impl_->SetError(L"Open settings before host initialization");
         return false;
+    }
+    if (!impl_->OnOwnerThread())
+    {
+        impl_->SetError(L"Open settings from a different thread");
+        return false;
+    }
+    if (!route.IsValid())
+    {
+        impl_->SetError(L"Open settings with an invalid route");
+        return false;
+    }
+    if (!impl_->window || !IsWindow(impl_->window))
+    {
+        impl_->SetError(L"Open settings with an invalid host window");
+        return false;
+    }
 
     ++impl_->viewEpoch;
     impl_->viewReleaseQueued = false;
@@ -3146,7 +3165,11 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
 
     SettingsActionResult openResult;
     if (!impl_->CommitRoute(route, &openResult))
+    {
+        if (impl_->lastError.empty())
+            impl_->SetError(L"Commit settings route failed");
         return false;
+    }
     const auto snapshot = impl_->controller->Snapshot();
     impl_->ApplySnapshotNow(snapshot);
     impl_->ResumeInteraction();
@@ -3154,8 +3177,20 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         ShowWindow(impl_->window, SW_RESTORE);
     else
         ShowWindow(impl_->window, SW_SHOWNORMAL);
+    // A tray or secondary-instance request can arrive after Windows has moved
+    // foreground activation to another process. Put the already-requested
+    // application window at the top of the normal band before asking Windows
+    // to activate it, without using a persistent topmost state.
+    (void)SetWindowPos(impl_->window, HWND_TOP, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SetForegroundWindow(impl_->window);
     SetActiveWindow(impl_->window);
+
+    if (!IsWindowVisible(impl_->window))
+    {
+        impl_->SetError(L"Settings host window remained hidden after show");
+        return false;
+    }
 
     if (!reloadResult.Succeeded())
         impl_->ShowActionError(reloadResult);

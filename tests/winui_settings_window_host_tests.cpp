@@ -861,6 +861,10 @@ void TestHostContract(const std::filesystem::path& repository)
         "impl_->QueueIntegratedTitleBarInsetsUpdate()");
     const std::size_t showReopenedWindow = reopenWindow.find(
         "ShowWindow(impl_->window");
+    const std::size_t raiseReopenedWindow = reopenWindow.find(
+        "SetWindowPos(impl_->window, HWND_TOP");
+    const std::size_t validateShownWindow = reopenWindow.find(
+        "IsWindowVisible(impl_->window)");
     const std::size_t sampleWorkingSet = reopenWindow.find(
         "QueryCurrentProcessWorkingSet()");
     Check(recreateView != std::string_view::npos &&
@@ -871,12 +875,16 @@ void TestHostContract(const std::filesystem::path& repository)
             reconfigureTitleBar != std::string_view::npos &&
             refreshTitleBarInsets != std::string_view::npos &&
             showReopenedWindow != std::string_view::npos &&
+            raiseReopenedWindow != std::string_view::npos &&
+            validateShownWindow != std::string_view::npos &&
             recreateView < sampleWorkingSet &&
             recreateView < missingTitleBarGuard &&
             missingTitleBarGuard < reconfigureTitleBar &&
             reconfigureTitleBar < refreshTitleBarInsets &&
-            refreshTitleBarInsets < showReopenedWindow,
-        "reopening cancels stale working-set work, records its closed baseline, reuses the retained XAML root when available, and rebuilds caption customization on the settings HWND");
+            refreshTitleBarInsets < showReopenedWindow &&
+            showReopenedWindow < raiseReopenedWindow &&
+            raiseReopenedWindow < validateShownWindow,
+        "reopening cancels stale working-set work, records its closed baseline, reuses the retained XAML root, rebuilds caption customization, raises the requested app window, and verifies that it became visible");
     Check(source.find("case WM_TIMER:") != std::string::npos &&
             source.find("static_cast<UINT_PTR>(wParam)") !=
                 std::string::npos &&

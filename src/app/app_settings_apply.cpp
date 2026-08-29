@@ -1519,7 +1519,16 @@ void DesktopApp::TryShowPendingSettingsWindow()
         if (controlHwnd_ && IsWindow(controlHwnd_))
             KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
         RefreshDockRunningWindows();
-        WriteDiagnosticLogEntry(L"SettingsWindow shown");
+        const HWND settingsHwnd = settingsWindow_->Window();
+        const HWND foregroundHwnd = GetForegroundWindow();
+        wchar_t message[256]{};
+        swprintf_s(message,
+            L"SettingsWindow shown (hwnd=%p, visible=%d, foreground=%p, foregroundMatch=%d)",
+            settingsHwnd,
+            settingsHwnd && IsWindowVisible(settingsHwnd) ? 1 : 0,
+            foregroundHwnd,
+            settingsHwnd && foregroundHwnd == settingsHwnd ? 1 : 0);
+        WriteDiagnosticLogEntry(message);
         if (postOpenAction ==
                 snowdesktop::settings_window_open_rules::PostOpenAction::
                     ShowExitConfirmation &&
@@ -1538,8 +1547,14 @@ void DesktopApp::TryShowPendingSettingsWindow()
         if (SetTimer(controlHwnd_, kSettingsWindowRetryTimerId,
                 kSettingsWindowRetryIntervalMs, nullptr) != 0)
         {
-            WriteDiagnosticLogEntry(
-                L"SettingsWindow show failed; retry scheduled");
+            std::wstring message =
+                L"SettingsWindow show failed; retry scheduled";
+            if (settingsWindow_ && !settingsWindow_->LastError().empty())
+            {
+                message += L": ";
+                message += settingsWindow_->LastError();
+            }
+            WriteDiagnosticLogEntry(message.c_str());
             return;
         }
         wchar_t message[192]{};
@@ -1549,8 +1564,14 @@ void DesktopApp::TryShowPendingSettingsWindow()
         WriteDiagnosticLogEntry(message);
     }
 
-    WriteDiagnosticLogEntry(
-        L"SettingsWindow show failed; request remains pending");
+    std::wstring message =
+        L"SettingsWindow show failed; request remains pending";
+    if (settingsWindow_ && !settingsWindow_->LastError().empty())
+    {
+        message += L": ";
+        message += settingsWindow_->LastError();
+    }
+    WriteDiagnosticLogEntry(message.c_str());
 }
 
 /**

@@ -196,31 +196,35 @@ int main(int argc, char** argv)
                 markSettingsShown < refreshDockAfterShow &&
                 refreshDockAfterShow < logSettingsShown,
             "showing settings refreshes the Dock immediately after the window becomes visible");
-        const std::size_t firstHostOpen = source.find(
-            "if (impl_->host->Open(canonical))");
-        const std::size_t failedHostShutdown = source.find(
-            "impl_->host->Shutdown();", firstHostOpen);
-        const std::size_t failedHostReset = source.find(
-            "impl_->host.reset();", failedHostShutdown);
-        const std::size_t recoverInitialization = source.find(
-            "if (!impl_->EnsureInitialized())", failedHostReset);
-        const std::size_t recoveredHostOpen = source.find(
-            "if (impl_->host->Open(canonical))", recoverInitialization);
+        const std::size_t openFacadeBegin = source.find(
+            "bool SettingsWindow::Open(");
+        const std::size_t openFacadeEnd = source.find(
+            "bool SettingsWindow::Show()", openFacadeBegin);
+        const std::string_view openFacade =
+            openFacadeBegin != std::string::npos &&
+                    openFacadeEnd != std::string::npos
+                ? std::string_view(source).substr(
+                      openFacadeBegin, openFacadeEnd - openFacadeBegin)
+                : std::string_view{};
         Check(source.find("bool EnsureInitialized()") !=
                     std::string::npos &&
                 source.find("auto candidate =") != std::string::npos &&
                 source.find("host = std::move(candidate)") !=
                     std::string::npos &&
-                firstHostOpen != std::string::npos &&
-                failedHostShutdown != std::string::npos &&
-                failedHostReset != std::string::npos &&
-                recoverInitialization != std::string::npos &&
-                recoveredHostOpen != std::string::npos &&
-                firstHostOpen < failedHostShutdown &&
-                failedHostShutdown < failedHostReset &&
-                failedHostReset < recoverInitialization &&
-                recoverInitialization < recoveredHostOpen,
-            "failed lazy initialization and failed Open each retry with a newly constructed WinUI host");
+                openFacade.find("impl_->host->Open(canonical)") !=
+                    std::string_view::npos &&
+                openFacade.find("impl_->host->LastError()") !=
+                    std::string_view::npos &&
+                openFacade.find("impl_->host->Shutdown()") ==
+                    std::string_view::npos &&
+                openFacade.find("impl_->host.reset()") ==
+                    std::string_view::npos,
+            "failed lazy initialization can use a fresh candidate, while a transient Open failure preserves the process-lifetime WinUI host for scheduled retries");
+        Check(appSettings.find("foregroundMatch=%d") !=
+                    std::string::npos &&
+                appSettings.find("settingsWindow_->LastError()") !=
+                    std::string::npos,
+            "settings open diagnostics distinguish visibility and foreground activation and retain the host failure stage");
         Check(host.find("shell->ReleaseSessionResources();") !=
                     std::string::npos &&
                 host.find("QueueViewRelease();") != std::string::npos &&
