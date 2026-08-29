@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -21,9 +22,12 @@
 namespace
 {
 int failures = 0;
+int skips = 0;
 constexpr wchar_t kRuntimeCompleteFilename[] =
     L".snowdesktop-runtime-complete";
 constexpr wchar_t kCurrentRuntimeFilename[] = L"current-runtime.txt";
+constexpr wchar_t kRuntimeManifestFilename[] =
+    L".snowdesktop-runtime-manifest.json";
 
 class OccupiedFile final
 {
@@ -58,6 +62,15 @@ void Check(bool condition, const char* message)
         return;
     ++failures;
     std::cerr << "FAIL: " << message << '\n';
+}
+
+void Skip(const char* message, DWORD error = ERROR_SUCCESS)
+{
+    ++skips;
+    std::cout << "SKIP: " << message;
+    if (error != ERROR_SUCCESS)
+        std::cout << " (Windows error " << error << ')';
+    std::cout << '\n';
 }
 
 void WriteText(const std::filesystem::path& path, std::string_view text)
@@ -96,6 +109,67 @@ DirectorySnapshot SnapshotDirectory(const std::filesystem::path& root)
         return left.first.generic_wstring() < right.first.generic_wstring();
     });
     return result;
+}
+
+bool IsReparsePoint(const std::filesystem::path& path)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool CreateDirectoryJunction(const std::filesystem::path& link,
+    const std::filesystem::path& target)
+{
+    std::filesystem::create_directories(link.parent_path());
+    const std::wstring command = L"cmd.exe /d /c mklink /J \"" +
+        std::filesystem::absolute(link).wstring() + L"\" \"" +
+        std::filesystem::absolute(target).wstring() +
+        L"\" >nul 2>&1";
+    return _wsystem(command.c_str()) == 0 && IsReparsePoint(link);
+}
+
+bool CreateFileSymlink(const std::filesystem::path& link,
+    const std::filesystem::path& target, DWORD& error)
+{
+    error = ERROR_SUCCESS;
+    constexpr DWORD allowUnprivilegedCreate = 0x2;
+    if (CreateSymbolicLinkW(link.c_str(),
+            std::filesystem::absolute(target).c_str(),
+            allowUnprivilegedCreate) ||
+        (GetLastError() == ERROR_INVALID_PARAMETER &&
+            CreateSymbolicLinkW(link.c_str(),
+                std::filesystem::absolute(target).c_str(), 0)))
+    {
+        return IsReparsePoint(link);
+    }
+    error = GetLastError();
+    return false;
+}
+
+std::filesystem::path FindRepositoryFile(
+    const std::filesystem::path& relativePath)
+{
+    std::filesystem::path testSource(__FILE__);
+    if (testSource.is_absolute())
+    {
+        const auto candidate = testSource.parent_path().parent_path() /
+            relativePath;
+        if (std::filesystem::is_regular_file(candidate))
+            return candidate;
+    }
+
+    std::filesystem::path current = std::filesystem::current_path();
+    while (!current.empty())
+    {
+        const auto candidate = current / relativePath;
+        if (std::filesystem::is_regular_file(candidate))
+            return candidate;
+        if (current == current.parent_path())
+            break;
+        current = current.parent_path();
+    }
+    return {};
 }
 
 std::string Sha256(const std::filesystem::path& path)
@@ -410,6 +484,22 @@ void CorruptDistributionLibrary(const std::filesystem::path& root)
         L"runtime.dll", "dll evil!");
 }
 
+void CorruptDistributionManifest(const std::filesystem::path& root)
+{
+    WriteText(root /
+            snowdesktop::steam_runtime::kDistributionManifestFilename,
+        "{not-json");
+}
+
+void CheckFallbackRejected(
+    const snowdesktop::steam_runtime::ApplyResult& result,
+    const char* message)
+{
+    Check(!result.ok && !result.usedFallback &&
+            result.executable.empty() && !result.error.empty(),
+        message);
+}
+
 void TestOccupiedSameBuildRecovery(const std::filesystem::path& root)
 {
     constexpr std::string_view buildId = "occupied-build";
@@ -530,6 +620,298 @@ void TestInvalidRuntimeFallbacks(const std::filesystem::path& root)
         "fallback rejects a runtime whose managed sidecar is invalid");
 }
 
+void TestRuntimeDirectoryIdValidation(const std::filesystem::path& root)
+{
+    constexpr std::string_view buildId = "directory-id";
+    const auto initial = PrepareRuntime(root, buildId);
+    if (!initial.ok)
+        return;
+
+    CorruptDistributionManifest(root);
+    const auto logicalFallback =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(logicalFallback.ok && logicalFallback.usedFallback &&
+            logicalFallback.executable == initial.executable &&
+            std::string_view(logicalFallback.buildId) == buildId,
+        "fallback accepts a runtime directory whose physical ID is the logical build ID");
+
+    WriteDistribution(root, "1.0.5.0", buildId,
+        "host clean", "dll clean");
+    WriteText(initial.executable.parent_path() / kRuntimeCompleteFilename,
+        "damaged completion marker\n");
+    const auto recovered =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(recovered.ok && !recovered.usedFallback &&
+            recovered.executable.parent_path() !=
+                initial.executable.parent_path() &&
+            recovered.executable.parent_path().filename().wstring().starts_with(
+                L"recovery-") &&
+            std::string_view(recovered.buildId) == buildId,
+        "same-build recovery publishes an allowed recovery-digest directory ID");
+    if (!recovered.ok)
+        return;
+
+    CorruptDistributionManifest(root);
+    const auto recoveryFallback =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(recoveryFallback.ok && recoveryFallback.usedFallback &&
+            recoveryFallback.executable == recovered.executable &&
+            std::string_view(recoveryFallback.buildId) == buildId,
+        "fallback accepts a validated recovery-digest directory ID");
+
+    const auto arbitraryRuntime = recovered.executable.parent_path()
+        .parent_path() / L"arbitrary-runtime-copy";
+    std::error_code renameError;
+    std::filesystem::rename(
+        recovered.executable.parent_path(), arbitraryRuntime, renameError);
+    Check(!renameError,
+        "the valid recovery runtime can be renamed for the directory-ID rejection fixture");
+    if (renameError)
+        return;
+    WriteText(root / L".snowdesktop" / kCurrentRuntimeFilename,
+        "arbitrary-runtime-copy\n");
+    const auto arbitraryFallback =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    CheckFallbackRejected(arbitraryFallback,
+        "fallback rejects an otherwise valid runtime under an arbitrary renamed directory ID");
+}
+
+void TestRuntimeReparseFallbacks(const std::filesystem::path& root)
+{
+    const auto verifyRejected = [](const std::filesystem::path& caseRoot,
+                                    const char* message) {
+        CorruptDistributionManifest(caseRoot);
+        CheckFallbackRejected(
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot),
+            message);
+    };
+
+    {
+        const auto caseRoot = root / L"runtime-root";
+        const auto initial = PrepareRuntime(caseRoot, "reparse-root");
+        if (initial.ok)
+        {
+            const auto runtime = initial.executable.parent_path();
+            const auto backing = caseRoot / L"runtime-root-backing";
+            std::error_code error;
+            std::filesystem::rename(runtime, backing, error);
+            Check(!error,
+                "the runtime-root reparse fixture can move its backing directory");
+            if (!error)
+            {
+                if (CreateDirectoryJunction(runtime, backing))
+                {
+                    verifyRejected(caseRoot,
+                        "fallback rejects a runtime whose root is a directory junction");
+                    RemoveDirectoryW(runtime.c_str());
+                }
+                else
+                {
+                    Skip("runtime-root reparse test could not create a directory junction",
+                        GetLastError());
+                    std::filesystem::rename(backing, runtime, error);
+                }
+            }
+        }
+    }
+
+    {
+        const auto caseRoot = root / L"payload-parent";
+        const auto initial = PrepareRuntime(caseRoot, "reparse-parent");
+        if (initial.ok)
+        {
+            const auto runtime = initial.executable.parent_path();
+            const auto parent = runtime / L"SnowDesktop.Runtime";
+            const auto backing = caseRoot / L"payload-parent-backing";
+            std::error_code error;
+            std::filesystem::rename(parent, backing, error);
+            Check(!error,
+                "the payload-parent reparse fixture can move its backing directory");
+            if (!error)
+            {
+                if (CreateDirectoryJunction(parent, backing))
+                {
+                    verifyRejected(caseRoot,
+                        "fallback rejects a runtime whose payload parent is a directory junction");
+                    RemoveDirectoryW(parent.c_str());
+                }
+                else
+                {
+                    Skip("payload-parent reparse test could not create a directory junction",
+                        GetLastError());
+                    std::filesystem::rename(backing, parent, error);
+                }
+            }
+        }
+    }
+
+    {
+        const auto caseRoot = root / L"internal-metadata";
+        const auto initial = PrepareRuntime(caseRoot, "reparse-metadata");
+        if (initial.ok)
+        {
+            const auto runtime = initial.executable.parent_path();
+            const auto metadata = runtime / kRuntimeManifestFilename;
+            const auto contents = ReadText(metadata);
+            const auto external = caseRoot / L"external-runtime-manifest.json";
+            WriteText(external, contents);
+            std::filesystem::remove(metadata);
+            DWORD error = ERROR_SUCCESS;
+            if (CreateFileSymlink(metadata, external, error))
+            {
+                verifyRejected(caseRoot,
+                    "fallback rejects symlinked internal runtime metadata");
+                DeleteFileW(metadata.c_str());
+            }
+            else
+            {
+                Skip("internal-metadata reparse test could not create a file symlink",
+                    error);
+                WriteText(metadata, contents);
+            }
+        }
+    }
+
+    {
+        const auto caseRoot = root / L"payload-file";
+        const auto initial = PrepareRuntime(caseRoot, "reparse-file");
+        if (initial.ok)
+        {
+            const auto runtime = initial.executable.parent_path();
+            const auto payload = runtime / L"SnowDesktop.Runtime" /
+                L"runtime.dll";
+            const auto contents = ReadText(payload);
+            const auto external = caseRoot / L"external-runtime.dll";
+            WriteText(external, contents);
+            std::filesystem::remove(payload);
+            DWORD error = ERROR_SUCCESS;
+            if (CreateFileSymlink(payload, external, error))
+            {
+                verifyRejected(caseRoot,
+                    "fallback rejects a symlinked runtime payload file");
+                DeleteFileW(payload.c_str());
+            }
+            else
+            {
+                Skip("payload-file reparse test could not create a file symlink",
+                    error);
+                WriteText(payload, contents);
+            }
+        }
+    }
+}
+
+void TestCompletionMarkerIsFinalFence()
+{
+    const auto sourcePath =
+        FindRepositoryFile(L"src/steam_runtime_manager.cpp");
+    Check(!sourcePath.empty(),
+        "the runtime manager source is available for the publish-order contract");
+    if (sourcePath.empty())
+        return;
+
+    const std::string source = ReadText(sourcePath);
+    const auto payloadValidation =
+        source.find("!ValidateFile(fileDestination, file, error)");
+    const auto internalManifest = source.find(
+        "WriteTextAtomically(staging / kRuntimeManifestFilename",
+        payloadValidation);
+    const auto sidecar = source.find(
+        "snowdesktop::deployment::kSteamRuntimeContextFilename",
+        internalManifest);
+    const auto completionMarker = source.find(
+        "WriteTextAtomically(staging / kCompleteFilename", sidecar);
+    const auto stagedValidation = source.find(
+        "ValidatePublishedRuntime(staging, &*manifest", completionMarker);
+    const auto publish = source.find(
+        "MoveFileExW(staging.c_str(), destination.path.c_str()",
+        stagedValidation);
+    Check(payloadValidation != std::string::npos &&
+            internalManifest != std::string::npos &&
+            sidecar != std::string::npos &&
+            completionMarker != std::string::npos &&
+            stagedValidation != std::string::npos &&
+            publish != std::string::npos &&
+            payloadValidation < internalManifest &&
+            internalManifest < sidecar && sidecar < completionMarker &&
+            completionMarker < stagedValidation &&
+            stagedValidation < publish,
+        "the completion marker is the final staged write after payload validation and before validation and publish");
+
+    const auto publishedValidation = source.find(
+        "std::optional<DistributionManifest> ValidatePublishedRuntime");
+    const auto publishedSidecar = source.find(
+        "const std::string sidecar = ReadFile", publishedValidation);
+    const auto publishedPayload = source.find(
+        "for (const DistributionFile& file : manifest->files)",
+        publishedValidation);
+    const auto publishedMarker = source.find(
+        "const std::string marker = ReadFile", publishedValidation);
+    const auto publishedValidationEnd = source.find(
+        "struct RuntimeDestination", publishedValidation);
+    Check(publishedValidation != std::string::npos &&
+            publishedSidecar != std::string::npos &&
+            publishedPayload != std::string::npos &&
+            publishedMarker != std::string::npos &&
+            publishedValidationEnd != std::string::npos &&
+            publishedValidation < publishedSidecar &&
+            publishedSidecar < publishedPayload &&
+            publishedPayload < publishedMarker &&
+            publishedMarker < publishedValidationEnd,
+        "published runtime validation reads the completion marker only after sidecar and payload hashes pass");
+}
+
+void TestUnexpectedRuntimeEntries(const std::filesystem::path& root)
+{
+    const auto verifyRejected = [&](const std::filesystem::path& caseRoot,
+                                    std::string_view buildId,
+                                    const std::filesystem::path& relativePath,
+                                    bool directory,
+                                    const char* fastPathMessage,
+                                    const char* fallbackMessage) {
+        const auto addUnexpected = [&](const std::filesystem::path& runtime) {
+            if (directory)
+                std::filesystem::create_directories(runtime / relativePath);
+            else
+                WriteText(runtime / relativePath, "unexpected");
+        };
+
+        const auto initial = PrepareRuntime(caseRoot, buildId);
+        if (!initial.ok)
+            return;
+        addUnexpected(initial.executable.parent_path());
+        const auto repaired =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        Check(repaired.ok && !repaired.usedFallback &&
+                repaired.executable.parent_path() !=
+                    initial.executable.parent_path() &&
+                !std::filesystem::exists(
+                    repaired.executable.parent_path() / relativePath),
+            fastPathMessage);
+        if (!repaired.ok)
+            return;
+
+        addUnexpected(repaired.executable.parent_path());
+        CorruptDistributionManifest(caseRoot);
+        CheckFallbackRejected(
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot),
+            fallbackMessage);
+    };
+
+    verifyRejected(root / L"ordinary-file", "unexpected-file",
+        L"unexpected.txt", false,
+        "fast path rejects a runtime containing an unexpected ordinary file",
+        "fallback rejects a runtime containing an unexpected ordinary file");
+    verifyRejected(root / L"library", "unexpected-library",
+        L"SnowDesktop.Runtime/unexpected.dll", false,
+        "fast path rejects a runtime containing an unexpected DLL",
+        "fallback rejects a runtime containing an unexpected DLL");
+    verifyRejected(root / L"directory", "unexpected-directory",
+        L"unexpected-directory", true,
+        "fast path rejects a runtime containing an unexpected directory",
+        "fallback rejects a runtime containing an unexpected directory");
+}
+
 void TestSteamAutoStartRules()
 {
     using namespace snowdesktop;
@@ -565,6 +947,10 @@ int main()
         TestOccupiedSameBuildRecovery(root / L"occupied-recovery");
         TestTamperedActiveRuntimeBypassesFastPath(root / L"tampered-active");
         TestInvalidRuntimeFallbacks(root / L"invalid-fallbacks");
+        TestRuntimeDirectoryIdValidation(root / L"directory-id-validation");
+        TestRuntimeReparseFallbacks(root / L"reparse-fallbacks");
+        TestCompletionMarkerIsFinalFence();
+        TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
         TestSteamAutoStartRules();
     }
     catch (const std::exception& exception)
@@ -580,6 +966,8 @@ int main()
         std::cerr << failures << " Steam runtime update check(s) failed\n";
         return 1;
     }
+    if (skips != 0)
+        std::cout << skips << " Steam runtime reparse check(s) skipped\n";
     std::cout << "Steam runtime update checks passed\n";
     return 0;
 }

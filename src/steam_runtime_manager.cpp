@@ -532,6 +532,150 @@ std::string RuntimeContextJson()
         "}\n";
 }
 
+std::wstring PathKey(const std::filesystem::path& path)
+{
+    std::wstring key = path.generic_wstring();
+    std::transform(key.begin(), key.end(), key.begin(),
+        [](wchar_t value) { return static_cast<wchar_t>(towlower(value)); });
+    return key;
+}
+
+bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
+    std::string_view label, std::string& error)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (attributes & FILE_ATTRIBUTE_DEVICE) != 0)
+    {
+        error = std::string(label) +
+            " is missing, is not a regular file, or is a reparse point";
+        return false;
+    }
+    return true;
+}
+
+bool ValidateExactPayloadTree(const std::filesystem::path& root,
+    const DistributionManifest& manifest, bool includeRuntimeMetadata,
+    std::string& error)
+{
+    const DWORD rootAttributes = GetFileAttributesW(root.c_str());
+    if (rootAttributes == INVALID_FILE_ATTRIBUTES ||
+        (rootAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (rootAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+    {
+        error = "Steam payload root is missing, is not a directory, or is a reparse point";
+        return false;
+    }
+
+    std::set<std::wstring> expectedFiles;
+    std::set<std::wstring> expectedDirectories;
+    for (const DistributionFile& file : manifest.files)
+    {
+        expectedFiles.insert(PathKey(file.relativePath));
+        for (std::filesystem::path parent = file.relativePath.parent_path();
+             !parent.empty(); parent = parent.parent_path())
+        {
+            expectedDirectories.insert(PathKey(parent));
+        }
+    }
+    if (includeRuntimeMetadata)
+    {
+        expectedFiles.insert(PathKey(kCompleteFilename));
+        expectedFiles.insert(PathKey(kRuntimeManifestFilename));
+        expectedFiles.insert(PathKey(
+            snowdesktop::deployment::kSteamRuntimeContextFilename));
+    }
+
+    std::set<std::wstring> actualFiles;
+    std::set<std::wstring> actualDirectories;
+    std::error_code iteratorError;
+    std::filesystem::recursive_directory_iterator iterator(
+        root, std::filesystem::directory_options::none, iteratorError);
+    const std::filesystem::recursive_directory_iterator end;
+    if (iteratorError)
+    {
+        error = "cannot enumerate the Steam payload tree";
+        return false;
+    }
+    while (iterator != end)
+    {
+        const std::filesystem::path entryPath = iterator->path();
+        const std::filesystem::path relative =
+            entryPath.lexically_relative(root);
+        const std::wstring key = PathKey(relative);
+        const DWORD attributes = GetFileAttributesW(entryPath.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+            (attributes & FILE_ATTRIBUTE_DEVICE) != 0)
+        {
+            error = "Steam payload contains an inaccessible or reparse-point entry: " +
+                relative.string();
+            return false;
+        }
+
+        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            if (!expectedDirectories.contains(key))
+            {
+                error = "Steam payload contains an unexpected directory: " +
+                    relative.string();
+                return false;
+            }
+            actualDirectories.insert(key);
+        }
+        else
+        {
+            if (!expectedFiles.contains(key))
+            {
+                error = "Steam payload contains an unexpected file: " +
+                    relative.string();
+                return false;
+            }
+            actualFiles.insert(key);
+        }
+
+        iterator.increment(iteratorError);
+        if (iteratorError)
+        {
+            error = "cannot enumerate the complete Steam payload tree";
+            return false;
+        }
+    }
+
+    if (actualFiles != expectedFiles ||
+        actualDirectories != expectedDirectories)
+    {
+        error = "Steam payload tree is incomplete";
+        return false;
+    }
+    return true;
+}
+
+bool DirectoryIdMatchesManifest(std::string_view directoryId,
+    const DistributionManifest& manifest) noexcept
+{
+    if (directoryId == manifest.buildId)
+        return true;
+    const std::string recoveryPrefix = "recovery-" + manifest.digest;
+    if (directoryId == recoveryPrefix)
+        return true;
+    if (!directoryId.starts_with(recoveryPrefix) ||
+        directoryId.size() <= recoveryPrefix.size() + 1 ||
+        directoryId[recoveryPrefix.size()] != '-')
+    {
+        return false;
+    }
+    const std::string_view suffix =
+        directoryId.substr(recoveryPrefix.size() + 1);
+    if (suffix.front() < '1' || suffix.front() > '9')
+        return false;
+    return std::all_of(suffix.begin(), suffix.end(), [](unsigned char value) {
+            return value >= '0' && value <= '9';
+        });
+}
+
 bool SameManifest(const DistributionManifest& left,
     const DistributionManifest& right) noexcept
 {
@@ -559,10 +703,20 @@ std::optional<DistributionManifest> ValidatePublishedRuntime(
     const std::filesystem::path& runtime,
     const DistributionManifest* expectedManifest, std::string& error)
 {
-    std::error_code fileError;
-    if (!std::filesystem::is_directory(runtime, fileError) || fileError)
+    const DWORD runtimeAttributes = GetFileAttributesW(runtime.c_str());
+    if (runtimeAttributes == INVALID_FILE_ATTRIBUTES ||
+        (runtimeAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (runtimeAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
     {
-        error = "published Steam runtime is missing or is not a directory";
+        error = "published Steam runtime is missing, is not a directory, or is a reparse point";
+        return std::nullopt;
+    }
+
+    std::string boundaryError;
+    if (!ValidatePlainFileNoReparse(runtime / kRuntimeManifestFilename,
+            "published Steam runtime manifest", boundaryError))
+    {
+        error = std::move(boundaryError);
         return std::nullopt;
     }
 
@@ -579,12 +733,8 @@ std::optional<DistributionManifest> ValidatePublishedRuntime(
         return std::nullopt;
     }
 
-    std::string markerError;
-    const std::string marker = ReadFile(
-        runtime / kCompleteFilename, 256, markerError);
-    if (!markerError.empty() || marker != manifest->digest + "\n")
+    if (!ValidateExactPayloadTree(runtime, *manifest, true, error))
     {
-        error = "published Steam runtime completion marker is invalid";
         return std::nullopt;
     }
 
@@ -606,6 +756,17 @@ std::optional<DistributionManifest> ValidatePublishedRuntime(
                 error = "published Steam runtime file is invalid";
             return std::nullopt;
         }
+    }
+
+    // The completion marker is the final publication fence. Read it only
+    // after the manifest, sidecar, exact tree, and every payload hash pass.
+    std::string markerError;
+    const std::string marker = ReadFile(
+        runtime / kCompleteFilename, 256, markerError);
+    if (!markerError.empty() || marker != manifest->digest + "\n")
+    {
+        error = "published Steam runtime completion marker is invalid";
+        return std::nullopt;
     }
     return manifest;
 }
@@ -721,6 +882,12 @@ ReadFallback(const std::filesystem::path& stateRoot,
         runtime, nullptr, validationError);
     if (!manifest)
         return std::nullopt;
+    if (!DirectoryIdMatchesManifest(directoryId, *manifest))
+    {
+        validationError =
+            "the active Steam runtime directory does not match its manifest";
+        return std::nullopt;
+    }
     return std::pair(runtime / L"SnowDesktop.exe", manifest->buildId);
 }
 
@@ -775,6 +942,11 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     std::string error;
     const std::filesystem::path manifestPath =
         installRoot / kDistributionManifestFilename;
+    if (!ValidatePlainFileNoReparse(manifestPath,
+            "Steam distribution manifest", error))
+    {
+        return FailureOrFallback(stateRoot, runtimeRoot, error);
+    }
     const auto manifest = ReadManifest(manifestPath, error);
     if (!manifest)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
@@ -824,6 +996,11 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
 
     const std::filesystem::path distribution =
         installRoot / kDistributionDirectory;
+    if (!ValidateExactPayloadTree(
+            distribution, *manifest, false, error))
+    {
+        return FailureOrFallback(stateRoot, runtimeRoot, error);
+    }
     for (const DistributionFile& file : manifest->files)
     {
         if (!ValidateFile(distribution / file.relativePath, file, error))
