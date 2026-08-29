@@ -527,6 +527,30 @@ bool ValidateFile(const std::filesystem::path& path,
     return true;
 }
 
+bool NormalizeStagedFileAttributes(const std::filesystem::path& path,
+    std::string& error)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (attributes & FILE_ATTRIBUTE_DEVICE) != 0)
+    {
+        error = "staged Steam runtime file is not a plain file";
+        return false;
+    }
+    DWORD normalized = attributes & ~FILE_ATTRIBUTE_READONLY;
+    if (normalized == 0)
+        normalized = FILE_ATTRIBUTE_NORMAL;
+    if (normalized != attributes &&
+        !SetFileAttributesW(path.c_str(), normalized))
+    {
+        error = "cannot make a staged Steam runtime file writable";
+        return false;
+    }
+    return true;
+}
+
 bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
     std::string_view label, std::string& error);
 
@@ -545,19 +569,30 @@ bool FlushPlainFile(const std::filesystem::path& path,
     }
 
     FILE_ATTRIBUTE_TAG_INFO attributes{};
-    const bool regular = GetFileInformationByHandleEx(file,
-        FileAttributeTagInfo, &attributes, sizeof(attributes)) &&
-        (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
-        (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
-        (attributes.FileAttributes & FILE_ATTRIBUTE_DEVICE) == 0;
-    const bool flushed = regular && FlushFileBuffers(file) != FALSE;
-    const DWORD flushError = flushed ? ERROR_SUCCESS : GetLastError();
+    DWORD operationError = ERROR_SUCCESS;
+    if (!GetFileInformationByHandleEx(file,
+            FileAttributeTagInfo, &attributes, sizeof(attributes)))
+    {
+        operationError = GetLastError();
+    }
+    else if ((attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+        (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (attributes.FileAttributes & FILE_ATTRIBUTE_DEVICE) != 0)
+    {
+        operationError = ERROR_INVALID_DATA;
+    }
+    else if (!FlushFileBuffers(file))
+    {
+        operationError = GetLastError();
+    }
     const bool closed = CloseHandle(file) != FALSE;
-    if (!flushed || !closed)
+    const DWORD closeError = closed ? ERROR_SUCCESS : GetLastError();
+    if (operationError != ERROR_SUCCESS || !closed)
     {
         error = "cannot durably flush " + std::string(label) +
             " (Win32 error " + std::to_string(
-                !flushed ? flushError : GetLastError()) + ')';
+                operationError != ERROR_SUCCESS ?
+                    operationError : closeError) + ')';
         return false;
     }
     return true;
@@ -605,38 +640,45 @@ bool WriteTextAtomically(const std::filesystem::path& path,
     }
 
     std::size_t offset = 0;
-    bool wrote = true;
-    while (offset < value.size())
+    DWORD operationError = ERROR_SUCCESS;
+    while (offset < value.size() && operationError == ERROR_SUCCESS)
     {
         const DWORD request = static_cast<DWORD>(std::min<std::size_t>(
             value.size() - offset,
             static_cast<std::size_t>(std::numeric_limits<DWORD>::max())));
         DWORD written = 0;
         if (!WriteFile(file, value.data() + offset, request,
-                &written, nullptr) || written != request)
+                &written, nullptr))
         {
-            wrote = false;
-            break;
+            operationError = GetLastError();
+        }
+        else if (written != request)
+        {
+            operationError = ERROR_WRITE_FAULT;
         }
         offset += written;
     }
-    const bool flushed = wrote && FlushFileBuffers(file) != FALSE;
-    const DWORD writeError = flushed ? ERROR_SUCCESS : GetLastError();
+    if (operationError == ERROR_SUCCESS && !FlushFileBuffers(file))
+        operationError = GetLastError();
     const bool closed = CloseHandle(file) != FALSE;
-    if (!flushed || !closed)
+    const DWORD closeError = closed ? ERROR_SUCCESS : GetLastError();
+    if (operationError != ERROR_SUCCESS || !closed)
     {
         DeleteFileW(temporary.c_str());
         error = "cannot durably write state file: " + path.string() +
             " (Win32 error " + std::to_string(
-                !flushed ? writeError : GetLastError()) + ')';
+                operationError != ERROR_SUCCESS ?
+                    operationError : closeError) + ')';
         return false;
     }
 
     if (!MoveFileExW(temporary.c_str(), path.c_str(),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {
+        const DWORD moveError = GetLastError();
         DeleteFileW(temporary.c_str());
-        error = "cannot publish state file: " + path.string();
+        error = "cannot publish state file: " + path.string() +
+            " (Win32 error " + std::to_string(moveError) + ')';
         return false;
     }
     return ValidatePlainFileNoReparse(path,
@@ -958,21 +1000,179 @@ std::optional<std::filesystem::path> CreateUniqueStagingDirectory(
     }
 }
 
-void RemoveStagingDirectorySafely(const std::filesystem::path& staging,
-    const std::filesystem::path& runtimeRoot) noexcept
+bool RemoveStagingDirectorySafely(const std::filesystem::path& staging,
+    const std::filesystem::path& runtimeRoot, std::string& error) noexcept
 {
     if (staging.parent_path() != runtimeRoot)
-        return;
+    {
+        error = "refusing to clean a staged runtime outside the runtime root";
+        return false;
+    }
     std::string boundaryError;
     if (!ValidatePlainDirectoryNoReparse(
             runtimeRoot, "Steam runtime directory", boundaryError) ||
         !ValidatePlainDirectoryNoReparse(
             staging, "staged Steam runtime", boundaryError))
     {
-        return;
+        error = std::move(boundaryError);
+        return false;
     }
+
+    std::error_code iteratorError;
+    std::filesystem::recursive_directory_iterator iterator(
+        staging, std::filesystem::directory_options::none, iteratorError);
+    const std::filesystem::recursive_directory_iterator end;
+    if (iteratorError)
+    {
+        error = "cannot enumerate a staged runtime for cleanup";
+        return false;
+    }
+    while (iterator != end)
+    {
+        const std::filesystem::path entry = iterator->path();
+        const DWORD attributes = GetFileAttributesW(entry.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+            (attributes & FILE_ATTRIBUTE_DEVICE) != 0)
+        {
+            error = "refusing to clean a staged runtime containing a reparse or device entry";
+            return false;
+        }
+        if ((attributes & FILE_ATTRIBUTE_READONLY) != 0)
+        {
+            DWORD normalized = attributes & ~FILE_ATTRIBUTE_READONLY;
+            if (normalized == 0)
+                normalized = FILE_ATTRIBUTE_NORMAL;
+            if (!SetFileAttributesW(entry.c_str(), normalized))
+            {
+                error = "cannot clear a read-only staged runtime entry";
+                return false;
+            }
+        }
+        iterator.increment(iteratorError);
+        if (iteratorError)
+        {
+            error = "cannot enumerate the complete staged runtime for cleanup";
+            return false;
+        }
+    }
+
+    const DWORD stagingAttributes = GetFileAttributesW(staging.c_str());
+    if (stagingAttributes == INVALID_FILE_ATTRIBUTES)
+    {
+        error = "cannot inspect the staged runtime before cleanup";
+        return false;
+    }
+    if ((stagingAttributes & FILE_ATTRIBUTE_READONLY) != 0)
+    {
+        DWORD normalized = stagingAttributes & ~FILE_ATTRIBUTE_READONLY;
+        if (normalized == 0)
+            normalized = FILE_ATTRIBUTE_NORMAL;
+        if (!SetFileAttributesW(staging.c_str(), normalized))
+        {
+            error = "cannot clear the read-only staged runtime root";
+            return false;
+        }
+    }
+
     std::error_code cleanupError;
     std::filesystem::remove_all(staging, cleanupError);
+    if (cleanupError)
+    {
+        error = "cannot remove the staged Steam runtime: " +
+            cleanupError.message();
+        return false;
+    }
+    return true;
+}
+
+bool IsStagingDirectoryName(std::wstring_view name) noexcept
+{
+    constexpr std::wstring_view prefix = L".staging.";
+    if (!name.starts_with(prefix))
+        return false;
+    name.remove_prefix(prefix.size());
+    std::array<std::size_t, 3> maximumLengths{10, 20, 10};
+    std::size_t component = 0;
+    while (!name.empty() && component < maximumLengths.size())
+    {
+        const std::size_t separator = name.find(L'.');
+        const std::wstring_view value = name.substr(0, separator);
+        if (value.empty() || value.size() > maximumLengths[component] ||
+            !std::all_of(value.begin(), value.end(), [](wchar_t character) {
+                return character >= L'0' && character <= L'9';
+            }))
+        {
+            return false;
+        }
+        ++component;
+        if (separator == std::wstring_view::npos)
+        {
+            name = {};
+            break;
+        }
+        if (separator + 1 == name.size())
+            return false;
+        name.remove_prefix(separator + 1);
+    }
+    return name.empty() && (component == 2 || component == 3);
+}
+
+bool CleanupAbandonedStagingDirectories(
+    const std::filesystem::path& runtimeRoot, std::string& error)
+{
+    if (!ValidatePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", error))
+    {
+        return false;
+    }
+
+    std::vector<std::filesystem::path> abandoned;
+    std::error_code iteratorError;
+    std::filesystem::directory_iterator iterator(
+        runtimeRoot, std::filesystem::directory_options::none, iteratorError);
+    const std::filesystem::directory_iterator end;
+    if (iteratorError)
+    {
+        error = "cannot enumerate the Steam runtime directory for abandoned staging data";
+        return false;
+    }
+    while (iterator != end)
+    {
+        const std::filesystem::path entry = iterator->path();
+        if (IsStagingDirectoryName(entry.filename().wstring()))
+        {
+            const DWORD attributes = GetFileAttributesW(entry.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES ||
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+                (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+                (attributes & FILE_ATTRIBUTE_DEVICE) != 0)
+            {
+                error = "an abandoned staging name is not a plain directory";
+                return false;
+            }
+            abandoned.push_back(entry);
+        }
+        iterator.increment(iteratorError);
+        if (iteratorError)
+        {
+            error = "cannot enumerate the complete Steam runtime directory for abandoned staging data";
+            return false;
+        }
+    }
+
+    for (const auto& entry : abandoned)
+    {
+        std::string cleanupError;
+        if (!RemoveStagingDirectorySafely(
+                entry, runtimeRoot, cleanupError))
+        {
+            error = "cannot clean abandoned Steam staging data: " +
+                cleanupError;
+            return false;
+        }
+    }
+    return true;
 }
 
 ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
@@ -998,8 +1198,9 @@ ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
             CloseHandle(value);
             break;
         }
-        if (GetLastError() != ERROR_SHARING_VIOLATION &&
-            GetLastError() != ERROR_LOCK_VIOLATION)
+        const DWORD openError = GetLastError();
+        if (openError != ERROR_SHARING_VIOLATION &&
+            openError != ERROR_LOCK_VIOLATION)
         {
             break;
         }
@@ -1099,8 +1300,11 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     // inside Steam's install directory as required by this distribution.
     if (!EnsurePlainDirectoryNoReparse(
             installRoot / L"data", "Steam data directory", rootError))
-        return FailureOrFallback(stateRoot, runtimeRoot,
-            std::move(rootError));
+    {
+        ApplyResult result;
+        result.error = std::move(rootError);
+        return result;
+    }
 
     std::error_code fileError;
 
@@ -1110,6 +1314,9 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             "cannot acquire the Steam runtime update lock");
 
     std::string error;
+    if (!CleanupAbandonedStagingDirectories(runtimeRoot, error))
+        return FailureOrFallback(stateRoot, runtimeRoot, error);
+
     const std::filesystem::path manifestPath =
         installRoot / kDistributionManifestFilename;
     if (!ValidatePlainFileNoReparse(manifestPath,
@@ -1215,6 +1422,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             fileDestination.parent_path(), fileError);
         if (fileError || !CopyFileW(
                 source.c_str(), fileDestination.c_str(), FALSE) ||
+            !NormalizeStagedFileAttributes(fileDestination, error) ||
             !ValidateFile(fileDestination, file, error) ||
             !FlushPlainFile(fileDestination,
                 "staged Steam runtime file", error))
@@ -1251,16 +1459,30 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     }
     if (!staged)
     {
-        RemoveStagingDirectorySafely(staging, runtimeRoot);
+        std::string cleanupError;
+        if (!RemoveStagingDirectorySafely(
+                staging, runtimeRoot, cleanupError))
+        {
+            error += "; staged cleanup failed: " + cleanupError;
+        }
         return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
     if (!MoveFileExW(staging.c_str(), destination.path.c_str(),
             MOVEFILE_WRITE_THROUGH))
     {
-        RemoveStagingDirectorySafely(staging, runtimeRoot);
-        return FailureOrFallback(stateRoot, runtimeRoot,
-            "cannot publish the staged Steam runtime");
+        const DWORD moveError = GetLastError();
+        std::string publishError =
+            "cannot publish the staged Steam runtime (Win32 error " +
+            std::to_string(moveError) + ')';
+        std::string cleanupError;
+        if (!RemoveStagingDirectorySafely(
+                staging, runtimeRoot, cleanupError))
+        {
+            publishError += "; staged cleanup failed: " + cleanupError;
+        }
+        return FailureOrFallback(
+            stateRoot, runtimeRoot, std::move(publishError));
     }
 
     std::string publishedError;

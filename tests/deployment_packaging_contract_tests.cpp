@@ -183,6 +183,14 @@ void TestPackagers(const std::string& module,
             steam.find("SnowDesktopWorkshopManager.exe") !=
                 std::string::npos,
         "only the Steam payload includes the Workshop manager while every release keeps the Agent Skill tool");
+    Check(release.find("SnowDesktopLauncher.exe") == std::string::npos &&
+            release.find("SnowDesktop.runtime-context.json") ==
+                std::string::npos &&
+            release.find("SnowDesktop.steam.json") == std::string::npos &&
+            release.find(".snowdesktop/runtime") == std::string::npos &&
+            release.find("Join-Path $payload \"distribution\"") ==
+                std::string::npos,
+        "traditional portable and MSIX packaging contain no Steam launcher, context, manifest, distribution, or managed runtime state");
     Check(steam.find("schemaVersion = 3") != std::string::npos &&
             steam.find("fileMetadata = $payloadFileMetadata") !=
                 std::string::npos &&

@@ -899,6 +899,42 @@ void TestManagedRootReparseBoundaries(const std::filesystem::path& root)
         "Steam apply rejects a data directory junction");
     verifyRejected(L"distribution-root", L"distribution", true,
         "Steam apply rejects a distribution directory junction");
+
+    {
+        const auto caseRoot = root / L"data-root-with-fallback";
+        const auto initial = PrepareRuntime(
+            caseRoot, "data-junction-fallback");
+        if (initial.ok)
+        {
+            const auto data = caseRoot / L"data";
+            WriteText(data / L"user-data.txt", "user data unchanged");
+            const auto backing = root / L"external-backing" /
+                L"data-root-with-fallback";
+            std::error_code fileError;
+            std::filesystem::create_directories(backing.parent_path());
+            std::filesystem::rename(data, backing, fileError);
+            Check(!fileError,
+                "the established data-root junction fixture can move its backing directory");
+            if (!fileError)
+            {
+                const DirectorySnapshot before = SnapshotDirectory(backing);
+                const bool created = CreateDirectoryJunction(data, backing);
+                Check(created,
+                    "the established data-root junction fixture must be available");
+                if (created)
+                {
+                    const auto result =
+                        snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+                    CheckFallbackRejected(result,
+                        "a data junction fails closed even when a valid runtime fallback exists");
+                    Check(SnapshotDirectory(backing) == before,
+                        "a rejected data junction with fallback leaves outside user data unchanged");
+                    Check(RemoveDirectoryW(data.c_str()) != FALSE,
+                        "the established data-root junction is detached without traversing it");
+                }
+            }
+        }
+    }
 }
 
 void TestAtomicStateTemporaryIsolation(const std::filesystem::path& root)
@@ -986,6 +1022,110 @@ void TestAtomicStateTemporaryIsolation(const std::filesystem::path& root)
     }
 }
 
+void TestReadOnlyPayloadAndStagingCleanup(
+    const std::filesystem::path& root)
+{
+    {
+        const auto caseRoot = root / L"readonly-payload";
+        WriteText(caseRoot /
+                snowdesktop::deployment::kSteamLauncherFilename,
+            "launcher");
+        WriteDistribution(caseRoot, "1.0.5.0", "readonly-payload",
+            "host readonly", "dll readonly");
+        const auto source = caseRoot / L"distribution" /
+            L"SnowDesktop.Runtime" / L"runtime.dll";
+        const DWORD sourceAttributes = GetFileAttributesW(source.c_str());
+        Check(sourceAttributes != INVALID_FILE_ATTRIBUTES &&
+                SetFileAttributesW(source.c_str(),
+                    sourceAttributes | FILE_ATTRIBUTE_READONLY) != FALSE,
+            "the read-only depot payload fixture can mark its source file read-only");
+
+        const auto result =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        Check(result.ok && !result.usedFallback,
+            "a read-only Steam depot payload is copied, flushed, and activated");
+        if (result.ok)
+        {
+            const auto published = result.executable.parent_path() /
+                L"SnowDesktop.Runtime" / L"runtime.dll";
+            const DWORD publishedAttributes =
+                GetFileAttributesW(published.c_str());
+            Check(publishedAttributes != INVALID_FILE_ATTRIBUTES &&
+                    (publishedAttributes & FILE_ATTRIBUTE_READONLY) == 0,
+                "the immutable runtime copy is normalized to a flushable plain file");
+        }
+
+        const auto runtimeRoot = caseRoot / L".snowdesktop" / L"runtime";
+        bool hasStaging = false;
+        for (const auto& entry : std::filesystem::directory_iterator(runtimeRoot))
+        {
+            if (entry.path().filename().wstring().starts_with(L".staging."))
+                hasStaging = true;
+        }
+        Check(!hasStaging,
+            "a read-only payload activation leaves no staged runtime residue");
+
+        if (sourceAttributes != INVALID_FILE_ATTRIBUTES)
+            SetFileAttributesW(source.c_str(), sourceAttributes);
+    }
+
+    {
+        const auto caseRoot = root / L"abandoned-staging";
+        const auto initial = PrepareRuntime(caseRoot, "cleanup-staging");
+        if (!initial.ok)
+            return;
+        const auto runtimeRoot =
+            initial.executable.parent_path().parent_path();
+        const auto abandoned = runtimeRoot / L".staging.123.456";
+        const auto readOnly = abandoned / L"read-only-partial.dll";
+        WriteText(readOnly, "partial staged payload");
+        const DWORD attributes = GetFileAttributesW(readOnly.c_str());
+        Check(attributes != INVALID_FILE_ATTRIBUTES &&
+                SetFileAttributesW(readOnly.c_str(),
+                    attributes | FILE_ATTRIBUTE_READONLY) != FALSE,
+            "the abandoned staging fixture can contain a read-only partial file");
+
+        const auto relaunched =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        Check(relaunched.ok && !relaunched.usedFallback &&
+                !std::filesystem::exists(abandoned),
+            "the next locked launcher run safely removes abandoned read-only staging data");
+    }
+}
+
+void TestCaseExactRuntimeTree(const std::filesystem::path& root)
+{
+    const auto initial = PrepareRuntime(root, "case-exact-tree");
+    if (!initial.ok)
+        return;
+    const auto directory = initial.executable.parent_path() /
+        L"SnowDesktop.Runtime";
+    const auto original = directory / L"runtime.dll";
+    const auto temporary = directory / L"case-rename.tmp";
+    const auto upper = directory / L"RUNTIME.DLL";
+    std::error_code renameError;
+    std::filesystem::rename(original, temporary, renameError);
+    if (!renameError)
+        std::filesystem::rename(temporary, upper, renameError);
+    Check(!renameError,
+        "the exact-tree fixture can change a payload filename only by case");
+    if (renameError)
+        return;
+
+    bool observedUpperCase = false;
+    for (const auto& entry : std::filesystem::directory_iterator(directory))
+    {
+        if (entry.path().filename() == L"RUNTIME.DLL")
+            observedUpperCase = true;
+    }
+    Check(observedUpperCase,
+        "the exact-tree fixture preserves the case-only renamed directory entry");
+    CorruptDistributionManifest(root);
+    CheckFallbackRejected(
+        snowdesktop::steam_runtime::ApplyDistribution(root),
+        "fallback rejects a hash-identical payload whose filename casing differs from the manifest");
+}
+
 void TestManifestSizeBoundaries(const std::filesystem::path& root)
 {
     const auto verifyRejected = [&](std::wstring_view caseName,
@@ -1011,8 +1151,13 @@ void TestManifestSizeBoundaries(const std::filesystem::path& root)
             return;
         manifest.replace(valueBegin, end - valueBegin, sizeToken);
         WriteText(manifestPath, manifest);
-        CheckFallbackRejected(
-            snowdesktop::steam_runtime::ApplyDistribution(caseRoot), message);
+        const auto result =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        CheckFallbackRejected(result, message);
+        Check(result.error.find(
+                "distribution manifest contains an invalid file entry") !=
+                std::string::npos,
+            "out-of-range manifest sizes are rejected by parsing before payload validation");
     };
 
     verifyRejected(L"beyond-exact-json", "9007199254740992",
@@ -1171,6 +1316,9 @@ int main()
         TestRuntimeReparseFallbacks(root / L"reparse-fallbacks");
         TestManagedRootReparseBoundaries(root / L"managed-root-boundaries");
         TestAtomicStateTemporaryIsolation(root / L"atomic-state");
+        TestReadOnlyPayloadAndStagingCleanup(
+            root / L"readonly-and-staging-cleanup");
+        TestCaseExactRuntimeTree(root / L"case-exact-tree");
         TestManifestSizeBoundaries(root / L"manifest-size-boundaries");
         TestCompletionMarkerIsFinalFence();
         TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
