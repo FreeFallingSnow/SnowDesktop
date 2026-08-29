@@ -1,4 +1,5 @@
 #include "auto_start_rules.h"
+#include "data_path_policy.h"
 #include "steam_runtime_context.h"
 #include "steam_runtime_manager.h"
 
@@ -178,6 +179,21 @@ void TestContextResolution(const std::filesystem::path& root)
             context.explicitContext,
         "an explicit malformed Steam context fails closed");
 
+    const auto nonDirectoryParent = root / L"sidecar-parent-is-a-file";
+    WriteText(nonDirectoryParent, "not a directory");
+    context = ResolveRuntimeDeploymentContext(
+        nonDirectoryParent / L"SnowDesktop.exe", false);
+    Check(context.kind == RuntimeDeploymentKind::Invalid &&
+            context.explicitContext && !context.error.empty(),
+        "a sidecar path-type probe error fails closed instead of becoming portable");
+
+    const auto overlongParent = root / std::wstring(300, L'x');
+    context = ResolveRuntimeDeploymentContext(
+        overlongParent / L"SnowDesktop.exe", false);
+    Check(context.kind == RuntimeDeploymentKind::Invalid &&
+            context.explicitContext && !context.error.empty(),
+        "a sidecar I/O probe error fails closed instead of becoming portable");
+
     const auto install = root / L"managed";
     const auto runtime = install / L".snowdesktop" / L"runtime" /
         L"build-1";
@@ -214,6 +230,64 @@ void TestContextResolution(const std::filesystem::path& root)
                 devInstall / L".snowdesktop" / L"dev-data" / L"debug") &&
             !CanOwnProductionAutoStart(context.kind),
         "local Steam development is isolated and cannot own production startup");
+}
+
+void TestRuntimeDataPathPolicy(const std::filesystem::path& root)
+{
+    using snowdesktop::data_paths::EnsureDirectoryTree;
+    using snowdesktop::data_paths::ResolveRuntimeDataPathPolicy;
+    using snowdesktop::deployment::RuntimeDeploymentContext;
+    using snowdesktop::deployment::RuntimeDeploymentKind;
+
+    const auto executableDirectory = root / L"portable";
+    RuntimeDeploymentContext context;
+    auto policy = ResolveRuntimeDataPathPolicy(
+        context, {}, executableDirectory);
+    Check(policy.dataRoot == executableDirectory / L"data" &&
+            policy.legacyRoot == executableDirectory &&
+            policy.pendingMigrationStateRoot == executableDirectory,
+        "portable data and migration roots retain their legacy layout");
+
+    const auto localState = root / L"LocalState";
+    context.kind = RuntimeDeploymentKind::Packaged;
+    policy = ResolveRuntimeDataPathPolicy(
+        context, localState, root / L"package-runtime");
+    Check(policy.dataRoot == localState / L"data" &&
+            policy.legacyRoot == localState &&
+            policy.pendingMigrationStateRoot == localState,
+        "packaged data and migration roots retain their LocalState layout");
+
+    const auto installRoot = root / L"steam";
+    context.kind = RuntimeDeploymentKind::SteamManaged;
+    context.installRoot = installRoot;
+    context.dataRoot = installRoot / L"data";
+    policy = ResolveRuntimeDataPathPolicy(
+        context, {}, root / L"managed-runtime");
+    Check(policy.dataRoot == installRoot / L"data" &&
+            policy.legacyRoot == installRoot &&
+            policy.pendingMigrationStateRoot == installRoot,
+        "managed Steam keeps its stable production data and migration roots");
+
+    const auto productionData = installRoot / L"data";
+    const auto productionLegacy = installRoot / L"SnowDesktop.general.json";
+    WriteText(productionData / L"production.txt", "production-data");
+    WriteText(productionLegacy, "production-legacy");
+
+    context.kind = RuntimeDeploymentKind::SteamLocalDevelopment;
+    context.dataRoot = installRoot / L".snowdesktop" / L"dev-data" /
+        L"debug";
+    policy = ResolveRuntimeDataPathPolicy(
+        context, {}, root / L"dev-runtime");
+    Check(policy.dataRoot == context.dataRoot &&
+            !policy.legacyRoot && !policy.pendingMigrationStateRoot,
+        "local Steam development exposes no production migration or legacy root");
+    Check(EnsureDirectoryTree(policy.dataRoot) &&
+            std::filesystem::is_directory(policy.dataRoot),
+        "local Steam development recursively creates its profile data root");
+    Check(ReadText(productionData / L"production.txt") ==
+                "production-data" &&
+            ReadText(productionLegacy) == "production-legacy",
+        "creating a local profile leaves production data and legacy files untouched");
 }
 
 void TestRuntimeUpdate(const std::filesystem::path& root)
@@ -290,6 +364,7 @@ int main()
     try
     {
         TestContextResolution(root / L"contexts");
+        TestRuntimeDataPathPolicy(root / L"data-paths");
         TestRuntimeUpdate(root / L"update");
         TestSteamAutoStartRules();
     }

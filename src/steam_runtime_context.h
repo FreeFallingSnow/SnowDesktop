@@ -34,8 +34,9 @@ struct RuntimeDeploymentContext
  * Resolve the deployment identity for one executable.
  *
  * MSIX package identity always wins. An unpackaged executable is Steam only
- * when a valid runtime sidecar exists next to it; otherwise it retains the
- * legacy portable behaviour. A present but invalid sidecar fails closed.
+ * when a valid runtime sidecar exists next to it. Only a conclusive absence
+ * retains the legacy portable behaviour; probe, I/O, path-type, and content
+ * errors fail closed.
  */
 [[nodiscard]] RuntimeDeploymentContext ResolveRuntimeDeploymentContext(
     const std::filesystem::path& executablePath,

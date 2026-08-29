@@ -122,6 +122,13 @@ RuntimeDeploymentContext Invalid(std::string message)
     result.error = std::move(message);
     return result;
 }
+
+std::string WindowsError(DWORD value)
+{
+    const std::error_code error(
+        static_cast<int>(value), std::system_category());
+    return std::to_string(value) + " (" + error.message() + ")";
+}
 }
 
 namespace snowdesktop::deployment
@@ -138,11 +145,43 @@ RuntimeDeploymentContext ResolveRuntimeDeploymentContext(
 
     const std::filesystem::path sidecar =
         executablePath.parent_path() / kSteamRuntimeContextFilename;
-    std::error_code error;
-    if (!std::filesystem::exists(sidecar, error))
-        return result;
+    const std::filesystem::path sidecarParent = sidecar.parent_path();
+    const DWORD parentAttributes =
+        GetFileAttributesW(sidecarParent.c_str());
+    if (parentAttributes == INVALID_FILE_ATTRIBUTES)
+    {
+        return Invalid("Steam runtime context directory cannot be inspected: " +
+            WindowsError(GetLastError()));
+    }
+    if ((parentAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+        return Invalid("Steam runtime context parent is not a directory");
+
+    const DWORD sidecarAttributes = GetFileAttributesW(sidecar.c_str());
+    if (sidecarAttributes == INVALID_FILE_ATTRIBUTES)
+    {
+        const DWORD probeError = GetLastError();
+        // The parent was just confirmed to be an accessible directory, so a
+        // missing leaf is the only conclusive absence. A disappeared parent,
+        // access denial, invalid path, or any other I/O error fails closed.
+        if (probeError == ERROR_FILE_NOT_FOUND)
+            return result;
+        return Invalid("Steam runtime context presence cannot be determined: " +
+            WindowsError(probeError));
+    }
+
     result.explicitContext = true;
-    if (error || !std::filesystem::is_regular_file(sidecar, error))
+    if ((sidecarAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        return Invalid("Steam runtime context is not a regular file");
+
+    std::error_code error;
+    const bool regularSidecar =
+        std::filesystem::is_regular_file(sidecar, error);
+    if (error)
+    {
+        return Invalid("Steam runtime context type cannot be determined: " +
+            error.message());
+    }
+    if (!regularSidecar)
         return Invalid("Steam runtime context is not a regular file");
 
     std::ifstream stream(sidecar, std::ios::binary);

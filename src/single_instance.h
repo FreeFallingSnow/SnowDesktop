@@ -67,6 +67,17 @@ bool WaitForRestartPredecessor(
 InstanceInfo DescribeCurrentInstance(std::wstring_view version);
 
 /**
+ * @brief Resolve the data directory for a queried executable deployment.
+ *
+ * A valid Steam runtime sidecar supplies the managed or local-development
+ * data root. Packaged and sidecar-free portable executables retain their
+ * legacy LocalState/data and executable-relative data layouts.
+ */
+std::wstring ResolveInstanceDataDirectory(
+    std::wstring_view executablePath,
+    std::wstring_view packageFamilyName = {});
+
+/**
  * @brief Find the running instance and read its version/deployment details.
  */
 std::optional<InstanceInfo> FindExistingInstance(

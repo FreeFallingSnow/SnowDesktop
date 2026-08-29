@@ -1,6 +1,7 @@
 #include "single_instance.h"
 
 #include "constants.h"
+#include "steam_runtime_context.h"
 
 #include <algorithm>
 #include <array>
@@ -83,7 +84,7 @@ std::wstring QueryPackageFamilyName(HANDLE process)
     return familyName;
 }
 
-std::wstring BuildDataDirectory(
+std::wstring BuildLegacyDataDirectory(
     const std::wstring& executablePath,
     const std::wstring& packageFamilyName)
 {
@@ -191,7 +192,7 @@ InstanceInfo DescribeProcess(
     const std::wstring packageFamilyName =
         QueryPackageFamilyName(process);
     info.packaged = !packageFamilyName.empty();
-    info.dataDirectory = BuildDataDirectory(
+    info.dataDirectory = ResolveInstanceDataDirectory(
         info.executablePath, packageFamilyName);
     info.version = knownVersion.empty()
         ? ReadExecutableVersion(info.executablePath)
@@ -199,6 +200,33 @@ InstanceInfo DescribeProcess(
     CloseHandle(process);
     return info;
 }
+}
+
+std::wstring ResolveInstanceDataDirectory(
+    std::wstring_view executablePath,
+    std::wstring_view packageFamilyName)
+{
+    const std::wstring executable(executablePath);
+    const std::wstring familyName(packageFamilyName);
+    if (!executable.empty() || !familyName.empty())
+    {
+        const auto context =
+            snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+                std::filesystem::path(executable), !familyName.empty());
+        switch (context.kind)
+        {
+        case snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged:
+        case snowdesktop::deployment::RuntimeDeploymentKind::
+            SteamLocalDevelopment:
+            return context.dataRoot.wstring();
+        case snowdesktop::deployment::RuntimeDeploymentKind::Invalid:
+            return {};
+        case snowdesktop::deployment::RuntimeDeploymentKind::Portable:
+        case snowdesktop::deployment::RuntimeDeploymentKind::Packaged:
+            break;
+        }
+    }
+    return BuildLegacyDataDirectory(executable, familyName);
 }
 
 Guard::~Guard()

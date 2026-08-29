@@ -29,7 +29,7 @@ scripts\widget-dev.bat widgets\reminders
 scripts\widget-dev.bat widgets\reminders -Once
 scripts\steam-dev.bat manager
 scripts\steam-dev.bat bridge status
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\steam_local_deploy.ps1 -PayloadDirectory .build\Release -BuildId local-test
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\steam_local_deploy.ps1 -PayloadDirectory <已解压的干净携带版目录> -BuildId local-test
 scripts\release.bat
 scripts\release.bat status -Json
 scripts\release.bat package
@@ -60,6 +60,10 @@ SnowDesktop 开发许可的 Steam 客户端。脚本从 `packaging\steam-identit
 SHA-256 校验写入 `<Steam安装根>\.snowdesktop\dev\<build-id>`。开发数据使用同一
 Steam 安装根内的 `.snowdesktop\dev-data\<profile-id>`，但部署动作本身不会创建数据，
 也不会接管生产自启动。该入口用于调试部署身份，不能冒充 Steam 客户端安装或更新。
+输入必须是解压后的干净发行载荷；不要直接传 `.build\Release`，因为构建目录可能包含
+当前用户的 `data`，部署器会拒绝把用户数据或部署状态复制进开发 runtime。缺少
+Steamworks SDK 时，可先用 `package_release.ps1 -SkipBuild -Development` 生成携带版
+ZIP，解压到独立临时目录后再作为 `-PayloadDirectory`。
 
 SteamPipe 操作需要将 `SNOWDESKTOP_STEAMCMD_PATH` 指向 `steamcmd.exe`，并在
 `SNOWDESKTOP_STEAM_BUILD_ACCOUNT` 中提供仅具备所需应用权限的构建账号名。脚本不接受

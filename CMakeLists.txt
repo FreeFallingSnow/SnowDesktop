@@ -952,6 +952,17 @@ if (BUILD_TESTING)
         LABELS core integration data)
 
     snowdesktop_add_test(
+        SnowDesktopSingleInstanceTests
+        single_instance
+        SOURCES
+            tests/single_instance_tests.cpp
+            src/single_instance.cpp
+            src/steam_runtime_context.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 user32 version
+        LABELS core contract deployment steam)
+
+    snowdesktop_add_test(
         SnowDesktopHttpSecurityTests
         http_security
         SOURCES
