@@ -162,7 +162,7 @@ void TestHostContract(const std::filesystem::path& repository)
             !shellHeader.empty() && !shell.empty(),
         "WinUI settings host contract sources are readable");
     Check(source.find("DesktopWindowXamlSource") == std::string::npos &&
-            source.find("runtime.Attach(impl_->window") !=
+            source.find("runtime.Attach(window") !=
                 std::string::npos &&
             runtime.find("muxh::DesktopWindowXamlSource xamlSource") !=
                 std::string::npos &&
@@ -439,7 +439,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("shell->SetActualThemeChangedCallback(") !=
                 std::string::npos &&
-            source.find("state->owner->ApplyActualTheme(darkTheme)") !=
+            source.find("state->owner->ApplyActualTheme(isDark)") !=
                 std::string::npos &&
             source.find("darkTheme = isDark;") != std::string::npos &&
             source.find(
