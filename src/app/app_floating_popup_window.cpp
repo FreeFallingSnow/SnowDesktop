@@ -657,20 +657,12 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
     const bool shouldBeTopmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
-    const bool isTopmost =
-        (GetWindowLongPtrW(
-            floatingPopupHwnd_, GWL_EXSTYLE) &
-            WS_EX_TOPMOST) != 0;
-    if (isTopmost != shouldBeTopmost)
-    {
-        SetWindowPos(
-            floatingPopupHwnd_,
-            shouldBeTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
     collectionPopupBackdropCompositor_.
-        SetPopupTopmost(shouldBeTopmost);
+        SetPopupWindowPairZOrder(
+            floatingPopupHwnd_,
+            shouldBeTopmost
+                ? HWND_TOPMOST : HWND_NOTOPMOST,
+            shouldBeTopmost);
     ApplyDragPreviewLayerPolicy();
 }
 

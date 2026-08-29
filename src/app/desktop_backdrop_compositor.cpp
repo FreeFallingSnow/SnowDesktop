@@ -13,6 +13,7 @@
 #include "desktop_backdrop_compositor.h"
 
 #include "desktop_backdrop_update_rules.h"
+#include "popup_window_pair_z_order.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -389,7 +390,7 @@ struct DesktopBackdropCompositor::Impl
         {
             // Ordinary panel paints do not own HWND placement. In
             // particular, a Dock demotion has already moved the content and
-            // glass pair in one DeferWindowPos transaction; issuing another
+            // glass pair through the coordinated Z-order policy; issuing another
             // helper-only SetWindowPos/SWP_SHOWWINDOW here would make DWM
             // re-evaluate the BackdropBrush source for an extra frame.
             return true;
@@ -647,9 +648,6 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
         impl_->popupTopmost = topmost;
     }
 
-    constexpr UINT contentFlags =
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-        SWP_NOOWNERZORDER;
     bool positionedTogether = false;
     if (backdropWindow)
     {
@@ -658,33 +656,19 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
         if (impl_->QueryContentPlacement(
                 nullptr, origin, size))
         {
-            HDWP deferred = BeginDeferWindowPos(2);
-            if (deferred)
-            {
-                deferred = DeferWindowPos(
-                    deferred, contentWindow,
-                    contentInsertAfter,
-                    0, 0, 0, 0, contentFlags);
-            }
-            if (deferred)
-            {
-                deferred = DeferWindowPos(
-                    deferred, backdropWindow,
-                    contentWindow,
-                    origin.x, origin.y,
-                    size.cx, size.cy,
-                    SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-            }
-            if (deferred)
-            {
-                positionedTogether =
-                    EndDeferWindowPos(deferred) != FALSE;
-            }
+            positionedTogether =
+                snowdesktop::popup_window_pair_z_order::Apply(
+                    contentWindow, backdropWindow,
+                    contentInsertAfter, topmost,
+                    origin, size);
         }
     }
 
     if (!positionedTogether)
     {
+        constexpr UINT contentFlags =
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER;
         SetWindowPos(
             contentWindow, contentInsertAfter,
             0, 0, 0, 0, contentFlags);

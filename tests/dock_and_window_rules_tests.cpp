@@ -18,6 +18,7 @@
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
 #include "app/native_menu_presentation_rules.h"
+#include "app/popup_window_pair_z_order.h"
 #include "desktop_window_discovery_rules.h"
 #include "floating_dock_rules.h"
 #include "floating_popup_rules.h"
@@ -103,10 +104,63 @@ void CheckRowMargins(
     Check(std::abs(leftMargin - rightMargin) <= 1, message);
 }
 
+void CheckPopupWindowPairZOrderTransitions()
+{
+    constexpr DWORD extendedStyle =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    HWND content = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-content",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND backdrop = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-backdrop",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(content && backdrop,
+        "popup pair transition test windows are created");
+    if (!content || !backdrop)
+    {
+        if (backdrop) DestroyWindow(backdrop);
+        if (content) DestroyWindow(content);
+        return;
+    }
+
+    const POINT origin{ 0, 0 };
+    const SIZE size{ 32, 32 };
+    const auto pairMatches = [&](bool topmost) {
+        return snowdesktop::popup_window_pair_z_order::
+                IsTopmost(content) == topmost &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(backdrop) == topmost &&
+            snowdesktop::popup_window_pair_z_order::
+                IsPaired(content, backdrop);
+    };
+
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size) &&
+            pairMatches(true),
+        "popup pair promotion keeps content above its topmost backdrop");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_NOTOPMOST, false,
+            origin, size) &&
+            pairMatches(false),
+        "popup pair demotion moves both windows out of TOPMOST and preserves adjacency");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size) &&
+            pairMatches(true),
+        "popup pair can return to TOPMOST without exposing its backdrop");
+
+    DestroyWindow(backdrop);
+    DestroyWindow(content);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    CheckPopupWindowPairZOrderTransitions();
     namespace dockDrop =
         snowdesktop::dock_drop_rules;
     namespace floatingDock =
@@ -4149,6 +4203,9 @@ int main(int argc, char** argv)
         const std::string backdropCompositorSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "desktop_backdrop_compositor.cpp");
+        const std::string popupPairZOrderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "popup_window_pair_z_order.h");
         const std::string quickNavigationWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_window.cpp");
@@ -4592,6 +4649,29 @@ int main(int argc, char** argv)
                   "collectionPopupBackdropCompositor_.SetVisible(false);") !=
                     std::string::npos,
             "the collection popup backdrop must follow the shared host lifecycle, cache hidden resources, and preserve z-order");
+        const std::size_t popupLayerPolicyBegin =
+            floatingPopupSource.find(
+                "void DesktopApp::ApplyFloatingPopupLayerPolicy()");
+        const std::size_t popupLayerPolicyEnd =
+            floatingPopupSource.find(
+                "void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()",
+                popupLayerPolicyBegin);
+        const std::string popupLayerPolicySource =
+            popupLayerPolicyBegin != std::string::npos &&
+                    popupLayerPolicyEnd != std::string::npos
+                ? floatingPopupSource.substr(
+                    popupLayerPolicyBegin,
+                    popupLayerPolicyEnd - popupLayerPolicyBegin)
+                : std::string{};
+        Check(!popupLayerPolicySource.empty() &&
+                popupLayerPolicySource.find(
+                  "SetPopupWindowPairZOrder(") !=
+                    std::string::npos &&
+                popupLayerPolicySource.find(
+                  "SetWindowPos(") == std::string::npos &&
+                popupLayerPolicySource.find(
+                  "SetPopupTopmost(") == std::string::npos,
+            "native menu layer changes must move the floating popup content and backdrop through the shared pair policy");
         Check(compositionAnimationSource.find(
                   "ApplyCollectionPopupBackdropAnimationFrame();") !=
                     std::string::npos &&
@@ -4815,26 +4895,37 @@ int main(int argc, char** argv)
                     pairZOrderBegin,
                     pairZOrderEnd - pairZOrderBegin)
                 : std::string{};
-        const std::size_t zOrderBatchBegin =
-            pairZOrderSource.find("BeginDeferWindowPos(2)");
-        const std::size_t zOrderContent =
-            pairZOrderSource.find(
-                "deferred, contentWindow,", zOrderBatchBegin);
-        const std::size_t zOrderBackdrop =
-            pairZOrderSource.find(
-                "deferred, backdropWindow,", zOrderContent);
-        const std::size_t zOrderBatchEnd =
-            pairZOrderSource.find(
-                "EndDeferWindowPos(deferred)", zOrderBackdrop);
         Check(!pairZOrderSource.empty() &&
-                zOrderBatchBegin != std::string::npos &&
-                zOrderContent != std::string::npos &&
-                zOrderBackdrop != std::string::npos &&
-                zOrderBatchEnd != std::string::npos &&
-                zOrderBatchBegin < zOrderContent &&
-                zOrderContent < zOrderBackdrop &&
-                zOrderBackdrop < zOrderBatchEnd,
-            "a popup content/backdrop pair must change Z-order in one window transaction");
+                pairZOrderSource.find(
+                  "popup_window_pair_z_order::Apply(") !=
+                    std::string::npos,
+            "popup backdrop compositor Z-order changes must use the shared pair transition policy");
+        const std::size_t bandChange =
+            popupPairZOrderSource.find(
+                "const bool changesZOrderBand");
+        const std::size_t demoteBackdrop =
+            popupPairZOrderSource.find(
+                "backdropWindow, HWND_NOTOPMOST", bandChange);
+        const std::size_t moveContent =
+            popupPairZOrderSource.find(
+                "contentWindow, contentInsertAfter", demoteBackdrop);
+        const std::size_t crossBandPairBackdrop =
+            popupPairZOrderSource.find(
+                "backdropWindow, contentWindow", moveContent);
+        const std::size_t sameBandBatch =
+            popupPairZOrderSource.find(
+                "BeginDeferWindowPos(2)", crossBandPairBackdrop);
+        Check(!popupPairZOrderSource.empty() &&
+                bandChange != std::string::npos &&
+                demoteBackdrop != std::string::npos &&
+                moveContent != std::string::npos &&
+                crossBandPairBackdrop != std::string::npos &&
+                sameBandBatch != std::string::npos &&
+                bandChange < demoteBackdrop &&
+                demoteBackdrop < moveContent &&
+                moveContent < crossBandPairBackdrop &&
+                crossBandPairBackdrop < sameBandBatch,
+            "cross-band popup demotion must move glass first, content second, and only batch windows already in one Z-order band");
         const std::size_t syncBackdropPlacementBegin =
             backdropCompositorSource.find(
                 "bool SyncWindowPlacement()");
@@ -5973,14 +6064,14 @@ int main(int argc, char** argv)
                 desktopBandPolicySource.find(
                   "host.backdrop.SetPopupWindowPairZOrder(") !=
                     std::string::npos,
-            "desktop mode must transactionally place the persistent DockHost pair above WorkerW");
+            "desktop mode must place the persistent DockHost pair above WorkerW through the shared policy");
         Check(shellMenuSource.find(
                   "host.backdrop.SetPopupTopmost(") ==
                     std::string::npos &&
                 shellMenuSource.find(
                   "host.backdrop.Reattach(host.hwnd)") ==
                     std::string::npos,
-            "Dock promotion and demotion must not restack its content and backdrop in separate operations");
+            "Dock callers must not bypass the shared pair policy with separate content and backdrop restacks");
         Check(appHeaderSource.find(
                   "struct PersistentDockHost") !=
                     std::string::npos &&

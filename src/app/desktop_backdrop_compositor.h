@@ -39,9 +39,9 @@ public:
         HWND contentWindow, bool topmost = true,
         bool initiallyVisible = true);
     /**
-     * @brief 在一个延迟窗口事务中同步 popup 内容与 backdrop 的 Z 序。
+     * @brief 安全同步 popup 内容与 backdrop 的 Z 序及 TOPMOST 状态。
      * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。
-     * @param topmost 事务完成后窗口对是否位于 TOPMOST 带。
+     * @param topmost 操作完成后窗口对是否位于 TOPMOST 带。
      */
     void SetPopupWindowPairZOrder(
         HWND contentWindow, HWND contentInsertAfter,
