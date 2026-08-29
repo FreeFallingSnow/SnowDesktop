@@ -20,10 +20,12 @@ DismissActiveContextMenuForPopupTransition()
         activeContextMenu2_.Get() != nullptr ||
         activeContextMenu3_.Get() != nullptr)
     {
-        // EndMenu is safe from the UI thread while TrackPopupMenuEx pumps its
-        // nested loop. The RAII layer guard remains responsible for restoring
-        // the floating Dock after TrackPopupMenuEx unwinds.
-        EndMenu();
+        // Native Shell menus are tracked on a dedicated thread. Per Win32's
+        // EndMenu fallback contract, sending WM_CANCELMODE to the owner asks
+        // that thread's menu loop to unwind while the UI pump stays live.
+        const HWND owner = ShellDialogOwnerHwnd();
+        if (owner && IsWindow(owner))
+            SendMessageW(owner, WM_CANCELMODE, 0, 0);
     }
 }
 

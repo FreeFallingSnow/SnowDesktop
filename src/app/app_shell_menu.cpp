@@ -17,6 +17,143 @@ DesktopApp::ShellPopupMenuLayerGuard::
     app_.EndShellPopupMenuLayer();
 }
 
+UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
+    HMENU menu,
+    UINT flags,
+    POINT screenPoint,
+    HWND owner)
+{
+    if (!menu || !owner || !IsWindow(owner))
+        return 0;
+
+    HANDLE completedEvent = CreateEventW(
+        nullptr, TRUE, FALSE, nullptr);
+    if (!completedEvent)
+    {
+        WriteDiagnosticLogEntry(
+            L"Native menu tracker event unavailable; using synchronous fallback");
+        return TrackPopupMenuEx(
+            menu, flags, screenPoint.x, screenPoint.y,
+            owner, nullptr);
+    }
+
+    std::atomic<UINT> selectedCommand{ 0 };
+    std::thread tracker;
+    try
+    {
+        tracker = std::thread([
+            menu, flags, screenPoint, owner,
+            completedEvent, &selectedCommand]() {
+            const HRESULT comResult = CoInitializeEx(
+                nullptr, COINIT_APARTMENTTHREADED);
+            const UINT command = TrackPopupMenuEx(
+                menu, flags,
+                screenPoint.x, screenPoint.y,
+                owner, nullptr);
+            selectedCommand.store(
+                command, std::memory_order_release);
+            SetEvent(completedEvent);
+            if (SUCCEEDED(comResult))
+                CoUninitialize();
+        });
+    }
+    catch (...)
+    {
+        CloseHandle(completedEvent);
+        WriteDiagnosticLogEntry(
+            L"Native menu tracker thread unavailable; using synchronous fallback");
+        return TrackPopupMenuEx(
+            menu, flags, screenPoint.x, screenPoint.y,
+            owner, nullptr);
+    }
+
+    bool quitPending = false;
+    WPARAM quitCode = 0;
+    bool waitFailed = false;
+    while (WaitForSingleObject(completedEvent, 0) !=
+        WAIT_OBJECT_0)
+    {
+        HANDLE waitHandles[2]{ completedEvent, nullptr };
+        DWORD handleCount = 1;
+        HANDLE animationWait =
+            uiAnimationScheduler_.WaitHandle();
+        if (animationWait)
+            waitHandles[handleCount++] = animationWait;
+
+        const DWORD waitResult = MsgWaitForMultipleObjectsEx(
+            handleCount,
+            waitHandles,
+            INFINITE,
+            QS_ALLINPUT,
+            MWMO_INPUTAVAILABLE);
+        if (waitResult == WAIT_FAILED)
+        {
+            waitFailed = true;
+            SendMessageW(owner, WM_CANCELMODE, 0, 0);
+            break;
+        }
+        if (waitResult == WAIT_OBJECT_0)
+            break;
+
+        const bool animationWasReady =
+            animationWait &&
+            waitResult == WAIT_OBJECT_0 + 1;
+        MSG message{};
+        unsigned processedMessages = 0;
+        while (processedMessages < 64 &&
+            PeekMessageW(
+                &message, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (message.message == WM_QUIT)
+            {
+                quitPending = true;
+                quitCode = message.wParam;
+                SendMessageW(owner, WM_CANCELMODE, 0, 0);
+                ++processedMessages;
+                continue;
+            }
+            const bool settingsMessageHandled =
+                settingsWindow_ &&
+                (settingsWindow_->PreTranslateMessage(&message) ||
+                    settingsWindow_->ProcessTabNavigation(&message));
+            if (!settingsMessageHandled)
+            {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+            ++processedMessages;
+        }
+
+        if (animationWait &&
+            (animationWasReady ||
+                WaitForSingleObject(animationWait, 0) ==
+                    WAIT_OBJECT_0))
+        {
+            uiAnimationScheduler_.DispatchDue();
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        }
+    }
+
+    if (waitFailed &&
+        WaitForSingleObject(completedEvent, 1000) !=
+            WAIT_OBJECT_0)
+    {
+        WriteDiagnosticLogEntry(
+            L"Native menu tracker did not stop after wait failure");
+    }
+    tracker.join();
+    const UINT command = selectedCommand.load(
+        std::memory_order_acquire);
+    CloseHandle(completedEvent);
+    PostMessageW(owner, WM_NULL, 0, 0);
+    if (quitPending)
+        PostQuitMessage(static_cast<int>(quitCode));
+    return command;
+}
+
 void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
 {
     ComPtr<IContextMenu> ctxMenu;
@@ -48,8 +185,10 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     const HWND menuOwner = ShellDialogOwnerHwnd();
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT cmd = TrackPopupMenuEx(newSub, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    UINT cmd = TrackShellPopupMenuWithDesktopPump(
+        newSub,
+        TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
+        screenPoint, menuOwner);
     newMenuContextMenu_.Reset();
 
     if (cmd != 0 && cmd >= 1)
@@ -111,8 +250,9 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    UINT cmd = TrackShellPopupMenuWithDesktopPump(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint, menuOwner);
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -232,8 +372,8 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
 void DesktopApp::BeginShellPopupMenuLayer()
 {
-    // TrackPopupMenuEx enters a private modal loop, so flush the frame that
-    // opened the native menu before the normal application loop stops running.
+    // Flush the frame that opened the native menu before its tracking thread
+    // takes pointer capture. The desktop pump remains live for the session.
     FlushPendingCompositionCommit();
     FlushPendingQuickNavigationCompositionCommit();
     ++shellPopupMenuLayerDepth_;
@@ -359,8 +499,9 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
 
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    UINT command = TrackShellPopupMenuWithDesktopPump(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint, menuOwner);
 
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
@@ -464,13 +605,12 @@ ShowShellItemContextMenuForPath(
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const UINT command =
-        TrackPopupMenuEx(
+        TrackShellPopupMenuWithDesktopPump(
             menu,
             TPM_RETURNCMD |
                 TPM_RIGHTBUTTON,
-            screenPoint.x,
-            screenPoint.y,
-            menuOwner, nullptr);
+            screenPoint,
+            menuOwner);
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 

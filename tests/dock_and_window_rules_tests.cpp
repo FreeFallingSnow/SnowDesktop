@@ -4195,6 +4195,9 @@ int main(int argc, char** argv)
         const std::string pointerReleaseSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_release.cpp");
+        const std::string itemMenuSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_item_menu.cpp");
         const std::string messageDispatchSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_message_dispatch.cpp");
@@ -4276,6 +4279,57 @@ int main(int argc, char** argv)
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
+        const std::size_t liveNativeMenuPumpBegin =
+            shellMenuSource.find(
+                "UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(");
+        const std::size_t firstShellMenuEntry =
+            shellMenuSource.find(
+                "void DesktopApp::ShowNewMenuAndInvoke(",
+                liveNativeMenuPumpBegin);
+        const std::string liveNativeMenuPumpSource =
+            liveNativeMenuPumpBegin != std::string::npos &&
+                    firstShellMenuEntry != std::string::npos
+                ? shellMenuSource.substr(
+                    liveNativeMenuPumpBegin,
+                    firstShellMenuEntry - liveNativeMenuPumpBegin)
+                : std::string{};
+        Check(!liveNativeMenuPumpSource.empty() &&
+                liveNativeMenuPumpSource.find(
+                    "std::thread") != std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "TrackPopupMenuEx(") != std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "MsgWaitForMultipleObjectsEx(") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "PeekMessageW(") != std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "uiAnimationScheduler_.DispatchDue();") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "FlushPendingCompositionCommit();") !=
+                    std::string::npos &&
+                CountOccurrences(
+                    shellMenuSource,
+                    "TrackShellPopupMenuWithDesktopPump(") == 5 &&
+                CountOccurrences(
+                    itemMenuSource,
+                    "TrackShellPopupMenuWithDesktopPump(") == 1 &&
+                CountOccurrences(
+                    shellMenuSource,
+                    "TrackPopupMenuEx(") ==
+                    CountOccurrences(
+                        liveNativeMenuPumpSource,
+                        "TrackPopupMenuEx(") &&
+                CountOccurrences(
+                    itemMenuSource,
+                    "TrackPopupMenuEx(") == 0 &&
+                popupLifecycleSource.find(
+                    "SendMessageW(owner, WM_CANCELMODE") !=
+                    std::string::npos &&
+                popupLifecycleSource.find(
+                    "EndMenu();") == std::string::npos,
+            "native Shell menu tracking must leave the desktop message, paint, and animation pump live");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"

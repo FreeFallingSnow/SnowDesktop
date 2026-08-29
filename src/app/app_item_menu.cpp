@@ -655,9 +655,9 @@ void DesktopApp::ShowShellContextMenu(
         SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT cmd = TrackPopupMenuEx(
+    UINT cmd = TrackShellPopupMenuWithDesktopPump(
         menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+        screenPoint, menuOwner);
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(true);
 
