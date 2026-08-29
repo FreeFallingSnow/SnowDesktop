@@ -4270,9 +4270,48 @@ int main(int argc, char** argv)
         const std::string shellMenuSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_shell_menu.cpp");
+        const std::string timerDispatchSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_timer_dispatch.cpp");
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
+        const std::size_t beginNativeMenuLayer =
+            shellMenuSource.find(
+                "void DesktopApp::BeginShellPopupMenuLayer()");
+        const std::size_t endNativeMenuLayer =
+            shellMenuSource.find(
+                "void DesktopApp::EndShellPopupMenuLayer()",
+                beginNativeMenuLayer);
+        const std::string beginNativeMenuLayerSource =
+            beginNativeMenuLayer != std::string::npos &&
+                    endNativeMenuLayer != std::string::npos
+                ? shellMenuSource.substr(
+                    beginNativeMenuLayer,
+                    endNativeMenuLayer - beginNativeMenuLayer)
+                : std::string{};
+        const std::string endNativeMenuLayerSource =
+            endNativeMenuLayer != std::string::npos
+                ? shellMenuSource.substr(endNativeMenuLayer)
+                : std::string{};
+        Check(!beginNativeMenuLayerSource.empty() &&
+                beginNativeMenuLayerSource.find(
+                    "kShellPopupMenuUiPumpTimerId") !=
+                    std::string::npos &&
+                beginNativeMenuLayerSource.find(
+                    "SetTimer(") != std::string::npos &&
+                endNativeMenuLayerSource.find(
+                    "kShellPopupMenuUiPumpTimerId") !=
+                    std::string::npos &&
+                endNativeMenuLayerSource.find(
+                    "KillTimer(") != std::string::npos &&
+                timerDispatchSource.find(
+                    "timerId == kShellPopupMenuUiPumpTimerId") !=
+                    std::string::npos &&
+                timerDispatchSource.find(
+                    "uiAnimationScheduler_.DispatchDue();") !=
+                    std::string::npos,
+            "native Shell menus must bridge their modal loop to the unified UI scheduler");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"
@@ -4628,9 +4667,6 @@ int main(int argc, char** argv)
         const std::string popupDwellInteractionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_popup_dwell_interaction.cpp");
-        const std::string timerDispatchSource = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_timer_dispatch.cpp");
         const std::string collectionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "widgets" /
                 "collection.cpp");

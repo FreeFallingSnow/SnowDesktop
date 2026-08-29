@@ -172,6 +172,12 @@ void DesktopApp::ResetDesktopWindowResources()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     nativeGlassPanelReadyLogged_ = false;
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+    {
+        KillTimer(
+            controlHwnd_,
+            kShellPopupMenuUiPumpTimerId);
+    }
     if (hwnd_ && IsWindow(hwnd_))
     {
         UnregisterNavigationHotkey();
@@ -183,6 +189,7 @@ void DesktopApp::ResetDesktopWindowResources()
         StopRecycleBinWatcher();
         StopSteamWorkshopWatcher();
         KillTimer(hwnd_, kOleDragUiPumpTimerId);
+        KillTimer(hwnd_, kShellPopupMenuUiPumpTimerId);
         CancelUiAnimationFrame();
         if (pageNotifyFadeOutToken_)
             uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);

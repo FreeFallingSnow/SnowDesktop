@@ -239,6 +239,17 @@ void DesktopApp::BeginShellPopupMenuLayer()
     ++shellPopupMenuLayerDepth_;
     if (shellPopupMenuLayerDepth_ == 1)
     {
+        const HWND timerWindow = ShellDialogOwnerHwnd();
+        if (timerWindow && IsWindow(timerWindow) &&
+            SetTimer(
+                timerWindow,
+                kShellPopupMenuUiPumpTimerId,
+                kShellPopupMenuUiPumpIntervalMs,
+                nullptr) == 0)
+        {
+            WriteDiagnosticLogEntry(
+                L"Native menu UI pump timer unavailable");
+        }
         if (shellHoverTraceActive_)
             FlushShellHoverTrace();
         BeginShellHoverTrace();
@@ -258,7 +269,16 @@ void DesktopApp::EndShellPopupMenuLayer()
     else
         shellPopupMenuLayerDepth_ = 0;
     if (shellPopupMenuLayerDepth_ == 0)
+    {
+        const HWND timerWindow = ShellDialogOwnerHwnd();
+        if (timerWindow && IsWindow(timerWindow))
+        {
+            KillTimer(
+                timerWindow,
+                kShellPopupMenuUiPumpTimerId);
+        }
         shellHoverTraceMenuEndTick_ = GetTickCount64();
+    }
     ApplyFloatingDockLayerPolicy();
     ApplyFloatingPopupLayerPolicy();
     RefocusFloatingDockKeyboardSession();
