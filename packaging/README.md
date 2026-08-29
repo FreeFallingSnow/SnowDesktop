@@ -95,6 +95,20 @@ SteamCMD 校验；调用前还会按包清单逐项复核文件大小与 SHA-256
 `SetLive`。所有 VDF、SteamPipe 缓存及日志都保存在当前版本的
 `artifacts\vA.B.C.0\steampipe\`，与 `steam\` 载荷目录分离，重新打包不会清掉上传缓存。
 
+## Steam 运行目录与数据
+
+Steam depot 只管理稳定的 `SnowDesktopLauncher.exe`、`SnowDesktop.steam.json` 和
+`distribution\`。Steam 启动项及用户自行创建的快捷方式都应指向稳定 launcher；launcher
+校验 manifest 中每个文件的大小和 SHA-256，将完整版本复制到
+`.snowdesktop\runtime\<build-id>` 后再原子切换当前指针。实际主程序只从这一不可变 runtime
+运行，因此 Steam 更新 `distribution` 时不会覆盖正在占用的 EXE/DLL；新分发不完整时继续
+启动上一个完整 runtime。
+
+唯一用户数据目录固定为 Steam 安装根的 `data\`，不复制进 distribution 或版本化 runtime。
+`.snowdesktop\` 只保存 runtime、切换状态、锁和本地开发副本，全部仍位于 Steam 安装目录内。
+携带版没有 Steam sidecar，继续使用 `exe\data`；MSIX 仍只按 Windows 包身份使用
+`LocalState\data`，两者不读取上述 Steam 状态。
+
 ## 每版本目录
 
 `version.json` 是唯一版本来源。所有发行文件和过程文档统一写入：

@@ -1296,6 +1296,15 @@ if (BUILD_TESTING)
         LINK_LIBRARIES bcrypt
         LABELS contract deployment integration steam update)
     add_test(
+        NAME steam_local_deploy_contract
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_local_deploy_contract_tests.ps1")
+    set_tests_properties(
+        steam_local_deploy_contract PROPERTIES
+        TIMEOUT 60
+        LABELS "contract;deployment;integration;steam")
+    add_test(
         NAME deployment_manifest_integration
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
             -File

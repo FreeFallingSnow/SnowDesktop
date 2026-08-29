@@ -162,8 +162,11 @@ function Assert-SteamPayloadManifest {
         }
     }
     if ($actual -contains "steam_appid.txt" -or
-        -not ($actual -contains "SnowDesktop.exe")) {
-        throw "Steam payload contains a development App ID file or lacks SnowDesktop.exe."
+        -not ($actual -contains "SnowDesktopLauncher.exe") -or
+        -not ($actual -contains "SnowDesktop.steam.json") -or
+        -not ($actual -contains "distribution/SnowDesktop.exe") -or
+        ($actual -contains "SnowDesktop.exe")) {
+        throw "Steam payload contains a development App ID file or has an invalid launcher/distribution layout."
     }
 }
 

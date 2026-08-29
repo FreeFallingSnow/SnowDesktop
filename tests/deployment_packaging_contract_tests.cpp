@@ -183,17 +183,28 @@ void TestPackagers(const std::string& module,
             steam.find("SnowDesktopWorkshopManager.exe") !=
                 std::string::npos,
         "only the Steam payload includes the Workshop manager while every release keeps the Agent Skill tool");
-    Check(steam.find("schemaVersion = 2") != std::string::npos &&
+    Check(steam.find("schemaVersion = 3") != std::string::npos &&
             steam.find("fileMetadata = $payloadFileMetadata") !=
                 std::string::npos &&
             steam.find("sha256 = Get-Sha256") != std::string::npos,
         "Steam packages retain compatible file paths plus size and SHA-256 metadata");
+    Check(steam.find("SnowDesktopLauncher.exe") != std::string::npos &&
+            steam.find("$distribution = Join-Path $payload \"distribution\"") !=
+                std::string::npos &&
+            steam.find("SnowDesktop.steam.json") != std::string::npos &&
+            steam.find("kind = \"steam-managed\"") !=
+                std::string::npos &&
+            steam.find("runtimeDirectory = \".snowdesktop/runtime\"") !=
+                std::string::npos &&
+            steam.find("dataDirectory = \"data\"") !=
+                std::string::npos,
+        "Steam packages separate the tracked distribution from the stable launcher, runtime copies, and data");
     Check(release.find("$runtimeDestination") != std::string::npos &&
             release.find("SnowDesktopWallpaperInjector32.exe") !=
                 std::string::npos &&
             steam.find("$runtimeFiles = @(") != std::string::npos &&
             steam.find(
-                "steamworksRedistributable = \"$runtimeDirectory/steam_api64.dll\"") !=
+                "\"distribution/$runtimeDirectory/steam_api64.dll\"") !=
                 std::string::npos,
         "first-party runtime helpers and the Steam redistributable are routed into the runtime directory");
     Check(module.find("AdditionalRuntimeDlls") != std::string::npos &&

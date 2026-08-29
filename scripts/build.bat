@@ -49,7 +49,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo === Building SnowDesktop.exe, Workshop Manager, Steam Bridge and snowwidget.exe ===
+echo === Building SnowDesktop.exe, Steam launcher, Workshop Manager, Steam Bridge and snowwidget.exe ===
 cmake --build --preset release
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
@@ -83,6 +83,7 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo === Build complete ===
 echo SnowDesktop.exe: .build\Release\SnowDesktop.exe
+echo Steam launcher: .build\Release\SnowDesktopLauncher.exe
 echo Steam bridge: .build\Release\SnowDesktopSteamBridge.exe
 echo Workshop manager: .build\Release\SnowDesktopWorkshopManager.exe
 echo Widget package tool: .build\Release\snowwidget.exe

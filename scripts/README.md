@@ -7,6 +7,7 @@
 - `test.bat`：构建并运行完整 CTest 测试集（包含国际化静态与运行时契约）；
 - `widget-dev.bat`：同步并监听本地 Lua 组件，保存后热重载，无需重复编译；
 - `steam-dev.bat`：以正式 App ID 创建临时本地 Steam 上下文，运行主程序、创作者管理器或 Bridge，退出后安全清理；
+- `steam_local_deploy.ps1`：默认只读预检，将构建载荷显式部署为 Steam 安装根内隔离的 `steam-local-dev` runtime；
 - `release.bat`：无参数打开发布 TUI，带参数作为 Agent/自动化 CLI。
 
 - `release_manager.ps1`：统一发布状态、打包、仓库同步、合并及发布流程；
@@ -28,6 +29,7 @@ scripts\widget-dev.bat widgets\reminders
 scripts\widget-dev.bat widgets\reminders -Once
 scripts\steam-dev.bat manager
 scripts\steam-dev.bat bridge status
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\steam_local_deploy.ps1 -PayloadDirectory .build\Release -BuildId local-test
 scripts\release.bat
 scripts\release.bat status -Json
 scripts\release.bat package
@@ -52,6 +54,12 @@ SnowDesktop 以发现组件；开发候选默认不覆盖已安装版本，需�
 SnowDesktop 开发许可的 Steam 客户端。脚本从 `packaging\steam-identity.json`
 读取正式 App ID，只在 `.build\Release\` 临时创建 `steam_appid.txt`；若该文件原本
 存在则校验但不删除。正式 Steam 包始终拒绝携带此开发文件。
+
+`scripts\steam_local_deploy.ps1` 不修改 Steam 的 appmanifest、depot 或正式
+`distribution`。默认仅显示将要写入的位置；显式增加 `-Apply` 后才通过 staging 和
+SHA-256 校验写入 `<Steam安装根>\.snowdesktop\dev\<build-id>`。开发数据使用同一
+Steam 安装根内的 `.snowdesktop\dev-data\<profile-id>`，但部署动作本身不会创建数据，
+也不会接管生产自启动。该入口用于调试部署身份，不能冒充 Steam 客户端安装或更新。
 
 SteamPipe 操作需要将 `SNOWDESKTOP_STEAMCMD_PATH` 指向 `steamcmd.exe`，并在
 `SNOWDESKTOP_STEAM_BUILD_ACCOUNT` 中提供仅具备所需应用权限的构建账号名。脚本不接受
