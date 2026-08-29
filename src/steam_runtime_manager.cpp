@@ -50,6 +50,7 @@ struct DistributionManifest
     std::string buildId;
     std::vector<DistributionFile> files;
     std::string digest;
+    std::string contents;
 };
 
 class ExclusiveFile final
@@ -87,19 +88,48 @@ private:
     HANDLE value_ = INVALID_HANDLE_VALUE;
 };
 
+bool IsAsciiAlphaNumeric(unsigned char value) noexcept
+{
+    return (value >= '0' && value <= '9') ||
+        (value >= 'A' && value <= 'Z') ||
+        (value >= 'a' && value <= 'z');
+}
+
+bool IsReservedDeviceName(std::wstring_view value) noexcept
+{
+    const std::size_t dot = value.find(L'.');
+    std::wstring base(value.substr(0, dot));
+    std::transform(base.begin(), base.end(), base.begin(),
+        [](wchar_t character) {
+            return static_cast<wchar_t>(towupper(character));
+        });
+    if (base == L"CON" || base == L"PRN" || base == L"AUX" ||
+        base == L"NUL")
+    {
+        return true;
+    }
+    return base.size() == 4 &&
+        (base.starts_with(L"COM") || base.starts_with(L"LPT")) &&
+        base[3] >= L'1' && base[3] <= L'9';
+}
+
 bool IsSafeIdentifier(std::string_view value) noexcept
 {
-    if (value.empty() || value.size() > 96)
+    if (value.empty() || value.size() > 96 ||
+        !IsAsciiAlphaNumeric(static_cast<unsigned char>(value.front())) ||
+        value.back() == '.')
+    {
         return false;
+    }
     for (const unsigned char character : value)
     {
-        if (!std::isalnum(character) && character != '-' &&
+        if (!IsAsciiAlphaNumeric(character) && character != '-' &&
             character != '_' && character != '.')
         {
             return false;
         }
     }
-    return true;
+    return !IsReservedDeviceName(std::wstring(value.begin(), value.end()));
 }
 
 std::wstring Utf8ToWide(std::string_view value)
@@ -224,6 +254,58 @@ std::optional<std::string> Sha256(const std::filesystem::path& path,
     return text.str();
 }
 
+std::optional<std::string> Sha256Contents(std::string_view contents,
+    std::string& error)
+{
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    DWORD objectSize = 0;
+    DWORD hashSize = 0;
+    DWORD written = 0;
+    std::vector<UCHAR> object;
+    std::vector<UCHAR> digest;
+    auto cleanup = [&] {
+        if (hash)
+            BCryptDestroyHash(hash);
+        if (algorithm)
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+    };
+    if (contents.size() > std::numeric_limits<ULONG>::max() ||
+        BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM,
+            nullptr, 0) < 0 ||
+        BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
+            reinterpret_cast<PUCHAR>(&objectSize), sizeof(objectSize),
+            &written, 0) < 0 ||
+        BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH,
+            reinterpret_cast<PUCHAR>(&hashSize), sizeof(hashSize),
+            &written, 0) < 0)
+    {
+        cleanup();
+        error = "cannot initialize SHA-256";
+        return std::nullopt;
+    }
+    object.resize(objectSize);
+    digest.resize(hashSize);
+    if (BCryptCreateHash(algorithm, &hash, object.data(), objectSize,
+            nullptr, 0, 0) < 0 ||
+        (!contents.empty() && BCryptHashData(hash,
+            reinterpret_cast<PUCHAR>(const_cast<char*>(contents.data())),
+            static_cast<ULONG>(contents.size()), 0) < 0) ||
+        BCryptFinishHash(hash, digest.data(), hashSize, 0) < 0)
+    {
+        cleanup();
+        error = "cannot hash distribution manifest contents";
+        return std::nullopt;
+    }
+    cleanup();
+
+    std::ostringstream text;
+    text << std::hex << std::setfill('0');
+    for (const UCHAR byte : digest)
+        text << std::setw(2) << static_cast<unsigned>(byte);
+    return text.str();
+}
+
 bool IsLowerHexSha256(std::string_view value) noexcept
 {
     if (value.size() != 64)
@@ -243,8 +325,23 @@ bool IsSafeRelativePath(const std::filesystem::path& path) noexcept
     }
     for (const auto& part : path)
     {
-        if (part.empty() || part == L"." || part == L"..")
+        const std::wstring component = part.wstring();
+        if (component.empty() || component == L"." || component == L".." ||
+            component.size() > 255 || component.back() == L'.' ||
+            component.back() == L' ' || IsReservedDeviceName(component))
+        {
             return false;
+        }
+        for (const wchar_t character : component)
+        {
+            if (character < 32 || character == L'<' || character == L'>' ||
+                character == L':' || character == L'"' ||
+                character == L'|' || character == L'?' ||
+                character == L'*')
+            {
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -366,10 +463,11 @@ std::optional<DistributionManifest> ReadManifest(
         error = "distribution manifest does not contain SnowDesktop.exe";
         return std::nullopt;
     }
-    const auto digest = Sha256(manifestPath, error);
+    const auto digest = Sha256Contents(contents, error);
     if (!digest)
         return std::nullopt;
     manifest.digest = *digest;
+    manifest.contents = contents;
     return manifest;
 }
 
@@ -438,7 +536,8 @@ bool SameManifest(const DistributionManifest& left,
     const DistributionManifest& right) noexcept
 {
     if (left.version != right.version || left.buildId != right.buildId ||
-        left.digest != right.digest || left.files.size() != right.files.size())
+        left.digest != right.digest || left.contents != right.contents ||
+        left.files.size() != right.files.size())
     {
         return false;
     }
@@ -743,13 +842,13 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     {
         const std::filesystem::path source =
             distribution / file.relativePath;
-        const std::filesystem::path destination =
+        const std::filesystem::path fileDestination =
             staging / file.relativePath;
         std::filesystem::create_directories(
-            destination.parent_path(), fileError);
+            fileDestination.parent_path(), fileError);
         if (fileError || !CopyFileW(
-                source.c_str(), destination.c_str(), FALSE) ||
-            !ValidateFile(destination, file, error))
+                source.c_str(), fileDestination.c_str(), FALSE) ||
+            !ValidateFile(fileDestination, file, error))
         {
             if (error.empty())
                 error = "cannot stage Steam runtime file: " +
@@ -760,12 +859,8 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     }
     if (staged)
     {
-        if (!CopyFileW(manifestPath.c_str(),
-                (staging / kRuntimeManifestFilename).c_str(), FALSE))
-        {
-            error = "cannot preserve the staged Steam runtime manifest";
-            staged = false;
-        }
+        staged = WriteTextAtomically(staging / kRuntimeManifestFilename,
+            manifest->contents, error);
     }
     if (staged)
     {

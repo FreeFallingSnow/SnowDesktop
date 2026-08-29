@@ -434,6 +434,8 @@ void TestOccupiedSameBuildRecovery(const std::filesystem::path& root)
 
     const auto recovered =
         snowdesktop::steam_runtime::ApplyDistribution(root);
+    if (!recovered.ok)
+        std::cerr << "occupied recovery error: " << recovered.error << '\n';
     Check(recovered.ok && !recovered.usedFallback &&
             std::string_view(recovered.buildId) == buildId,
         "a damaged same-build marker publishes a fresh runtime while the old runtime is occupied");
@@ -476,6 +478,8 @@ void TestTamperedActiveRuntimeBypassesFastPath(
         "the active-runtime tamper preserves file size to require hash validation");
     const auto repaired =
         snowdesktop::steam_runtime::ApplyDistribution(root);
+    if (!repaired.ok)
+        std::cerr << "tampered active recovery error: " << repaired.error << '\n';
     Check(repaired.ok && !repaired.usedFallback &&
             std::string_view(repaired.buildId) == buildId &&
             ReadText(repaired.executable) == "host clean",
