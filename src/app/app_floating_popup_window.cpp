@@ -986,6 +986,15 @@ POINT DesktopApp::FloatingPopupClientToDesktop(
 LRESULT DesktopApp::HandleFloatingPopupMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
     auto desktopPoint = [&]() {
         return FloatingPopupClientToDesktop(
             POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });

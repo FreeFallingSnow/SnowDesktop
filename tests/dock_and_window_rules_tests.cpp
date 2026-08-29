@@ -4168,6 +4168,24 @@ int main(int argc, char** argv)
         const std::string pointerContextSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_context.cpp");
+
+        const std::size_t floatingDockMessageHandler =
+            floatingDockRenderSource.find(
+                "LRESULT DesktopApp::HandleFloatingDockMessage(");
+        const std::size_t floatingPopupMessageHandler =
+            floatingPopupSource.find(
+                "LRESULT DesktopApp::HandleFloatingPopupMessage(");
+        Check(floatingDockMessageHandler != std::string::npos &&
+                floatingDockRenderSource.find(
+                    "app.FlushNativeMenuPresentation();",
+                    floatingDockMessageHandler) != std::string::npos &&
+                floatingPopupMessageHandler != std::string::npos &&
+                floatingPopupSource.find(
+                    "app.FlushNativeMenuPresentation();",
+                    floatingPopupMessageHandler) != std::string::npos,
+            "floating Dock and popup hosts must flush content composition "
+            "after native-menu modal-loop messages");
+
         const std::string menuIconsSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_menu_icons.cpp");
