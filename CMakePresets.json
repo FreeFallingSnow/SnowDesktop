@@ -37,6 +37,7 @@
       "jobs": 2,
       "targets": [
         "SnowDesktop",
+        "SnowDesktopLauncher",
         "SnowDesktopSteamBridge",
         "SnowDesktopWorkshopManager",
         "snowwidget"
