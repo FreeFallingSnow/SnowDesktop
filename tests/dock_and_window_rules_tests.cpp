@@ -5469,6 +5469,9 @@ int main(int argc, char** argv)
         const std::size_t closeDemoted =
             closeFloatingDockSource.find(
                 "host.promoted = false;");
+        const std::size_t closeRightButtonPressCleared =
+            closeFloatingDockSource.find(
+                "rightButtonDownDockHost_ = nullptr;");
         const std::size_t closeAggregateUpdated =
             closeFloatingDockSource.find(
                 "RefreshFloatingDockVisibilityState();",
@@ -5486,11 +5489,13 @@ int main(int argc, char** argv)
                 "if (action)",
                 closeVisibilityUpdated);
         Check(!closeFloatingDockSource.empty() &&
+                closeRightButtonPressCleared != std::string::npos &&
                 closeDemoted != std::string::npos &&
                 closeAggregateUpdated != std::string::npos &&
                 closeVisibilityUpdated != std::string::npos &&
                 closeKeyboardEnded != std::string::npos &&
                 closeActionRun != std::string::npos &&
+                closeRightButtonPressCleared < closeDemoted &&
                 closeDemoted < closeAggregateUpdated &&
                 closeAggregateUpdated < closeVisibilityUpdated &&
                 closeVisibilityUpdated < closeKeyboardEnded &&
@@ -5507,7 +5512,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 closeFloatingDockSource.find(
                   "DwmFlush()") == std::string::npos,
-            "closing a persistent DockHost must demote its window pair before changing foreground focus or running the queued command");
+            "closing a persistent DockHost must cancel its pending right-button press and demote its window pair before changing foreground focus or running the queued command");
         const std::size_t closeAllFloatingDocksBegin =
             floatingDockInteractionSource.find(
                 "void DesktopApp::CloseAllFloatingDocks(");
@@ -5526,6 +5531,9 @@ int main(int argc, char** argv)
         const std::size_t closeAllDemoted =
             closeAllFloatingDocksSource.find(
                 "host->promoted = false;");
+        const std::size_t closeAllRightButtonPressCleared =
+            closeAllFloatingDocksSource.find(
+                "rightButtonDownDockHost_ = nullptr;");
         const std::size_t closeAllVisibilityUpdated =
             closeAllFloatingDocksSource.find(
                 "UpdatePersistentDockHostVisibility(*host);",
@@ -5535,12 +5543,15 @@ int main(int argc, char** argv)
                 "EndFloatingDockKeyboardSession(focusPolicy);",
                 closeAllVisibilityUpdated);
         Check(!closeAllFloatingDocksSource.empty() &&
+                closeAllRightButtonPressCleared !=
+                    std::string::npos &&
                 closeAllDemoted != std::string::npos &&
                 closeAllVisibilityUpdated != std::string::npos &&
                 closeAllKeyboardEnded != std::string::npos &&
+                closeAllRightButtonPressCleared < closeAllDemoted &&
                 closeAllDemoted < closeAllVisibilityUpdated &&
                 closeAllVisibilityUpdated < closeAllKeyboardEnded,
-            "closing every promoted Dock must finish all pair demotions before the foreground input proxy is hidden");
+            "closing every promoted Dock must cancel pending right-button ownership and finish all pair demotions before the foreground input proxy is hidden");
 
         const std::size_t showFloatingDockBegin =
             floatingDockInteractionSource.find(
@@ -6117,6 +6128,14 @@ int main(int argc, char** argv)
             pointerContextSource.find(
                 "rightButtonPressDockHost ==",
                 dockContextSourceGate);
+        const std::size_t dockContextRejectedLog =
+            pointerContextSource.find(
+                "Floating Dock context summon ignored:",
+                dockContextHostMatch);
+        const std::size_t dockContextRejectedReturn =
+            pointerContextSource.find(
+                "return;",
+                dockContextRejectedLog);
         const std::size_t dockContextBranch =
             pointerContextSource.find(
                 "if (dockOwnsContextInput)",
@@ -6135,11 +6154,16 @@ int main(int argc, char** argv)
                 rightButtonPressConsume != std::string::npos &&
                 dockContextSourceGate != std::string::npos &&
                 dockContextHostMatch != std::string::npos &&
+                dockContextRejectedLog != std::string::npos &&
+                dockContextRejectedReturn != std::string::npos &&
                 dockContextBranch != std::string::npos &&
                 dockContextSummon != std::string::npos &&
                 dockContextEnd != std::string::npos &&
                 dockContextHit < dockContextSourceGate &&
                 dockContextSourceGate < dockContextHostMatch &&
+                dockContextHostMatch < dockContextRejectedLog &&
+                dockContextRejectedLog < dockContextRejectedReturn &&
+                dockContextRejectedReturn < dockContextBranch &&
                 dockContextHostMatch < dockContextBranch &&
                 dockContextBranch < dockContextSummon &&
                 dockContextSummon < dockContextEnd &&
@@ -6148,7 +6172,7 @@ int main(int argc, char** argv)
                 pointerContextSource.find(
                   "EnsureFloatingDockVisibleForAssociatedSurface(",
                   dockContextSummon + 1) == std::string::npos,
-            "only a right-button press that began on the persistent Host owning a Dock hit may summon its floating host, and every press cancels an armed edge gesture synchronously");
+            "only a right-button press that began on the persistent Host owning a Dock hit may summon its floating host, rejected releases must not fall through, and every press cancels an armed edge gesture synchronously");
         const std::size_t dockRightButtonDown =
             floatingDockRenderSource.find(
                 "case WM_RBUTTONDOWN:");

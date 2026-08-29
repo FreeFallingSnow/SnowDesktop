@@ -4,6 +4,8 @@
 #include "../right_click_contract.h"
 #include "../widgets/lua_logical_slot.h"
 
+#include <utility>
+
 // Page-navigation clicks and right-button context dispatch.
 
 void DesktopApp::ClearPopupMouseDownItem()
@@ -274,6 +276,10 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     {
         WriteDiagnosticLogEntry(
             L"Floating Dock context summon ignored: right-button press did not begin on matching DockHost");
+        // The release belongs to a press handled by another surface (most
+        // commonly a menu that disappeared after button-down). Do not let it
+        // fall through to an unrelated desktop or widget context menu.
+        return;
     }
     if (dockOwnsContextInput)
     {

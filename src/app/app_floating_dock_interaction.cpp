@@ -131,6 +131,8 @@ EnsureFloatingDockVisibleForAssociatedSurface(
 void DesktopApp::CloseFloatingDock(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    if (rightButtonDownDockHost_ == floatingDockHost_)
+        rightButtonDownDockHost_ = nullptr;
     if (!floatingDockHost_ ||
         !IsPersistentDockHostPromoted(
             *floatingDockHost_))
@@ -149,6 +151,8 @@ void DesktopApp::CloseFloatingDock(
     PersistentDockHost& host,
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    if (rightButtonDownDockHost_ == &host)
+        rightButtonDownDockHost_ = nullptr;
     if (!IsPersistentDockHostPromoted(host))
     {
         std::function<void()> action =
@@ -208,6 +212,7 @@ void DesktopApp::CloseFloatingDock(
 void DesktopApp::CloseAllFloatingDocks(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    rightButtonDownDockHost_ = nullptr;
     const bool endKeyboardSession =
         floatingDockKeyboardSessionActive_;
     floatingDockHoverTargetOwner_ = nullptr;
