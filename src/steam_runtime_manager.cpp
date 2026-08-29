@@ -32,6 +32,8 @@ constexpr wchar_t kStateDirectory[] = L".snowdesktop";
 constexpr wchar_t kRuntimeDirectory[] = L"runtime";
 constexpr wchar_t kCurrentRuntimeFilename[] = L"current-runtime.txt";
 constexpr wchar_t kCompleteFilename[] = L".snowdesktop-runtime-complete";
+constexpr wchar_t kRuntimeManifestFilename[] =
+    L".snowdesktop-runtime-manifest.json";
 constexpr wchar_t kUpdateLockFilename[] = L"update.lock";
 constexpr std::uint64_t kMaximumManifestBytes = 16ULL * 1024ULL * 1024ULL;
 
@@ -247,6 +249,13 @@ bool IsSafeRelativePath(const std::filesystem::path& path) noexcept
     return true;
 }
 
+bool IsReservedRuntimePath(std::wstring_view path) noexcept
+{
+    return path == L".snowdesktop-runtime-complete" ||
+        path == L".snowdesktop-runtime-manifest.json" ||
+        path == L"snowdesktop.runtime-context.json";
+}
+
 const JsonValue* RequiredField(const JsonValue& object,
     std::string_view name, JsonValue::Type type) noexcept
 {
@@ -336,6 +345,11 @@ std::optional<DistributionManifest> ReadManifest(
         std::wstring key = relative.generic_wstring();
         std::transform(key.begin(), key.end(), key.begin(),
             [](wchar_t value) { return static_cast<wchar_t>(towlower(value)); });
+        if (IsReservedRuntimePath(key))
+        {
+            error = "distribution manifest contains a reserved runtime path";
+            return std::nullopt;
+        }
         if (!uniquePaths.insert(key).second)
         {
             error = "distribution manifest contains a duplicate file path";
@@ -420,6 +434,151 @@ std::string RuntimeContextJson()
         "}\n";
 }
 
+bool SameManifest(const DistributionManifest& left,
+    const DistributionManifest& right) noexcept
+{
+    if (left.version != right.version || left.buildId != right.buildId ||
+        left.digest != right.digest || left.files.size() != right.files.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.files.size(); ++index)
+    {
+        const DistributionFile& leftFile = left.files[index];
+        const DistributionFile& rightFile = right.files[index];
+        if (leftFile.relativePath != rightFile.relativePath ||
+            leftFile.size != rightFile.size ||
+            leftFile.sha256 != rightFile.sha256)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<DistributionManifest> ValidatePublishedRuntime(
+    const std::filesystem::path& runtime,
+    const DistributionManifest* expectedManifest, std::string& error)
+{
+    std::error_code fileError;
+    if (!std::filesystem::is_directory(runtime, fileError) || fileError)
+    {
+        error = "published Steam runtime is missing or is not a directory";
+        return std::nullopt;
+    }
+
+    auto manifest = ReadManifest(runtime / kRuntimeManifestFilename, error);
+    if (!manifest)
+    {
+        if (error.empty())
+            error = "published Steam runtime manifest is invalid";
+        return std::nullopt;
+    }
+    if (expectedManifest && !SameManifest(*manifest, *expectedManifest))
+    {
+        error = "published Steam runtime manifest does not match the distribution";
+        return std::nullopt;
+    }
+
+    std::string markerError;
+    const std::string marker = ReadFile(
+        runtime / kCompleteFilename, 256, markerError);
+    if (!markerError.empty() || marker != manifest->digest + "\n")
+    {
+        error = "published Steam runtime completion marker is invalid";
+        return std::nullopt;
+    }
+
+    std::string sidecarError;
+    const std::string sidecar = ReadFile(runtime /
+            snowdesktop::deployment::kSteamRuntimeContextFilename,
+        4096, sidecarError);
+    if (!sidecarError.empty() || sidecar != RuntimeContextJson())
+    {
+        error = "published Steam runtime context is invalid";
+        return std::nullopt;
+    }
+
+    for (const DistributionFile& file : manifest->files)
+    {
+        if (!ValidateFile(runtime / file.relativePath, file, error))
+        {
+            if (error.empty())
+                error = "published Steam runtime file is invalid";
+            return std::nullopt;
+        }
+    }
+    return manifest;
+}
+
+struct RuntimeDestination
+{
+    std::filesystem::path path;
+    std::string directoryId;
+    bool alreadyPublished = false;
+};
+
+std::optional<RuntimeDestination> SelectRecoveryDestination(
+    const std::filesystem::path& runtimeRoot,
+    const DistributionManifest& manifest, std::string& error)
+{
+    const std::string base = "recovery-" + manifest.digest;
+    for (std::uint64_t attempt = 0;; ++attempt)
+    {
+        const std::string directoryId = attempt == 0 ? base :
+            base + "-" + std::to_string(attempt);
+        const std::filesystem::path candidate = runtimeRoot /
+            Utf8ToWide(directoryId);
+        std::error_code fileError;
+        const bool exists = std::filesystem::exists(candidate, fileError);
+        if (fileError)
+        {
+            error = "cannot inspect a Steam runtime recovery directory";
+            return std::nullopt;
+        }
+        if (!exists)
+            return RuntimeDestination{candidate, directoryId, false};
+
+        std::string validationError;
+        if (ValidatePublishedRuntime(candidate, &manifest, validationError))
+            return RuntimeDestination{candidate, directoryId, true};
+
+        if (attempt == std::numeric_limits<std::uint64_t>::max())
+        {
+            error = "cannot allocate a unique Steam runtime recovery directory";
+            return std::nullopt;
+        }
+    }
+}
+
+std::optional<std::filesystem::path> CreateUniqueStagingDirectory(
+    const std::filesystem::path& runtimeRoot, std::string_view directoryId,
+    std::string& error)
+{
+    const std::wstring prefix = Utf8ToWide(directoryId) + L".staging." +
+        std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(GetTickCount64());
+    for (std::uint32_t attempt = 0;; ++attempt)
+    {
+        const std::filesystem::path candidate = runtimeRoot /
+            (attempt == 0 ? prefix : prefix + L"." +
+                std::to_wstring(attempt));
+        std::error_code fileError;
+        if (std::filesystem::create_directory(candidate, fileError))
+            return candidate;
+        if (fileError)
+        {
+            error = "cannot create a staged Steam runtime";
+            return std::nullopt;
+        }
+        if (attempt == std::numeric_limits<std::uint32_t>::max())
+        {
+            error = "cannot allocate a unique staged Steam runtime";
+            return std::nullopt;
+        }
+    }
+}
+
 ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
 {
     const auto deadline = std::chrono::steady_clock::now() +
@@ -443,30 +602,28 @@ ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
 
 std::optional<std::pair<std::filesystem::path, std::string>>
 ReadFallback(const std::filesystem::path& stateRoot,
-    const std::filesystem::path& runtimeRoot)
+    const std::filesystem::path& runtimeRoot, std::string& validationError)
 {
     std::string error;
-    std::string buildId = ReadFile(
+    std::string directoryId = ReadFile(
         stateRoot / kCurrentRuntimeFilename, 256, error);
-    while (!buildId.empty() &&
-        (buildId.back() == '\r' || buildId.back() == '\n'))
+    while (!directoryId.empty() &&
+        (directoryId.back() == '\r' || directoryId.back() == '\n'))
     {
-        buildId.pop_back();
+        directoryId.pop_back();
     }
-    if (!error.empty() || !IsSafeIdentifier(buildId))
+    if (!error.empty() || !IsSafeIdentifier(directoryId))
+    {
+        validationError = "the active Steam runtime selection is invalid";
         return std::nullopt;
+    }
     const std::filesystem::path runtime = runtimeRoot /
-        Utf8ToWide(buildId);
-    const std::filesystem::path executable = runtime / L"SnowDesktop.exe";
-    const std::filesystem::path sidecar = runtime /
-        snowdesktop::deployment::kSteamRuntimeContextFilename;
-    std::error_code fileError;
-    if (!std::filesystem::is_regular_file(executable, fileError) ||
-        !std::filesystem::is_regular_file(sidecar, fileError))
-    {
+        Utf8ToWide(directoryId);
+    auto manifest = ValidatePublishedRuntime(
+        runtime, nullptr, validationError);
+    if (!manifest)
         return std::nullopt;
-    }
-    return std::pair(executable, buildId);
+    return std::pair(runtime / L"SnowDesktop.exe", manifest->buildId);
 }
 
 ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
@@ -474,12 +631,18 @@ ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
 {
     ApplyResult result;
     result.error = std::move(error);
-    if (const auto fallback = ReadFallback(stateRoot, runtimeRoot))
+    std::string fallbackError;
+    if (const auto fallback = ReadFallback(
+            stateRoot, runtimeRoot, fallbackError))
     {
         result.ok = true;
         result.usedFallback = true;
         result.executable = fallback->first;
         result.buildId = fallback->second;
+    }
+    else if (!fallbackError.empty())
+    {
+        result.error += "; fallback rejected: " + fallbackError;
     }
     return result;
 }
@@ -518,23 +681,47 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     if (!manifest)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
 
-    const std::filesystem::path target = runtimeRoot /
-        Utf8ToWide(manifest->buildId);
-    const std::filesystem::path complete = target / kCompleteFilename;
-    std::string completeError;
-    const std::string completeValue = ReadFile(complete, 256, completeError);
-    if (completeError.empty() && completeValue == manifest->digest + "\n")
-    {
+    auto activate = [&](const RuntimeDestination& selected) {
         if (!WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
-                manifest->buildId + "\n", error))
+                selected.directoryId + "\n", error))
         {
             return FailureOrFallback(stateRoot, runtimeRoot, error);
         }
         ApplyResult result;
         result.ok = true;
-        result.executable = target / L"SnowDesktop.exe";
+        result.executable = selected.path / L"SnowDesktop.exe";
         result.buildId = manifest->buildId;
         return result;
+    };
+
+    RuntimeDestination destination{
+        runtimeRoot / Utf8ToWide(manifest->buildId), manifest->buildId, false};
+    const bool primaryExists =
+        std::filesystem::exists(destination.path, fileError);
+    if (fileError)
+        return FailureOrFallback(stateRoot, runtimeRoot,
+            "cannot inspect the Steam runtime target");
+    if (primaryExists)
+    {
+        std::string validationError;
+        if (ValidatePublishedRuntime(
+                destination.path, &*manifest, validationError))
+        {
+            destination.alreadyPublished = true;
+            return activate(destination);
+        }
+
+        // Published runtimes are immutable. A missing marker, damaged file,
+        // or reused build ID must never turn repair into an in-place delete.
+        // Instead, either reuse an already verified recovery publication or
+        // reserve a new content-addressed recovery directory.
+        auto recovery = SelectRecoveryDestination(
+            runtimeRoot, *manifest, error);
+        if (!recovery)
+            return FailureOrFallback(stateRoot, runtimeRoot, error);
+        destination = std::move(*recovery);
+        if (destination.alreadyPublished)
+            return activate(destination);
     }
 
     const std::filesystem::path distribution =
@@ -545,15 +732,11 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
-    const std::filesystem::path staging = runtimeRoot /
-        (Utf8ToWide(manifest->buildId) + L".staging." +
-            std::to_wstring(GetCurrentProcessId()));
-    std::filesystem::remove_all(staging, fileError);
-    fileError.clear();
-    std::filesystem::create_directories(staging, fileError);
-    if (fileError)
-        return FailureOrFallback(stateRoot, runtimeRoot,
-            "cannot create a staged Steam runtime");
+    const auto stagingValue = CreateUniqueStagingDirectory(
+        runtimeRoot, destination.directoryId, error);
+    if (!stagingValue)
+        return FailureOrFallback(stateRoot, runtimeRoot, error);
+    const std::filesystem::path staging = *stagingValue;
 
     bool staged = true;
     for (const DistributionFile& file : manifest->files)
@@ -577,11 +760,30 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     }
     if (staged)
     {
+        if (!CopyFileW(manifestPath.c_str(),
+                (staging / kRuntimeManifestFilename).c_str(), FALSE))
+        {
+            error = "cannot preserve the staged Steam runtime manifest";
+            staged = false;
+        }
+    }
+    if (staged)
+    {
         staged = WriteTextAtomically(staging /
                 snowdesktop::deployment::kSteamRuntimeContextFilename,
             RuntimeContextJson(), error) &&
             WriteTextAtomically(staging / kCompleteFilename,
                 manifest->digest + "\n", error);
+    }
+    if (staged)
+    {
+        std::string validationError;
+        if (!ValidatePublishedRuntime(staging, &*manifest, validationError))
+        {
+            error = "staged Steam runtime validation failed: " +
+                validationError;
+            staged = false;
+        }
     }
     if (!staged)
     {
@@ -589,33 +791,21 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
-    if (std::filesystem::exists(target, fileError))
-    {
-        fileError.clear();
-        std::filesystem::remove_all(target, fileError);
-        if (fileError)
-        {
-            std::filesystem::remove_all(staging, fileError);
-            return FailureOrFallback(stateRoot, runtimeRoot,
-                "an incomplete target runtime is still in use");
-        }
-    }
-    if (!MoveFileExW(staging.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH))
+    if (!MoveFileExW(staging.c_str(), destination.path.c_str(),
+            MOVEFILE_WRITE_THROUGH))
     {
         std::filesystem::remove_all(staging, fileError);
         return FailureOrFallback(stateRoot, runtimeRoot,
             "cannot publish the staged Steam runtime");
     }
-    if (!WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
-            manifest->buildId + "\n", error))
-    {
-        return FailureOrFallback(stateRoot, runtimeRoot, error);
-    }
 
-    ApplyResult result;
-    result.ok = true;
-    result.executable = target / L"SnowDesktop.exe";
-    result.buildId = manifest->buildId;
-    return result;
+    std::string publishedError;
+    if (!ValidatePublishedRuntime(
+            destination.path, &*manifest, publishedError))
+    {
+        return FailureOrFallback(stateRoot, runtimeRoot,
+            "published Steam runtime validation failed: " + publishedError);
+    }
+    return activate(destination);
 }
 }

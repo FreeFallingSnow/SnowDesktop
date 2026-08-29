@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -13,11 +14,43 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
 {
 int failures = 0;
+constexpr wchar_t kRuntimeCompleteFilename[] =
+    L".snowdesktop-runtime-complete";
+constexpr wchar_t kCurrentRuntimeFilename[] = L"current-runtime.txt";
+
+class OccupiedFile final
+{
+public:
+    explicit OccupiedFile(const std::filesystem::path& path)
+        : handle_(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr))
+    {
+    }
+
+    ~OccupiedFile()
+    {
+        if (handle_ != INVALID_HANDLE_VALUE)
+            CloseHandle(handle_);
+    }
+
+    OccupiedFile(const OccupiedFile&) = delete;
+    OccupiedFile& operator=(const OccupiedFile&) = delete;
+
+    [[nodiscard]] bool valid() const noexcept
+    {
+        return handle_ != INVALID_HANDLE_VALUE;
+    }
+
+private:
+    HANDLE handle_ = INVALID_HANDLE_VALUE;
+};
 
 void Check(bool condition, const char* message)
 {
@@ -42,6 +75,27 @@ std::string ReadText(const std::filesystem::path& path)
     std::ostringstream text;
     text << stream.rdbuf();
     return text.str();
+}
+
+using DirectorySnapshot = std::vector<
+    std::pair<std::filesystem::path, std::string>>;
+
+DirectorySnapshot SnapshotDirectory(const std::filesystem::path& root)
+{
+    DirectorySnapshot result;
+    for (const auto& entry :
+        std::filesystem::recursive_directory_iterator(root))
+    {
+        if (!entry.is_regular_file())
+            continue;
+        result.emplace_back(
+            entry.path().lexically_relative(root), ReadText(entry.path()));
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left,
+                  const auto& right) {
+        return left.first.generic_wstring() < right.first.generic_wstring();
+    });
+    return result;
 }
 
 std::string Sha256(const std::filesystem::path& path)
@@ -334,6 +388,144 @@ void TestRuntimeUpdate(const std::filesystem::path& root)
         CloseHandle(occupied);
 }
 
+snowdesktop::steam_runtime::ApplyResult PrepareRuntime(
+    const std::filesystem::path& root, std::string_view buildId,
+    std::string_view hostContents = "host clean",
+    std::string_view libraryContents = "dll clean")
+{
+    WriteText(root / snowdesktop::deployment::kSteamLauncherFilename,
+        "launcher");
+    WriteDistribution(root, "1.0.5.0", buildId,
+        hostContents, libraryContents);
+    auto result = snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(result.ok && !result.usedFallback &&
+            std::string_view(result.buildId) == buildId,
+        "the runtime test fixture is published before corruption");
+    return result;
+}
+
+void CorruptDistributionLibrary(const std::filesystem::path& root)
+{
+    WriteText(root / L"distribution" / L"SnowDesktop.Runtime" /
+        L"runtime.dll", "dll evil!");
+}
+
+void TestOccupiedSameBuildRecovery(const std::filesystem::path& root)
+{
+    constexpr std::string_view buildId = "occupied-build";
+    const auto initial = PrepareRuntime(
+        root, buildId, "host stable", "dll stable");
+    if (!initial.ok)
+        return;
+
+    const auto oldRuntime = initial.executable.parent_path();
+    const auto oldLibrary = oldRuntime / L"SnowDesktop.Runtime" /
+        L"runtime.dll";
+    WriteText(oldRuntime / kRuntimeCompleteFilename,
+        "damaged completion marker\n");
+    const DirectorySnapshot oldSnapshot = SnapshotDirectory(oldRuntime);
+
+    OccupiedFile occupiedExecutable(initial.executable);
+    OccupiedFile occupiedLibrary(oldLibrary);
+    Check(occupiedExecutable.valid() && occupiedLibrary.valid(),
+        "the prior same-build executable and DLL are held without delete sharing");
+    if (!occupiedExecutable.valid() || !occupiedLibrary.valid())
+        return;
+
+    const auto recovered =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(recovered.ok && !recovered.usedFallback &&
+            std::string_view(recovered.buildId) == buildId,
+        "a damaged same-build marker publishes a fresh runtime while the old runtime is occupied");
+    if (!recovered.ok)
+        return;
+
+    const auto recoveredRuntime = recovered.executable.parent_path();
+    Check(recoveredRuntime != oldRuntime &&
+            recoveredRuntime.parent_path() == oldRuntime.parent_path(),
+        "same-build recovery publishes to a distinct sibling runtime directory");
+    Check(std::filesystem::is_directory(oldRuntime) &&
+            SnapshotDirectory(oldRuntime) == oldSnapshot,
+        "same-build recovery never deletes or modifies the occupied old runtime");
+    Check(ReadText(recovered.executable) == "host stable" &&
+            ReadText(recoveredRuntime / L"SnowDesktop.Runtime" /
+                L"runtime.dll") == "dll stable",
+        "the recovery runtime contains the complete validated distribution");
+    Check(ReadText(root / L".snowdesktop" / kCurrentRuntimeFilename) ==
+            recoveredRuntime.filename().string() + "\n",
+        "the active runtime pointer records the physical recovery directory ID");
+    const auto context =
+        snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+            recovered.executable, false);
+    Check(context.kind ==
+            snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged,
+        "the recovery runtime publishes a valid managed Steam sidecar");
+}
+
+void TestTamperedActiveRuntimeBypassesFastPath(
+    const std::filesystem::path& root)
+{
+    constexpr std::string_view buildId = "tampered-active";
+    const auto initial = PrepareRuntime(root, buildId);
+    if (!initial.ok)
+        return;
+
+    WriteText(initial.executable, "host evil!");
+    Check(ReadText(initial.executable).size() ==
+            std::string_view("host clean").size(),
+        "the active-runtime tamper preserves file size to require hash validation");
+    const auto repaired =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(repaired.ok && !repaired.usedFallback &&
+            std::string_view(repaired.buildId) == buildId &&
+            ReadText(repaired.executable) == "host clean",
+        "a valid completion marker cannot fast-path a hash-tampered active runtime");
+}
+
+void TestInvalidRuntimeFallbacks(const std::filesystem::path& root)
+{
+    const auto verifyRejected = [&](const std::filesystem::path& caseRoot,
+                                    std::string_view buildId,
+                                    const auto& corruptRuntime,
+                                    const char* message) {
+        const auto initial = PrepareRuntime(caseRoot, buildId);
+        if (!initial.ok)
+            return;
+        const auto runtime = initial.executable.parent_path();
+        corruptRuntime(runtime, initial.executable);
+        CorruptDistributionLibrary(caseRoot);
+        const auto fallback =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        Check(!fallback.ok && !fallback.usedFallback &&
+                fallback.executable.empty() && !fallback.error.empty(),
+            message);
+    };
+
+    verifyRejected(root / L"marker", "fallback-marker",
+        [](const std::filesystem::path& runtime,
+            const std::filesystem::path&) {
+            WriteText(runtime / kRuntimeCompleteFilename,
+                "damaged completion marker\n");
+        },
+        "fallback rejects a runtime with an invalid completion marker");
+
+    verifyRejected(root / L"hash", "fallback-hash",
+        [](const std::filesystem::path&,
+            const std::filesystem::path& executable) {
+            WriteText(executable, "host evil!");
+        },
+        "fallback rejects a runtime whose payload hash is invalid");
+
+    verifyRejected(root / L"sidecar", "fallback-sidecar",
+        [](const std::filesystem::path& runtime,
+            const std::filesystem::path&) {
+            WriteText(runtime /
+                    snowdesktop::deployment::kSteamRuntimeContextFilename,
+                "{not-json");
+        },
+        "fallback rejects a runtime whose managed sidecar is invalid");
+}
+
 void TestSteamAutoStartRules()
 {
     using namespace snowdesktop;
@@ -366,6 +558,9 @@ int main()
         TestContextResolution(root / L"contexts");
         TestRuntimeDataPathPolicy(root / L"data-paths");
         TestRuntimeUpdate(root / L"update");
+        TestOccupiedSameBuildRecovery(root / L"occupied-recovery");
+        TestTamperedActiveRuntimeBypassesFastPath(root / L"tampered-active");
+        TestInvalidRuntimeFallbacks(root / L"invalid-fallbacks");
         TestSteamAutoStartRules();
     }
     catch (const std::exception& exception)
