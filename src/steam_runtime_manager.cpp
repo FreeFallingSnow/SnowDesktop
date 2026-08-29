@@ -1018,6 +1018,12 @@ bool RemoveStagingDirectorySafely(const std::filesystem::path& staging,
         return false;
     }
 
+    struct CleanupEntry
+    {
+        std::filesystem::path path;
+        DWORD attributes = 0;
+    };
+    std::vector<CleanupEntry> entries;
     std::error_code iteratorError;
     std::filesystem::recursive_directory_iterator iterator(
         staging, std::filesystem::directory_options::none, iteratorError);
@@ -1038,21 +1044,57 @@ bool RemoveStagingDirectorySafely(const std::filesystem::path& staging,
             error = "refusing to clean a staged runtime containing a reparse or device entry";
             return false;
         }
-        if ((attributes & FILE_ATTRIBUTE_READONLY) != 0)
+        if ((attributes & FILE_ATTRIBUTE_READONLY) != 0 &&
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
         {
-            DWORD normalized = attributes & ~FILE_ATTRIBUTE_READONLY;
-            if (normalized == 0)
-                normalized = FILE_ATTRIBUTE_NORMAL;
-            if (!SetFileAttributesW(entry.c_str(), normalized))
+            HANDLE file = CreateFileW(entry.c_str(), FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                nullptr);
+            if (file == INVALID_HANDLE_VALUE)
             {
-                error = "cannot clear a read-only staged runtime entry";
+                error = "cannot inspect a read-only staged runtime entry";
+                return false;
+            }
+            BY_HANDLE_FILE_INFORMATION information{};
+            const bool inspected =
+                GetFileInformationByHandle(file, &information) != FALSE;
+            const DWORD inspectError =
+                inspected ? ERROR_SUCCESS : GetLastError();
+            const bool closed = CloseHandle(file) != FALSE;
+            const DWORD closeError = closed ? ERROR_SUCCESS : GetLastError();
+            if (!inspected || !closed)
+            {
+                error = "cannot inspect a read-only staged runtime link (Win32 error " +
+                    std::to_string(!inspected ? inspectError : closeError) + ')';
+                return false;
+            }
+            if (information.nNumberOfLinks > 1)
+            {
+                error = "refusing to change attributes through a staged runtime hardlink";
                 return false;
             }
         }
+        entries.push_back({entry, attributes});
         iterator.increment(iteratorError);
         if (iteratorError)
         {
             error = "cannot enumerate the complete staged runtime for cleanup";
+            return false;
+        }
+    }
+
+    for (const CleanupEntry& entry : entries)
+    {
+        if ((entry.attributes & FILE_ATTRIBUTE_READONLY) == 0)
+            continue;
+        DWORD normalized = entry.attributes & ~FILE_ATTRIBUTE_READONLY;
+        if (normalized == 0)
+            normalized = FILE_ATTRIBUTE_NORMAL;
+        if (!SetFileAttributesW(entry.path.c_str(), normalized))
+        {
+            error = "cannot clear a read-only staged runtime entry";
             return false;
         }
     }
@@ -1086,36 +1128,59 @@ bool RemoveStagingDirectorySafely(const std::filesystem::path& staging,
     return true;
 }
 
+bool ParseCanonicalUnsigned(std::wstring_view text, std::uint64_t maximum,
+    bool requireNonZero, std::uint64_t& value) noexcept
+{
+    if (text.empty() || (text.size() > 1 && text.front() == L'0'))
+        return false;
+    std::uint64_t parsed = 0;
+    for (const wchar_t character : text)
+    {
+        if (character < L'0' || character > L'9')
+            return false;
+        const std::uint64_t digit =
+            static_cast<std::uint64_t>(character - L'0');
+        if (parsed > (maximum - digit) / 10)
+            return false;
+        parsed = parsed * 10 + digit;
+    }
+    if (requireNonZero && parsed == 0)
+        return false;
+    value = parsed;
+    return true;
+}
+
 bool IsStagingDirectoryName(std::wstring_view name) noexcept
 {
     constexpr std::wstring_view prefix = L".staging.";
     if (!name.starts_with(prefix))
         return false;
     name.remove_prefix(prefix.size());
-    std::array<std::size_t, 3> maximumLengths{10, 20, 10};
-    std::size_t component = 0;
-    while (!name.empty() && component < maximumLengths.size())
+
+    const std::size_t firstSeparator = name.find(L'.');
+    if (firstSeparator == std::wstring_view::npos)
+        return false;
+    const std::wstring_view process = name.substr(0, firstSeparator);
+    name.remove_prefix(firstSeparator + 1);
+    const std::size_t secondSeparator = name.find(L'.');
+    const std::wstring_view tick = name.substr(0, secondSeparator);
+    const std::wstring_view attempt = secondSeparator ==
+            std::wstring_view::npos ? std::wstring_view{} :
+        name.substr(secondSeparator + 1);
+    if (secondSeparator != std::wstring_view::npos &&
+        attempt.find(L'.') != std::wstring_view::npos)
     {
-        const std::size_t separator = name.find(L'.');
-        const std::wstring_view value = name.substr(0, separator);
-        if (value.empty() || value.size() > maximumLengths[component] ||
-            !std::all_of(value.begin(), value.end(), [](wchar_t character) {
-                return character >= L'0' && character <= L'9';
-            }))
-        {
-            return false;
-        }
-        ++component;
-        if (separator == std::wstring_view::npos)
-        {
-            name = {};
-            break;
-        }
-        if (separator + 1 == name.size())
-            return false;
-        name.remove_prefix(separator + 1);
+        return false;
     }
-    return name.empty() && (component == 2 || component == 3);
+
+    std::uint64_t parsed = 0;
+    return ParseCanonicalUnsigned(process,
+               std::numeric_limits<std::uint32_t>::max(), true, parsed) &&
+        ParseCanonicalUnsigned(tick,
+            std::numeric_limits<std::uint64_t>::max(), false, parsed) &&
+        (secondSeparator == std::wstring_view::npos ||
+            ParseCanonicalUnsigned(attempt,
+                std::numeric_limits<std::uint32_t>::max(), true, parsed));
 }
 
 bool CleanupAbandonedStagingDirectories(

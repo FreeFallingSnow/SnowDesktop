@@ -1091,6 +1091,74 @@ void TestReadOnlyPayloadAndStagingCleanup(
                 !std::filesystem::exists(abandoned),
             "the next locked launcher run safely removes abandoned read-only staging data");
     }
+
+    {
+        const auto caseRoot = root / L"hardlinked-staging";
+        const auto initial = PrepareRuntime(caseRoot, "hardlink-staging");
+        if (!initial.ok)
+            return;
+        const auto runtimeRoot =
+            initial.executable.parent_path().parent_path();
+        const auto abandoned = runtimeRoot / L".staging.123.789";
+        const auto sentinel = root / L"outside-read-only-sentinel.dll";
+        WriteText(sentinel, "outside read-only sentinel unchanged");
+        const DWORD originalAttributes =
+            GetFileAttributesW(sentinel.c_str());
+        const bool markedReadOnly =
+            originalAttributes != INVALID_FILE_ATTRIBUTES &&
+            SetFileAttributesW(sentinel.c_str(),
+                originalAttributes | FILE_ATTRIBUTE_READONLY) != FALSE;
+        Check(markedReadOnly,
+            "the staging hardlink fixture can mark its outside sentinel read-only");
+        const auto stagedHardlink = abandoned / L"linked-partial.dll";
+        const bool linked = markedReadOnly &&
+            CreateFileHardLink(stagedHardlink, sentinel);
+        Check(linked,
+            "the staging hardlink fixture can link a partial file outside the runtime root");
+        if (linked)
+        {
+            const auto relaunched =
+                snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+            const DWORD finalAttributes =
+                GetFileAttributesW(sentinel.c_str());
+            Check(relaunched.ok && relaunched.usedFallback &&
+                    relaunched.executable == initial.executable &&
+                    relaunched.error.find(
+                        "cannot clean abandoned Steam staging data") !=
+                        std::string::npos,
+                "a read-only staged hardlink is rejected with the last valid runtime as fallback");
+            Check(std::filesystem::exists(abandoned) &&
+                    ReadText(sentinel) ==
+                        "outside read-only sentinel unchanged" &&
+                    finalAttributes != INVALID_FILE_ATTRIBUTES &&
+                    (finalAttributes & FILE_ATTRIBUTE_READONLY) != 0,
+                "rejected staging cleanup leaves the outside hardlink target content and attributes unchanged");
+        }
+        if (originalAttributes != INVALID_FILE_ATTRIBUTES)
+            SetFileAttributesW(sentinel.c_str(), originalAttributes);
+    }
+
+    {
+        const auto caseRoot = root / L"noncanonical-staging";
+        const auto initial = PrepareRuntime(caseRoot, "canonical-staging");
+        if (!initial.ok)
+            return;
+        const auto runtimeRoot =
+            initial.executable.parent_path().parent_path();
+        const auto leadingZero = runtimeRoot / L".staging.01.2";
+        const auto overflow = runtimeRoot /
+            L".staging.4294967296.18446744073709551616";
+        WriteText(leadingZero / L"unowned.txt", "leading zero");
+        WriteText(overflow / L"unowned.txt", "overflow");
+
+        const auto relaunched =
+            snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
+        Check(relaunched.ok && !relaunched.usedFallback,
+            "noncanonical staging-like names do not block a normal launcher run");
+        Check(ReadText(leadingZero / L"unowned.txt") == "leading zero" &&
+                ReadText(overflow / L"unowned.txt") == "overflow",
+            "cleanup retains staging-like directories that the launcher generator cannot produce");
+    }
 }
 
 void TestCaseExactRuntimeTree(const std::filesystem::path& root)
