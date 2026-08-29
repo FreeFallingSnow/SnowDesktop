@@ -116,10 +116,15 @@ void CheckPopupWindowPairZOrderTransitions()
         extendedStyle, L"STATIC", L"popup-pair-backdrop",
         WS_POPUP, 0, 0, 32, 32,
         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-    Check(content && backdrop,
+    HWND menu = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-menu",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(content && backdrop && menu,
         "popup pair transition test windows are created");
-    if (!content || !backdrop)
+    if (!content || !backdrop || !menu)
     {
+        if (menu) DestroyWindow(menu);
         if (backdrop) DestroyWindow(backdrop);
         if (content) DestroyWindow(content);
         return;
@@ -152,6 +157,29 @@ void CheckPopupWindowPairZOrderTransitions()
             pairMatches(true),
         "popup pair can return to TOPMOST without exposing its backdrop");
 
+    const auto isAbove = [](HWND upper, HWND lower) {
+        for (HWND current = upper; current;
+             current = GetWindow(current, GW_HWNDNEXT))
+        {
+            if (current == lower)
+                return true;
+        }
+        return false;
+    };
+    Check(SetWindowPos(
+            menu, HWND_TOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+            isAbove(menu, content),
+        "a menu probe can be placed above the synchronized popup pair");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size) &&
+            pairMatches(true) &&
+            isAbove(menu, content),
+        "an idempotent popup layer refresh must not raise the pair above an existing menu");
+
+    DestroyWindow(menu);
     DestroyWindow(backdrop);
     DestroyWindow(content);
 }

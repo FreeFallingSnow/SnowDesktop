@@ -53,6 +53,25 @@ inline bool Apply(
             0, 0, 0, 0, contentFlags) != FALSE;
     }
 
+    const bool usesBandSentinel =
+        contentInsertAfter == HWND_TOPMOST ||
+        contentInsertAfter == HWND_NOTOPMOST;
+    const bool pairAlreadySynchronized =
+        IsTopmost(contentWindow) == topmost &&
+        IsTopmost(backdropWindow) == topmost &&
+        IsPaired(contentWindow, backdropWindow);
+    if (usesBandSentinel && pairAlreadySynchronized)
+    {
+        // A layer-policy refresh must not raise an already-correct popup
+        // pair above a menu that Windows has since placed over its content.
+        // Keep the helper geometry synchronized without changing Z order.
+        return SetWindowPos(
+            backdropWindow, nullptr,
+            backdropOrigin.x, backdropOrigin.y,
+            backdropSize.cx, backdropSize.cy,
+            backdropFlags | SWP_NOZORDER) != FALSE;
+    }
+
     const bool changesZOrderBand =
         IsTopmost(contentWindow) != topmost ||
         IsTopmost(backdropWindow) != topmost;
