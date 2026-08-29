@@ -191,7 +191,8 @@ std::optional<std::string> Sha256(const std::filesystem::path& path,
         error = "cannot hash file: " + path.string();
         return std::nullopt;
     }
-    std::array<char, 1024 * 1024> buffer{};
+    // Keep the hashing buffer off the launcher's default 1 MiB thread stack.
+    std::vector<char> buffer(1024 * 1024);
     while (stream)
     {
         stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
