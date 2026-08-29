@@ -5071,6 +5071,10 @@ int main(int argc, char** argv)
                 "dragSession_.IsActive() ||\n"
                 "        dragDropController_.IsTransportActive() ||\n"
                 "        buttonsDown != 0");
+        const std::size_t contextMenuGestureGuard =
+            dockPointerSamplerSource.find(
+                "HasActiveContextMenuSession() ||",
+                passiveDragSamplerCall);
         const std::size_t edgeSwipeDetectorUpdate =
             dockPointerSamplerSource.find(
                 "floatingDockEdgeSwipeDetector_.Update(",
@@ -5169,7 +5173,7 @@ int main(int argc, char** argv)
                   "dockWindowPreview_->IsVisible()") !=
                     std::string::npos &&
                 passiveDragUpdateSource.find(
-                  "HasActiveContextMenuSession()") !=
+                  "HasActiveContextMenuSession()") ==
                     std::string::npos &&
                 passiveDragUpdateSource.find(
                   "ShowFloatingDock(") ==
@@ -5198,6 +5202,7 @@ int main(int argc, char** argv)
                   "                dockSettings_.showOnlyWhenSummoned,\n"
                   "                dockSettings_.floatingEdgeSwipeEnabled)") !=
                     std::string::npos &&
+                contextMenuGestureGuard != std::string::npos &&
                 legacyDragButtonGuard != std::string::npos &&
                 edgeSwipeDetectorUpdate != std::string::npos &&
                 edgeSwipeTriggerBranch != std::string::npos &&
@@ -5208,11 +5213,12 @@ int main(int argc, char** argv)
                 edgeSwipeTriggerSource.find(
                   "showOnlyWhenSummoned") ==
                     std::string::npos &&
-                passiveDragSamplerCall < legacyDragButtonGuard &&
+                passiveDragSamplerCall < contextMenuGestureGuard &&
+                contextMenuGestureGuard < legacyDragButtonGuard &&
                 legacyDragButtonGuard < edgeSwipeDetectorUpdate &&
                 edgeSwipeDetectorUpdate < edgeSwipeTriggerBranch &&
                 edgeSwipeTriggerBranch < edgeSwipeSummon,
-            "ordinary edge swipe must always keep the manual summon path while internal and OLE drags are excluded after passive reveal sampling");
+            "ordinary edge swipe must keep the manual summon path while context menus, internal drags and OLE drags are excluded after passive reveal sampling");
         const std::size_t containsPointBegin =
             dockContainerSource.find(
                 "bool DockContainer::ContainsInteractivePoint(");
@@ -6032,10 +6038,26 @@ int main(int argc, char** argv)
                 proxyForegroundRequest < proxyActivationReturn &&
                 proxyActivationReturn < ordinaryActivationRequest,
             "taskbar document proxies must activate directly without showing the hidden helper window");
-        Check(pointerContextSource.find(
-                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
-                    std::string::npos,
-            "context menus opened from the Dock must reveal its floating host");
+        const std::size_t dockContextHit =
+            pointerContextSource.find(
+                "if (DockContainer* dock = GetDockContainerAtPoint(pt))");
+        const std::size_t dockContextSummon =
+            pointerContextSource.find(
+                "EnsureFloatingDockVisibleForAssociatedSurface(",
+                dockContextHit);
+        const std::size_t dockContextEnd =
+            pointerContextSource.find(
+                "const size_t standaloneInputWidget",
+                dockContextHit);
+        Check(dockContextHit != std::string::npos &&
+                dockContextSummon != std::string::npos &&
+                dockContextEnd != std::string::npos &&
+                dockContextHit < dockContextSummon &&
+                dockContextSummon < dockContextEnd &&
+                pointerContextSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(",
+                  dockContextSummon + 1) == std::string::npos,
+            "only context menus dispatched from a Dock hit must summon its floating host");
         Check(pointerContextSource.find(
                   "if (mouseDownHit_ == popupItem)") !=
                     std::string::npos &&

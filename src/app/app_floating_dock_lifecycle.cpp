@@ -137,8 +137,6 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
         dragDropController_.IsTransportActive();
     const bool dragRevealActive =
         internalDragActive || oleDragActive;
-    const bool contextMenuActive =
-        HasActiveContextMenuSession();
     bool passiveDragRevealedThisSample = false;
 
     for (const auto& ownedHost : persistentDockHosts_)
@@ -223,7 +221,6 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 MONITOR_DEFAULTTONEAREST) == host.monitor;
         }
         const bool associatedSurfaceActive =
-            contextMenuActive ||
             collectionPopupDockHost_ == &host ||
             quickNavigationDockHost_ == &host ||
             previewAssociated;
@@ -448,6 +445,9 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             IsFloatingEdgeSwipeEnabled(
                 dockSettings_.showOnlyWhenSummoned,
                 dockSettings_.floatingEdgeSwipeEnabled) ||
+        // Context menus run a nested input loop. Pointer travel inside any
+        // menu is menu interaction, not an intentional Dock edge gesture.
+        HasActiveContextMenuSession() ||
         dragSession_.IsActive() ||
         dragDropController_.IsTransportActive() ||
         buttonsDown != 0)
