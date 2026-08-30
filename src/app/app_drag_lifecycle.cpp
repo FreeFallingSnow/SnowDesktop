@@ -181,14 +181,33 @@ void DesktopApp::PresentPointerInteractionFrame(
             widgetInteractionPresented = true;
         }
     }
+    bool marqueeInteractionPresented = false;
+    if (marqueeActive_ && !marqueeFullPresentPending_ &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        // The first marquee frame still repaints the complete desktop so
+        // selected icon pixels move from the background to the interaction
+        // layer. Later frames change only that layer (and, when applicable,
+        // the one widget surface queued by OnMouseMoveAt).
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        marqueeInteractionPresented =
+            PresentDesktopForegroundComposition(client);
+    }
     bool desktopFallbackPresented = false;
     if (immediateDesktopPresent &&
+        !marqueeInteractionPresented &&
         (!widgetPreviewActive || !widgetInteractionPresented) &&
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
         desktopFallbackPresented = true;
+    }
+    if (marqueeActive_ && marqueeFullPresentPending_ &&
+        desktopFallbackPresented)
+    {
+        marqueeFullPresentPending_ = false;
     }
     bool pageNavDragHintPresented =
         pageNavDragHintChanged &&

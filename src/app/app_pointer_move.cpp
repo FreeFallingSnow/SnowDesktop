@@ -198,7 +198,9 @@ void DesktopApp::OnMouseMoveAt(
         (widgetAction_ == WidgetAction::Move ||
          widgetAction_ == WidgetAction::Resize) &&
         mouseDownWidgetIndex_ < widgets_.size();
-    if (!activeWidgetGesture)
+    const bool marqueePointerGesture =
+        IsMarqueePointerGesturePendingOrActive();
+    if (!activeWidgetGesture && !marqueePointerGesture)
     {
         // Once a component owns the captured pointer, Dock previews, Lua
         // hover routing and popup dwell state cannot consume this sample.
@@ -1055,11 +1057,23 @@ void DesktopApp::OnMouseMoveAt(
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
-            if (!marqueeActive_)
+            const bool startingMarquee = !marqueeActive_;
+            if (startingMarquee)
+            {
                 dragRenderCache_.Reset();
+                marqueeFullPresentPending_ = true;
+            }
             marqueeActive_ = true;
             UpdateMarqueeSelection(current);
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (!startingMarquee &&
+                marqueeWidgetIndex_ < widgets_.size() &&
+                popupWidgetIndex_ != marqueeWidgetIndex_)
+            {
+                (void)QueueDesktopWidgetComposition(
+                    widgets_[marqueeWidgetIndex_].id);
+            }
+            if (startingMarquee)
+                InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }

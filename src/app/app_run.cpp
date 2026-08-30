@@ -1401,6 +1401,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
                     dragDropController_.IsTransportActive());
+            const bool latencySensitivePointerActive =
+                nativeDragActive ||
+                IsMarqueePointerGesturePendingOrActive();
             const bool nativeDragMessageSurface =
                 snowdesktop::drag_input_rules::
                     IsNativeDragMessageSurface(
@@ -1410,7 +1413,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                             msg.hwnd == floatingPopupHwnd_);
             snowdesktop::drag_input_rules::
                 CoalesceQueuedMouseMoves(
-                    nativeDragActive,
+                    latencySensitivePointerActive,
                     nativeDragMessageSurface,
                     msg,
                     [](MSG& next) {

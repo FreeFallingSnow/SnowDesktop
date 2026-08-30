@@ -188,6 +188,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
+    marqueeFullPresentPending_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();

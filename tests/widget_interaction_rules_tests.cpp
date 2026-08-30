@@ -861,7 +861,27 @@ void TestDragInputSampling()
         dragInputRules::ShouldSampleLivePointer(true, true) &&
             !dragInputRules::ShouldSampleLivePointer(false, true) &&
             !dragInputRules::ShouldSampleLivePointer(true, false),
-        "live drag sampling must stop after the physical primary button is released");
+        "live drag and marquee sampling must stop after the physical primary button is released");
+    Check(
+        dragInputRules::IsMarqueePointerGesture(
+            true, false, true, true, true,
+            true, true, true, true, true, false) &&
+        dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, false,
+            false, false, false, false, false, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, true, false, false,
+            false, false, false, false, false, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, true,
+            false, false, false, false, false, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, false,
+            false, false, false, false, true, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, false,
+            false, false, false, false, false, false),
+        "only an active marquee or an unclaimed pressed marquee target may use latency-sensitive pointer routing");
     Check(
         dragInputRules::ShouldSampleFloatingWindowPointer(true, true) &&
             !dragInputRules::ShouldSampleFloatingWindowPointer(true, false) &&
@@ -887,7 +907,7 @@ void TestDragInputSampling()
             true, false, true) &&
         !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
             true, true, false),
-        "native drag coalescing must start only for a move on an eligible input surface");
+        "latency-sensitive pointer coalescing must start only for a move on an eligible input surface");
     Check(
         dragInputRules::ShouldCoalesceQueuedMouseMove(
             true, true, true) &&
@@ -897,7 +917,7 @@ void TestDragInputSampling()
                 true, false, true) &&
             !dragInputRules::ShouldCoalesceQueuedMouseMove(
                 true, true, false),
-        "native drag coalescing must stop at another window or message kind");
+        "latency-sensitive pointer coalescing must stop at another window or message kind");
 }
 
 void TestPopupIconLoadCancellationRules()

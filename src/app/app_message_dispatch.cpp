@@ -287,11 +287,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
-        const bool primaryButtonDown = nativeDragActive &&
+        const bool marqueePointerActive =
+            IsMarqueePointerGesturePendingOrActive();
+        const bool latencySensitivePointerActive =
+            nativeDragActive || marqueePointerActive;
+        const bool primaryButtonDown = latencySensitivePointerActive &&
             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-        const bool sampleNativeDrag =
+        const bool sampleLivePointer =
             snowdesktop::drag_input_rules::ShouldSampleLivePointer(
-                nativeDragActive, primaryButtonDown);
+                latencySensitivePointerActive, primaryButtonDown);
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
             widgetAction_ != WidgetAction::None ||
@@ -303,7 +307,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     mouseDown_,
                     dragSession_.IsActive(),
                     widgetInteractionActive);
-        if (sampleNativeDrag || samplePassiveHover)
+        if (sampleLivePointer || samplePassiveHover)
         {
             // Costly frames and modal Shell loops can leave old WM_MOUSEMOVE
             // messages queued for this HWND. Native item drags must follow the
@@ -312,9 +316,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             POINT cursorScreen{};
             if (!GetCursorPos(&cursorScreen))
             {
-                // A captured drag must keep making progress even if the live
-                // sample fails transiently. Passive hover has no equivalent
-                // gesture state, so retain its existing drop-on-failure rule.
+                // A captured drag or marquee must keep making progress even
+                // if the live sample fails transiently. Passive hover has no
+                // equivalent gesture state, so retain its drop-on-failure rule.
                 if (samplePassiveHover)
                     return 0;
             }

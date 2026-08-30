@@ -1720,6 +1720,8 @@ private:
     int GetMarqueeScrollOffset() const;
     /** @brief 获取当前框选目标的内容视口。 */
     RECT GetMarqueeViewportRect() const;
+    /** @brief 判断当前捕获状态是否属于待启动或进行中的框选手势。 */
+    bool IsMarqueePointerGesturePendingOrActive() const;
     /** @brief 按当前鼠标位置更新框选矩形及命中状态。 */
     void UpdateMarqueeSelection(POINT current);
     /**
@@ -3522,6 +3524,7 @@ private:
     Item* mouseDownHit_ = nullptr;
     WidgetHit pendingGuideAction_ = WidgetHit::None;
     bool marqueeActive_ = false;
+    bool marqueeFullPresentPending_ = false;
     RECT marqueeRect_{};
     size_t marqueeWidgetIndex_ = static_cast<size_t>(-1);
     bool marqueeDockFolderPopup_ = false;

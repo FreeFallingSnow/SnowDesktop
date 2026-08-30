@@ -1,6 +1,22 @@
 #include "app.h"
+#include "../drag_input_rules.h"
 
 // Selection projection, keyboard focus sync and marquee selection.
+
+bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
+{
+    const bool hasMarqueeTarget =
+        marqueeDockFolderPopup_ ||
+        marqueeWidgetIndex_ < widgets_.size() ||
+        mouseDownWidgetIndex_ >= widgets_.size();
+    return snowdesktop::drag_input_rules::IsMarqueePointerGesture(
+        marqueeActive_, mouseDown_, mouseDownHit_ != nullptr,
+        pendingGuideAction_ != WidgetHit::None,
+        widgetAction_ != WidgetAction::None,
+        middleButtonWidgetMove_, detailColumnResizeActive_,
+        widgetScrollbarDragging_, popupScrollbarDragging_,
+        luaWidgetPanelMouseDown_, hasMarqueeTarget);
+}
 
 void DesktopApp::ClearSelection()
 {

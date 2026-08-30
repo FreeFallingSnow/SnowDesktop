@@ -7285,6 +7285,46 @@ int main(int argc, char** argv)
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,
             "ordinary drag movement must not invalidate the full desktop after every pointer pixel");
+        const std::size_t marqueeMoveBegin =
+            pointerMoveSource.find(
+                "if (mouseDown_ && !mouseDownHit_");
+        const std::size_t marqueeMoveEnd =
+            pointerMoveSource.find(
+                "    {\n        int oldHover = navHoverSide_;",
+                marqueeMoveBegin);
+        const std::string marqueeMoveHotPath =
+            marqueeMoveBegin != std::string::npos &&
+                    marqueeMoveEnd != std::string::npos
+                ? pointerMoveSource.substr(
+                    marqueeMoveBegin,
+                    marqueeMoveEnd - marqueeMoveBegin)
+                : std::string{};
+        Check(!marqueeMoveHotPath.empty() &&
+                marqueeMoveHotPath.find(
+                    "const bool startingMarquee = !marqueeActive_;") !=
+                    std::string::npos &&
+                marqueeMoveHotPath.find(
+                    "QueueDesktopWidgetComposition(") !=
+                    std::string::npos &&
+                marqueeMoveHotPath.find(
+                    "if (startingMarquee)\n                InvalidateRect(") !=
+                    std::string::npos &&
+                CountOccurrences(
+                    marqueeMoveHotPath,
+                    "InvalidateRect(hwnd_, nullptr, FALSE);") == 1 &&
+                dragLifecycleSource.find(
+                    "marqueeInteractionPresented =\n            PresentDesktopForegroundComposition(client);") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                    "!marqueeInteractionPresented &&") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                    "const bool marqueePointerActive =") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                    "const bool sampleLivePointer =") !=
+                    std::string::npos,
+            "marquee moves must use live pointer input and redraw only the foreground plus their target widget after the first frame");
         const std::size_t widgetTransitionPaint =
             pointerMoveSource.find(
                 "PresentDesktopPointerUpdate();",
