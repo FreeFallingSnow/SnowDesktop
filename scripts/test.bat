@@ -2,26 +2,51 @@
 setlocal
 cd /d "%~dp0.."
 
-echo === Configuring tests ===
-cmake --preset tests
-if %ERRORLEVEL% NEQ 0 exit /b 1
+set "MODE=full"
+set "FILTER="
 
-echo.
-echo === Building test targets ===
-cmake --build --preset tests
-if %ERRORLEVEL% NEQ 0 exit /b 1
+if "%~1"=="" goto run
+if /i "%~1"=="full" set "MODE=full"& goto validate_tail
+if /i "%~1"=="fast" set "MODE=fast"& goto validate_tail
+if /i "%~1"=="core" set "MODE=core"& goto validate_tail
+if /i "%~1"=="list" set "MODE=list"& goto validate_tail
+if /i "%~1"=="label" (
+    if "%~2"=="" goto usage
+    set "MODE=label"
+    set "FILTER=%~2"
+    goto validate_filter_tail
+)
+if /i "%~1"=="name" (
+    if "%~2"=="" goto usage
+    set "MODE=name"
+    set "FILTER=%~2"
+    goto validate_filter_tail
+)
+goto usage
 
-echo.
-echo === Running CTest ===
-ctest --preset tests
-if %ERRORLEVEL% NEQ 0 exit /b 1
+:validate_tail
+if not "%~2"=="" goto usage
+goto run
 
-echo.
-echo === Verifying isolated test output ===
-powershell -NoProfile -Command "$releaseRoot=[IO.Path]::GetFullPath('.build\Release'); $testRoot=Join-Path $releaseRoot 'tests'; $runtimeRoot=Join-Path $releaseRoot 'SnowDesktop.Runtime'; $tests=@(Get-ChildItem -LiteralPath $testRoot -File -Filter 'SnowDesktop*Tests.exe' -ErrorAction Stop); $rootTests=@(Get-ChildItem -LiteralPath $releaseRoot -File -Filter 'SnowDesktop*Tests.exe' -ErrorAction Stop); $rootDlls=@(Get-ChildItem -LiteralPath $releaseRoot -File -Filter '*.dll' -ErrorAction Stop); $runtimeDirectoryNames=@(Get-ChildItem -LiteralPath $runtimeRoot -Directory -ErrorAction Stop | ForEach-Object Name); $emptyRuntimeDirs=@(Get-ChildItem -LiteralPath $releaseRoot -Directory -ErrorAction Stop | Where-Object { $runtimeDirectoryNames -contains $_.Name -and [IO.Directory]::GetFileSystemEntries($_.FullName).Count -eq 0 }); if ($tests.Count -eq 0 -or $rootTests.Count -ne 0 -or $rootDlls.Count -ne 0 -or $emptyRuntimeDirs.Count -ne 0) { Write-Error 'Build or CTest output escaped its dedicated runtime/test directory.'; exit 1 }"
-if %ERRORLEVEL% NEQ 0 exit /b 1
+:validate_filter_tail
+if not "%~3"=="" goto usage
 
+:run
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test_manager.ps1 -Mode "%MODE%" -Filter "%FILTER%"
+exit /b %ERRORLEVEL%
+
+:usage
+echo Usage:
+echo   scripts\test.bat                         Full suite
+echo   scripts\test.bat full                    Full suite
+echo   scripts\test.bat fast                    Exclude integration tests
+echo   scripts\test.bat core                    Core tests only
+echo   scripts\test.bat label ^<regex^>           Tests matching a CTest label
+echo   scripts\test.bat name ^<regex^>            Tests matching a CTest name
+echo   scripts\test.bat list                    List tests and labels
 echo.
-echo === Tests complete ===
-echo Test binaries: .build\Release\tests
-exit /b 0
+echo Examples:
+echo   scripts\test.bat label rules
+echo   scripts\test.bat label "^(ui^|winui^)$"
+echo   scripts\test.bat name quick_navigation
+exit /b 2

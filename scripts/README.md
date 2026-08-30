@@ -4,7 +4,8 @@
 
 - `build.bat`：默认无进程副作用的 Release 编译；
 - `build_debug.bat`：默认无进程副作用的 Debug 编译；
-- `test.bat`：构建并运行完整 CTest 测试集（包含国际化静态与运行时契约）；
+- `test.bat`：按完整、快速、核心、标签或名称构建并运行 CTest 测试；
+- `test_manager.ps1`：从 CTest 清单动态选择测试及其构建目标，避免在脚本中重复维护目标列表；
 - `widget-dev.bat`：同步并监听本地 Lua 组件，保存后热重载，无需重复编译；
 - `steam-dev.bat`：以正式 App ID 创建临时本地 Steam 上下文，运行主程序、创作者管理器或 Bridge，退出后安全清理；
 - `steam_local_deploy.ps1`：默认只读预检，将构建载荷显式部署为 Steam 安装根内隔离的 `steam-local-dev` runtime；
@@ -25,6 +26,11 @@
 scripts\build.bat
 scripts\build_debug.bat
 scripts\test.bat
+scripts\test.bat fast
+scripts\test.bat core
+scripts\test.bat label rules
+scripts\test.bat name quick_navigation
+scripts\test.bat list
 scripts\widget-dev.bat widgets\reminders
 scripts\widget-dev.bat widgets\reminders -Once
 scripts\steam-dev.bat manager
@@ -44,6 +50,11 @@ scripts\release.bat steam-upload-dev -Yes -ConfirmVersion 1.0.5.0 -ConfirmPrivat
 等确实占用构建输出的情况才需要 `--reload-shell`。脚本会明确提示并短暂重启 Shell。发布 CLI
 对应使用 `-ReloadShell`；发布 TUI 检测到实际构建输出占用时会在执行前请求一次明确确认。
 本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
+
+测试按使用场景分层：日常改动优先用 `name <regex>` 或 `label <regex>` 运行最小充分集合；
+`core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；无参数或 `full` 运行全部测试。
+筛选参数是 CTest 正则表达式。完整测试用于任务最终交付、Pull Request 和发布验证，不要求每个
+中间 Commit 重复执行。
 
 `scripts\widget-dev.bat` 需要先构建一次宿主。首次创建开发候选时会重启一次
 SnowDesktop 以发现组件；开发候选默认不覆盖已安装版本，需要在“我的组件”卡片中

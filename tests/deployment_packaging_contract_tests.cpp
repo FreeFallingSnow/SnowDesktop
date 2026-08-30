@@ -255,7 +255,8 @@ void TestPackagers(const std::string& module,
 
 void TestBuildOutputLayout(const std::string& cmake,
     const std::string& arranger,
-    const std::string& testScript)
+    const std::string& testScript,
+    const std::string& testManager)
 {
     Check(cmake.find(
               "${CMAKE_BINARY_DIR}/$<CONFIG>/tests") !=
@@ -282,15 +283,29 @@ void TestBuildOutputLayout(const std::string& cmake,
             arranger.find("Build output still contains root-level DLLs") !=
                 std::string::npos,
         "standard builds become directly runnable private-runtime layouts without root DLLs");
-    Check(testScript.find(".build\\Release\\tests") !=
+    Check(testScript.find("test_manager.ps1") !=
                 std::string::npos &&
-            testScript.find("rootTests.Count -ne 0") !=
+            testScript.find("MODE=fast") !=
                 std::string::npos &&
-            testScript.find("rootDlls.Count -ne 0") !=
+            testScript.find("MODE=core") !=
                 std::string::npos &&
-            testScript.find("emptyRuntimeDirs.Count -ne 0") !=
+            testScript.find("MODE=label") !=
+                std::string::npos &&
+            testScript.find("MODE=name") !=
+                std::string::npos &&
+            testManager.find("--show-only=json-v1") !=
+                std::string::npos &&
+            testManager.find("^SnowDesktop.+Tests\\.exe$") !=
+                std::string::npos &&
+            testManager.find("-LE\", \"^integration$") !=
+                std::string::npos &&
+            testManager.find("rootTests.Count -ne 0") !=
+                std::string::npos &&
+            testManager.find("rootDlls.Count -ne 0") !=
+                std::string::npos &&
+            testManager.find("emptyRuntimeDirs.Count -ne 0") !=
                 std::string::npos,
-        "the standard test entry point rejects flat test executables");
+        "the standard test entry point supports layered CTest selection without duplicating target lists");
 }
 
 void TestReleaseManagerShellReload(const std::string& manager,
@@ -567,7 +582,8 @@ int main(int argc, char** argv)
         TestBuildOutputLayout(
             ReadText(root / "CMakeLists.txt"),
             ReadText(root / "scripts/arrange_build_output.ps1"),
-            ReadText(root / "scripts/test.bat"));
+            ReadText(root / "scripts/test.bat"),
+            ReadText(root / "scripts/test_manager.ps1"));
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
             ReadText(root / "packaging/README.md"));
