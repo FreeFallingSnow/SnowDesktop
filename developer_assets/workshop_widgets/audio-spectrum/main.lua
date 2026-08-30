@@ -1,7 +1,7 @@
 local spectrum = module.require("modules/spectrum.lua")
 local audioAnalysis
 
-local DEFAULT_COLOR = 0xFFFFFF
+local DEFAULT_COLOR = 0xBFE9FF
 local CAPTURE_BINS = 128
 
 local settings = {
@@ -50,7 +50,7 @@ local settings = {
             min = 16,
             max = 128,
             step = 16,
-            default = 64,
+            default = 48,
             group = "appearance",
         },
         {
@@ -66,7 +66,7 @@ local settings = {
                 l10n.tr("workshop.audio_spectrum.align_center"),
                 l10n.tr("workshop.audio_spectrum.align_top"),
             },
-            default = "bottom",
+            default = "center",
             group = "appearance",
         },
         {
@@ -164,87 +164,133 @@ local function setup(context)
     return model
 end
 
-local function dataSeriesStyle(model)
-    return {
-        foreground = model.color,
-    }
-end
-
-local function dataSeriesAccessibility(hidden)
-    return {
-        label = l10n.tr("workshop.audio_spectrum.spectrum_label"),
-        hidden = hidden == true,
-    }
-end
-
-local function spectrumNode(model)
-    local padding = math.max(layout.cu(4), math.min(
-        layout.cu(10), layout.vmin(5)))
-    local values = spectrum.display(model.values, model.barCount)
-    local plan = spectrum.seriesPlan(model.alignment)
-    local function properties(key, seriesValues, hidden, trackOpacity)
-        return {
-            key = key,
-            values = seriesValues,
-            width = "fill",
-            height = "fill",
-            padding = padding,
-            fillOpacity = 0.94,
-            trackOpacity = trackOpacity,
-            min = plan.minimum,
-            max = plan.maximum,
-            style = dataSeriesStyle(model),
-            accessibility = dataSeriesAccessibility(hidden),
-        }
-    end
-
-    if plan.renderer == "spectrum" then
-        return view.spectrum(properties(
-            "audio-spectrum.bars", values, false, nil))
-    end
-
-    if plan.negate then values = spectrum.negate(values) end
-    local primary = view.barChart(properties(
-        "audio-spectrum.bars", values, false, 1))
-    if not plan.mirror then return primary end
-
-    return view.stack({
-        key = "audio-spectrum.centered",
-        width = "fill",
-        height = "fill",
-        children = {
-            primary,
-            view.barChart(properties("audio-spectrum.reflection",
-                spectrum.negate(values), true, 0)),
+local function registerAccessibility(width, height, label)
+    interaction.region({
+        key = "audio-spectrum.visual",
+        shape = {
+            type = "rect",
+            x = 0,
+            y = 0,
+            width = math.max(1, width),
+            height = math.max(1, height),
+        },
+        accessibility = {
+            role = "group",
+            label = label,
         },
     })
 end
 
-local function statusNode(status)
+local function drawStatus(status, width, height)
     local key = statusKeys[status] or statusKeys.unavailable
-    return view.text({
-        key = "audio-spectrum.status",
-        text = l10n.tr(key),
-        width = "fill",
-        height = "fill",
-        padding = layout.cu(8),
-        fontSize = layout.fontCu(12),
-        textAlign = "center",
-        verticalAlign = "center",
-        textWrap = "wrap",
-        maxLines = 2,
-        style = { foreground = "textSecondary" },
-    })
+    local text = l10n.tr(key)
+    local fontSize = layout.fontCu(12)
+    local padding = layout.cu(8)
+    local maxWidth = math.max(1, width - padding * 2)
+    local metrics = draw.measureText(text, fontSize, maxWidth, false)
+    local textX = math.max(padding, (width - metrics.width) / 2)
+    local textY = math.max(padding, (height - metrics.height) / 2)
+    local theme = widget.theme()
+    local color = theme and theme.contentTheme == 1 and
+        0x334155 or 0xCBD5E1
+    draw.text(textX, textY, text, fontSize, color,
+        maxWidth, false, false, math.max(1, height - textY - padding))
+    registerAccessibility(width, height, text)
 end
 
-local function viewTree(_context, model)
+local function drawBar(x, baseline, barWidth, extent, level,
+    direction, colors, alpha, reflection)
+    if extent <= 0 or barWidth <= 0 then return end
+    local minimum = math.min(extent,
+        math.max(layout.cu(2), barWidth * 0.72))
+    local barHeight = minimum + (extent - minimum) * level
+    local y = direction < 0 and baseline - barHeight or baseline
+    local radius = math.min(barWidth * 0.5, barHeight * 0.5)
+    local glow = math.min(layout.cu(1.5), barWidth * 0.34)
+    draw.gradientRect(x - glow, y - glow,
+        barWidth + glow * 2, barHeight + glow * 2,
+        colors.glow, colors.glow, "vertical", radius + glow,
+        alpha * (reflection and 0.12 or 0.18))
+
+    local topColor = direction < 0 and colors.highlight or colors.base
+    local bottomColor = direction < 0 and colors.depth or colors.highlight
+    draw.gradientRect(x, y, barWidth, barHeight,
+        topColor, bottomColor, "vertical", radius, alpha)
+
+    if not reflection then
+        local capHeight = math.min(barHeight * 0.18,
+            math.max(layout.cu(0.7), barWidth * 0.22))
+        local capY = direction < 0 and y or y + barHeight - capHeight
+        draw.rect(x + barWidth * 0.22, capY,
+            barWidth * 0.56, capHeight, colors.highlight,
+            capHeight * 0.5, alpha * 0.72)
+    end
+end
+
+local function drawSpectrum(model, width, height)
+    local padding = math.max(layout.cu(6), math.min(
+        layout.cu(14), layout.vmin(3.8)))
+    local plotWidth = math.max(1, width - padding * 2)
+    local values = spectrum.visual(model.values, model.barCount)
+    local stride = plotWidth / math.max(1, #values)
+    local barWidth = math.max(0.75,
+        math.min(layout.cu(12), stride * 0.62))
+    local colors = {
+        base = model.color,
+        highlight = spectrum.mixColor(model.color, 0xFFFFFF, 0.52),
+        depth = spectrum.mixColor(model.color, 0x071A3A, 0.32),
+        glow = spectrum.mixColor(model.color, 0xFFFFFF, 0.18),
+    }
+
+    local alignment = model.alignment
+    local baseline
+    local primaryDirection
+    local primaryExtent
+    local reflectionExtent = 0
+    if alignment == "top" then
+        baseline = padding
+        primaryDirection = 1
+        primaryExtent = math.max(1, height - padding * 2)
+    elseif alignment == "bottom" then
+        baseline = height - padding
+        primaryDirection = -1
+        primaryExtent = math.max(1, height - padding * 2)
+    else
+        baseline = height * 0.56
+        primaryDirection = -1
+        primaryExtent = math.max(1, baseline - padding)
+        reflectionExtent = math.max(1,
+            (height - padding - baseline) * 0.78)
+    end
+
+    draw.rect(padding, baseline - layout.cu(0.45), plotWidth,
+        layout.cu(0.9), colors.base, layout.cu(0.45), 0.16)
+
+    for index, level in ipairs(values) do
+        local x = padding + (index - 0.5) * stride - barWidth * 0.5
+        drawBar(x, baseline, barWidth, primaryExtent,
+            level, primaryDirection, colors, 0.94, false)
+        if reflectionExtent > 0 then
+            drawBar(x, baseline, barWidth, reflectionExtent,
+                level * 0.72, 1, colors, 0.30, true)
+        end
+    end
+
+    registerAccessibility(width, height,
+        l10n.tr("workshop.audio_spectrum.spectrum_label"))
+end
+
+local function render(_context, model)
     local force, reset = applyConfig(model)
     capture(model, force, reset)
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
     if model.status == "ready" or model.status == "silent" or
         model.status == "warming" or model.status == "stale" then
-        return spectrumNode(model)
+        drawSpectrum(model, width, height)
+        return
     end
-    return statusNode(model.status)
+    drawStatus(model.status, width, height)
 end
 
 local function event(_context, model, value)
@@ -272,7 +318,7 @@ return widget.define({
     glassEnabled = false,
     settings = settings,
     setup = setup,
-    view = viewTree,
+    render = render,
     event = event,
     dispose = dispose,
 })

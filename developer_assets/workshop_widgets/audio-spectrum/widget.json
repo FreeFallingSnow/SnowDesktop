@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Audio Spectrum",
   "nameKey": "workshop.audio_spectrum.name",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "description": "Visualizes the current Windows audio output as transparent live frequency bars, only while the component is visible.",
   "descriptionKey": "workshop.audio_spectrum.description",
   "preview": "workshop-preview.png",
@@ -259,11 +259,9 @@
     "settings.range",
     "settings.select.localizedOptions",
     "storage.typed",
-    "view.accessibility.metadata",
-    "view.dataSeries",
-    "view.text.flow",
-    "view.theme.tokens",
-    "view.tree.core"
+    "draw.advanced",
+    "draw.immediate",
+    "interaction.region"
   ],
   "optionalFeatures": []
 }
