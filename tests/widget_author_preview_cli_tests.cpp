@@ -826,9 +826,20 @@ int wmain(int argc, wchar_t** argv)
         borderless, wideEdgeHighlight, leftLightStrip);
     const std::uint64_t rightGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, rightLightStrip);
+    constexpr RECT topLeftCornerLight{ 0, 0, 16, 16 };
+    const std::uint64_t topLeftCornerGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, topLeftCornerLight);
+    const std::uint64_t topChangedPixels = CountDifferingPixels(
+        borderless, wideEdgeHighlight, topLightStrip);
+    const std::uint64_t topLeftCornerChangedPixels = CountDifferingPixels(
+        borderless, wideEdgeHighlight, topLeftCornerLight);
     Check(topGain > bottomGain * 2 && leftGain > rightGain * 2 &&
             bottomGain > 0 && rightGain > 0,
         "top-left light drives the primary bevel reflection while the opposite bevel stays weaker");
+    Check(topChangedPixels > 0 && topLeftCornerChangedPixels > 0 &&
+            topLeftCornerGain * topChangedPixels * 5 <
+                topGain * topLeftCornerChangedPixels * 7,
+        "broad area light keeps the rounded corner from overpowering the connected straight edge");
 
     constexpr std::array<std::wstring_view, 6> appearances{
         L"dark", L"light", L"glass-dark", L"glass-light",

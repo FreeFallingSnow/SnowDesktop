@@ -698,10 +698,15 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float depth = edgeDistance / bevelDepth;
                     const float alignment = sample.normalX * lightX +
                         sample.normalY * lightY;
+                    // Treat the source as a broad area light. A tight
+                    // specular power makes the rounded corner facing the
+                    // source dominate the straight top and left edges;
+                    // sub-linear powers keep those connected edges readable
+                    // without introducing an omnidirectional base stroke.
                     const float primary = std::pow(
-                        std::max(alignment, 0.0f), 2.4f);
-                    const float transmitted = 0.42f * std::pow(
-                        std::max(-alignment, 0.0f), 1.8f);
+                        std::max(alignment, 0.0f), 0.65f);
+                    const float transmitted = 0.55f * std::pow(
+                        std::max(-alignment, 0.0f), 0.80f);
                     // A bevel reflection is a filled light band, not a line
                     // sitting on the perimeter. Let the energy rise just
                     // inside the boundary, then leave a longer inward tail.
