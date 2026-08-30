@@ -215,6 +215,9 @@ int main(int argc, char** argv)
     const std::string_view reconciliation = FunctionBody(settingsApply,
         "ReconciledAutoStart ReconcileAutoStart() noexcept",
         "} // namespace");
+    const std::string_view applyAutoStart = FunctionBody(settingsApply,
+        "DesktopApp::ApplyAutoStartEnabled(",
+        "DesktopApp::StartSettingsUpdateCheck()");
     const std::string_view establishedCleanup = FunctionBody(settingsApply,
         "void SuppressLegacySourcesForEstablishedTask() noexcept",
         "struct ReconciledAutoStart");
@@ -249,6 +252,15 @@ int main(int argc, char** argv)
                 "QueryLegacyPackagedAutoStart()") !=
                 std::string_view::npos,
         "an established unified task is authoritative without portable builds waiting on the packaged bridge");
+    Check(applyAutoStart.find(
+              "CanExplicitlyEnableMissingAutoStart(") !=
+                std::string_view::npos &&
+            applyAutoStart.find(
+              "if (!before.stateKnown && !explicitlyEnableMissing)") !=
+                std::string_view::npos &&
+            applyAutoStart.find(
+              "auto_start::Configure(") != std::string_view::npos,
+        "explicit enablement creates a confirmed-missing task without replacing foreign or unavailable tasks");
     Check(autoStartManager.find("kMigrationEnableDescription") !=
                 std::string::npos &&
             autoStartManager.find("kMigrationDisableDescription") !=

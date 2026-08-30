@@ -490,7 +490,10 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     };
 
     const snowdesktop::AutoStartQueryResult before = QueryAutoStartState();
-    if (!before.stateKnown)
+    const bool explicitlyEnableMissing =
+        snowdesktop::CanExplicitlyEnableMissingAutoStart(
+            enabled, before.stateKnown, before.taskStatus);
+    if (!before.stateKnown && !explicitlyEnableMissing)
     {
         return finish(AutoStartApplyStatus::StateUnavailable,
             _LW(enabled

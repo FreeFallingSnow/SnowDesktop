@@ -20,6 +20,7 @@ int main()
 {
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;
+    using snowdesktop::CanExplicitlyEnableMissingAutoStart;
     using snowdesktop::ClassifyAutoStartOwnershipNotice;
     using snowdesktop::DecodePortableAutoStartApprovalState;
     using snowdesktop::HasActivePortableAutoStart;
@@ -107,6 +108,19 @@ int main()
                PortableAutoStartRegistrationOwner::Error,
                PortableAutoStartApprovalState::Enabled),
         "an unreadable Run registration is not reported as active");
+
+    Check(CanExplicitlyEnableMissingAutoStart(true, false,
+              UnifiedAutoStartTaskState::Missing),
+        "an explicit enable can recover when the unified task is confirmed missing");
+    Check(!CanExplicitlyEnableMissingAutoStart(false, false,
+              UnifiedAutoStartTaskState::Missing) &&
+            !CanExplicitlyEnableMissingAutoStart(true, true,
+              UnifiedAutoStartTaskState::Missing) &&
+            !CanExplicitlyEnableMissingAutoStart(true, false,
+              UnifiedAutoStartTaskState::Foreign) &&
+            !CanExplicitlyEnableMissingAutoStart(true, false,
+              UnifiedAutoStartTaskState::Unavailable),
+        "explicit recovery never disables, bypasses known state, or replaces unreadable tasks");
 
     Check(ClassifyAutoStartOwnershipNotice(true,
               UnifiedAutoStartTaskState::Enabled, false,
