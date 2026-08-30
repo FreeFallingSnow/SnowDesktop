@@ -19,6 +19,8 @@ struct PreviewRenderRequest
     std::string appearance = "dark";
     std::string dataState = "ready";
     std::filesystem::path backgroundImage;
+    int canvasSize = 0;
+    int padding = 0;
     std::unordered_map<std::string, std::string> storage;
 };
 
@@ -30,6 +32,14 @@ struct PreviewRenderResult
     std::filesystem::path outputPng;
     int width = 0;
     int height = 0;
+    int componentWidth = 0;
+    int componentHeight = 0;
+    int canvasSize = 0;
+    int padding = 0;
+    int placementX = 0;
+    int placementY = 0;
+    int placementWidth = 0;
+    int placementHeight = 0;
     int columns = 0;
     int rows = 0;
     unsigned dpi = 0;

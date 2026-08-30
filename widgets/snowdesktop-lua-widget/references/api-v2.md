@@ -39,6 +39,10 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `dark/light/glass-dark/glass-light/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
 继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。生成最终打包预览时应通过
 `--background <图片文件>` 显式选择背景；该图片只参与合成，不会被 `pack` 自动加入组件包。
+需要正方形创意工坊图片时，可继续用组件真实的 `--columns/--rows` 渲染透明组件层，并加上
+`--canvas-size 512 --padding 48`。宿主会保持组件原始宽高比，将透明层等比放入带内边距的
+正方形画布，再把它合成到按 center-cover 裁切的背景上；不会拉伸背景，也不会为了方图改变
+组件布局跨度。`--padding` 只在指定 `--canvas-size` 时有效，且必须为画布留下正尺寸内容区。
 未指定时使用中性的兼容背景。输出 PNG 始终包含背景、解析后的普通/毛玻璃/亚克力材质层和组件
 内容，像素完全不透明；组件自定义材质
 优先，`followPersonalization` 则回到所选宿主外观。应先用 `preview` 生成清单声明的最终预览图，

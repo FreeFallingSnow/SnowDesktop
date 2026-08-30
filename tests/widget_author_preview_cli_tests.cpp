@@ -530,6 +530,39 @@ int wmain(int argc, wchar_t** argv)
             selectedBackground.pixels[3] == 255,
         "transparent preview pixels reveal the selected author background");
 
+    const auto squareOutput = temporary.path / L"square-preview.png";
+    const auto [squareExit, squareJson] = Run(snowwidget, {
+        L"preview", backgroundSource.wstring(), squareOutput.wstring(),
+        L"--background", background.wstring(),
+        L"--canvas-size", L"512", L"--padding", L"48",
+        L"--host", host.wstring() });
+    Check(squareExit == 0 &&
+            squareJson.find("\"width\":512") != std::string::npos &&
+            squareJson.find("\"height\":512") != std::string::npos &&
+            squareJson.find("\"componentWidth\":192") !=
+                std::string::npos &&
+            squareJson.find("\"componentHeight\":240") !=
+                std::string::npos &&
+            squareJson.find("\"canvasSize\":512") !=
+                std::string::npos &&
+            squareJson.find("\"padding\":48") != std::string::npos &&
+            squareJson.find("\"placementX\":89") !=
+                std::string::npos &&
+            squareJson.find("\"placementY\":48") !=
+                std::string::npos &&
+            squareJson.find("\"placementWidth\":333") !=
+                std::string::npos &&
+            squareJson.find("\"placementHeight\":416") !=
+                std::string::npos,
+        "preview reports the native component layer and square canvas placement");
+    const RgbaBitmap square =
+        CheckOpaquePreview(squareOutput, 512, 512);
+    Check(PixelAt(square, 0, 0) ==
+            std::array<std::uint8_t, 4>{ 18, 126, 214, 255 } &&
+            PixelAt(square, 511, 511) ==
+                std::array<std::uint8_t, 4>{ 18, 126, 214, 255 },
+        "square composition preserves the background outside component padding");
+
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";
     const auto [exitCode, json] = Run(snowwidget, {
@@ -746,6 +779,25 @@ int wmain(int argc, wchar_t** argv)
                 "\"stage\":\"request.background\"") !=
                 std::string::npos,
         "preview rejects a missing or undecodable author background");
+
+    const auto [paddingWithoutCanvasExit, paddingWithoutCanvasJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), invalidOutput.wstring(),
+            L"--padding", L"48", L"--host", host.wstring() });
+    Check(paddingWithoutCanvasExit == 2 &&
+            paddingWithoutCanvasJson.find("padding requires canvas-size") !=
+                std::string::npos,
+        "preview rejects padding without an independent square canvas");
+
+    const auto [oversizedPaddingExit, oversizedPaddingJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), invalidOutput.wstring(),
+            L"--canvas-size", L"512", L"--padding", L"256",
+            L"--host", host.wstring() });
+    Check(oversizedPaddingExit == 2 &&
+            oversizedPaddingJson.find("positive canvas content area") !=
+                std::string::npos,
+        "preview rejects padding that consumes the square canvas");
 
     std::cout << "widget author preview CLI tests passed\n";
     CoUninitialize();

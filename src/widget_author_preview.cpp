@@ -473,6 +473,14 @@ std::string PreviewRenderResult::ToJson() const
         << JsonString(WideToUtf8(outputPng.wstring()))
         << ",\"width\":" << width
         << ",\"height\":" << height
+        << ",\"componentWidth\":" << componentWidth
+        << ",\"componentHeight\":" << componentHeight
+        << ",\"canvasSize\":" << canvasSize
+        << ",\"padding\":" << padding
+        << ",\"placementX\":" << placementX
+        << ",\"placementY\":" << placementY
+        << ",\"placementWidth\":" << placementWidth
+        << ",\"placementHeight\":" << placementHeight
         << ",\"columns\":" << columns
         << ",\"rows\":" << rows
         << ",\"dpi\":" << dpi
@@ -498,6 +506,8 @@ PreviewRenderResult RenderWidgetPreview(
     result.appearance = request.appearance;
     result.dataState = request.dataState;
     result.backgroundImage = request.backgroundImage;
+    result.canvasSize = request.canvasSize;
+    result.padding = request.padding;
 
     const auto appearance = ParseAppearance(request.appearance);
     if (!appearance)
@@ -584,16 +594,51 @@ PreviewRenderResult RenderWidgetPreview(
         static_cast<int>(std::lround(8.0f * dpiScale)));
     const int barHeight = std::max(1,
         static_cast<int>(std::lround(24.0f * dpiScale)));
-    result.width = request.columns * cellWidth +
+    result.componentWidth = request.columns * cellWidth +
         (request.columns - 1) * gap;
-    result.height = request.rows * cellHeight +
+    result.componentHeight = request.rows * cellHeight +
         (request.rows - 1) * gap;
-    if (result.width <= 0 || result.height <= 0 ||
-        result.width > 8192 || result.height > 8192)
+    if (result.componentWidth <= 0 || result.componentHeight <= 0 ||
+        result.componentWidth > 8192 || result.componentHeight > 8192)
     {
         result.stage = "request.pixels";
         result.error = "preview pixel dimensions exceed the renderer limit";
         return result;
+    }
+    if (request.canvasSize < 0 || request.canvasSize > 8192 ||
+        (request.canvasSize > 0 && request.canvasSize < 64) ||
+        request.padding < 0 || request.padding > 4096 ||
+        (request.padding > 0 && request.canvasSize == 0) ||
+        (request.canvasSize > 0 &&
+            request.padding * 2 >= request.canvasSize))
+    {
+        result.stage = "request.canvas";
+        result.error = "preview canvas size or padding is outside the supported range";
+        return result;
+    }
+    result.width = request.canvasSize > 0
+        ? request.canvasSize : result.componentWidth;
+    result.height = request.canvasSize > 0
+        ? request.canvasSize : result.componentHeight;
+    if (request.canvasSize > 0)
+    {
+        const int available = request.canvasSize - request.padding * 2;
+        const double scale = std::min(
+            static_cast<double>(available) / result.componentWidth,
+            static_cast<double>(available) / result.componentHeight);
+        result.placementWidth = std::max(1,
+            static_cast<int>(std::lround(result.componentWidth * scale)));
+        result.placementHeight = std::max(1,
+            static_cast<int>(std::lround(result.componentHeight * scale)));
+        result.placementWidth = std::min(available, result.placementWidth);
+        result.placementHeight = std::min(available, result.placementHeight);
+        result.placementX = (request.canvasSize - result.placementWidth) / 2;
+        result.placementY = (request.canvasSize - result.placementHeight) / 2;
+    }
+    else
+    {
+        result.placementWidth = result.componentWidth;
+        result.placementHeight = result.componentHeight;
     }
 
     ScopedComInitialization com;
@@ -632,7 +677,23 @@ PreviewRenderResult RenderWidgetPreview(
             HresultText(graphicsResult);
         return result;
     }
-    context->SetTarget(target.Get());
+    ComPtr<ID2D1Bitmap1> componentTarget;
+    if (request.canvasSize > 0)
+    {
+        const D2D1_SIZE_U componentBitmapSize = D2D1::SizeU(
+            static_cast<UINT32>(result.componentWidth),
+            static_cast<UINT32>(result.componentHeight));
+        graphicsResult = context->CreateBitmap(componentBitmapSize,
+            nullptr, 0, &targetProperties, &componentTarget);
+        if (FAILED(graphicsResult))
+        {
+            result.stage = "graphics.componentTarget";
+            result.error = "cannot create the transparent component render target: " +
+                HresultText(graphicsResult);
+            return result;
+        }
+    }
+    context->SetTarget(componentTarget ? componentTarget.Get() : target.Get());
     context->SetDpi(static_cast<float>(request.dpi),
         static_cast<float>(request.dpi));
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
@@ -647,7 +708,7 @@ PreviewRenderResult RenderWidgetPreview(
     }
     LuaWidgetAuthorPreviewConfiguration previewConfiguration;
     previewConfiguration.bounds = {
-        0, 0, result.width, result.height };
+        0, 0, result.componentWidth, result.componentHeight };
     previewConfiguration.columns = request.columns;
     previewConfiguration.rows = request.rows;
     previewConfiguration.cellWidth = cellWidth;
@@ -672,21 +733,25 @@ PreviewRenderResult RenderWidgetPreview(
         context->SetTarget(nullptr);
         return result;
     }
-    const RECT bounds{ 0, 0, result.width, result.height };
+    const RECT componentBounds{
+        0, 0, result.componentWidth, result.componentHeight };
     const ResolvedPreviewStyle resolvedStyle =
         ResolvePreviewStyle(engine, *appearance);
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    snowdesktop::widget_preview::DrawStage(context.Get(), bounds,
-        { resolvedStyle.lightStage,
-            resolvedStyle.material.glassEnabled,
-            resolvedStyle.material.glassBlurRadius,
-            std::max(0.0f,
-                resolvedStyle.theme.cornerRadius * dpiScale) }, {},
-        background.pixels.empty() ? nullptr : &background);
+    if (request.canvasSize == 0)
+    {
+        snowdesktop::widget_preview::DrawStage(context.Get(), componentBounds,
+            { resolvedStyle.lightStage,
+                resolvedStyle.material.glassEnabled,
+                resolvedStyle.material.glassBlurRadius,
+                std::max(0.0f,
+                    resolvedStyle.theme.cornerRadius * dpiScale) }, {},
+            background.pixels.empty() ? nullptr : &background);
+    }
     DrawHostBackground(
-        context.Get(), resolvedStyle, bounds, dpiScale);
-    engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), bounds,
+        context.Get(), resolvedStyle, componentBounds, dpiScale);
+    engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
         request.columns, request.rows);
     graphicsResult = context->EndDraw();
     if (FAILED(graphicsResult))
@@ -706,6 +771,54 @@ PreviewRenderResult RenderWidgetPreview(
         engine.Shutdown();
         context->SetTarget(nullptr);
         return result;
+    }
+    if (request.canvasSize > 0)
+    {
+        context->SetTarget(target.Get());
+        const RECT canvasBounds{ 0, 0, result.width, result.height };
+        const RECT placementBounds{
+            result.placementX,
+            result.placementY,
+            result.placementX + result.placementWidth,
+            result.placementY + result.placementHeight };
+        const float placementScale = std::min(
+            static_cast<float>(result.placementWidth) /
+                result.componentWidth,
+            static_cast<float>(result.placementHeight) /
+                result.componentHeight);
+        context->BeginDraw();
+        context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        snowdesktop::widget_preview::DrawStage(context.Get(), canvasBounds,
+            { resolvedStyle.lightStage, false, 0.0f, 0.0f }, {},
+            background.pixels.empty() ? nullptr : &background);
+        if (resolvedStyle.material.glassEnabled)
+        {
+            snowdesktop::widget_preview::DrawStage(context.Get(),
+                placementBounds,
+                { resolvedStyle.lightStage, true,
+                    resolvedStyle.material.glassBlurRadius * placementScale,
+                    std::max(0.0f, resolvedStyle.theme.cornerRadius *
+                        dpiScale * placementScale) },
+                { result.width, result.height,
+                    result.placementX, result.placementY },
+                background.pixels.empty() ? nullptr : &background);
+        }
+        context->DrawBitmap(componentTarget.Get(),
+            D2D1::RectF(static_cast<float>(placementBounds.left),
+                static_cast<float>(placementBounds.top),
+                static_cast<float>(placementBounds.right),
+                static_cast<float>(placementBounds.bottom)),
+            1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+        graphicsResult = context->EndDraw();
+        if (FAILED(graphicsResult))
+        {
+            result.stage = "graphics.composite";
+            result.error = "Direct2D rejected the preview canvas composition: " +
+                HresultText(graphicsResult);
+            engine.Shutdown();
+            context->SetTarget(nullptr);
+            return result;
+        }
     }
 
     const D2D1_BITMAP_PROPERTIES1 readProperties =
@@ -814,6 +927,36 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
             WriteResultFile(resultPath, result);
             releaseArguments();
             return 2;
+        }
+        if (pair.substr(0, equals) == L"@preview.canvasSize")
+        {
+            if (!ParsePositiveInteger(pair.substr(equals + 1),
+                    64, 8192, request.canvasSize))
+            {
+                result.stage = "request.canvas";
+                result.error = "preview canvas size is outside the supported range";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            continue;
+        }
+        if (pair.substr(0, equals) == L"@preview.padding")
+        {
+            int padding = 0;
+            if (!ParsePositiveInteger(pair.substr(equals + 1),
+                    0, 4096, padding))
+            {
+                result.stage = "request.canvas";
+                result.error = "preview padding is outside the supported range";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            request.padding = padding;
+            continue;
         }
         request.storage[WideToUtf8(pair.substr(0, equals))] =
             WideToUtf8(pair.substr(equals + 1));

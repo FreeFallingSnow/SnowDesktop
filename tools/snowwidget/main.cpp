@@ -36,6 +36,7 @@ void PrintUsage()
         << "  snowwidget permissions <package-directory>\n"
         << "  snowwidget preview <package-directory> <output.png>"
            " [--columns N] [--rows N] [--dpi N]"
+           " [--canvas-size N] [--padding N]"
            " [--locale CODE]"
            " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
            " [--theme dark|light]"
@@ -230,6 +231,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     std::wstring_view appearance,
     std::wstring_view dataState,
     const std::filesystem::path& backgroundImage,
+    int canvasSize, int padding,
     const std::vector<std::wstring>& storage)
 {
     const auto resultPath = CreateResultPath();
@@ -256,6 +258,10 @@ int RunPreviewHost(const std::filesystem::path& host,
     append(appearance);
     append(dataState);
     append(backgroundImage.wstring());
+    if (canvasSize > 0)
+        append(L"@preview.canvasSize=" + std::to_wstring(canvasSize));
+    if (padding > 0)
+        append(L"@preview.padding=" + std::to_wstring(padding));
     for (const auto& pair : storage) append(pair);
 
     STARTUPINFOW startup{};
@@ -488,6 +494,8 @@ int wmain(int argc, wchar_t** argv)
         int columns = manifest.defaultColumns;
         int rows = manifest.defaultRows;
         int dpi = 96;
+        int canvasSize = 0;
+        int padding = 0;
         std::wstring locale = L"en-US";
         std::wstring theme = L"dark";
         std::wstring appearance = L"dark";
@@ -501,7 +509,8 @@ int wmain(int argc, wchar_t** argv)
         {
             const std::wstring_view option(argv[index]);
             if ((option == L"--columns" || option == L"--rows" ||
-                    option == L"--dpi" || option == L"--storage" ||
+                    option == L"--dpi" || option == L"--canvas-size" ||
+                    option == L"--padding" || option == L"--storage" ||
                     option == L"--host" || option == L"--locale" ||
                     option == L"--theme" || option == L"--appearance" ||
                     option == L"--data-state" ||
@@ -532,6 +541,22 @@ int wmain(int argc, wchar_t** argv)
                 if (!ParseInteger(argv[++index], 96, 480, dpi))
                 {
                     std::cerr << "{\"ok\":false,\"error\":\"DPI must be an integer from 96 to 480\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--canvas-size")
+            {
+                if (!ParseInteger(argv[++index], 64, 8192, canvasSize))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"canvas size must be an integer from 64 to 8192\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--padding")
+            {
+                if (!ParseInteger(argv[++index], 0, 4096, padding))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"padding must be an integer from 0 to 4096\"}\n";
                     return 2;
                 }
             }
@@ -621,6 +646,16 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << "{\"ok\":false,\"stage\":\"request.size\",\"error\":\"preview size is outside the component manifest bounds\"}\n";
             return 2;
         }
+        if (padding > 0 && canvasSize == 0)
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"padding requires canvas-size\"}\n";
+            return 2;
+        }
+        if (canvasSize > 0 && padding * 2 >= canvasSize)
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
+            return 2;
+        }
         const auto host = FindPreviewHost(explicitHost);
         if (!host)
         {
@@ -630,7 +665,7 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunPreviewHost(*host, source, output,
             columns, rows, dpi, locale, theme, appearance,
-            dataState, backgroundImage, storage);
+            dataState, backgroundImage, canvasSize, padding, storage);
     }
     if (command == L"pack")
     {

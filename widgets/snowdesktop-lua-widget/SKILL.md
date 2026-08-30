@@ -60,6 +60,8 @@ development packages live under `data\widgets\installed` and
     `snowwidget preview <directory> <preview.png>` at the default size. Repeat
     preview with relevant `--columns`, `--rows`, `--dpi`, `--locale`,
     `--appearance`, `--background`, `--data-state`, and `--storage` values,
+    and use `--canvas-size <pixels> --padding <pixels>` when a square catalog
+    image must preserve the component's own grid aspect ratio,
     then run
     `snowwidget validate <directory>` and
     `snowwidget pack <directory> <name.snowwidget>`.
@@ -84,6 +86,13 @@ permission-denied subscription envelopes. Generate the final PNG with
 `preview` before running `pack`; `pack` only validates and archives the preview
 declared by the manifest. It does not package the source background unless the
 manifest separately declares that file as a component resource.
+
+For a square Workshop image, keep `--columns` and `--rows` at the component's
+real preview span and add, for example, `--canvas-size 512 --padding 48`.
+The authoring host first renders that component surface as a transparent layer,
+then scales it proportionally into the padded square and composites it over a
+center-cover crop of `--background`. It does not stretch the background or
+change the component to a square layout.
 
 ## Required entry
 
