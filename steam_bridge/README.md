@@ -143,6 +143,12 @@ record. Manager package staging, Steam upload staging, previews, and the
 standalone CLI's scratch files all stay below the SnowDesktop `data` directory;
 they do not use the system temporary directory.
 
+On the first launch after upgrading, an older
+`%LOCALAPPDATA%\SnowDesktop\CreatorProjects` tree is preserved under
+`<SnowDesktop data>\CreatorProjects`, while obsolete LocalAppData Hook copies
+are removed. A marker below `<SnowDesktop data>\migrations` prevents later
+launches from touching that legacy root again.
+
 New items are created private. On update, title, description, and visibility
 are left untouched; primary preview and tags change only when selected. After a
 successful upload the Manager opens Steam Owner Controls for additional media,

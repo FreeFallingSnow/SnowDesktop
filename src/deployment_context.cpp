@@ -369,6 +369,18 @@ std::filesystem::path GetTemporaryDirectory()
     return std::filesystem::path(buffer);
 }
 
+std::filesystem::path GetLegacyLocalAppDataRoot()
+{
+    PWSTR localAppData = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
+            KF_FLAG_DEFAULT, nullptr, &localAppData)))
+        return {};
+    std::filesystem::path result =
+        std::filesystem::path(localAppData) / L"SnowDesktop";
+    CoTaskMemFree(localAppData);
+    return result;
+}
+
 bool IsReparsePoint(const std::filesystem::path& path)
 {
     const DWORD attributes = GetFileAttributesW(path.c_str());
@@ -437,6 +449,127 @@ void CleanupStaleRuntimeDirectories(
     }
 }
 
+bool MigrateLegacyCreatorProjects(
+    const std::filesystem::path& legacyParent,
+    const std::filesystem::path& data)
+{
+    const auto source = legacyParent / L"CreatorProjects";
+    std::error_code error;
+    if (!std::filesystem::exists(source, error))
+        return !error;
+    if (error || !std::filesystem::is_directory(source, error) || error ||
+        IsReparsePoint(source) || IsReparsePoint(data))
+        return false;
+
+    std::filesystem::path destination = data / L"CreatorProjects";
+    for (unsigned int suffix = 1;
+         std::filesystem::exists(destination, error) && !error; ++suffix)
+    {
+        destination = data /
+            (L"CreatorProjects-legacy-localappdata-" +
+                std::to_wstring(suffix));
+    }
+    if (error)
+        return false;
+
+    std::filesystem::create_directories(destination, error);
+    if (error || IsReparsePoint(destination))
+        return false;
+
+    bool complete = true;
+    for (std::filesystem::recursive_directory_iterator iterator(source,
+             std::filesystem::directory_options::none, error), end;
+         complete && !error && iterator != end; iterator.increment(error))
+    {
+        if (IsReparsePoint(iterator->path()))
+        {
+            complete = false;
+            break;
+        }
+        const auto relative = iterator->path().lexically_relative(source);
+        if (relative.empty())
+        {
+            complete = false;
+            break;
+        }
+        const auto target = destination / relative;
+        std::error_code entryError;
+        if (iterator->is_directory(entryError) && !entryError)
+        {
+            std::filesystem::create_directories(target, entryError);
+        }
+        else if (!entryError && iterator->is_regular_file(entryError) &&
+                 !entryError)
+        {
+            std::filesystem::create_directories(
+                target.parent_path(), entryError);
+            if (!entryError)
+                std::filesystem::copy_file(iterator->path(), target,
+                    std::filesystem::copy_options::none, entryError);
+        }
+        else
+        {
+            complete = false;
+        }
+        if (entryError)
+            complete = false;
+    }
+    if (error)
+        complete = false;
+    if (!complete)
+    {
+        error.clear();
+        std::filesystem::remove_all(destination, error);
+        return false;
+    }
+
+    std::filesystem::remove_all(source, error);
+    return !error;
+}
+
+bool CleanupLegacyLocalAppDataRoot(const std::filesystem::path& data)
+{
+    const auto legacyParent = GetLegacyLocalAppDataRoot();
+    if (legacyParent.empty())
+        return false;
+    std::error_code error;
+    if (!std::filesystem::exists(legacyParent, error))
+        return !error;
+    if (error || !std::filesystem::is_directory(legacyParent, error) ||
+        error || IsReparsePoint(legacyParent))
+        return false;
+    if (!MigrateLegacyCreatorProjects(legacyParent, data))
+        return false;
+
+    bool complete = true;
+    for (const wchar_t* name : {
+             L"RuntimeHooks", L"TaskbarHook", L"ShellHook" })
+    {
+        const auto root = legacyParent / name;
+        error.clear();
+        if (!std::filesystem::exists(root, error))
+        {
+            if (error) complete = false;
+            continue;
+        }
+        if (error || !std::filesystem::is_directory(root, error) || error ||
+            IsReparsePoint(root))
+        {
+            complete = false;
+            continue;
+        }
+        CleanupStaleRuntimeDirectories(root);
+        error.clear();
+        std::filesystem::remove(root, error);
+        error.clear();
+        if (std::filesystem::exists(root, error) || error)
+            complete = false;
+    }
+    error.clear();
+    std::filesystem::remove(legacyParent, error);
+    return complete;
+}
+
 bool CleanupLegacyRuntimeRoots()
 {
     const std::filesystem::path temporary = GetTemporaryDirectory();
@@ -477,13 +610,14 @@ bool CleanupLegacyRuntimeRoots()
 void CleanupLegacyRuntimeRootsOnce(const std::filesystem::path& data)
 {
     const auto markerRoot = data / L"migrations";
-    const auto marker = markerRoot / L"legacy-shell-hook-temp-v1.done";
+    const auto marker = markerRoot / L"legacy-runtime-roots-v2.done";
     const DWORD attributes = GetFileAttributesW(marker.c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
         return;
-    if (!CleanupLegacyRuntimeRoots())
+    if (!CleanupLegacyRuntimeRoots() ||
+        !CleanupLegacyLocalAppDataRoot(data))
         return;
 
     std::error_code error;

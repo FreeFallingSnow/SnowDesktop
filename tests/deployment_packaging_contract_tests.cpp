@@ -424,7 +424,11 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
                 std::string::npos &&
             deploymentSource.find("CleanupLegacyRuntimeRootsOnce") !=
                 std::string::npos &&
-            deploymentSource.find("legacy-shell-hook-temp-v1.done") !=
+            deploymentSource.find("CleanupLegacyLocalAppDataRoot") !=
+                std::string::npos &&
+            deploymentSource.find("MigrateLegacyCreatorProjects") !=
+                std::string::npos &&
+            deploymentSource.find("legacy-runtime-roots-v2.done") !=
                 std::string::npos &&
             deploymentSource.find("~InjectableRuntimeDirectory") !=
                 std::string::npos,
