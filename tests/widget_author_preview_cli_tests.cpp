@@ -581,6 +581,29 @@ int wmain(int argc, wchar_t** argv)
     CheckPng(output);
     const RgbaBitmap customDark = CheckOpaquePreview(output, 288, 360);
 
+    const auto lightForegroundOutput =
+        temporary.path / L"analog-clock-light-foreground.png";
+    const auto darkForegroundOutput =
+        temporary.path / L"analog-clock-dark-foreground.png";
+    const auto [lightForegroundExit, lightForegroundJson] = Run(snowwidget, {
+        L"preview", source.wstring(), lightForegroundOutput.wstring(),
+        L"--appearance", L"acrylic-light", L"--storage",
+        L"followPersonalization=0", L"--storage", L"__contentTheme=0",
+        L"--host", host.wstring() });
+    const auto [darkForegroundExit, darkForegroundJson] = Run(snowwidget, {
+        L"preview", source.wstring(), darkForegroundOutput.wstring(),
+        L"--appearance", L"acrylic-light", L"--storage",
+        L"followPersonalization=0", L"--storage", L"__contentTheme=1",
+        L"--host", host.wstring() });
+    Check(lightForegroundExit == 0 && darkForegroundExit == 0 &&
+            lightForegroundJson.find("\"ok\":true") !=
+                std::string::npos &&
+            darkForegroundJson.find("\"ok\":true") !=
+                std::string::npos &&
+            CheckOpaquePreview(lightForegroundOutput, 192, 240).pixels !=
+                CheckOpaquePreview(darkForegroundOutput, 192, 240).pixels,
+        "custom foreground themes render independently of preview material");
+
     const auto customGlassOutput =
         temporary.path / L"analog-clock-custom-glass.png";
     const auto [customGlassExit, customGlassJson] = Run(snowwidget, {

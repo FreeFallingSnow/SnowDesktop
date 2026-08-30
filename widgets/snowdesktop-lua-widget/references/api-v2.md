@@ -187,7 +187,11 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
   辅助功能、语言区域、时区、可见/预览/选择状态和 surface。
-- `widget.info()`、`widget.theme()`：兼容的实例与外观快照。
+- `widget.info()`、`widget.theme()`：兼容的实例与外观快照。`widget.theme().contentTheme`
+  是宿主已经解析的前景配色：`0` 表示浅色/白色前景，`1` 表示深色/黑色前景；它与
+  `bg`、alpha、壁纸和 normal/glass/acrylic 材质相互独立。`widget.context().theme.mode`
+  的等价映射为 `"dark"` 使用浅色前景、`"light"` 使用深色前景。组件不得根据背景
+  RGB 亮度或材质名称反推前景主题。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
 - v2 不暴露旧 `widget.setTimer/cancelTimer`；周期、延迟和绝对时间调度统一使用
@@ -304,6 +308,16 @@ hoverStyle = { background = "surfaceVariant" }
 之间的状态变化仍可由 `view.transition.visual` 插值。高对比度模式改用 Windows 系统窗口、
 文本、选中和禁用色；Token 不会把系统颜色数值暴露为可持久化品牌色，也不适用于即时绘制 API。
 该能力无需权限。未知字符串会拒绝整棵新树并保留上一棵成功树。
+
+语义 Token 使用宿主已经解析的前景主题，不根据组件背景色、壁纸亮度或材质名称自行切换。
+因此浅色 glass/acrylic 可以配浅色前景，深色材质也可以配深色前景。组件若允许用户分别选择
+材质和前景配色，必须把两者作为独立状态；跟随个性化时应让 Token 或上述
+`contentTheme`/`context.theme.mode` 决定前景。预览时应分别覆盖材质与前景主题，至少检查
+`--appearance acrylic-light --storage followPersonalization=0 --storage __contentTheme=0/1`
+以及对应的深色材质组合，不能只检查 dark/light 外观默认配对。
+`textPrimary/textSecondary/textDisabled` 直接表达前景层级；`surface/surfaceVariant` 仍会混入
+组件背景色，组件必须验证它们与独立前景组合后的对比度。若内部表面和所选前景不能保持可读，
+应按 `contentTheme` 选择对比明确的内部表面调色板，而不是重新读取背景亮度来决定前景。
 
 探测 `view.transform.basic` 后，任意节点可声明
 `transform={translateX?,translateY?,scale?,originX?,originY?}`。平移每轴限制在

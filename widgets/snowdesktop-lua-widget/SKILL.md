@@ -60,6 +60,7 @@ development packages live under `data\widgets\installed` and
     `snowwidget preview <directory> <preview.png>` at the default size. Repeat
     preview with relevant `--columns`, `--rows`, `--dpi`, `--locale`,
     `--appearance`, `--background`, `--data-state`, and `--storage` values,
+    including both foreground-theme overrides on every supported material,
     and use `--canvas-size <pixels> --padding <pixels>` when a square catalog
     image must preserve the component's own grid aspect ratio,
     then run
@@ -71,6 +72,38 @@ development packages live under `data\widgets\installed` and
 Read `references/api-v2.md` completely before implementing API calls, features,
 resources or troubleshooting. Use `library/snowdesktop-v2.lua` as the LuaLS
 library. The host and authoring tools accept only schema/API v2 packages.
+
+## Foreground theme and material
+
+Treat the resolved foreground theme and the component material/background as
+independent inputs. Never infer text, icon, stroke, or control foreground colors
+from `widget.theme().bg`, RGB luminance, wallpaper pixels, an alpha value, or a
+`normal`/`glass`/`acrylic` material name. A light glass or acrylic material can
+legitimately request a light foreground, and a dark material can request a dark
+foreground.
+
+For declarative views, require and probe `view.theme.tokens`, then prefer
+`textPrimary`, `textSecondary`, `textDisabled`, `border`, and related semantic
+foreground tokens. Do not assume `surface` or `surfaceVariant` will contrast
+with every independently chosen material/background; verify them in the full
+matrix, and use a `contentTheme`-selected contrasting internal-surface palette
+when necessary. For immediate drawing, resolve a palette from
+`widget.theme().contentTheme`: `0` means a light/white foreground and `1` means
+a dark/black foreground. The equivalent context value is
+`widget.context().theme.mode`: `"dark"` selects a light foreground and
+`"light"` selects a dark foreground. These names describe the host color
+scheme, so keep the mapping explicit in component code.
+
+If a component exposes its own foreground choice, use that value only while it
+is not following personalization. While following personalization, the resolved
+host foreground theme wins. Do not read or persist the host-owned
+`__contentTheme` storage key from component Lua; it is only an authoring preview
+override and host implementation detail. In preview, independently exercise at
+least the `acrylic-light` appearance with `followPersonalization=0` and
+`__contentTheme=0`, then repeat it with `__contentTheme=1` and for the
+corresponding dark-material cases. Pass each value through a separate
+`--storage key=value` option. Verify readable primary, secondary, disabled,
+icon, stroke, and control text in every combination.
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
 and writes a real API v2/D2D PNG; it does not emulate the view tree. The PNG is

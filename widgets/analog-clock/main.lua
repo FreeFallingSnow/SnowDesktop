@@ -20,12 +20,54 @@ local settings = {
     }
 }
 
+local palettes = {
+    lightForeground = {
+        shadow = 0x000000,
+        outer = 0x334155,
+        face = 0x111827,
+        innerStroke = 0x1F2937,
+        innerFace = 0x0F172A,
+        majorTick = 0xF8FAFC,
+        minorTick = 0x64748B,
+        number = 0xF8FAFC,
+        handShadow = 0x000000,
+        hourHand = 0xF8FAFC,
+        minuteHand = 0xCBD5E1,
+        capOuter = 0x0F172A,
+        capInner = 0xF8FAFC,
+    },
+    darkForeground = {
+        shadow = 0x000000,
+        outer = 0xD7DEE8,
+        face = 0xFFFFFF,
+        innerStroke = 0xF6F8FB,
+        innerFace = 0xFFFFFF,
+        majorTick = 0x1F2937,
+        minorTick = 0xAEB7C5,
+        number = 0x1F2937,
+        handShadow = 0xFFFFFF,
+        hourHand = 0x111827,
+        minuteHand = 0x374151,
+        capOuter = 0xFFFFFF,
+        capInner = 0x111827,
+    },
+}
+
+local function palette()
+    local theme = widget.theme()
+    if theme and theme.contentTheme == 1 then
+        return palettes.darkForeground
+    end
+    return palettes.lightForeground
+end
+
 local function setup()
     schedule.every("clock", 1000, { whenHidden = "pause" })
 end
 
 local function render()
     local t = time.parts(time.now())
+    local colors = palette()
     local showSecondHand = storage.get("showSecondHand") ~= "0"
     local showNumbers = storage.get("showNumbers") ~= "0"
     local w = layout.width()
@@ -69,12 +111,13 @@ local function render()
     end
 
     -- 多层表盘，用填充圆模拟描边，避免依赖额外 stroke API。
-    draw.circle(cx, cy + su(1.5), r + outerStroke + su(1.2), 0x000000, 0.10)
-    draw.circle(cx, cy, r + outerStroke, 0xD7DEE8, 0.95)
-    draw.circle(cx, cy, r, 0xFFFFFF, 1.0)
+    draw.circle(cx, cy + su(1.5), r + outerStroke + su(1.2),
+        colors.shadow, 0.10)
+    draw.circle(cx, cy, r + outerStroke, colors.outer, 0.95)
+    draw.circle(cx, cy, r, colors.face, 1.0)
     local innerR = math.max(su(8), r - su(5) - innerStroke)
-    draw.circle(cx, cy, innerR + innerStroke, 0xF6F8FB, 0.72)
-    draw.circle(cx, cy, innerR, 0xFFFFFF, 1.0)
+    draw.circle(cx, cy, innerR + innerStroke, colors.innerStroke, 0.72)
+    draw.circle(cx, cy, innerR, colors.innerFace, 1.0)
 
     -- 刻度：主刻度更稳，副刻度更轻。
     for i = 0, 59 do
@@ -83,7 +126,7 @@ local function render()
         local quarter = i % 15 == 0
         local len = major and hourTickLen or minuteTickLen
         local thick = quarter and quarterTickWidth or (major and hourTickWidth or minuteTickWidth)
-        local col = major and 0x1F2937 or 0xAEB7C5
+        local col = major and colors.majorTick or colors.minorTick
         local alphaTick = major and 0.86 or 0.46
         local x1, y1 = point(a, r - len)
         local x2, y2 = point(a, r - su(2))
@@ -99,7 +142,7 @@ local function render()
             local metrics = draw.measureText(label, numberFont, 0, true)
             local tx, ty = point(a, numberRadius)
             draw.text(tx - metrics.width / 2, ty - metrics.height / 2,
-                label, numberFont, 0x1F2937, 0, true, true)
+                label, numberFont, colors.number, 0, true, true)
         end
     end
 
@@ -107,17 +150,19 @@ local function render()
     local ma = (t.min + t.sec / 60) * math.pi / 30 - math.pi / 2
 
     -- 指针和中心帽按跨格缩放单位计算，跨多格时比例保持一致。
-    hand(ha, r * 0.45, su(7), hourHandWidth + su(1.0), 0xFFFFFF, 0.45)
-    hand(ma, r * 0.65, su(8), minuteHandWidth + su(0.8), 0xFFFFFF, 0.35)
-    hand(ha, r * 0.43, su(6), hourHandWidth, 0x111827, 0.96)
-    hand(ma, r * 0.63, su(7), minuteHandWidth, 0x374151, 0.96)
+    hand(ha, r * 0.45, su(7), hourHandWidth + su(1.0),
+        colors.handShadow, 0.45)
+    hand(ma, r * 0.65, su(8), minuteHandWidth + su(0.8),
+        colors.handShadow, 0.35)
+    hand(ha, r * 0.43, su(6), hourHandWidth, colors.hourHand, 0.96)
+    hand(ma, r * 0.63, su(7), minuteHandWidth, colors.minuteHand, 0.96)
     if showSecondHand then
         local sa = t.sec * math.pi / 30 - math.pi / 2
         hand(sa, r * 0.76, su(13), secondHandWidth, 0xEF4444, 0.96)
     end
 
-    draw.circle(cx, cy, su(6.4), 0xFFFFFF, 1.0)
-    draw.circle(cx, cy, su(4.8), 0x111827, 0.98)
+    draw.circle(cx, cy, su(6.4), colors.capOuter, 1.0)
+    draw.circle(cx, cy, su(4.8), colors.capInner, 0.98)
     if showSecondHand then
         draw.circle(cx, cy, su(2.1), 0xEF4444, 1.0)
     end

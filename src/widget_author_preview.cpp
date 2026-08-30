@@ -737,6 +737,9 @@ PreviewRenderResult RenderWidgetPreview(
         0, 0, result.componentWidth, result.componentHeight };
     const ResolvedPreviewStyle resolvedStyle =
         ResolvePreviewStyle(engine, *appearance);
+    // Keep component theme APIs and declarative semantic tokens in sync with
+    // the independently resolved custom material/foreground preview settings.
+    engine.SetWidgetTheme(kPreviewWidgetId, resolvedStyle.theme);
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
     if (request.canvasSize == 0)

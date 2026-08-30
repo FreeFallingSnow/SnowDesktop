@@ -553,6 +553,52 @@ void TestAudioAnalysisSubscriptionOptions(const fs::path& repository)
         "audio provider must aggregate eligible subscription configurations");
 }
 
+void TestBuiltinWidgetForegroundThemes(const fs::path& repository)
+{
+    static constexpr std::array<std::string_view, 11> packages = {
+        "agenda", "analog-clock", "digital-clock", "media-controls",
+        "month-calendar", "pomodoro", "quick-launcher", "reminders",
+        "rss-reader", "sticky-note", "system-monitor"
+    };
+    for (const std::string_view package : packages)
+    {
+        const std::string source = ReadFile(repository / "widgets" / package /
+            "main.lua");
+        Check(source.find("contentTheme") != std::string::npos ||
+                source.find("context.theme") != std::string::npos ||
+                source.find("\"textPrimary\"") != std::string::npos,
+            "every built-in widget must consume the resolved foreground theme");
+    }
+
+    const std::string pomodoro = ReadFile(
+        repository / "widgets" / "pomodoro" / "main.lua");
+    const std::string pomodoroManifest = ReadFile(
+        repository / "widgets" / "pomodoro" / "widget.json");
+    Check(pomodoro.find("text = \"textPrimary\"") != std::string::npos &&
+            pomodoro.find("muted = \"textSecondary\"") !=
+                std::string::npos &&
+            pomodoro.find("theme.contentTheme == 1") !=
+                std::string::npos &&
+            pomodoro.find("accent, palette.text, true") !=
+                std::string::npos &&
+            pomodoroManifest.find("\"view.theme.tokens\"") !=
+                std::string::npos,
+        "pomodoro foregrounds and internal surfaces must follow the host theme");
+    Check(pomodoro.find("red * 299") == std::string::npos &&
+            pomodoro.find("green * 587") == std::string::npos &&
+            pomodoro.find("blue * 114") == std::string::npos,
+        "pomodoro must not infer its foreground theme from background luminance");
+
+    const std::string analog = ReadFile(
+        repository / "widgets" / "analog-clock" / "main.lua");
+    Check(analog.find("theme.contentTheme == 1") != std::string::npos &&
+            analog.find("lightForeground") != std::string::npos &&
+            analog.find("darkForeground") != std::string::npos &&
+            analog.find("colors.number") != std::string::npos &&
+            analog.find("colors.hourHand") != std::string::npos,
+        "analog clock dial content must follow both resolved foreground themes");
+}
+
 void TestAllBuiltinWidgetsUseV2(const fs::path& repository)
 {
     static constexpr std::array<std::string_view, 11> packages = {
@@ -610,6 +656,7 @@ int main(int argc, char** argv)
     TestV2OnlyWidgetActivation(fs::path(argv[1]));
     TestPackageResourceRenderPurity(fs::path(argv[1]));
     TestAudioAnalysisSubscriptionOptions(fs::path(argv[1]));
+    TestBuiltinWidgetForegroundThemes(fs::path(argv[1]));
     TestAllBuiltinWidgetsUseV2(fs::path(argv[1]));
     std::cout << "Built-in widget source contract tests passed\n";
     return 0;

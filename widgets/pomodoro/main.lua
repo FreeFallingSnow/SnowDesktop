@@ -68,23 +68,20 @@ local function loadStyle()
 end
 
 local function getPalette()
-    local background = descriptor and descriptor.bg or 0x151A21
-    local red = math.floor(background / 0x10000) % 0x100
-    local green = math.floor(background / 0x100) % 0x100
-    local blue = background % 0x100
-    local isLight = red * 299 + green * 587 + blue * 114 >= 160000
-    if isLight then
+    local theme = widget.theme()
+    local darkForeground = theme and theme.contentTheme == 1
+    if darkForeground then
         return {
-            text = 0x162033,
-            muted = 0x667085,
+            text = "textPrimary",
+            muted = "textSecondary",
             track = 0xDCE3EC,
             statusSurface = 0xEEF2F6,
             button = 0xE3E9F1,
         }
     end
     return {
-        text = 0xF8FAFC,
-        muted = 0xAAB4C3,
+        text = "textPrimary",
+        muted = "textSecondary",
         track = 0x2A3648,
         statusSurface = 0x222D3D,
         button = 0x273449,
@@ -534,7 +531,7 @@ local function buildView(context)
         justifyContent = "center",
         children = {
             actionButton(primaryAction[1], primaryAction[2], buttonHeight,
-                accent, 0xFFFFFF, true),
+                accent, palette.text, true),
             actionButton(secondaryAction[1], secondaryAction[2], buttonHeight,
                 palette.button, palette.muted, false),
         },

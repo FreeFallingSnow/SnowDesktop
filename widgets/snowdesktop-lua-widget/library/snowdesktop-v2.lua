@@ -85,7 +85,7 @@
 ---@field borderAlpha number
 ---@field gradientEndA number
 ---@field cornerRadius number
----@field contentTheme integer
+---@field contentTheme integer Resolved foreground scheme, independent of background/material: 0 = light/white foreground, 1 = dark/black foreground.
 
 ---@class SnowSettingCondition
 ---@field key string Stable key of another declared setting field.
