@@ -883,6 +883,13 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
                 std::string::npos &&
             source.find("steam_.Publish(") == std::string::npos,
         "Workshop Manager and Agent CLI share one component publish planner and executor");
+    Check(source.find("PreparedManagerPublish") != std::string::npos &&
+            source.find("StartPreparePublish(") != std::string::npos &&
+            source.find("StartPreparedPublishUnlocked(") !=
+                std::string::npos &&
+            source.find("Prepare publish plan") != std::string::npos &&
+            source.find("Confirm metadata update") != std::string::npos,
+        "Workshop Manager requires a visible prepared plan before create, content update, or metadata update confirmation");
 }
 }
 

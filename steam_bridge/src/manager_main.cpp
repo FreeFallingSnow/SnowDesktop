@@ -40,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -56,7 +57,7 @@ ComPtr<IDXGISwapChain> gSwapChain;
 ComPtr<ID3D11RenderTargetView> gRenderTarget;
 float gDpiScale = 1.0f;
 
-constexpr float kSidebarWidthDip = 176.0f;
+constexpr float kSidebarWidthDip = 224.0f;
 constexpr float kSettingControlWidthDip = 320.0f;
 
 void SetupLightTheme()
@@ -339,6 +340,15 @@ struct ManagerArguments
     std::string language;
 };
 
+struct PreparedManagerPublish
+{
+    std::string localId;
+    WorkshopProject snapshot;
+    WidgetInspection inspection;
+    PackagedWidget artifact;
+    ComponentPublishPlan plan;
+};
+
 class WorkshopManagerApp
 {
 public:
@@ -437,6 +447,7 @@ public:
         std::string error;
         if (store_.AddDirectory(path, project, error) && store_.Save(error))
         {
+            InvalidatePreparedPublishUnlocked();
             selectedLocalId_ = project->localId;
             activePage_ = 0;
             SetMessageUnlocked(true, T("已添加本地项目", "Local project added"));
@@ -525,6 +536,12 @@ private:
         message_ = std::move(value);
     }
 
+    void InvalidatePreparedPublishUnlocked()
+    {
+        ++publishInputsRevision_;
+        preparedPublish_.reset();
+    }
+
     template<typename Work>
     void StartWork(Work&& work)
     {
@@ -547,7 +564,11 @@ private:
         ImGui::TextDisabled("v%s", SNOWDESKTOP_VERSION);
         ImGui::SameLine();
         const SteamStatus steamStatus = steam_.Status();
-        ImGui::TextDisabled("%s", steamStatus.initialized && steamStatus.loggedOn
+        const bool connected = steamStatus.initialized && steamStatus.loggedOn;
+        ImGui::TextColored(connected ?
+            ImVec4(0.18f, 0.58f, 0.32f, 1.0f) :
+            ImVec4(0.55f, 0.55f, 0.60f, 1.0f), "%s",
+            connected
             ? T("Steam 已连接", "Steam connected")
             : T("Steam 未连接", "Steam disconnected"));
         std::lock_guard lock(mutex_);
@@ -556,18 +577,20 @@ private:
             const ImVec4 color = messageSuccess_ ?
                 ImVec4(0.35f, 0.85f, 0.52f, 1.0f) :
                 ImVec4(1.0f, 0.42f, 0.38f, 1.0f);
+            ImGui::Spacing();
             ImGui::TextColored(color, "%s", message_.c_str());
         }
         if (busy_.load())
         {
-            ImGui::SameLine();
             ImGui::TextDisabled("%s", T("正在处理…", "Working…"));
         }
     }
 
     void RenderSidebar()
     {
-        if (ImGui::Selectable((std::string(T("发布组件", "Publish component")) +
+        ImGui::TextDisabled("%s", T("工作区", "Workspace"));
+        ImGui::Spacing();
+        if (ImGui::Selectable((std::string(T("本地项目", "Local projects")) +
                 "###PublishComponentPage").c_str(), activePage_ == 0))
             activePage_ = 0;
         if (ImGui::Selectable((std::string(T("我的 Workshop", "My Workshop")) +
@@ -575,6 +598,8 @@ private:
             activePage_ = 1;
         ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextDisabled("Steam");
         ImGui::Spacing();
         if (SecondaryButton(T("打开创意工坊", "Open Workshop"),
                 ImVec2(-1, 0)))
@@ -584,7 +609,7 @@ private:
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        ImGui::TextDisabled("%s", T("本地项目", "Local Projects"));
+        ImGui::TextDisabled("%s", T("项目列表", "Project list"));
         ImGui::Spacing();
 
         ImGui::SetNextItemWidth(-1.0f);
@@ -616,6 +641,7 @@ private:
                         project.localId).c_str(),
                         selectedLocalId_ == project.localId))
                 {
+                    InvalidatePreparedPublishUnlocked();
                     selectedLocalId_ = project.localId;
                     tagsBuffer_ = JoinTags(project.tags);
                     titleBuffer_.clear();
@@ -630,7 +656,7 @@ private:
 
     void RenderLocalProjects(HWND window)
     {
-        ImGui::SeparatorText(T("发布组件", "Publish component"));
+        ImGui::SeparatorText(T("本地项目工作区", "Local project workspace"));
         ImGui::Spacing();
         const char* openRoot = T("打开目录", "Open folder");
         const std::string openRootButton =
@@ -696,6 +722,18 @@ private:
         ImGui::SeparatorText(WideToUtf8(
             project.sourceDirectory.filename().wstring()).c_str());
         ImGui::TextWrapped("%s", WideToUtf8(project.sourceDirectory.wstring()).c_str());
+        if (project.publishedFileId)
+        {
+            ImGui::TextColored(ImVec4(0.18f, 0.58f, 0.32f, 1.0f),
+                "%s  %llu", T("已绑定 Workshop", "Workshop bound"),
+                *project.publishedFileId);
+        }
+        else
+            ImGui::TextDisabled("%s", T(
+                "本地草稿 · 尚未创建 Workshop 项目",
+                "Local draft · no Workshop item yet"));
+        if (!project.packageId.empty())
+            ImGui::TextDisabled("Package ID: %s", project.packageId.c_str());
         ImGui::Spacing();
         const char* openLabel = T("打开目录", "Open folder");
         const std::string openProjectButton =
@@ -727,7 +765,7 @@ private:
         }
 
         ImGui::Spacing();
-        ImGui::SeparatorText(T("主预览", "Primary preview"));
+        ImGui::SeparatorText(T("1. 商店素材", "1. Store assets"));
         ImGui::TextDisabled("%s", project.primaryPreview.empty() ?
             T("未绑定", "Not bound") :
             WideToUtf8(project.primaryPreview.wstring()).c_str());
@@ -753,6 +791,7 @@ private:
         {
             if (const auto path = PickPath(window, false))
             {
+                InvalidatePreparedPublishUnlocked();
                 project.primaryPreview = *path;
                 std::string error;
                 if (!store_.Save(error)) SetMessageUnlocked(false, error);
@@ -773,6 +812,7 @@ private:
         BeginSettingRow("", ButtonWidth(T("保存标签", "Save tags")));
         if (SecondaryButton(T("保存标签", "Save tags")))
         {
+            InvalidatePreparedPublishUnlocked();
             project.tags = SplitTags(tagsBuffer_);
             std::string error;
             if (!store_.Save(error)) SetMessageUnlocked(false, error);
@@ -800,7 +840,7 @@ private:
             localizationPreviewError_.clear();
             localizationPreviewLoading_ = false;
         }
-        ImGui::SeparatorText(T("发布", "Publish"));
+        ImGui::SeparatorText(T("2. 标题与更新来源", "2. Listing and update sources"));
         if (creating)
         {
             ImGui::TextWrapped("%s", T(
@@ -836,6 +876,8 @@ private:
             }
             else if (syncPackageLocalization_)
                 localizationPreviewProjectId_.clear();
+            if (project.publishPreferences.textSource != previous)
+                InvalidatePreparedPublishUnlocked();
         }
         if (syncPackageLocalization_)
         {
@@ -931,7 +973,10 @@ private:
                 kSettingControlWidthDip * gDpiScale);
             ImGui::SetNextItemWidth(kSettingControlWidthDip * gDpiScale);
             if (ImGui::InputText("##initial-title", title.data(), title.size()))
+            {
                 titleBuffer_ = title.data();
+                InvalidatePreparedPublishUnlocked();
+            }
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
                 project.publishPreferences.manualEnglishTitle = titleBuffer_;
@@ -948,7 +993,10 @@ private:
                     description.data(), description.size(),
                     ImVec2(kSettingControlWidthDip * gDpiScale,
                         90.0f * gDpiScale)))
+            {
                 descriptionBuffer_ = description.data();
+                InvalidatePreparedPublishUnlocked();
+            }
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
                 project.publishPreferences.manualEnglishDescription =
@@ -974,6 +1022,7 @@ private:
                     updatePreview_ = previous == WorkshopAssetSource::Local;
                     SetMessageUnlocked(false, error);
                 }
+                else InvalidatePreparedPublishUnlocked();
             }
             BeginSettingRow(T("同时更新标签", "Also update tags"),
                 ImGui::GetFrameHeight());
@@ -990,20 +1039,79 @@ private:
                     updateTags_ = previous == WorkshopAssetSource::Local;
                     SetMessageUnlocked(false, error);
                 }
+                else InvalidatePreparedPublishUnlocked();
             }
         }
         const bool missingManualTitle = creating &&
             !syncPackageLocalization_ && titleBuffer_.empty();
+        ImGui::Spacing();
+        ImGui::SeparatorText(T("3. 核对并发布", "3. Review and publish"));
+        PreparedManagerPublish* prepared = preparedPublish_ &&
+            preparedPublish_->localId == project.localId ?
+            &*preparedPublish_ : nullptr;
+        if (!prepared)
+        {
+            ImGui::TextWrapped("%s", T(
+                "先准备计划以校验组件并明确本次会创建项目、上传内容还是只更新资料。准备计划不会连接 Steam。",
+                "Prepare a plan first to validate the component and see whether this run creates an item, uploads content, or only updates listing metadata. Planning does not connect to Steam."));
+        }
+        else
+        {
+            const ComponentPublishPlan& plan = prepared->plan;
+            const char* action = T("创建私有项目", "Create private item");
+            if (plan.action == ComponentPublishAction::UpdateContent)
+                action = T("更新组件内容", "Update component content");
+            else if (plan.action == ComponentPublishAction::UpdateMetadata)
+                action = T("仅更新资料", "Update listing metadata only");
+            ImGui::Text("%s: %s", T("操作", "Action"), action);
+            ImGui::Text("%s: %s", T("版本", "Version"),
+                plan.version.c_str());
+            ImGui::TextWrapped("SHA-256: %s", plan.sha256.c_str());
+            ImGui::Text("%s: %s", T("组件内容", "Component content"),
+                plan.updateContent ? T("将上传", "Upload") :
+                    T("未变化，不上传", "Unchanged; do not upload"));
+            if (plan.localizations.empty())
+                ImGui::Text("%s: %s", T("标题和说明", "Title and description"),
+                    T("保留 Steam 当前内容", "Preserve current Steam text"));
+            else
+                ImGui::Text(T("标题和说明：提交 %zu 种 Steam 语言",
+                    "Title and description: submit %zu Steam languages",
+                    plan.localizations.size()).c_str());
+            ImGui::Text("%s: %s", T("主预览", "Primary preview"),
+                plan.preview ? T("使用本地预览", "Use local preview") :
+                    T("保留 Steam 当前预览", "Preserve Steam preview"));
+            ImGui::Text("%s: %s", T("标签", "Tags"),
+                plan.tags ? T("提交本地标签", "Submit local tags") :
+                    T("保留 Steam 当前标签", "Preserve Steam tags"));
+            ImGui::TextWrapped("%s", T(
+                "确认按钮只提交上面这份已打包计划；修改发布设置后必须重新准备。",
+                "The confirmation button submits only this prepared package plan; changing publishing settings requires a new plan."));
+        }
+        const bool hasPreparedPlan = prepared != nullptr;
+        const ComponentPublishAction preparedAction = hasPreparedPlan ?
+            prepared->plan.action : ComponentPublishAction::Create;
         ImGui::BeginDisabled(busy_.load() || submitStarted_.load() ||
-            project.packageId.empty() || missingManualTitle);
-        if (BlueButton(creating ? T("创建私有项目并上传", "Create private item and upload") :
-                T("上传新版本", "Upload new version")))
-            StartPublish(project.localId);
+            missingManualTitle);
+        if (SecondaryButton(hasPreparedPlan ?
+                T("重新准备计划", "Prepare again") :
+                T("准备发布计划", "Prepare publish plan")))
+            StartPreparePublish(project.localId);
+        if (hasPreparedPlan)
+        {
+            ImGui::SameLine();
+            const char* confirm = T("确认创建私有项目", "Confirm private creation");
+            if (preparedAction == ComponentPublishAction::UpdateContent)
+                confirm = T("确认更新内容", "Confirm content update");
+            else if (preparedAction == ComponentPublishAction::UpdateMetadata)
+                confirm = T("确认更新资料", "Confirm metadata update");
+            if (BlueButton(confirm))
+                StartPreparedPublishUnlocked(project.localId);
+        }
         ImGui::EndDisabled();
         if (project.publishedFileId)
         {
             ImGui::SameLine();
-            if (SecondaryButton(T("打开 Steam Owner Controls", "Open Steam Owner Controls")))
+            if (SecondaryButton(T("打开 Steam 项目管理页", "Open Steam item controls")))
                 OpenSteamUrlWithWebFallback(
                     SteamCommunityItemClientUrl(*project.publishedFileId),
                     CommunityItemUrl(*project.publishedFileId));
@@ -1016,12 +1124,14 @@ private:
                 "Steam has started SubmitItemUpdate; this stage cannot be cancelled or closed."));
         }
         ImGui::Spacing();
-        if (SecondaryButton(T("仅移除本地记录", "Remove local record only")))
+        if (ImGui::CollapsingHeader(T("本地项目维护", "Local project maintenance")) &&
+            SecondaryButton(T("仅移除本地记录", "Remove local record only")))
         {
             const std::string id = project.localId;
             std::string error;
             if (store_.Remove(id, error) && store_.Save(error))
             {
+                InvalidatePreparedPublishUnlocked();
                 selectedLocalId_.clear();
                 SetMessageUnlocked(true, T(
                     "已移除记录；源码和 Workshop 内容未删除",
@@ -1061,6 +1171,7 @@ private:
             std::lock_guard lock(mutex_);
             if (auto* project = FindProjectUnlocked(localId))
             {
+                InvalidatePreparedPublishUnlocked();
                 project->packageId = inspection.packageId;
                 if (project->primaryPreview.empty())
                     project->primaryPreview = inspection.preview;
@@ -1098,15 +1209,18 @@ private:
         });
     }
 
-    void StartPublish(std::string localId)
+    void StartPreparePublish(std::string localId)
     {
+        preparedPublish_.reset();
         const std::string title = titleBuffer_;
         const std::string description = descriptionBuffer_;
         const bool syncPackageLocalization = syncPackageLocalization_;
         const bool updatePreview = updatePreview_;
         const bool updateTags = updateTags_;
+        const std::uint64_t inputRevision = publishInputsRevision_;
         StartWork([this, localId = std::move(localId), title, description,
-                   syncPackageLocalization, updatePreview, updateTags]
+                   syncPackageLocalization, updatePreview, updateTags,
+                   inputRevision]
         {
             WorkshopProject snapshot;
             {
@@ -1127,6 +1241,7 @@ private:
             snapshot.publishPreferences.manualEnglishTitle = title;
             snapshot.publishPreferences.manualEnglishDescription =
                 description;
+
             WidgetInspection inspection;
             PackagedWidget artifact;
             std::string error;
@@ -1145,24 +1260,52 @@ private:
                 SetMessage(false, error);
                 return;
             }
+
+            std::lock_guard lock(mutex_);
+            if (publishInputsRevision_ != inputRevision ||
+                selectedLocalId_ != localId)
             {
-                std::lock_guard lock(mutex_);
-                if (auto* project = FindProjectUnlocked(localId))
-                {
-                    project->packageId = inspection.packageId;
-                    project->publishPreferences =
-                        snapshot.publishPreferences;
-                    if (!store_.Save(error))
-                    {
-                        SetMessageUnlocked(false, error);
-                        return;
-                    }
-                }
+                SetMessageUnlocked(false, T(
+                    "发布设置已变化，请重新准备计划",
+                    "Publishing settings changed; prepare the plan again"));
+                return;
             }
+            auto* project = FindProjectUnlocked(localId);
+            if (!project) return;
+            project->packageId = inspection.packageId;
+            project->publishPreferences = snapshot.publishPreferences;
+            if (!store_.Save(error))
+            {
+                SetMessageUnlocked(false, error);
+                return;
+            }
+            PreparedManagerPublish prepared;
+            prepared.localId = localId;
+            prepared.snapshot = std::move(snapshot);
+            prepared.inspection = std::move(inspection);
+            prepared.artifact = std::move(artifact);
+            prepared.plan = std::move(plan);
+            preparedPublish_ = std::move(prepared);
+            SetMessageUnlocked(true, T(
+                "发布计划已准备，请核对后确认",
+                "Publish plan prepared; review it before confirming"));
+        });
+    }
+
+    void StartPreparedPublishUnlocked(std::string localId)
+    {
+        if (!preparedPublish_ || preparedPublish_->localId != localId)
+            return;
+        PreparedManagerPublish prepared =
+            std::move(*preparedPublish_);
+        preparedPublish_.reset();
+        StartWork([this, localId = std::move(localId),
+                   prepared = std::move(prepared)]() mutable
+        {
             ComponentPublishResult result;
             CoreError coreError;
             const bool published = ExecuteComponentPublishPlan(
-                plan, steam_,
+                prepared.plan, steam_,
                 [this, &localId](const ComponentPublishProgress& progress)
                 {
                     const PublishProgress& value = progress.steam;
@@ -1191,6 +1334,7 @@ private:
                 }, result, coreError);
             submitStarted_.store(false);
             progressFraction_.store(0.0f);
+            std::string error;
             {
                 std::lock_guard lock(mutex_);
                 if (auto* project = FindProjectUnlocked(localId))
@@ -1200,9 +1344,11 @@ private:
                             result.publishedFileId;
                     if (result.baseSubmitted)
                     {
-                        project->packageId = plan.packageId;
-                        project->lastPublishedVersion = plan.version;
-                        project->lastPublishedSha256 = plan.sha256;
+                        project->packageId = prepared.plan.packageId;
+                        project->lastPublishedVersion =
+                            prepared.plan.version;
+                        project->lastPublishedSha256 =
+                            prepared.plan.sha256;
                         project->lastPublishedAt = NowIso8601();
                     }
                     if (!store_.Save(error))
@@ -1224,25 +1370,16 @@ private:
                         result.failedLanguage.c_str(), detail.c_str()));
                 }
                 else SetMessage(false, detail);
-                if (result.publishedFileId)
-                    OpenSteamUrlWithWebFallback(
-                        SteamCommunityItemClientUrl(
-                            result.publishedFileId),
-                        result.communityUrl);
                 return;
             }
-            {
-                std::lock_guard lock(mutex_);
-                localizationStateCreating_ = false;
-                SetMessageUnlocked(true, result.needsLegalAgreement ?
-                    T("上传成功；请在 Steam 页面接受创意工坊协议",
-                      "Upload complete; accept the Workshop agreement on Steam") :
-                    T("上传成功；已打开 Steam 项目页面",
-                      "Upload complete; opening the Steam item page"));
-            }
-            OpenSteamUrlWithWebFallback(
-                SteamCommunityItemClientUrl(result.publishedFileId),
-                result.communityUrl);
+            std::lock_guard lock(mutex_);
+            localizationStateCreating_ = false;
+            ++publishInputsRevision_;
+            SetMessageUnlocked(true, result.needsLegalAgreement ?
+                T("上传成功；请打开 Steam 页面接受创意工坊协议",
+                  "Upload complete; open Steam to accept the Workshop agreement") :
+                T("上传成功；可打开 Steam 查看项目",
+                  "Upload complete; you can open the item in Steam"));
         });
     }
 
@@ -1336,7 +1473,7 @@ private:
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
                     "%s", texture.error.c_str());
         }
-        if (SecondaryButton(T("打开 Steam Owner Controls", "Open Steam Owner Controls")))
+        if (SecondaryButton(T("打开 Steam 项目管理页", "Open Steam item controls")))
             OpenSteamUrlWithWebFallback(
                 SteamCommunityItemClientUrl(item->publishedFileId),
                 CommunityItemUrl(item->publishedFileId));
@@ -1354,6 +1491,7 @@ private:
                     item->ownerSteamId, currentSteamId, item->consumerAppId,
                     status.appId, error))
             {
+                InvalidatePreparedPublishUnlocked();
                 project->publishedFileId = item->publishedFileId;
                 if (store_.Save(error)) SetMessageUnlocked(true,
                     T("Workshop 项目已绑定", "Workshop item bound"));
@@ -1398,6 +1536,8 @@ private:
                         item.consumerAppId == status.appId)
                     {
                         project.publishedFileId = item.publishedFileId;
+                        if (project.localId == selectedLocalId_)
+                            InvalidatePreparedPublishUnlocked();
                         changed = true;
                     }
                 }
@@ -1437,6 +1577,8 @@ private:
     std::string tagsBuffer_;
     std::string titleBuffer_;
     std::string descriptionBuffer_;
+    std::optional<PreparedManagerPublish> preparedPublish_;
+    std::uint64_t publishInputsRevision_ = 0;
     std::string localizationStateProjectId_;
     std::string localizationPreviewProjectId_;
     std::vector<SteamWorkshopLocalization> localizationPreview_;
