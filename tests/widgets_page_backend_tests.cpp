@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +25,9 @@ std::string ReadText(const std::filesystem::path& path)
     if (!input) return {};
     std::ostringstream text;
     text << input.rdbuf();
-    return text.str();
+    std::string source = text.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 void TestPresenterBoundary(const std::string& header,

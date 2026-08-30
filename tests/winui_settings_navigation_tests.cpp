@@ -1,5 +1,6 @@
 #include "winui/settings_shell_navigation.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -28,7 +29,9 @@ std::string ReadText(const std::filesystem::path& path)
     if (!input) return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    std::string source = content.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 void TestHistoryAndFocusRoutes()
