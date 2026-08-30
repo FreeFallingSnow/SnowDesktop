@@ -64,11 +64,11 @@ int main(int argc, char** argv)
         "a hidden widget must hide its child surface");
     Check(!rules::ShouldPresentWidgetSurface(true, true),
         "a move or resize preview source must hide its child surface");
-    Check(rules::kWidgetSurfaceBorderOverdraw == 2 &&
-            rules::WidgetSurfaceOrigin(120) == 118 &&
-            rules::WidgetSurfaceOrigin(-120) == -122 &&
-            rules::WidgetSurfaceExtent(80) == 84,
-        "compact widget surfaces must reserve two pixels around every border");
+    Check(rules::kWidgetSurfaceBorderOverdraw == 3 &&
+            rules::WidgetSurfaceOrigin(120) == 117 &&
+            rules::WidgetSurfaceOrigin(-120) == -123 &&
+            rules::WidgetSurfaceExtent(80) == 86,
+        "compact widget surfaces must reserve the maximum dimensional border overdraw");
 
     using rules::PointerVisualLayer;
     Check(rules::NeedsWidgetSurfaceRefresh(

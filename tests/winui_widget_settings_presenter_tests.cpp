@@ -391,6 +391,9 @@ void TestDeclarativeBehavior(const std::string& source)
              "customAppearanceHost.Children().Append(backgroundOpacity.row.root)",
              "customAppearanceHost.Children().Append(borderColorEditor->row.root)",
              "customAppearanceHost.Children().Append(borderOpacity.row.root)",
+             "customAppearanceHost.Children().Append(borderWidth.row.root)",
+             "customAppearanceHost.Children().Append(borderStyleRow.root)",
+             "borderEffectStrength.row.root",
              "customAppearanceHost.Children().Append(gradientEndOpacity.row.root)",
              "customAppearanceHost.Children().Append(glassRow.root)",
              "customAppearanceHost.Children().Append(acrylicRow.root)",
@@ -406,6 +409,13 @@ void TestDeclarativeBehavior(const std::string& source)
             "custom appearance, preset, fields, and reset controls retain the legacy order");
         if (next != std::string::npos) order = next + 1;
     }
+    Check(ContainsAll(source, {
+              "patch.borderStyle = preset.widgetBorderStyle",
+              "patch.borderWidth = preset.widgetBorderWidth",
+              "patch.borderEffectStrength =",
+              "PanelBorderStyle::Dimensional",
+              "borderEffectStrength.row.SetEnabled"}),
+        "per-widget appearance keeps material and configurable dimensional border controls independent");
     Check(ContainsAll(source, {
               "WidgetSettingKind::Unknown",
               "BuildTextEditor(*field)",

@@ -48,7 +48,9 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
 {
     return key == "cornerRadius" || key == "barHeight" ||
         key == "bg" || key == "border" || key == "alpha" ||
-        key == "borderAlpha" || key == "gradientEndA" ||
+        key == "borderAlpha" || key == "borderStyle" ||
+        key == "borderWidth" || key == "borderEffectStrength" ||
+        key == "gradientEndA" ||
         key == "shadowAlpha" || key == "shadowBlur" ||
         key == "shadowOffsetY" || key == "highlightAlpha" ||
         key == "noiseAlpha" || key == "glassEnabled" ||
@@ -61,7 +63,9 @@ bool IsHostAppearancePresetKey(std::string_view key) noexcept
 {
     return key == "followPersonalization" || key == "bg" ||
         key == "border" || key == "alpha" || key == "borderAlpha" ||
-        key == "gradientEndA" || key == "shadowAlpha" ||
+        key == "borderStyle" || key == "borderWidth" ||
+        key == "borderEffectStrength" || key == "gradientEndA" ||
+        key == "shadowAlpha" ||
         key == "shadowBlur" || key == "shadowOffsetY" ||
         key == "highlightAlpha" || key == "noiseAlpha" ||
         key == "glassEnabled" || key == "glassBlurRadius" ||
@@ -515,12 +519,16 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     float borderB = 1.0f;
     float backgroundOpacity = 0.36f;
     float borderOpacity = 0.40f;
+    PanelBorderStyle borderStyle = PanelBorderStyle::Standard;
+    float borderWidth = 1.0f;
+    float borderEffectStrength = kDefaultDimensionalBorderStrength;
     float gradientEndOpacity = 0.0f;
     bool glassEnabled = false;
     bool acrylicEnabled = false;
     (void)engine_.ReadCustomColors(widget.widgetId,
         bgR, bgG, bgB, backgroundOpacity,
         borderR, borderG, borderB, borderOpacity,
+        borderStyle, borderWidth, borderEffectStrength,
         gradientEndOpacity, glassEnabled, acrylicEnabled);
     const auto colorToInteger = [](float red, float green, float blue) {
         const auto channel = [](float value) {
@@ -541,6 +549,11 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     appearance.backgroundOpacity = finiteOpacity(
         backgroundOpacity, 0.36f);
     appearance.borderOpacity = finiteOpacity(borderOpacity, 0.40f);
+    appearance.borderStyle = borderStyle;
+    appearance.borderWidth = std::clamp(borderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    appearance.borderEffectStrength = finiteOpacity(
+        borderEffectStrength, kDefaultDimensionalBorderStrength);
     appearance.gradientEndOpacity = finiteOpacity(
         gradientEndOpacity, 0.0f);
     appearance.glassEnabled = glassEnabled;
@@ -972,9 +985,42 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
     };
     if (!setOpacity("alpha", appearance.backgroundOpacity) ||
         !setOpacity("borderAlpha", appearance.borderOpacity) ||
-        !setOpacity("gradientEndA", appearance.gradientEndOpacity))
+        !setOpacity("gradientEndA", appearance.gradientEndOpacity) ||
+        !setOpacity("borderEffectStrength",
+            appearance.borderEffectStrength))
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "invalidAppearanceOpacity", std::move(appearanceError));
+    if (appearance.borderStyle &&
+        *appearance.borderStyle != PanelBorderStyle::Standard &&
+        *appearance.borderStyle != PanelBorderStyle::Dimensional)
+    {
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "invalidBorderStyle");
+    }
+    if (appearance.borderStyle &&
+        !setAppearance("borderStyle",
+            std::to_string(static_cast<int>(*appearance.borderStyle)),
+            appearanceError))
+    {
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
+    }
+    if (appearance.borderWidth)
+    {
+        if (!std::isfinite(*appearance.borderWidth) ||
+            *appearance.borderWidth < kMinimumWidgetBorderWidth ||
+            *appearance.borderWidth > kMaximumWidgetBorderWidth)
+        {
+            return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                "invalidBorderWidth");
+        }
+        if (!setAppearance("borderWidth",
+                std::to_string(*appearance.borderWidth), appearanceError))
+        {
+            return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+                "appearanceWriteRejected", std::move(appearanceError));
+        }
+    }
     if (appearance.glassEnabled &&
         !setAppearance("glassEnabled",
             *appearance.glassEnabled ? "1" : "0", appearanceError))

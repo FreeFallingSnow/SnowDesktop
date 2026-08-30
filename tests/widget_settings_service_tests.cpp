@@ -189,6 +189,13 @@ public:
         if (appearance.borderOpacity)
             descriptor.hostAppearance.borderOpacity =
                 *appearance.borderOpacity;
+        if (appearance.borderStyle)
+            descriptor.hostAppearance.borderStyle = *appearance.borderStyle;
+        if (appearance.borderWidth)
+            descriptor.hostAppearance.borderWidth = *appearance.borderWidth;
+        if (appearance.borderEffectStrength)
+            descriptor.hostAppearance.borderEffectStrength =
+                *appearance.borderEffectStrength;
         if (appearance.gradientEndOpacity)
             descriptor.hostAppearance.gradientEndOpacity =
                 *appearance.gradientEndOpacity;
@@ -1209,8 +1216,20 @@ int main()
     FakeBackend appearanceBackend = MakeBackend();
     appearanceBackend.descriptor.customStyle = true;
     appearanceBackend.descriptor.hostAppearance = {
-        false, "__custom", 0x102030, 0xE0D0C0,
-        0.25f, 0.5f, 0.75f, false, false, 0 };
+        .followPersonalization = false,
+        .presetId = "__custom",
+        .backgroundColor = 0x102030,
+        .borderColor = 0xE0D0C0,
+        .backgroundOpacity = 0.25f,
+        .borderOpacity = 0.5f,
+        .borderStyle = PanelBorderStyle::Standard,
+        .borderWidth = 1.0f,
+        .borderEffectStrength = kDefaultDimensionalBorderStrength,
+        .gradientEndOpacity = 0.75f,
+        .glassEnabled = false,
+        .acrylicEnabled = false,
+        .contentTheme = 0,
+    };
     appearanceBackend.descriptor.scriptPresets[0]
         .hostAppearanceValues = {
             { "bg", "1193046" },
@@ -1222,6 +1241,27 @@ int main()
             { "__contentTheme", "1" },
             { "__preset", "must-not-win" },
         };
+    WidgetSettingPresetSchema explicitBorderPreset;
+    explicitBorderPreset.id = "outlined";
+    explicitBorderPreset.label = "Outlined";
+    explicitBorderPreset.hostAppearanceValues = {
+        { "glassEnabled", "0" },
+        { "borderStyle", "1" },
+        { "borderWidth", "3.5" },
+        { "borderEffectStrength", "0.25" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        explicitBorderPreset);
+    WidgetSettingPresetSchema invalidBorderPreset;
+    invalidBorderPreset.id = "invalid-border";
+    invalidBorderPreset.label = "Invalid border";
+    invalidBorderPreset.hostAppearanceValues = {
+        { "borderStyle", "2" },
+        { "borderWidth", "4.5" },
+        { "borderEffectStrength", "1.1" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidBorderPreset);
     // Opaque entries authored in a preset are ignored without preventing the
     // ordinary and host appearance values from applying.
     appearanceBackend.descriptor.scriptPresets[0].values["token"] =
@@ -1260,13 +1300,48 @@ int main()
                 0.625f &&
             appearanceBackend.lastAppearancePatch.glassEnabled == true &&
             appearanceBackend.lastAppearancePatch.acrylicEnabled == false &&
+            appearanceBackend.lastAppearancePatch.borderStyle ==
+                PanelBorderStyle::Dimensional &&
+            appearanceBackend.lastAppearancePatch.borderWidth ==
+                kDefaultDimensionalBorderWidth &&
+            appearanceBackend.lastAppearancePatch.borderEffectStrength ==
+                kDefaultDimensionalBorderStrength &&
             !appearanceBackend.lastAppearancePatch.followPersonalization &&
             !appearanceBackend.lastAppearancePatch.contentTheme &&
             appearanceBackend.lastAppearancePatch.clearContentTheme &&
             !appearanceBackend.ordinary.contains("token") &&
             appearanceSnapshot &&
             appearanceSnapshot->hostAppearance.presetId == "compact",
-        "component themes atomically persist __preset, editable host appearance, and ordinary values while skipping opaque and host-shared or retired entries");
+        "legacy component themes migrate their glass border while atomically persisting editable host appearance and ordinary values");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    const auto explicitBorderResult = appearanceService.ApplyPreset(
+        appearanceGuard, "outlined");
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(explicitBorderResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch.glassEnabled == false &&
+            appearanceBackend.lastAppearancePatch.borderStyle ==
+                PanelBorderStyle::Dimensional &&
+            appearanceBackend.lastAppearancePatch.borderWidth == 3.5f &&
+            appearanceBackend.lastAppearancePatch.borderEffectStrength ==
+                0.25f && appearanceSnapshot &&
+            !appearanceSnapshot->hostAppearance.glassEnabled &&
+            appearanceSnapshot->hostAppearance.borderStyle ==
+                PanelBorderStyle::Dimensional,
+        "explicit component border preset fields remain independent from the material toggle");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    const std::size_t appearanceTransactionsBeforeInvalid =
+        appearanceBackend.appearanceTransactions.size();
+    const auto invalidBorderResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border");
+    Check(invalidBorderResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidBorderResult.errorCode == "invalidBorderStyle" &&
+            appearanceBackend.appearanceTransactions.size() ==
+                appearanceTransactionsBeforeInvalid,
+        "invalid component border preset ranges are rejected before persistence");
 
     FakeBackend utf8Backend = MakeBackend();
     WidgetSettingsService utf8Service(utf8Backend);

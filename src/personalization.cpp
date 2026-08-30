@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <shlwapi.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -107,6 +108,9 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
     s.backgroundPreset = kAppearancePresetGlassDark;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
+    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
+    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
+    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
     s.glassBlurRadius = 24.0f;
     return s;
 }
@@ -120,6 +124,9 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
     s.backgroundPreset = kAppearancePresetGlassLight;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
+    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
+    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
+    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
     s.glassBlurRadius = 22.0f;
     s.contentTheme = 0;
     return s;
@@ -136,6 +143,9 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.acrylicEnabled = true;
+    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
+    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
+    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 0;
     return s;
@@ -152,6 +162,9 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.acrylicEnabled = true;
+    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
+    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
+    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 1;
     return s;
@@ -294,6 +307,28 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "widgetBorderB", v)) s.widgetBorderB = (float)v;
     if (ReadDoubleField(text, "widgetAlpha", v)) s.widgetAlpha = (float)v;
     if (ReadDoubleField(text, "widgetBorderAlpha", v)) s.widgetBorderAlpha = (float)v;
+    bool borderStyleLoaded = false;
+    if (ReadDoubleField(text, "widgetBorderStyle", v) && std::isfinite(v))
+    {
+        s.widgetBorderStyle = NormalizePanelBorderStyle(
+            static_cast<int>(v));
+        borderStyleLoaded = true;
+    }
+    bool borderWidthLoaded = false;
+    if (ReadDoubleField(text, "widgetBorderWidth", v) && std::isfinite(v))
+    {
+        s.widgetBorderWidth = std::clamp(static_cast<float>(v),
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        borderWidthLoaded = true;
+    }
+    bool borderStrengthLoaded = false;
+    if (ReadDoubleField(text, "widgetBorderEffectStrength", v) &&
+        std::isfinite(v))
+    {
+        s.widgetBorderEffectStrength = std::clamp(
+            static_cast<float>(v), 0.0f, 1.0f);
+        borderStrengthLoaded = true;
+    }
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
     if (ReadDoubleField(text, "categorizedTabHeight", v))
@@ -329,12 +364,35 @@ bool LoadPersonalization(
     bool b3 = false;
     if (ReadBoolField(text, "showCategoryTabCounts", b3))
         s.showCategoryTabCounts = b3;
+    // Legacy releases tied the dimensional edge to glassEnabled and always
+    // used a one-pixel core stroke.  Missing new fields opt into the stronger
+    // replacement only for appearances that previously received that edge.
+    if (!borderStyleLoaded)
+    {
+        s.widgetBorderStyle = s.glassEnabled
+            ? PanelBorderStyle::Dimensional
+            : PanelBorderStyle::Standard;
+    }
+    if (!borderWidthLoaded)
+    {
+        s.widgetBorderWidth = s.glassEnabled
+            ? kDefaultDimensionalBorderWidth : 1.0f;
+    }
+    if (!borderStrengthLoaded)
+    {
+        s.widgetBorderEffectStrength =
+            kDefaultDimensionalBorderStrength;
+    }
     // Presets are immutable choices in the UI. Refresh persisted acrylic
     // values so palette refinements and the old placeholder migration are
     // applied without requiring users to reselect the theme.
     if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
         s.backgroundPreset == kAppearancePresetAcrylicLight)
     {
+        const PanelBorderStyle explicitBorderStyle = s.widgetBorderStyle;
+        const float explicitBorderWidth = s.widgetBorderWidth;
+        const float explicitBorderStrength =
+            s.widgetBorderEffectStrength;
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
@@ -350,6 +408,12 @@ bool LoadPersonalization(
         s.showCategoryTabCounts =
             showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
+        if (borderStyleLoaded)
+            s.widgetBorderStyle = explicitBorderStyle;
+        if (borderWidthLoaded)
+            s.widgetBorderWidth = explicitBorderWidth;
+        if (borderStrengthLoaded)
+            s.widgetBorderEffectStrength = explicitBorderStrength;
     }
     return true;
 }
@@ -378,6 +442,20 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBorderB\": " << s.widgetBorderB << ",\n";
     file << "  \"widgetAlpha\": " << s.widgetAlpha << ",\n";
     file << "  \"widgetBorderAlpha\": " << s.widgetBorderAlpha << ",\n";
+    file << "  \"widgetBorderStyle\": "
+         << static_cast<int>(NormalizePanelBorderStyle(
+                static_cast<int>(s.widgetBorderStyle))) << ",\n";
+    file << "  \"widgetBorderWidth\": "
+         << (std::isfinite(s.widgetBorderWidth)
+                ? std::clamp(s.widgetBorderWidth,
+                    kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
+                : 1.0f)
+         << ",\n";
+    file << "  \"widgetBorderEffectStrength\": "
+         << (std::isfinite(s.widgetBorderEffectStrength)
+                ? std::clamp(s.widgetBorderEffectStrength, 0.0f, 1.0f)
+                : kDefaultDimensionalBorderStrength)
+         << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
     file << "  \"categorizedTabHeight\": "

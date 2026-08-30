@@ -27,6 +27,26 @@ constexpr int kFourThemeLight = 1;
 constexpr int kFourThemeAcrylicDark = 2;
 constexpr int kFourThemeAcrylicLight = 3;
 
+/** @brief Host-drawn panel border treatment, persisted as its integer value. */
+enum class PanelBorderStyle
+{
+    Standard = 0,
+    Dimensional = 1,
+};
+
+inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
+inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
+inline constexpr float kDefaultDimensionalBorderWidth = 2.0f;
+inline constexpr float kDefaultDimensionalBorderStrength = 0.75f;
+
+/** @brief Clamp a persisted panel border style without changing wire values. */
+constexpr PanelBorderStyle NormalizePanelBorderStyle(int style) noexcept
+{
+    return style == static_cast<int>(PanelBorderStyle::Dimensional)
+        ? PanelBorderStyle::Dimensional
+        : PanelBorderStyle::Standard;
+}
+
 /** @brief Clamp a persisted four-theme selection without changing its wire values. */
 constexpr int NormalizeFourThemeSelection(int selection)
 {
@@ -113,6 +133,15 @@ struct PersonalizationSettings
      */
     float widgetBorderAlpha = 0.40f;
 
+    /** @brief Host panel border style, independent from the background material. */
+    PanelBorderStyle widgetBorderStyle = PanelBorderStyle::Standard;
+
+    /** @brief Host panel border width in logical pixels, clamped to [0.5, 4.0]. */
+    float widgetBorderWidth = 1.0f;
+
+    /** @brief Directional highlight/shadow strength, stored in [0.0, 1.0]. */
+    float widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
+
     /**
      * @brief 渐变底部末端 Alpha
      * @details 组件底部渐变结束端的 Alpha 通道值，与 widgetAlpha 配合
@@ -150,7 +179,7 @@ struct PersonalizationSettings
     /**
      * @brief 毛玻璃背景开关（苹果 Dock 效果）
      * @details 开启后由 DWM 原生合成器模糊面板背后的桌面内容，
-     *          填充色作为半透明色调叠加，边框切换为玻璃边缘光渐变描边。
+     *          填充色作为半透明色调叠加；边框样式由独立字段控制。
      */
     bool glassEnabled = false;
 

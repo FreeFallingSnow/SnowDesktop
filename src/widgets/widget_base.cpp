@@ -2437,7 +2437,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     float radius = static_cast<float>(Cu(cornerRadiusCu));
-    float strokeW = selected ? 1.6f : 1.0f;
+    const PersonalizationSettings& borderAppearance = appearanceOverride
+        ? *appearanceOverride : app_->CurrentPersonalization();
+    const float configuredStroke = std::clamp(
+        borderAppearance.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    float strokeW = selected
+        ? std::max(1.6f, configuredStroke) : configuredStroke;
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);

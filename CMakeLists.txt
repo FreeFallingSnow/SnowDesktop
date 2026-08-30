@@ -1297,6 +1297,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/general_settings_tests.cpp
             src/general_settings.cpp
+            src/personalization.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract settings)
 

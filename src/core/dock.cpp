@@ -1677,9 +1677,11 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
     const D2D1_COLOR_F border = D2D1::ColorF(
         p.widgetBorderR, p.widgetBorderG, p.widgetBorderB, p.widgetBorderAlpha);
+    const float borderWidth = std::clamp(p.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     if (app_)
         app_->DrawWidgetPanelBackground(context, bounds, panelRadius, fill,
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, 1.0f, &p, true,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, borderWidth, &p, true,
             reinterpret_cast<std::uintptr_t>(this));
 
     if (border.a > 0.0f)
@@ -1715,7 +1717,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                     end = D2D1::Point2F(static_cast<float>(bounds.right), start.y);
                     break;
                 }
-                context->DrawLine(start, end, borderBrush.Get(), 1.0f);
+                context->DrawLine(start, end, borderBrush.Get(), borderWidth);
             }
             else
             {
@@ -1723,9 +1725,15 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                     D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
                         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
                     panelRadius, panelRadius);
-                if (!p.glassEnabled ||
-                    !app_->DrawGlassBorder(context, bounds, panelRadius, border, 1.0f))
-                    context->DrawRoundedRectangle(rr, borderBrush.Get(), 1.0f);
+                if (p.widgetBorderStyle != PanelBorderStyle::Dimensional ||
+                    p.widgetBorderEffectStrength <= 0.0005f ||
+                    !app_->DrawDimensionalBorder(context, bounds, panelRadius,
+                        border, borderWidth,
+                        p.widgetBorderEffectStrength))
+                {
+                    context->DrawRoundedRectangle(
+                        rr, borderBrush.Get(), borderWidth);
+                }
             }
         }
     }

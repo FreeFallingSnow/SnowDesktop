@@ -613,13 +613,22 @@ DesktopApp::RenderWidgetMenuPreview(
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f;
             float borderAlpha = 0.0f;
+            PanelBorderStyle borderStyle = PanelBorderStyle::Standard;
+            float borderWidth = 1.0f;
+            float borderEffectStrength =
+                kDefaultDimensionalBorderStrength;
             float gradientEndA = stageAppearance.gradientEndA;
             bool glass = false, acrylic = false;
             if (previewEngine->ReadCustomColors(data->id,
                     bgR, bgG, bgB, alpha,
                     borderR, borderG, borderB, borderAlpha,
+                    borderStyle, borderWidth, borderEffectStrength,
                     gradientEndA, glass, acrylic))
             {
+                stageAppearance.widgetBorderStyle = borderStyle;
+                stageAppearance.widgetBorderWidth = borderWidth;
+                stageAppearance.widgetBorderEffectStrength =
+                    borderEffectStrength;
                 stageAppearance.glassEnabled = glass;
                 stageAppearance.acrylicEnabled = glass && acrylic;
             }
@@ -742,7 +751,14 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.widgetBgG) + L":" +
         std::to_wstring(appearance.widgetBgB) + L":" +
         std::to_wstring(appearance.widgetAlpha) + L":" +
+        std::to_wstring(appearance.widgetBorderR) + L":" +
+        std::to_wstring(appearance.widgetBorderG) + L":" +
+        std::to_wstring(appearance.widgetBorderB) + L":" +
         std::to_wstring(appearance.widgetBorderAlpha) + L":" +
+        std::to_wstring(static_cast<int>(appearance.widgetBorderStyle)) + L":" +
+        std::to_wstring(appearance.widgetBorderWidth) + L":" +
+        std::to_wstring(appearance.widgetBorderEffectStrength) + L":" +
+        std::to_wstring(appearance.gradientEndA) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
         std::to_wstring(appearance.categorizedTabHeight) + L":" +

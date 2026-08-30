@@ -657,6 +657,65 @@ int wmain(int argc, wchar_t** argv)
     Check(customMaterialGlass.pixels != customMaterialAcrylic.pixels,
         "custom acrylic adds one stable noise layer over custom glass");
 
+    const auto standardBorderOutput =
+        temporary.path / L"border-standard.png";
+    const auto zeroStrengthBorderOutput =
+        temporary.path / L"border-dimensional-zero.png";
+    const auto dimensionalBorderOutput =
+        temporary.path / L"border-dimensional-75.png";
+    const auto wideDimensionalBorderOutput =
+        temporary.path / L"border-dimensional-wide.png";
+    const auto [standardBorderExit, standardBorderJson] = Run(snowwidget, {
+        L"preview", source.wstring(), standardBorderOutput.wstring(),
+        L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+        L"--storage", L"borderStyle=0", L"--storage", L"borderWidth=2",
+        L"--storage", L"borderEffectStrength=0.75",
+        L"--host", host.wstring() });
+    const auto [zeroStrengthBorderExit, zeroStrengthBorderJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), zeroStrengthBorderOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=2",
+            L"--storage", L"borderEffectStrength=0",
+            L"--host", host.wstring() });
+    const auto [dimensionalBorderExit, dimensionalBorderJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), dimensionalBorderOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=2",
+            L"--storage", L"borderEffectStrength=0.75",
+            L"--host", host.wstring() });
+    const auto [wideDimensionalBorderExit, wideDimensionalBorderJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), wideDimensionalBorderOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=4",
+            L"--storage", L"borderEffectStrength=0.75",
+            L"--host", host.wstring() });
+    Check(standardBorderExit == 0 && zeroStrengthBorderExit == 0 &&
+            dimensionalBorderExit == 0 && wideDimensionalBorderExit == 0 &&
+            standardBorderJson.find("\"ok\":true") != std::string::npos &&
+            zeroStrengthBorderJson.find("\"ok\":true") !=
+                std::string::npos &&
+            dimensionalBorderJson.find("\"ok\":true") !=
+                std::string::npos &&
+            wideDimensionalBorderJson.find("\"ok\":true") !=
+                std::string::npos,
+        "standard, zero-strength, recommended, and maximum-width borders render");
+    const RgbaBitmap standardBorder =
+        CheckOpaquePreview(standardBorderOutput, 192, 240);
+    const RgbaBitmap zeroStrengthBorder =
+        CheckOpaquePreview(zeroStrengthBorderOutput, 192, 240);
+    const RgbaBitmap dimensionalBorder =
+        CheckOpaquePreview(dimensionalBorderOutput, 192, 240);
+    const RgbaBitmap wideDimensionalBorder =
+        CheckOpaquePreview(wideDimensionalBorderOutput, 192, 240);
+    Check(standardBorder.pixels == zeroStrengthBorder.pixels,
+        "zero-percent dimensional strength is pixel-identical to the standard border");
+    Check(standardBorder.pixels != dimensionalBorder.pixels &&
+            dimensionalBorder.pixels != wideDimensionalBorder.pixels,
+        "recommended dimensional strength and maximum width produce distinct preview output");
+
     constexpr std::array<std::wstring_view, 6> appearances{
         L"dark", L"light", L"glass-dark", L"glass-light",
         L"acrylic-dark", L"acrylic-light" };

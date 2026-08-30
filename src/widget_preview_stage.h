@@ -97,8 +97,9 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, bool lightTheme, POINT pixelOrigin = {});
 
-/** Draw the shared liquid-glass edge treatment. */
-bool DrawGlassBorder(ID2D1DeviceContext* context, const RECT& bounds,
-    float cornerRadius, D2D1_COLOR_F color, float strokeWidth);
+/** Draw the shared directional highlight/shadow border treatment. */
+bool DrawDimensionalBorder(ID2D1DeviceContext* context, const RECT& bounds,
+    float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
+    float effectStrength);
 
 } // namespace snowdesktop::widget_preview

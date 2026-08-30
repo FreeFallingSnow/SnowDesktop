@@ -7,10 +7,10 @@
 
 namespace snowdesktop::widget_composition_layer_rules
 {
-// The glass border includes a 2.35 px antialiased outer pass around the
-// logical widget rectangle. Reserve whole pixels on each side so compact
-// DirectComposition surfaces do not clip that overdraw.
-inline constexpr long kWidgetSurfaceBorderOverdraw = 2;
+// The maximum four-pixel dimensional border includes a 1.35 px antialiased
+// outer pass. Reserve the centered half-width on each side so compact
+// DirectComposition surfaces never clip the configured overdraw.
+inline constexpr long kWidgetSurfaceBorderOverdraw = 3;
 
 constexpr long WidgetSurfaceOrigin(long logicalOrigin)
 {

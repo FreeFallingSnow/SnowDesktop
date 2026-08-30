@@ -3094,7 +3094,9 @@ static bool IsHostStructureSettingKey(const std::string& key)
 static bool IsHostAppearanceSettingKey(const std::string& key)
 {
     return key == "bg" || key == "border" || key == "alpha" ||
-        key == "borderAlpha" || key == "gradientEndA" ||
+        key == "borderAlpha" || key == "borderStyle" ||
+        key == "borderWidth" || key == "borderEffectStrength" ||
+        key == "gradientEndA" ||
         IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
         key == "followPersonalization";
@@ -21171,7 +21173,9 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag,
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
-    float& gradientEndA, bool& glassEnabled, bool& acrylicEnabled) const
+    PanelBorderStyle& borderStyle, float& borderWidth,
+    float& borderEffectStrength, float& gradientEndA,
+    bool& glassEnabled, bool& acrylicEnabled) const
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -21216,6 +21220,22 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readBool("glassEnabled", glassEnabled, false);
     readBool("acrylicEnabled", acrylicEnabled, false);
 
+    lua_getfield(state, -1, "borderStyle");
+    const bool borderStyleDeclared = lua_isinteger(state, -1);
+    if (borderStyleDeclared)
+    {
+        borderStyle = NormalizePanelBorderStyle(
+            static_cast<int>(lua_tointeger(state, -1)));
+    }
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "borderWidth");
+    const bool borderWidthDeclared = lua_isnumber(state, -1);
+    if (borderWidthDeclared)
+        borderWidth = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    readFloat("borderEffectStrength", borderEffectStrength,
+        kDefaultDimensionalBorderStrength);
+
     auto readStoredColor = [&](const char* key, float& r, float& g,
                                float& b) {
         const std::string value = RuntimeGetStorageValue(widgetId, key);
@@ -21242,6 +21262,44 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readStoredFloat("gradientEndA", gradientEndA);
     readStoredBool("glassEnabled", glassEnabled);
     readStoredBool("acrylicEnabled", acrylicEnabled);
+
+    const std::string storedBorderStyle =
+        RuntimeGetStorageValue(widgetId, "borderStyle");
+    if (!storedBorderStyle.empty())
+    {
+        borderStyle = NormalizePanelBorderStyle(
+            std::atoi(storedBorderStyle.c_str()));
+    }
+    else if (!borderStyleDeclared)
+    {
+        borderStyle = glassEnabled
+            ? PanelBorderStyle::Dimensional
+            : PanelBorderStyle::Standard;
+    }
+    const std::string storedBorderWidth =
+        RuntimeGetStorageValue(widgetId, "borderWidth");
+    if (!storedBorderWidth.empty())
+    {
+        borderWidth = static_cast<float>(
+            std::atof(storedBorderWidth.c_str()));
+    }
+    else if (!borderWidthDeclared)
+    {
+        borderWidth = glassEnabled
+            ? kDefaultDimensionalBorderWidth : 1.0f;
+    }
+    readStoredFloat("borderEffectStrength", borderEffectStrength);
+    if (!std::isfinite(borderWidth))
+    {
+        borderWidth = glassEnabled
+            ? kDefaultDimensionalBorderWidth : 1.0f;
+    }
+    if (!std::isfinite(borderEffectStrength))
+        borderEffectStrength = kDefaultDimensionalBorderStrength;
+    borderWidth = std::clamp(borderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    borderEffectStrength = std::clamp(
+        borderEffectStrength, 0.0f, 1.0f);
 
     lua_pop(state, 1);
     return true;

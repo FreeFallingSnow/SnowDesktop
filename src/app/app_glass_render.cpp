@@ -1,13 +1,14 @@
 #include "app.h"
 #include "../widget_preview_stage.h"
 
-// Native glass border rendering and diagnostics.
+// Dimensional border rendering is independent from glass diagnostics.
 
-bool DesktopApp::DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame,
-    float radius, D2D1_COLOR_F color, float strokeWidth)
+bool DesktopApp::DrawDimensionalBorder(ID2D1DeviceContext* ctx, RECT frame,
+    float radius, D2D1_COLOR_F color, float strokeWidth,
+    float effectStrength)
 {
-    return snowdesktop::widget_preview::DrawGlassBorder(
-        ctx, frame, radius, color, strokeWidth);
+    return snowdesktop::widget_preview::DrawDimensionalBorder(
+        ctx, frame, radius, color, strokeWidth, effectStrength);
 }
 
 /** @brief 返回设置界面显示的原生毛玻璃合成状态。 */

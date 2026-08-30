@@ -666,6 +666,21 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         patch.acrylicEnabled = value == "1" || value == "true";
         return true;
     }
+    if (key == "borderStyle")
+    {
+        char* end = nullptr;
+        const long parsed = std::strtol(value.c_str(), &end, 10);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            parsed < static_cast<long>(PanelBorderStyle::Standard) ||
+            parsed > static_cast<long>(PanelBorderStyle::Dimensional))
+        {
+            error = "invalidBorderStyle";
+            return false;
+        }
+        patch.borderStyle = NormalizePanelBorderStyle(
+            static_cast<int>(parsed));
+        return true;
+    }
     if (key == "bg" || key == "border")
     {
         char* end = nullptr;
@@ -683,7 +698,7 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         return true;
     }
     if (key == "alpha" || key == "borderAlpha" ||
-        key == "gradientEndA")
+        key == "gradientEndA" || key == "borderEffectStrength")
     {
         char* end = nullptr;
         const float parsed = std::strtof(value.c_str(), &end);
@@ -695,7 +710,23 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         }
         if (key == "alpha") patch.backgroundOpacity = parsed;
         else if (key == "borderAlpha") patch.borderOpacity = parsed;
-        else patch.gradientEndOpacity = parsed;
+        else if (key == "gradientEndA") patch.gradientEndOpacity = parsed;
+        else patch.borderEffectStrength = parsed;
+        return true;
+    }
+    if (key == "borderWidth")
+    {
+        char* end = nullptr;
+        const float parsed = std::strtof(value.c_str(), &end);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            !std::isfinite(parsed) ||
+            parsed < kMinimumWidgetBorderWidth ||
+            parsed > kMaximumWidgetBorderWidth)
+        {
+            error = "invalidBorderWidth";
+            return false;
+        }
+        patch.borderWidth = parsed;
         return true;
     }
     if (key == "__contentTheme")
@@ -1162,8 +1193,9 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
     appearance.presetId = preset->id;
     if (session.snapshot.customStyle)
     {
-        // Component themes default both effects off when a preset omits them,
-        // exactly as the legacy editor did before applying its values.
+        // Component themes default both background materials off when a
+        // preset omits them, exactly as the legacy editor did before applying
+        // its values. Border defaults are resolved independently below.
         appearance.glassEnabled = false;
         appearance.acrylicEnabled = false;
     }
@@ -1181,6 +1213,28 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
             return { WidgetSettingMutationStatus::InvalidValue,
                 session.snapshot.generation, session.snapshot.revision,
                 std::move(appearanceError), {} };
+        }
+    }
+    if (session.snapshot.customStyle)
+    {
+        const bool legacyDimensional =
+            appearance.glassEnabled.value_or(false);
+        if (!preset->hostAppearanceValues.contains("borderStyle"))
+        {
+            appearance.borderStyle = legacyDimensional
+                ? PanelBorderStyle::Dimensional
+                : PanelBorderStyle::Standard;
+        }
+        if (!preset->hostAppearanceValues.contains("borderWidth"))
+        {
+            appearance.borderWidth = legacyDimensional
+                ? kDefaultDimensionalBorderWidth : 1.0f;
+        }
+        if (!preset->hostAppearanceValues.contains(
+                "borderEffectStrength"))
+        {
+            appearance.borderEffectStrength =
+                kDefaultDimensionalBorderStrength;
         }
     }
     if (session.snapshot.customStyle)

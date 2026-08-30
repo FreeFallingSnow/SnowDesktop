@@ -289,6 +289,7 @@ struct AppearanceScalarControl
     muxc::Grid editors{nullptr};
     muxc::Slider slider{nullptr};
     muxc::NumberBox number{nullptr};
+    muxc::TextBlock unit{nullptr};
     winrt::event_token sliderChanged{};
     winrt::event_token numberChanged{};
     winrt::event_token sliderPointerReleased{};
@@ -302,6 +303,9 @@ struct AppearanceScalarControl
     bool continuousDirty = false;
     mux::DispatcherTimer idleCommitTimer{nullptr};
     std::string previewOwner;
+    double minimum = 0.0;
+    double maximum = 1.0;
+    double scale = 1.0;
     std::function<void(wr::WidgetHostAppearancePatch&, float)> assign;
 };
 
@@ -424,6 +428,10 @@ struct WidgetSettingsPresenter::Impl
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         borderColorEditor;
     AppearanceScalarControl borderOpacity;
+    AppearanceScalarControl borderWidth;
+    presenter_controls::SettingRow borderStyleRow;
+    muxc::ComboBox borderStyle{nullptr};
+    AppearanceScalarControl borderEffectStrength;
     AppearanceScalarControl gradientEndOpacity;
     presenter_controls::SettingRow glassRow;
     muxc::ToggleSwitch glassEnabled{nullptr};
@@ -473,6 +481,7 @@ struct WidgetSettingsPresenter::Impl
 
     winrt::event_token followGlobalToggled{};
     winrt::event_token appearanceThemeChanged{};
+    winrt::event_token borderStyleChanged{};
     winrt::event_token glassToggled{};
     winrt::event_token acrylicToggled{};
     winrt::event_token contentThemeChanged{};
@@ -522,7 +531,10 @@ struct WidgetSettingsPresenter::Impl
         return title;
     }
 
-    void InitializeAppearanceScalar(AppearanceScalarControl& control)
+    void InitializeAppearanceScalar(AppearanceScalarControl& control,
+        double minimum = 0.0, double maximum = 1.0,
+        double step = 0.01, double scale = 1.0,
+        std::wstring unit = {})
     {
         control.editors = muxc::Grid{};
         control.editors.ColumnSpacing(8.0);
@@ -533,19 +545,23 @@ struct WidgetSettingsPresenter::Impl
             1.0, mux::GridUnitType::Star));
         muxc::ColumnDefinition numberColumn{};
         numberColumn.Width(mux::GridLengthHelper::Auto());
+        muxc::ColumnDefinition unitColumn{};
+        unitColumn.Width(mux::GridLengthHelper::Auto());
         control.editors.ColumnDefinitions().Append(sliderColumn);
         control.editors.ColumnDefinitions().Append(numberColumn);
+        control.editors.ColumnDefinitions().Append(unitColumn);
         control.slider = muxc::Slider{};
-        control.slider.Minimum(0.0);
-        control.slider.Maximum(1.0);
-        control.slider.StepFrequency(0.01);
+        control.slider.Minimum(minimum);
+        control.slider.Maximum(maximum);
+        control.slider.StepFrequency(step);
         control.slider.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         control.slider.VerticalAlignment(mux::VerticalAlignment::Center);
         control.number = muxc::NumberBox{};
-        control.number.Minimum(0.0);
-        control.number.Maximum(1.0);
-        control.number.SmallChange(0.01);
+        control.number.Minimum(minimum);
+        control.number.Maximum(maximum);
+        control.number.SmallChange(step);
+        control.number.LargeChange(step * 5.0);
         control.number.Width(92.0);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
@@ -554,6 +570,17 @@ struct WidgetSettingsPresenter::Impl
         control.editors.Children().Append(control.slider);
         muxc::Grid::SetColumn(control.number, 1);
         control.editors.Children().Append(control.number);
+        control.unit = muxc::TextBlock{};
+        control.unit.Text(std::move(unit));
+        control.unit.VerticalAlignment(mux::VerticalAlignment::Center);
+        control.unit.Opacity(0.72);
+        control.unit.Visibility(control.unit.Text().empty()
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        muxc::Grid::SetColumn(control.unit, 2);
+        control.editors.Children().Append(control.unit);
+        control.minimum = minimum;
+        control.maximum = maximum;
+        control.scale = scale;
         control.row.Initialize(control.editors);
     }
 
@@ -582,10 +609,11 @@ struct WidgetSettingsPresenter::Impl
         control.sliderChanged = control.slider.ValueChanged(
             [this, &control](const auto&, const auto&) {
                 if (!CanMutate() || control.synchronizing) return;
-                const float value = static_cast<float>(
-                    std::clamp(control.slider.Value(), 0.0, 1.0));
+                const float value = static_cast<float>(std::clamp(
+                    control.slider.Value(), control.minimum,
+                    control.maximum) * control.scale);
                 control.synchronizing = true;
-                control.number.Value(value);
+                control.number.Value(value / control.scale);
                 control.synchronizing = false;
                 QueueAppearancePreview(control, value);
             });
@@ -594,10 +622,11 @@ struct WidgetSettingsPresenter::Impl
                 if (!CanMutate() || control.synchronizing ||
                     std::isnan(control.number.Value()))
                     return;
-                const float value = static_cast<float>(
-                    std::clamp(control.number.Value(), 0.0, 1.0));
+                const float value = static_cast<float>(std::clamp(
+                    control.number.Value(), control.minimum,
+                    control.maximum) * control.scale);
                 control.synchronizing = true;
-                control.slider.Value(value);
+                control.slider.Value(value / control.scale);
                 control.synchronizing = false;
                 QueueAppearancePreview(control, value);
             });
@@ -689,6 +718,21 @@ struct WidgetSettingsPresenter::Impl
 
         InitializeAppearanceScalar(borderOpacity);
         customAppearanceHost.Children().Append(borderOpacity.row.root);
+        InitializeAppearanceScalar(borderWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
+            0.5, 1.0, L"px");
+        customAppearanceHost.Children().Append(borderWidth.row.root);
+
+        borderStyle = muxc::ComboBox{};
+        borderStyle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        borderStyle.MaxWidth(520.0);
+        borderStyleRow.Initialize(borderStyle);
+        customAppearanceHost.Children().Append(borderStyleRow.root);
+
+        InitializeAppearanceScalar(borderEffectStrength,
+            0.0, 100.0, 1.0, 0.01, L"%");
+        customAppearanceHost.Children().Append(
+            borderEffectStrength.row.root);
         InitializeAppearanceScalar(gradientEndOpacity);
         customAppearanceHost.Children().Append(gradientEndOpacity.row.root);
 
@@ -812,6 +856,10 @@ struct WidgetSettingsPresenter::Impl
                         preset.widgetBorderG, preset.widgetBorderB);
                     patch.backgroundOpacity = preset.widgetAlpha;
                     patch.borderOpacity = preset.widgetBorderAlpha;
+                    patch.borderStyle = preset.widgetBorderStyle;
+                    patch.borderWidth = preset.widgetBorderWidth;
+                    patch.borderEffectStrength =
+                        preset.widgetBorderEffectStrength;
                     patch.gradientEndOpacity = preset.gradientEndA;
                     patch.glassEnabled = preset.glassEnabled;
                     patch.acrylicEnabled = preset.acrylicEnabled;
@@ -828,6 +876,28 @@ struct WidgetSettingsPresenter::Impl
             "__appearance.borderOpacity",
             [](auto& patch, float value) {
                 patch.borderOpacity = value;
+            });
+        HookAppearanceScalar(borderWidth,
+            "__appearance.borderWidth",
+            [](auto& patch, float value) {
+                patch.borderWidth = value;
+            });
+        borderStyleChanged = borderStyle.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selected = borderStyle.SelectedIndex();
+                if (selected < 0) return;
+                borderEffectStrength.row.SetEnabled(
+                    selected == static_cast<int>(
+                        PanelBorderStyle::Dimensional));
+                if (!CanMutate()) return;
+                wr::WidgetHostAppearancePatch patch;
+                patch.borderStyle = NormalizePanelBorderStyle(selected);
+                RunAppearancePatch(std::move(patch));
+            });
+        HookAppearanceScalar(borderEffectStrength,
+            "__appearance.borderEffectStrength",
+            [](auto& patch, float value) {
+                patch.borderEffectStrength = value;
             });
         HookAppearanceScalar(gradientEndOpacity,
             "__appearance.gradientEndOpacity",
@@ -1642,6 +1712,7 @@ struct WidgetSettingsPresenter::Impl
             transientPreviewOwner.clear();
             for (AppearanceScalarControl* control : {
                     &backgroundOpacity, &borderOpacity,
+                    &borderWidth, &borderEffectStrength,
                     &gradientEndOpacity })
             {
                 if (control->idleCommitTimer)
@@ -1672,7 +1743,8 @@ struct WidgetSettingsPresenter::Impl
     {
         control.synchronizing = true;
         const double normalized = std::clamp(
-            static_cast<double>(value), 0.0, 1.0);
+            static_cast<double>(value) / control.scale,
+            control.minimum, control.maximum);
         control.slider.Value(normalized);
         control.number.Value(normalized);
         control.synchronizing = false;
@@ -1733,6 +1805,15 @@ struct WidgetSettingsPresenter::Impl
                 snapshot.hostAppearance.borderColor));
         PatchAppearanceScalar(borderOpacity,
             snapshot.hostAppearance.borderOpacity);
+        PatchAppearanceScalar(borderWidth,
+            snapshot.hostAppearance.borderWidth);
+        borderStyle.SelectedIndex(static_cast<int>(
+            snapshot.hostAppearance.borderStyle));
+        PatchAppearanceScalar(borderEffectStrength,
+            snapshot.hostAppearance.borderEffectStrength);
+        borderEffectStrength.row.SetEnabled(
+            snapshot.hostAppearance.borderStyle ==
+                PanelBorderStyle::Dimensional);
         PatchAppearanceScalar(gradientEndOpacity,
             snapshot.hostAppearance.gradientEndOpacity);
         glassEnabled.IsOn(snapshot.hostAppearance.glassEnabled);
@@ -2011,6 +2092,8 @@ struct WidgetSettingsPresenter::Impl
         };
         if (clearAppearance(backgroundOpacity) ||
             clearAppearance(borderOpacity) ||
+            clearAppearance(borderWidth) ||
+            clearAppearance(borderEffectStrength) ||
             clearAppearance(gradientEndOpacity))
             return;
         const auto field = fieldsByKey.find(std::string(owner));
@@ -2604,6 +2687,18 @@ struct WidgetSettingsPresenter::Impl
             cancelText);
         borderOpacity.row.SetText(
             L("app.settings.border_opacity", L"Border opacity"));
+        borderWidth.row.SetText(
+            L("app.settings.border_width", L"Border width"));
+        borderStyleRow.SetText(
+            L("app.settings.border_style", L"Border style"));
+        borderStyle.Items().Clear();
+        borderStyle.Items().Append(winrt::box_value(L(
+            "app.settings.border_style_standard", L"Standard")));
+        borderStyle.Items().Append(winrt::box_value(L(
+            "app.settings.border_style_dimensional", L"Dimensional")));
+        borderEffectStrength.row.SetText(L(
+            "app.settings.border_effect_strength",
+            L"Dimensional border strength"));
         gradientEndOpacity.row.SetText(L(
             "app.settings.gradient_end_alpha", L"Gradient end opacity"));
         glassRow.SetText(
@@ -2651,6 +2746,18 @@ struct WidgetSettingsPresenter::Impl
             borderOpacity.slider, borderOpacity.row.label.Text());
         muxa::AutomationProperties::SetName(
             borderOpacity.number, borderOpacity.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderWidth.slider, borderWidth.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderWidth.number, borderWidth.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderStyle, borderStyleRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderEffectStrength.slider,
+            borderEffectStrength.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            borderEffectStrength.number,
+            borderEffectStrength.row.label.Text());
         muxa::AutomationProperties::SetName(
             gradientEndOpacity.slider,
             gradientEndOpacity.row.label.Text());
@@ -2918,6 +3025,8 @@ struct WidgetSettingsPresenter::Impl
                 followGlobal.Toggled(followGlobalToggled);
             if (appearanceTheme && HasToken(appearanceThemeChanged))
                 appearanceTheme.SelectionChanged(appearanceThemeChanged);
+            if (borderStyle && HasToken(borderStyleChanged))
+                borderStyle.SelectionChanged(borderStyleChanged);
             if (glassEnabled && HasToken(glassToggled))
                 glassEnabled.Toggled(glassToggled);
             if (acrylicEnabled && HasToken(acrylicToggled))
@@ -2961,6 +3070,8 @@ struct WidgetSettingsPresenter::Impl
             };
             unhookScalar(backgroundOpacity);
             unhookScalar(borderOpacity);
+            unhookScalar(borderWidth);
+            unhookScalar(borderEffectStrength);
             unhookScalar(gradientEndOpacity);
             if (backgroundColorEditor)
             {

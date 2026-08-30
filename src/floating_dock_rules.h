@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 
@@ -462,13 +463,22 @@ inline RECT ExpandHostForTitleLayer(
     return dockRect;
 }
 
-inline RECT ExpandForBorderOverdraw(
-    RECT visualRect)
+inline int ResolveBorderOverdraw(float borderWidth) noexcept
 {
-    // DrawGlassBorder's antialiased outer pass is wider than the logical
-    // one-pixel border. Desktop rendering has an unrestricted surface around
-    // it; floating layers must explicitly reserve the same pixels.
-    constexpr int borderOverdraw = 2;
+    const float width = std::clamp(borderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    return std::max(1, static_cast<int>(std::ceil(
+        (width + 1.35f) * 0.5f)));
+}
+
+inline RECT ExpandForBorderOverdraw(
+    RECT visualRect,
+    float borderWidth = 1.0f)
+{
+    // The dimensional border includes an antialiased outer pass wider than
+    // its logical core. Floating layers must reserve pixels dynamically so
+    // the configured maximum width is not clipped by the host region.
+    const int borderOverdraw = ResolveBorderOverdraw(borderWidth);
     if (!IsRectEmpty(&visualRect))
         InflateRect(
             &visualRect,

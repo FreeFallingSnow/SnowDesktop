@@ -143,9 +143,13 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         : border;
     if (stroke.a > 0.0f)
     {
-        const bool glassDrawn = p.glassEnabled && !selected &&
-            DrawGlassBorder(ctx, frame, radius, stroke, strokeWidth);
-        if (!glassDrawn)
+        strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
+        const bool dimensionalDrawn = !selected &&
+            p.widgetBorderStyle == PanelBorderStyle::Dimensional &&
+            p.widgetBorderEffectStrength > 0.0005f &&
+            DrawDimensionalBorder(ctx, frame, radius, stroke, strokeWidth,
+                p.widgetBorderEffectStrength);
+        if (!dimensionalDrawn)
         {
             if (auto* strokeBrush = getBrush(stroke))
                 ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);

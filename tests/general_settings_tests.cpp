@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -121,6 +122,120 @@ int main()
         AppearancePresetFromFourThemeSelection(kFourThemeAcrylicLight) ==
             kAppearancePresetAcrylicLight,
         "four overlay themes map back to stable appearance preset IDs");
+
+    const auto darkPreset = PersonalizationSettings::DarkPreset();
+    const auto lightPreset = PersonalizationSettings::LightPreset();
+    const auto glassDarkPreset =
+        PersonalizationSettings::GlassDarkPreset();
+    const auto glassLightPreset =
+        PersonalizationSettings::GlassLightPreset();
+    const auto acrylicDarkPreset =
+        PersonalizationSettings::AcrylicDarkPreset();
+    const auto acrylicLightPreset =
+        PersonalizationSettings::AcrylicLightPreset();
+    Check(darkPreset.widgetBorderStyle == PanelBorderStyle::Standard &&
+            lightPreset.widgetBorderStyle == PanelBorderStyle::Standard &&
+            darkPreset.widgetBorderWidth == 1.0f &&
+            lightPreset.widgetBorderWidth == 1.0f,
+        "ordinary appearance presets keep the one-pixel standard border");
+    Check(glassDarkPreset.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            glassLightPreset.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            acrylicDarkPreset.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            acrylicLightPreset.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            glassDarkPreset.widgetBorderWidth ==
+                kDefaultDimensionalBorderWidth &&
+            acrylicLightPreset.widgetBorderWidth ==
+                kDefaultDimensionalBorderWidth &&
+            glassLightPreset.widgetBorderEffectStrength ==
+                kDefaultDimensionalBorderStrength &&
+            acrylicDarkPreset.widgetBorderEffectStrength ==
+                kDefaultDimensionalBorderStrength,
+        "glass and acrylic presets load the recommended dimensional border");
+
+    const auto personalizationPath =
+        std::filesystem::temp_directory_path(error) /
+        (L"SnowDesktopPersonalizationTests-" +
+            std::to_wstring(GetCurrentProcessId()) + L".json");
+    std::filesystem::remove(personalizationPath, error);
+    PersonalizationSettings savedAppearance =
+        PersonalizationSettings::DarkPreset();
+    savedAppearance.backgroundPreset = kAppearancePresetCustom;
+    savedAppearance.glassEnabled = false;
+    savedAppearance.acrylicEnabled = false;
+    savedAppearance.widgetBorderStyle = PanelBorderStyle::Dimensional;
+    savedAppearance.widgetBorderWidth = 3.5f;
+    savedAppearance.widgetBorderEffectStrength = 0.42f;
+    Check(SavePersonalization(
+            personalizationPath.c_str(), savedAppearance),
+        "personalization save succeeds");
+    PersonalizationSettings loadedAppearance;
+    Check(LoadPersonalization(
+            personalizationPath.c_str(), loadedAppearance) &&
+            loadedAppearance.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            loadedAppearance.widgetBorderWidth == 3.5f &&
+            std::abs(loadedAppearance.widgetBorderEffectStrength -
+                0.42f) < 0.0001f &&
+            !loadedAppearance.glassEnabled,
+        "border style, width, and strength round trip independently from glass");
+
+    {
+        std::ofstream legacyGlass(
+            personalizationPath, std::ios::binary | std::ios::trunc);
+        legacyGlass << "{\n"
+                       "  \"backgroundPreset\": 9,\n"
+                       "  \"glassEnabled\": true\n"
+                       "}\n";
+    }
+    PersonalizationSettings migratedGlass;
+    Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
+            migratedGlass.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            migratedGlass.widgetBorderWidth ==
+                kDefaultDimensionalBorderWidth &&
+            migratedGlass.widgetBorderEffectStrength ==
+                kDefaultDimensionalBorderStrength,
+        "legacy glass appearance migrates to the recommended dimensional border");
+    {
+        std::ofstream legacyOpaque(
+            personalizationPath, std::ios::binary | std::ios::trunc);
+        legacyOpaque << "{\n"
+                        "  \"backgroundPreset\": 9,\n"
+                        "  \"glassEnabled\": false\n"
+                        "}\n";
+    }
+    PersonalizationSettings migratedOpaque;
+    Check(LoadPersonalization(personalizationPath.c_str(), migratedOpaque) &&
+            migratedOpaque.widgetBorderStyle ==
+                PanelBorderStyle::Standard &&
+            migratedOpaque.widgetBorderWidth == 1.0f,
+        "legacy non-glass appearance migrates to the standard border");
+    {
+        std::ofstream explicitAcrylic(
+            personalizationPath, std::ios::binary | std::ios::trunc);
+        explicitAcrylic << "{\n"
+                           "  \"backgroundPreset\": 10,\n"
+                           "  \"glassEnabled\": true,\n"
+                           "  \"acrylicEnabled\": true,\n"
+                           "  \"widgetBorderStyle\": 0,\n"
+                           "  \"widgetBorderWidth\": 99,\n"
+                           "  \"widgetBorderEffectStrength\": -1\n"
+                           "}\n";
+    }
+    PersonalizationSettings explicitAppearance;
+    Check(LoadPersonalization(
+            personalizationPath.c_str(), explicitAppearance) &&
+            explicitAppearance.widgetBorderStyle ==
+                PanelBorderStyle::Standard &&
+            explicitAppearance.widgetBorderWidth ==
+                kMaximumWidgetBorderWidth &&
+            explicitAppearance.widgetBorderEffectStrength == 0.0f,
+        "explicit acrylic border fields take priority and clamp to supported ranges");
+    std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);
     if (failures == 0)

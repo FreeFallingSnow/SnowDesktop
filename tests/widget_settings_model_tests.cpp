@@ -246,6 +246,21 @@ int main()
                 preset.hostAppearanceValues,
         "opaque preset entries are skipped while ordinary and host-owned preset values still apply");
 
+    WidgetHostAppearanceState hostAppearance;
+    Check(hostAppearance.borderStyle == PanelBorderStyle::Standard &&
+            hostAppearance.borderWidth == 1.0f &&
+            hostAppearance.borderEffectStrength ==
+                kDefaultDimensionalBorderStrength,
+        "host appearance exposes stable standard-border defaults");
+    WidgetHostAppearancePatch borderPatch;
+    Check(borderPatch.Empty(),
+        "an untouched host appearance patch is empty");
+    borderPatch.borderStyle = PanelBorderStyle::Dimensional;
+    borderPatch.borderWidth = 2.5f;
+    borderPatch.borderEffectStrength = 0.6f;
+    Check(!borderPatch.Empty(),
+        "border style, width, and strength participate in atomic patches");
+
     WidgetSettingsSnapshot snapshot;
     snapshot.widgetId = L"weather-instance";
     snapshot.generation = 7;

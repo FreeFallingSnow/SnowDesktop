@@ -514,6 +514,13 @@ void TestHostContract(const std::filesystem::path& repository)
             staticSearchMapsTo(
                 "personalization.backgroundColor", "AppearanceTheme") &&
             staticSearchMapsTo(
+                "personalization.borderWidth", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.borderStyle", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.borderEffectStrength",
+                "AppearanceTheme") &&
+            staticSearchMapsTo(
                 "personalization.cornerRadius", "AppearanceWidgets") &&
             staticSearchMapsTo(
                 "desktop.categoryLayout", "AppearanceWidgets") &&

@@ -888,9 +888,10 @@ private:
     /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
     void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
         bool lightTheme, POINT screenOrigin);
-    /** @brief 绘制液态玻璃边缘（斜向受光、柔亮外缘、暗色内缘）。 @return 成功绘制返回 true */
-    bool DrawGlassBorder(ID2D1DeviceContext* ctx, RECT frame, float radius,
-        D2D1_COLOR_F color, float strokeWidth);
+    /** @brief 绘制立体边框（左上高光、右下暗边、柔亮外缘）。 @return 成功绘制返回 true */
+    bool DrawDimensionalBorder(ID2D1DeviceContext* ctx, RECT frame,
+        float radius, D2D1_COLOR_F color, float strokeWidth,
+        float effectStrength);
     /** @brief 获取原生毛玻璃后端状态文本。 */
     std::wstring GetGlassBackendStatusText() const;
     /** @brief 触发换页通知（记录文本与时间戳，安排淡出截止时间）。 @param text 通知文本 */

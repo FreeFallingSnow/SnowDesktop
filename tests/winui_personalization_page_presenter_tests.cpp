@@ -88,7 +88,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "personalization numeric snapshots are quantized to their declared slider step");
 
     for (const char* member : {
-             "widgetAlpha", "widgetBorderAlpha", "gradientEndA",
+             "widgetAlpha", "widgetBorderAlpha", "widgetBorderStyle",
+             "widgetBorderWidth", "widgetBorderEffectStrength",
+             "gradientEndA",
              "glassBlurRadius", "cornerRadius", "barHeight",
              "categorizedTabHeight",
              "glassEnabled", "acrylicEnabled",
@@ -154,6 +156,15 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("kAppearancePresetCustom") != std::string::npos,
         "all seven global appearance presets remain selectable");
+    Check(source.find("personalization.borderWidth") != std::string::npos &&
+            source.find("personalization.borderStyle") != std::string::npos &&
+            source.find("personalization.borderEffectStrength") !=
+                std::string::npos &&
+            source.find("PanelBorderStyle::Dimensional") !=
+                std::string::npos &&
+            source.find("borderEffectStrength.row.SetEnabled") !=
+                std::string::npos,
+        "custom themes expose searchable border width, style, and conditional dimensional strength controls");
     Check(source.find(
               "gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&

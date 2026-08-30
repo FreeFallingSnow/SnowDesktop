@@ -197,17 +197,27 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             effectSettings = PersonalizationSettings::DarkPreset();
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
+            PanelBorderStyle luaBorderStyle = PanelBorderStyle::Standard;
+            float luaBorderWidth = 1.0f;
+            float luaBorderEffectStrength =
+                kDefaultDimensionalBorderStrength;
             float luaGradientEndA = gradientEndA;
             bool luaGlassEnabled = false;
             bool luaAcrylicEnabled = false;
             if (engine->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
-                luaGradientEndA, luaGlassEnabled, luaAcrylicEnabled))
+                luaBorderStyle, luaBorderWidth,
+                luaBorderEffectStrength, luaGradientEndA,
+                luaGlassEnabled, luaAcrylicEnabled))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
                 effectSettings = PersonalizationSettings::DarkPreset();
+                effectSettings.widgetBorderStyle = luaBorderStyle;
+                effectSettings.widgetBorderWidth = luaBorderWidth;
+                effectSettings.widgetBorderEffectStrength =
+                    luaBorderEffectStrength;
                 effectSettings.glassEnabled = luaGlassEnabled;
                 effectSettings.acrylicEnabled =
                     luaGlassEnabled && luaAcrylicEnabled;
@@ -248,8 +258,12 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
+    const float configuredStroke = std::clamp(
+        effectSettings.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
-        fillColor, borderColor, selected, selected ? 1.6f : 1.0f,
+        fillColor, borderColor, selected,
+        selected ? std::max(1.6f, configuredStroke) : configuredStroke,
         customStyle ? &effectSettings : nullptr,
         !preview && registerBackdrop);
 

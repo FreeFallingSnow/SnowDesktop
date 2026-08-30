@@ -100,7 +100,9 @@ void DesktopApp::DrawCollectionPopup(
                 collectionPopupAppearance_.widgetBorderAlpha,
                 0.0f, 1.0f)),
         false,
-        std::max(1.0f, 1.4f * popupMetrics.scale),
+        std::clamp(collectionPopupAppearance_.widgetBorderWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
+            popupMetrics.scale,
         &collectionPopupAppearance_, false);
 
     const auto headerBounds =

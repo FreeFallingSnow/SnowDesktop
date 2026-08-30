@@ -370,11 +370,15 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
         resolved.theme.cornerRadius = appearance.settings.cornerRadius;
         float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f;
         float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f;
+        PanelBorderStyle borderStyle = PanelBorderStyle::Standard;
+        float borderWidth = 1.0f;
+        float borderEffectStrength = kDefaultDimensionalBorderStrength;
         float gradient = resolved.theme.gradientEndA;
         bool glass = false, acrylic = false;
         if (engine.ReadCustomColors(kPreviewWidgetId,
                 bgR, bgG, bgB, resolved.theme.alpha,
                 borderR, borderG, borderB, resolved.theme.borderAlpha,
+                borderStyle, borderWidth, borderEffectStrength,
                 gradient, glass, acrylic))
         {
             resolved.theme.bg =
@@ -386,6 +390,10 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 (static_cast<int>(std::lround(borderG * 255.0f)) << 8) |
                 static_cast<int>(std::lround(borderB * 255.0f));
             resolved.theme.gradientEndA = gradient;
+            resolved.material.widgetBorderStyle = borderStyle;
+            resolved.material.widgetBorderWidth = borderWidth;
+            resolved.material.widgetBorderEffectStrength =
+                borderEffectStrength;
             resolved.material.glassEnabled = glass;
             resolved.material.acrylicEnabled = glass && acrylic;
         }
@@ -433,11 +441,18 @@ void DrawHostBackground(ID2D1DeviceContext* context,
     }
     if (theme.borderAlpha > 0.0f)
     {
-        const float strokeWidth = std::max(1.0f, scale);
-        const bool glassDrawn = resolved.material.glassEnabled &&
-            snowdesktop::widget_preview::DrawGlassBorder(context, bounds,
-                radius, color(theme.border, theme.borderAlpha), strokeWidth);
-        if (!glassDrawn)
+        const float strokeWidth = std::clamp(
+            resolved.material.widgetBorderWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+        const bool dimensionalDrawn =
+            resolved.material.widgetBorderStyle ==
+                PanelBorderStyle::Dimensional &&
+            resolved.material.widgetBorderEffectStrength > 0.0005f &&
+            snowdesktop::widget_preview::DrawDimensionalBorder(
+                context, bounds, radius,
+                color(theme.border, theme.borderAlpha), strokeWidth,
+                resolved.material.widgetBorderEffectStrength);
+        if (!dimensionalDrawn)
             context->DrawRoundedRectangle(
                 rounded, border.Get(), strokeWidth);
     }

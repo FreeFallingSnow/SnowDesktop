@@ -2217,7 +2217,20 @@ int main(int argc, char** argv)
                 floatingDockRect.right + 2 &&
             floatingBorderOverdraw.bottom ==
                 floatingDockRect.bottom + 2,
-        "floating layers must preserve the desktop glass-border overdraw");
+        "floating layers must preserve the default dimensional-border overdraw");
+    const RECT maximumFloatingBorderOverdraw =
+        floatingDock::ExpandForBorderOverdraw(
+            floatingDockRect,
+            kMaximumWidgetBorderWidth);
+    Check(maximumFloatingBorderOverdraw.left ==
+            floatingDockRect.left - 3 &&
+            maximumFloatingBorderOverdraw.top ==
+                floatingDockRect.top - 3 &&
+            maximumFloatingBorderOverdraw.right ==
+                floatingDockRect.right + 3 &&
+            maximumFloatingBorderOverdraw.bottom ==
+                floatingDockRect.bottom + 3,
+        "floating layers must expand for the maximum configured border width");
     Check((floatingPopup::kWindowExStyle &
             WS_EX_TOPMOST) == 0 &&
             (floatingPopup::kWindowExStyle &

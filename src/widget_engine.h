@@ -24,6 +24,7 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
+#include "personalization.h"
 #include "system_snapshot.h"
 #include "http_runtime.h"
 #include "calendar_service.h"
@@ -1047,8 +1048,9 @@ public:
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
-        float& gradientEndA, bool& glassEnabled,
-        bool& acrylicEnabled) const;
+        PanelBorderStyle& borderStyle, float& borderWidth,
+        float& borderEffectStrength, float& gradientEndA,
+        bool& glassEnabled, bool& acrylicEnabled) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表

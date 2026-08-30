@@ -580,6 +580,10 @@ CalculateFloatingDockStableSourceRect(
     const RECT dockRect =
         host.container->
             GetInteractiveBounds();
+    const PersonalizationSettings& appearance =
+        IsPersistentDockHostEffectivelyFloating(host)
+            ? floatingDockPersonalization_
+            : CurrentPersonalization();
     RECT sourceRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
@@ -587,7 +591,8 @@ CalculateFloatingDockStableSourceRect(
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
                             dockRect,
-                            dockSettings_.position));
+                            dockSettings_.position),
+                appearance.widgetBorderWidth);
 
     return sourceRect;
 }
@@ -693,10 +698,19 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         1, floatingDockSourceRect_.bottom -
             floatingDockSourceRect_.top);
 
+    const PersonalizationSettings& dockAppearance = promoted
+        ? floatingDockPersonalization_
+        : CurrentPersonalization();
+    const float dockBorderWidth = std::clamp(
+        dockAppearance.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    const int borderOverdraw =
+        snowdesktop::floating_dock_rules::ResolveBorderOverdraw(
+            dockBorderWidth);
     const RECT dockRegionRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
-                floatingDockRect_);
+                floatingDockRect_, dockBorderWidth);
     const RECT dockLocal =
         snowdesktop::floating_dock_rules::
             DesktopRectToWindowRect(
@@ -707,7 +721,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             promoted
                 ? floatingDockPersonalization_.cornerRadius
                 : CurrentPersonalization().cornerRadius)));
-    constexpr int borderOverdraw = 2;
     HRGN windowRegion = CreateRoundRectRgn(
         dockLocal.left, dockLocal.top,
         dockLocal.right + 1, dockLocal.bottom + 1,
