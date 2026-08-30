@@ -91,6 +91,8 @@ muxc::CommandBar NewCommandBar()
     commandBar.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
     commandBar.HorizontalContentAlignment(
         mux::HorizontalAlignment::Stretch);
+    commandBar.VerticalContentAlignment(
+        mux::VerticalAlignment::Center);
     commandBar.DefaultLabelPosition(
         muxc::CommandBarDefaultLabelPosition::Right);
     commandBar.IsDynamicOverflowEnabled(true);
