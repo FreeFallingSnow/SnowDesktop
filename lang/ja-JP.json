@@ -587,6 +587,8 @@
   "app.dock.keep_when_hidden": "デスクトップ非表示時に保持",
   "app.dock.remove_frequent": "よく使う項目から削除",
   "app.dock.close_application": "アプリケーションを閉じる",
+  "app.dock.pin_move_to_dock": "Dock に固定して移動",
+  "app.dock.create_mapping": "Dock にマッピングを作成",
   "app.dock.enable": "Dock を有効にする",
   "app.dock.floating_shortcut_mode": "ホットキーでフローティング ドックを呼び出す",
   "app.dock.floating_shortcut_hint": "設定されたホットキーを押して、現在の画面上のデスクトップ ドックを非表示にし、そのフローティング コピーを同じ位置に表示します",

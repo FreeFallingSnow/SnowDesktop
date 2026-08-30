@@ -587,6 +587,8 @@
   "app.dock.keep_when_hidden": "Mantener oculto el escritorio",
   "app.dock.remove_frequent": "Quitar de elementos frecuentes",
   "app.dock.close_application": "Cerrar aplicación",
+  "app.dock.pin_move_to_dock": "Fijar y mover al Dock",
+  "app.dock.create_mapping": "Crear asignación en el Dock",
   "app.dock.enable": "Activar el Dock",
   "app.dock.floating_shortcut_mode": "Mostrar el Dock flotante con un atajo de teclado",
   "app.dock.floating_shortcut_hint": "Presiona el atajo configurado para ocultar el Dock del escritorio en la pantalla actual y mostrar su copia flotante en la misma posición",

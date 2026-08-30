@@ -587,6 +587,8 @@
   "app.dock.keep_when_hidden": "데스크톱을 숨겨도 유지",
   "app.dock.remove_frequent": "자주 사용하는 항목에서 제거",
   "app.dock.close_application": "애플리케이션 닫기",
+  "app.dock.pin_move_to_dock": "Dock에 고정하고 이동",
+  "app.dock.create_mapping": "Dock에 매핑 만들기",
   "app.dock.enable": "Dock 활성화",
   "app.dock.floating_shortcut_mode": "단축키로 플로팅 Dock 표시",
   "app.dock.floating_shortcut_hint": "설정한 단축키를 누르면 현재 화면의 데스크톱 Dock을 숨기고 같은 위치에 플로팅 Dock을 표시합니다.",

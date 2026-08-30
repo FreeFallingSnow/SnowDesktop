@@ -587,6 +587,8 @@
   "app.dock.keep_when_hidden": "Conserver lorsque le bureau est masqué",
   "app.dock.remove_frequent": "Retirer de la liste des éléments fréquents",
   "app.dock.close_application": "Fermer l'application",
+  "app.dock.pin_move_to_dock": "Épingler et déplacer vers le Dock",
+  "app.dock.create_mapping": "Créer un mappage dans le Dock",
   "app.dock.enable": "Activer le Dock",
   "app.dock.floating_shortcut_mode": "Invoquer un Dock flottant avec un raccourci clavier",
   "app.dock.floating_shortcut_hint": "Appuyez sur la touche de raccourci configurée pour masquer le Dock du bureau sur l'écran actuel et afficher sa copie flottante dans la même position",

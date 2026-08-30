@@ -587,6 +587,8 @@
     "app.dock.keep_when_hidden": "Keep When Desktop Hidden",
     "app.dock.remove_frequent": "Remove from Frequent",
     "app.dock.close_application": "Close Application",
+    "app.dock.pin_move_to_dock": "Pin and Move to Dock",
+    "app.dock.create_mapping": "Create Mapping in Dock",
     "app.dock.enable": "Enable Dock",
     "app.dock.floating_shortcut_mode": "Summon floating Dock with hotkey",
     "app.dock.floating_shortcut_hint": "Press the configured hotkey to hide the desktop Dock on the current screen and show its floating copy in the same position",

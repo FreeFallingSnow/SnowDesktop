@@ -57,6 +57,7 @@
 #include "../widget_composition_layer_rules.h"
 #include "../desktop_hover_rules.h"
 #include "../desktop_drop_cache.h"
+#include "../dock_app_identity_rules.h"
 #include "../shell_launch_worker.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
@@ -254,14 +255,6 @@ enum class QuickNavigationInvocationSource
     Pointer,
     DockSearch,
     Hotkey,
-};
-
-enum class DockAppIdentityKind
-{
-    None,
-    Executable,
-    Applications,
-    Steam,
 };
 
 struct DockAppIdentity
@@ -1282,6 +1275,8 @@ private:
     bool IsDockUsageEligibleItem(const DesktopItem& item) const;
     bool RemoveDockDragOutItems(const std::vector<Item*>& sourceItems);
     bool RemoveDockMappingAt(size_t entryIndex);
+    std::optional<size_t> FindDesktopItemForDockRunningApp(
+        const DockRunningAppInfo& running);
     std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;
     std::wstring GetDockDragOutRemovalHint(POINT point) const;

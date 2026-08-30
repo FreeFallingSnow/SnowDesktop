@@ -587,6 +587,8 @@
   "app.dock.keep_when_hidden": "Manter quando a área de trabalho estiver oculta",
   "app.dock.remove_frequent": "Remover dos itens frequentes",
   "app.dock.close_application": "Fechar aplicativo",
+  "app.dock.pin_move_to_dock": "Fixar e mover para o Dock",
+  "app.dock.create_mapping": "Criar mapeamento no Dock",
   "app.dock.enable": "Ativar Dock",
   "app.dock.floating_shortcut_mode": "Convocar Dock flutuante com tecla de atalho",
   "app.dock.floating_shortcut_hint": "Pressione a tecla de atalho configurada para ocultar o Dock da área de trabalho na tela atual e mostrar sua cópia flutuante na mesma posição",

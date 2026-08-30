@@ -397,26 +397,44 @@ std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
         const bool isShownAsRunning =
             std::any_of(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& running) {
-                switch (identity.kind)
-                {
-                case DockAppIdentityKind::Executable:
-                    return !identity.executablePath.empty() &&
-                        identity.executablePath == running.executablePath;
-                case DockAppIdentityKind::Applications:
-                    return !identity.appUserModelId.empty() &&
-                        identity.appUserModelId == running.appUserModelId;
-                case DockAppIdentityKind::Steam:
-                    return (!identity.appUserModelId.empty() &&
-                            identity.appUserModelId == running.appUserModelId) ||
-                        IsDockPathInsideDirectory(running.executablePath,
-                            identity.steamInstallDirectory);
-                default:
-                    return false;
-                }
+                return snowdesktop::dock_app_identity_rules::
+                    MatchesRunningApp(
+                        identity.kind,
+                        identity.executablePath,
+                        identity.appUserModelId,
+                        identity.steamInstallDirectory,
+                        running.executablePath,
+                        running.appUserModelId);
             });
         if (isShownAsRunning) continue;
         result.push_back(candidate.itemIndex);
         if (result.size() >= limit) break;
     }
     return result;
+}
+
+std::optional<size_t>
+DesktopApp::FindDesktopItemForDockRunningApp(
+    const DockRunningAppInfo& running)
+{
+    std::optional<size_t> match;
+    for (size_t itemIndex = 0;
+        itemIndex < items_.size(); ++itemIndex)
+    {
+        const DockAppIdentity identity =
+            ResolveDockAppIdentity(itemIndex);
+        if (!snowdesktop::dock_app_identity_rules::
+                MatchesRunningApp(
+                    identity.kind,
+                    identity.executablePath,
+                    identity.appUserModelId,
+                    identity.steamInstallDirectory,
+                    running.executablePath,
+                    running.appUserModelId))
+            continue;
+        if (match)
+            return std::nullopt;
+        match = itemIndex;
+    }
+    return match;
 }

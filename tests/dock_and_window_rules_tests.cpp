@@ -13,6 +13,7 @@
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
+#include "dock_app_identity_rules.h"
 #include "page_navigation_rules.h"
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
@@ -46,6 +47,7 @@
 #include <string>
 
 namespace rules = snowdesktop::dock_window_rules;
+namespace identityRules = snowdesktop::dock_app_identity_rules;
 
 namespace
 {
@@ -2889,6 +2891,39 @@ int main(int argc, char** argv)
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Executable,
+            L"C:\\APPS\\EDITOR.EXE", L"", L"",
+            L"C:\\APPS\\EDITOR.EXE", L"") &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable,
+                L"C:\\APPS\\EDITOR.EXE", L"", L"",
+                L"C:\\APPS\\OTHER.EXE", L""),
+        "running executable identities must match only the same normalized executable path");
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Applications,
+            L"", L"CONTOSO.EDITOR_123!APP", L"",
+            L"C:\\WINDOWS\\SYSTEM32\\APPLICATIONFRAMEHOST.EXE",
+            L"CONTOSO.EDITOR_123!APP") &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Applications,
+                L"", L"CONTOSO.EDITOR_123!APP", L"",
+                L"C:\\WINDOWS\\SYSTEM32\\APPLICATIONFRAMEHOST.EXE",
+                L"CONTOSO.OTHER_123!APP"),
+        "packaged applications must match by normalized application user model ID");
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Steam,
+            L"", L"", L"D:\\STEAM\\COMMON\\GAME",
+            L"D:\\STEAM\\COMMON\\GAME\\BIN\\GAME.EXE", L"") &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Steam,
+                L"", L"", L"D:\\STEAM\\COMMON\\GAME",
+                L"D:\\STEAM\\COMMON\\GAME2\\GAME.EXE", L"") &&
+            identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Steam,
+                L"", L"STEAM.APP.123", L"",
+                L"C:\\GAMES\\GAME.EXE", L"STEAM.APP.123"),
+        "Steam identities must match their AUMID or a path below the install directory without accepting sibling prefixes");
     Check(rules::ResolveDockClickAction(true, false, false) ==
             rules::DockClickAction::Activate,
         "a short running indicator must activate the application");

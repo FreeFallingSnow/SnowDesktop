@@ -168,11 +168,35 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         identity.executablePath.empty())
         return;
 
+    std::wstring matchingDesktopKey;
+    if (const std::optional<size_t> itemIndex =
+            FindDesktopItemForDockRunningApp(running);
+        itemIndex && *itemIndex < items_.size())
+        matchingDesktopKey = items_[*itemIndex].layoutKey;
+
     PrepareMenuIconsForPoint(screenPoint);
 
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return;
+    if (!matchingDesktopKey.empty())
+    {
+        AppendMenuW(
+            menu, MF_STRING,
+            kContextDockPinMoveToDock,
+            _LW("app.dock.pin_move_to_dock"));
+        AppendMenuW(
+            menu, MF_STRING,
+            kContextDockCreateMapping,
+            _LW("app.dock.create_mapping"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        SetMenuItemIcon(
+            menu, kContextDockPinMoveToDock,
+            L"");
+        SetMenuItemIcon(
+            menu, kContextDockCreateMapping,
+            L"");
+    }
     AppendMenuW(
         menu, MF_STRING,
         kContextDockCloseApplication,
@@ -188,6 +212,37 @@ void DesktopApp::ShowDockRunningAppContextMenu(
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
     RestoreInteractionInputFocus();
+
+    if ((command == kContextDockPinMoveToDock ||
+            command == kContextDockCreateMapping) &&
+        !matchingDesktopKey.empty())
+    {
+        const size_t itemIndex =
+            FindItemIndexByKey(matchingDesktopKey);
+        POINT clientPoint = screenPoint;
+        if (itemIndex < items_.size() &&
+            ScreenToClient(hwnd_, &clientPoint))
+        {
+            if (DockContainer* dock =
+                    GetDockContainerAtPoint(clientPoint))
+            {
+                DesktopIcon source(
+                    &items_[itemIndex], nullptr, this);
+                const int mods =
+                    command == kContextDockCreateMapping
+                    ? MK_CONTROL : 0;
+                CommitDockDrop(
+                    { &source }, nullptr, dock,
+                    dock->GetInsertIndexAtPoint(clientPoint),
+                    mods);
+                SaveLayoutSlots();
+                ApplyPageMapping();
+                LayoutItems();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+        return;
+    }
 
     if (command ==
         kContextDockCloseApplication)

@@ -174,10 +174,8 @@ inline bool IsDockSteamAppRunning(const std::wstring& appId)
 inline bool IsDockPathInsideDirectory(
     const std::wstring& path, const std::wstring& directory)
 {
-    if (path.empty() || directory.empty() || path.size() <= directory.size() ||
-        path.compare(0, directory.size(), directory) != 0)
-        return false;
-    return directory.back() == L'\\' || path[directory.size()] == L'\\';
+    return snowdesktop::dock_app_identity_rules::
+        IsPathInsideDirectory(path, directory);
 }
 
 inline std::wstring ReadDockStringProperty(
@@ -420,22 +418,18 @@ inline bool DockWindowMatchesAppIdentity(
     if (!window || !IsWindow(window)) return false;
     window = GetAncestor(window, GA_ROOT);
     const std::wstring executablePath = QueryDockWindowExecutablePath(window);
-    switch (identity.kind)
-    {
-    case DockAppIdentityKind::Executable:
-        return !identity.executablePath.empty() &&
-            executablePath == identity.executablePath;
-    case DockAppIdentityKind::Applications:
-        return !identity.appUserModelId.empty() &&
-            QueryDockWindowAppUserModelId(window) == identity.appUserModelId;
-    case DockAppIdentityKind::Steam:
-        return (!identity.appUserModelId.empty() &&
-                QueryDockWindowAppUserModelId(window) == identity.appUserModelId) ||
-            IsDockPathInsideDirectory(executablePath,
-                identity.steamInstallDirectory);
-    default:
-        return false;
-    }
+    const std::wstring appUserModelId =
+        identity.kind == DockAppIdentityKind::Executable
+        ? std::wstring{}
+        : QueryDockWindowAppUserModelId(window);
+    return snowdesktop::dock_app_identity_rules::
+        MatchesRunningApp(
+            identity.kind,
+            identity.executablePath,
+            identity.appUserModelId,
+            identity.steamInstallDirectory,
+            executablePath,
+            appUserModelId);
 }
 
 inline bool DockWindowsShareActivationGroup(HWND first, HWND second)

@@ -587,6 +587,8 @@
     "app.dock.keep_when_hidden": "隐藏桌面时保留",
     "app.dock.remove_frequent": "移出常用项目",
     "app.dock.close_application": "关闭应用",
+    "app.dock.pin_move_to_dock": "固定并移动到 Dock",
+    "app.dock.create_mapping": "在 Dock 创建映射",
     "app.dock.enable": "启用 Dock 栏",
     "app.dock.floating_shortcut_mode": "快捷键唤起悬浮 Dock",
     "app.dock.floating_shortcut_hint": "按设定快捷键隐藏当前屏幕的桌面 Dock，并在同一位置显示悬浮 Dock",
