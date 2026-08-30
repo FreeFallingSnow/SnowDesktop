@@ -800,26 +800,35 @@ int wmain(int argc, wchar_t** argv)
                 wholePanel) == 0,
         "edge highlights only add light to the existing panel pixels");
     constexpr RECT outerTopLight{ 64, 0, 128, 1 };
-    constexpr RECT innerTopLight{ 64, 3, 128, 4 };
+    constexpr RECT peakTopLight{ 64, 1, 128, 2 };
+    constexpr RECT innerTopTail{ 64, 3, 128, 4 };
+    constexpr RECT deepInterior{ 8, 8, 184, 232 };
     const std::uint64_t outerGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, outerTopLight);
-    const std::uint64_t innerGain = SumBrightnessGain(
-        borderless, wideEdgeHighlight, innerTopLight);
-    Check(outerGain > 0 && outerGain > innerGain * 3,
-        "edge highlight fades strongly from the outer edge toward zero inside");
-    constexpr RECT topBorderStrip{ 0, 0, 192, 4 };
-    constexpr RECT bottomBorderStrip{ 0, 236, 192, 240 };
-    constexpr RECT leftBorderStrip{ 0, 0, 4, 240 };
-    constexpr RECT rightBorderStrip{ 188, 0, 192, 240 };
-    Check(CountDifferingPixels(transparent, wideEdgeHighlight,
-                topBorderStrip) > 128 &&
-            CountDifferingPixels(transparent, wideEdgeHighlight,
-                bottomBorderStrip) > 128 &&
-            CountDifferingPixels(transparent, wideEdgeHighlight,
-                leftBorderStrip) > 128 &&
-            CountDifferingPixels(transparent, wideEdgeHighlight,
-                rightBorderStrip) > 128,
-        "maximum-width edge highlight remains visible on every canvas edge");
+    const std::uint64_t peakGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, peakTopLight);
+    const std::uint64_t tailGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, innerTopTail);
+    Check(peakGain > outerGain && outerGain > tailGain * 3 &&
+            tailGain > 0 &&
+            CountDifferingPixels(borderless, wideEdgeHighlight,
+                deepInterior) == 0,
+        "bevel reflection peaks just inside the edge and fades to zero before the panel interior");
+    constexpr RECT topLightStrip{ 64, 0, 128, 4 };
+    constexpr RECT bottomLightStrip{ 64, 236, 128, 240 };
+    constexpr RECT leftLightStrip{ 0, 80, 4, 160 };
+    constexpr RECT rightLightStrip{ 188, 80, 192, 160 };
+    const std::uint64_t topGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, topLightStrip);
+    const std::uint64_t bottomGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, bottomLightStrip);
+    const std::uint64_t leftGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, leftLightStrip);
+    const std::uint64_t rightGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, rightLightStrip);
+    Check(topGain > bottomGain * 2 && leftGain > rightGain * 2 &&
+            bottomGain > 0 && rightGain > 0,
+        "top-left light drives the primary bevel reflection while the opposite bevel stays weaker");
 
     constexpr std::array<std::wstring_view, 6> appearances{
         L"dark", L"light", L"glass-dark", L"glass-light",
