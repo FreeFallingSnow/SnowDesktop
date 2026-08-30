@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,38 @@ struct TemporaryDirectory
     {
         std::error_code error;
         std::filesystem::remove_all(path, error);
+    }
+};
+
+struct ScopedEnvironmentVariable
+{
+    std::wstring name;
+    std::optional<std::wstring> original;
+
+    ScopedEnvironmentVariable(std::wstring variableName,
+        const wchar_t* value) : name(std::move(variableName))
+    {
+        SetLastError(ERROR_SUCCESS);
+        const DWORD size = GetEnvironmentVariableW(name.c_str(), nullptr, 0);
+        if (size != 0)
+        {
+            std::wstring current(size, L'\0');
+            const DWORD length = GetEnvironmentVariableW(
+                name.c_str(), current.data(), size);
+            current.resize(length);
+            original = std::move(current);
+        }
+        else if (GetLastError() != ERROR_ENVVAR_NOT_FOUND)
+        {
+            original = L"";
+        }
+        SetEnvironmentVariableW(name.c_str(), value);
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        SetEnvironmentVariableW(name.c_str(),
+            original ? original->c_str() : nullptr);
     }
 };
 
@@ -115,6 +148,42 @@ void TestSteamChildEnvironment()
     }
     Check(appIdEntries == 1 && gameIdEntries == 1,
         "Steam child environment carries exactly one production App ID context");
+
+    ScopedEnvironmentVariable appId(L"SteamAppId", L"480");
+    ScopedEnvironmentVariable gameId(L"SteamGameId", L"480");
+    ScopedEnvironmentVariable overlayId(L"SteamOverlayGameId", L"480");
+    ScopedEnvironmentVariable clientLaunch(L"SteamClientLaunch", L"1");
+    ScopedEnvironmentVariable steamPath(L"SteamPath", L"C:\\Steam");
+    ScopedEnvironmentVariable mixedCaseMarker(
+        L"sTeAmTestMarker", L"inherited");
+    ScopedEnvironmentVariable retainedMarker(
+        L"SNOWDESKTOP_ENVIRONMENT_SENTINEL", L"retained");
+
+    const std::vector<wchar_t> detachedBlock =
+        snowdesktop::BuildSnowDesktopDetachedRuntimeEnvironment();
+    Check(detachedBlock.size() >= 2 &&
+            detachedBlock[detachedBlock.size() - 1] == L'\0' &&
+            detachedBlock[detachedBlock.size() - 2] == L'\0',
+        "detached runtime environment is a double-null-terminated "
+        "Unicode block");
+    std::size_t inheritedSteamEntries = 0;
+    bool retainedSentinel = false;
+    for (const wchar_t* current = detachedBlock.data(); *current != L'\0';
+         current += std::wcslen(current) + 1)
+    {
+        const std::wstring_view entry(current);
+        const std::size_t delimiter = entry.find(L'=');
+        const std::wstring_view name = entry.substr(0, delimiter);
+        if (name.size() >= 5 && CompareStringOrdinal(name.data(), 5,
+                L"Steam", 5, TRUE) == CSTR_EQUAL)
+            ++inheritedSteamEntries;
+        if (entry == L"SNOWDESKTOP_ENVIRONMENT_SENTINEL=retained")
+            retainedSentinel = true;
+    }
+    Check(inheritedSteamEntries == 0,
+        "detached runtime environment removes every inherited Steam marker");
+    Check(retainedSentinel,
+        "detached runtime environment preserves unrelated variables");
 }
 
 void TestManagerLocalization()

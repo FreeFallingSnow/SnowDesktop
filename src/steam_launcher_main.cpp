@@ -1,3 +1,4 @@
+#include "steam_runtime_environment.h"
 #include "steam_runtime_manager.h"
 
 #include <windows.h>
@@ -82,12 +83,21 @@ bool LaunchRuntime(const std::filesystem::path& executable,
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
+    std::vector<wchar_t> environment =
+        snowdesktop::BuildSnowDesktopDetachedRuntimeEnvironment();
+    if (environment.empty())
+    {
+        error = ERROR_BAD_ENVIRONMENT;
+        return false;
+    }
     const std::wstring workingDirectory =
         executable.parent_path().wstring();
     if (!CreateProcessW(executable.c_str(), mutableCommand.data(), nullptr,
             nullptr, FALSE, CREATE_NEW_PROCESS_GROUP |
+                CREATE_UNICODE_ENVIRONMENT |
                 CREATE_BREAKAWAY_FROM_JOB,
-            nullptr, workingDirectory.c_str(), &startup, &process))
+            environment.data(), workingDirectory.c_str(), &startup,
+            &process))
     {
         error = GetLastError();
         if (error != ERROR_ACCESS_DENIED)
@@ -97,8 +107,10 @@ bool LaunchRuntime(const std::filesystem::path& executable,
         mutableCommand.assign(command.begin(), command.end());
         mutableCommand.push_back(L'\0');
         if (!CreateProcessW(executable.c_str(), mutableCommand.data(),
-                nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP, nullptr,
-                workingDirectory.c_str(), &startup, &process))
+                nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP |
+                    CREATE_UNICODE_ENVIRONMENT,
+                environment.data(), workingDirectory.c_str(), &startup,
+                &process))
         {
             error = GetLastError();
             return false;
