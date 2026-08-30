@@ -3,7 +3,7 @@ local M = {}
 local MIN_BINS = 16
 local MAX_BINS = 128
 local BIN_STEP = 16
-local DEFAULT_BINS = 48
+local DEFAULT_BINS = 64
 local MIN_SENSITIVITY = 0.5
 local MAX_SENSITIVITY = 3.0
 local DEFAULT_SENSITIVITY = 1.5
@@ -15,8 +15,6 @@ local RANGE_MINIMUM_FRACTION = 0.45
 local RANGE_PADDING_FRACTION = 0.05
 local RANGE_EXPAND = 0.55
 local RANGE_CONTRACT = 0.04
-local VISUAL_NEIGHBOR_MIX = 0.28
-local VISUAL_GAMMA = 0.72
 
 local function finiteNumber(value, fallback)
     local number = tonumber(value)
@@ -190,33 +188,6 @@ function M.display(values, count)
             M.clamp(source[index], 0, 1, 0))
     end
     return result
-end
-
-function M.visual(values, count)
-    local source = M.display(values, count)
-    local result = {}
-    for index = 1, #source do
-        local before = source[math.max(1, index - 1)]
-        local current = source[index]
-        local after = source[math.min(#source, index + 1)]
-        local neighborhood = (before + current * 2 + after) / 4
-        local blended = current * (1 - VISUAL_NEIGHBOR_MIX) +
-            neighborhood * VISUAL_NEIGHBOR_MIX
-        result[index] = M.clamp(blended, 0, 1, 0) ^ VISUAL_GAMMA
-    end
-    return result
-end
-
-function M.mixColor(left, right, amount)
-    local first = M.color(left, 0)
-    local second = M.color(right, 0)
-    local fraction = M.clamp(amount, 0, 1, 0)
-    local function channel(shift)
-        local a = math.floor(first / (2 ^ shift)) % 256
-        local b = math.floor(second / (2 ^ shift)) % 256
-        return math.floor(a + (b - a) * fraction + 0.5)
-    end
-    return channel(16) * 0x10000 + channel(8) * 0x100 + channel(0)
 end
 
 function M.negate(values)

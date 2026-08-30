@@ -132,21 +132,6 @@ return {
             source[3] == -1 and source[4] == math.huge)
     end,
 
-    ["visual profile softens neighbors and stays bounded"] = function()
-        local source = { 0, 1, 0 }
-        local values = spectrum.visual(source, 16)
-        assert(#values == 16)
-        assert(values[1] > 0.018 and values[1] < values[2])
-        assert(values[2] <= 1 and values[3] > 0.018)
-        assert(source[1] == 0 and source[2] == 1 and source[3] == 0)
-    end,
-
-    ["color mixing is rounded and bounded"] = function()
-        assert(spectrum.mixColor(0x000000, 0xFFFFFF, 0.5) == 0x808080)
-        assert(spectrum.mixColor(0x123456, 0xABCDEF, -1) == 0x123456)
-        assert(spectrum.mixColor(0x123456, 0xABCDEF, 2) == 0xABCDEF)
-    end,
-
     ["preview spectrum is deterministic varied and bounded"] = function()
         local first = spectrum.preview(64, 1.5)
         local second = spectrum.preview(64, 1.5)
@@ -188,7 +173,7 @@ return {
     end,
 
     ["bin count is rounded and bounded"] = function()
-        assert(spectrum.binCount(nil) == 48)
+        assert(spectrum.binCount(nil) == 64)
         assert(spectrum.binCount(17) == 16)
         assert(spectrum.binCount(25) == 32)
         assert(spectrum.binCount(500) == 128)
