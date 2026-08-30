@@ -4658,7 +4658,7 @@ int main(int argc, char** argv)
                 "const bool activeWidgetGesture =");
         const std::size_t widgetGestureInactiveBranch =
             pointerMoveSource.find(
-                "if (!activeWidgetGesture)",
+                "if (!activeWidgetGesture && !marqueePointerGesture)",
                 widgetGestureGuard);
         const std::size_t guardedDockPreview =
             pointerMoveSource.find(
@@ -4687,7 +4687,7 @@ int main(int argc, char** argv)
                 guardedDockPreview < guardedLuaHover &&
                 guardedLuaHover < guardedPopupDwell &&
                 guardedPopupDwell < widgetGestureThreshold,
-            "active widget drags must bypass unrelated Dock, Lua hover and popup dwell work");
+            "active widget drags and marquees must bypass unrelated Dock, Lua hover and popup dwell work");
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");
