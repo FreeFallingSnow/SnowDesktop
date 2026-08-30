@@ -437,15 +437,39 @@ void CleanupStaleRuntimeDirectories(
     }
 }
 
+void CleanupLegacyRuntimeRoots()
+{
+    const std::filesystem::path temporary = GetTemporaryDirectory();
+    if (temporary.empty())
+        return;
+    const std::filesystem::path legacyParent = temporary / L"SnowDesktop";
+    if (IsReparsePoint(legacyParent))
+        return;
+    for (const wchar_t* name : {
+             L"RuntimeHooks", L"TaskbarHook", L"ShellHook" })
+    {
+        const std::filesystem::path root = legacyParent / name;
+        std::error_code error;
+        if (!std::filesystem::is_directory(root, error) || error ||
+            IsReparsePoint(root))
+            continue;
+        CleanupStaleRuntimeDirectories(root);
+        error.clear();
+        std::filesystem::remove(root, error);
+    }
+    std::error_code error;
+    std::filesystem::remove(legacyParent, error);
+}
+
 class InjectableRuntimeDirectory
 {
 public:
     InjectableRuntimeDirectory()
     {
-        const std::filesystem::path temporary = GetTemporaryDirectory();
-        if (temporary.empty())
+        const std::filesystem::path data = GetDataDirectoryPath();
+        if (data.empty())
             return;
-        copiesRoot_ = temporary / L"SnowDesktop" / L"RuntimeHooks";
+        copiesRoot_ = data / L"ShellHook";
 
         std::error_code error;
         std::filesystem::create_directories(copiesRoot_, error);
@@ -454,6 +478,7 @@ public:
             copiesRoot_.clear();
             return;
         }
+        CleanupLegacyRuntimeRoots();
         CleanupStaleRuntimeDirectories(copiesRoot_);
 
         path_ = copiesRoot_ / (std::wstring(kVersion) + L"-" +
@@ -468,7 +493,7 @@ public:
         ownerHandle_ = CreateFileW(
             (path_ / kRuntimeHookOwnerLockFilename).c_str(), GENERIC_READ,
             FILE_SHARE_READ, nullptr, CREATE_NEW,
-            FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_TEMPORARY, nullptr);
+            FILE_ATTRIBUTE_HIDDEN, nullptr);
         if (ownerHandle_ == INVALID_HANDLE_VALUE)
         {
             std::filesystem::remove_all(path_, error);
@@ -486,8 +511,6 @@ public:
         std::filesystem::remove_all(path_, error);
         error.clear();
         std::filesystem::remove(copiesRoot_, error);
-        error.clear();
-        std::filesystem::remove(copiesRoot_.parent_path(), error);
     }
 
     InjectableRuntimeDirectory(const InjectableRuntimeDirectory&) = delete;

@@ -1714,6 +1714,8 @@ int main()
         "excluded rotated diagnostic log\n");
     Write(fullBackupData / L"crashdumps" / L"test.dmp",
         "excluded dump\n");
+    Write(fullBackupData / L"ShellHook" / L"1.0.5.0-test" /
+        L"SnowDesktopTaskbarHook.dll", "excluded runtime hook\n");
     Write(fullBackupData / L"widgets" / L"staging" /
         L"temporary.txt", "excluded staging\n");
     Write(fullBackupData / L"widgets" / L"quarantine" /
@@ -1783,10 +1785,12 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"crashdumps") &&
         !std::filesystem::exists(
+            createdFullBackup.backup.data / L"ShellHook") &&
+        !std::filesystem::exists(
             createdFullBackup.backup.data / L"widgets" / L"staging") &&
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"widgets" / L"quarantine"),
-        "complete backup excludes logs, dumps, staging, and quarantine");
+        "complete backup excludes logs, dumps, runtime hooks, staging, and quarantine");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.root / L"PrivateState") &&
         !std::filesystem::exists(

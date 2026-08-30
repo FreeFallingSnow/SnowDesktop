@@ -170,10 +170,11 @@ NOTICE，避免仅复制主 Windows App SDK 项时遗漏。WebView2 WinRT Core D
 
 任务栏 Hook 通过 XAML Diagnostics TAP 接入 Explorer。该接口没有对应的进程级关闭 API，
 因此 Hook 模块可能一直映射到 Explorer 重启为止。SnowDesktop 不再直接注入构建或发行目录
-里的 DLL，而是先复制到 `%TEMP%\SnowDesktop\RuntimeHooks\` 下的进程专属目录；Wallpaper
-Engine 的 32/64 位 Hook 也复用同一部署机制，避免目标进程无法加载受保护的 MSIX 安装目录。
-正常退出后即使临时副本仍在目标进程中，也不会锁住便携目录、安装目录或下一次构建的输出文件。
-启动时会清理已经不再占用的旧临时副本。
+里的 DLL，而是先复制到 SnowDesktop 数据目录的 `ShellHook\` 进程专属目录；Wallpaper Engine
+的 32/64 位 Hook 也复用同一部署机制，避免目标进程无法加载受保护的 MSIX 安装目录。正常退出后
+即使副本仍在目标进程中，也不会锁住便携目录、安装目录或下一次构建的输出文件。启动时会清理
+已经不再占用的旧副本，并回收旧版本使用过的 `%TEMP%\SnowDesktop\TaskbarHook\`、
+`RuntimeHooks\` 和 `ShellHook\` 目录。
 
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过

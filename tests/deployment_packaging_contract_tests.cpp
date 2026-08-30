@@ -416,15 +416,17 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             std::string::npos &&
             deploymentSource.find("DeployInjectableRuntimeCopy") !=
             std::string::npos &&
-            deploymentSource.find("GetTemporaryDirectory") !=
+            deploymentSource.find("GetDataDirectoryPath") !=
                 std::string::npos &&
-            deploymentSource.find("RuntimeHooks") != std::string::npos &&
+            deploymentSource.find("ShellHook") != std::string::npos &&
             deploymentSource.find(".owner.lock") != std::string::npos &&
             deploymentSource.find("RuntimeDirectoryHasLiveOwner") !=
                 std::string::npos &&
+            deploymentSource.find("CleanupLegacyRuntimeRoots") !=
+                std::string::npos &&
             deploymentSource.find("~InjectableRuntimeDirectory") !=
                 std::string::npos,
-        "cross-process hooks use a leased temporary directory with startup and exit cleanup");
+        "cross-process hooks use a leased data directory with legacy, startup, and exit cleanup");
     Check(wallpaperCapture.find("GetInjectableRuntimeFilePath") !=
             std::string::npos &&
             wallpaperCapture.find("GetRuntimeFilePath") !=
