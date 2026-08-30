@@ -192,10 +192,12 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         SetMenuItemIcon(
             menu, kContextDockPinMoveToDock,
-            L"");
+            snowdesktop::menu_fluent_glyphs::kPin,
+            MenuIconFont::FluentRegular);
         SetMenuItemIcon(
             menu, kContextDockCreateMapping,
-            L"");
+            snowdesktop::menu_fluent_glyphs::kLinkAdd,
+            MenuIconFont::FluentRegular);
     }
     AppendMenuW(
         menu, MF_STRING,
