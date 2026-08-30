@@ -567,6 +567,7 @@ bool ProjectStore::Load(std::string& error)
         return false;
     }
     const std::string text((std::istreambuf_iterator<char>(input)), {});
+    input.close();
     if (text.size() > 4u * 1024u * 1024u)
     {
         error = "projects.json exceeds the 4 MiB safety limit";
