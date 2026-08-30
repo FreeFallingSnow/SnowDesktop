@@ -472,19 +472,9 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         const float edgeWidth = std::clamp(
             resolved.material.widgetEdgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
-        const LONG edgeInset = static_cast<LONG>(std::ceil(
-            (edgeWidth + 1.35f) * 0.5f));
-        RECT edgeBounds = bounds;
-        InflateRect(&edgeBounds, -edgeInset, -edgeInset);
-        if (!IsRectEmpty(&edgeBounds))
-        {
-            const float edgeRadius = std::max(
-                0.0f, radius - static_cast<float>(edgeInset));
-            (void)snowdesktop::widget_preview::DrawEdgeHighlight(
-                context, edgeBounds, edgeRadius,
-                color(theme.border, 1.0f), edgeWidth,
-                resolved.material.widgetEdgeHighlightStrength);
-        }
+        (void)snowdesktop::widget_preview::DrawEdgeHighlight(
+            context, bounds, radius, color(theme.border, 1.0f), edgeWidth,
+            resolved.material.widgetEdgeHighlightStrength);
     }
 }
 

@@ -578,19 +578,28 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     if (!context || color.a <= 0.0f || strength <= 0.0005f ||
         IsRectEmpty(&bounds))
         return false;
-    strokeWidth = std::max(0.5f, strokeWidth);
+    const D2D1_RECT_F outerRect = ToD2DRect(bounds);
+    const float availableDepth = std::max(0.0f,
+        std::min(outerRect.right - outerRect.left,
+            outerRect.bottom - outerRect.top) * 0.5f - 0.01f);
+    strokeWidth = std::min(std::max(0.5f, strokeWidth), availableDepth);
+    if (strokeWidth <= 0.0f)
+        return false;
     const auto mix = [](float value, float target, float amount) {
         return std::clamp(value + (target - value) * amount, 0.0f, 1.0f);
     };
-    const float highlightMix = 0.12f + 0.25f * strength;
+    const float baseMix = 0.25f + 0.20f * strength;
+    const float highlightMix = 0.45f + 0.25f * strength;
     const D2D1_COLOR_F base = D2D1::ColorF(
-        color.r, color.g, color.b,
-        color.a * (0.06f + 0.14f * strength));
+        mix(color.r, 1.0f, baseMix),
+        mix(color.g, 1.0f, baseMix),
+        mix(color.b, 1.0f, baseMix),
+        color.a * (0.025f + 0.065f * strength));
     const D2D1_COLOR_F reflected = D2D1::ColorF(
         mix(color.r, 1.0f, highlightMix),
         mix(color.g, 1.0f, highlightMix),
         mix(color.b, 1.0f, highlightMix),
-        color.a * (0.16f + 0.50f * strength));
+        color.a * (0.08f + 0.20f * strength));
     const D2D1_GRADIENT_STOP reflectionStops[] = {
         { 0.0f, reflected },
         { 0.42f, D2D1::ColorF(reflected.r, reflected.g, reflected.b,
@@ -602,12 +611,13 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     ComPtr<ID2D1SolidColorBrush> baseBrush;
     ComPtr<ID2D1GradientStopCollection> reflectionCollection;
     if (FAILED(context->CreateSolidColorBrush(base, &baseBrush)) ||
-        !baseBrush ||
-        FAILED(context->CreateGradientStopCollection(reflectionStops,
-            static_cast<UINT32>(std::size(reflectionStops)), D2D1_GAMMA_2_2,
-            D2D1_EXTEND_MODE_CLAMP, &reflectionCollection)) ||
-        !reflectionCollection)
+        !baseBrush)
         return false;
+    const bool hasReflectionStops = SUCCEEDED(
+        context->CreateGradientStopCollection(reflectionStops,
+            static_cast<UINT32>(std::size(reflectionStops)), D2D1_GAMMA_2_2,
+            D2D1_EXTEND_MODE_CLAMP, &reflectionCollection)) &&
+        reflectionCollection;
 
     auto createCornerBrush = [context](const D2D1_RECT_F& rect,
         bool lower, ID2D1GradientStopCollection* stops,
@@ -623,26 +633,71 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
             stops, &brush)) && brush;
     };
 
-    const D2D1_RECT_F outerRect = ToD2DRect(bounds);
     ComPtr<ID2D1RadialGradientBrush> upperLeftBrush;
     ComPtr<ID2D1RadialGradientBrush> lowerRightBrush;
-    if (!createCornerBrush(outerRect, false, reflectionCollection.Get(),
-            upperLeftBrush) ||
-        !createCornerBrush(outerRect, true, reflectionCollection.Get(),
-            lowerRightBrush))
-        return false;
-    const float radius = std::max(0.0f, cornerRadius);
-    const D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(
-        outerRect, radius, radius);
-    context->DrawRoundedRectangle(outer, baseBrush.Get(), strokeWidth);
-    for (ID2D1RadialGradientBrush* brush :
-        { upperLeftBrush.Get(), lowerRightBrush.Get() })
+    const bool hasCornerReflections = hasReflectionStops &&
+        createCornerBrush(outerRect, false, reflectionCollection.Get(),
+            upperLeftBrush) &&
+        createCornerBrush(outerRect, true, reflectionCollection.Get(),
+            lowerRightBrush);
+
+    // A highlight is light added to the existing panel, not a colored stroke.
+    // Overlapping sub-pixel bands approximate a smooth normal gradient: the
+    // outer edge receives the strongest contribution and the final inner band
+    // is almost transparent before antialiasing reaches exactly zero.
+    const int bandCount = strokeWidth <= 0.55f ? 1 : std::clamp(
+        static_cast<int>(std::ceil(strokeWidth / 0.35f)), 2, 12);
+    const float bandStroke = bandCount == 1 ? strokeWidth : std::min(
+        strokeWidth, std::max(0.5f,
+            strokeWidth / static_cast<float>(bandCount) * 1.4f));
+    const float firstCenter = bandStroke * 0.5f;
+    const float lastCenter = std::max(firstCenter,
+        strokeWidth - bandStroke * 0.5f);
+    const float advance = bandCount > 1
+        ? (lastCenter - firstCenter) /
+            static_cast<float>(bandCount - 1)
+        : bandStroke;
+    const float overlapNormalization = bandCount > 1
+        ? std::min(1.0f, advance / bandStroke)
+        : 1.0f;
+    const D2D1_PRIMITIVE_BLEND previousBlend = context->GetPrimitiveBlend();
+    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
+    for (int index = 0; index < bandCount; ++index)
     {
-        brush->SetOpacity(0.08f + 0.18f * strength);
-        context->DrawRoundedRectangle(outer, brush, strokeWidth + 1.35f);
-        brush->SetOpacity(1.0f);
-        context->DrawRoundedRectangle(outer, brush, strokeWidth);
+        const float centerInset = bandCount > 1
+            ? firstCenter + advance * static_cast<float>(index)
+            : firstCenter;
+        const float outerDepth = std::clamp(
+            (centerInset - bandStroke * 0.5f) / strokeWidth, 0.0f, 1.0f);
+        const float falloff = std::pow(1.0f - outerDepth, 1.8f) *
+            overlapNormalization;
+        const D2D1_RECT_F bandRect = D2D1::RectF(
+            outerRect.left + centerInset,
+            outerRect.top + centerInset,
+            outerRect.right - centerInset,
+            outerRect.bottom - centerInset);
+        if (bandRect.left >= bandRect.right ||
+            bandRect.top >= bandRect.bottom)
+            break;
+        const float bandRadius = std::max(
+            0.0f, cornerRadius - centerInset);
+        const D2D1_ROUNDED_RECT band = D2D1::RoundedRect(
+            bandRect, bandRadius, bandRadius);
+        baseBrush->SetOpacity(falloff);
+        context->DrawRoundedRectangle(
+            band, baseBrush.Get(), bandStroke);
+        if (hasCornerReflections)
+        {
+            for (ID2D1RadialGradientBrush* brush :
+                { upperLeftBrush.Get(), lowerRightBrush.Get() })
+            {
+                brush->SetOpacity(falloff);
+                context->DrawRoundedRectangle(
+                    band, brush, bandStroke);
+            }
+        }
     }
+    context->SetPrimitiveBlend(previousBlend);
     return true;
 }
 

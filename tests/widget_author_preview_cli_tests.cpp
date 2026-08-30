@@ -180,6 +180,64 @@ std::size_t CountDifferingPixels(const RgbaBitmap& first,
     return differences;
 }
 
+std::size_t CountDarkenedPixels(const RgbaBitmap& baseline,
+    const RgbaBitmap& highlighted, const RECT& bounds)
+{
+    Check(baseline.width == highlighted.width &&
+            baseline.height == highlighted.height &&
+            bounds.left >= 0 && bounds.top >= 0 &&
+            bounds.right <= static_cast<LONG>(baseline.width) &&
+            bounds.bottom <= static_cast<LONG>(baseline.height) &&
+            bounds.left < bounds.right && bounds.top < bounds.bottom,
+        "preview darkening bounds are valid");
+    std::size_t darkened = 0;
+    for (LONG y = bounds.top; y < bounds.bottom; ++y)
+    {
+        for (LONG x = bounds.left; x < bounds.right; ++x)
+        {
+            const auto before = PixelAt(
+                baseline, static_cast<UINT>(x), static_cast<UINT>(y));
+            const auto after = PixelAt(
+                highlighted, static_cast<UINT>(x), static_cast<UINT>(y));
+            if (after[0] < before[0] || after[1] < before[1] ||
+                after[2] < before[2])
+                ++darkened;
+        }
+    }
+    return darkened;
+}
+
+std::uint64_t SumBrightnessGain(const RgbaBitmap& baseline,
+    const RgbaBitmap& highlighted, const RECT& bounds)
+{
+    Check(baseline.width == highlighted.width &&
+            baseline.height == highlighted.height &&
+            bounds.left >= 0 && bounds.top >= 0 &&
+            bounds.right <= static_cast<LONG>(baseline.width) &&
+            bounds.bottom <= static_cast<LONG>(baseline.height) &&
+            bounds.left < bounds.right && bounds.top < bounds.bottom,
+        "preview brightness bounds are valid");
+    std::uint64_t gain = 0;
+    for (LONG y = bounds.top; y < bounds.bottom; ++y)
+    {
+        for (LONG x = bounds.left; x < bounds.right; ++x)
+        {
+            const auto before = PixelAt(
+                baseline, static_cast<UINT>(x), static_cast<UINT>(y));
+            const auto after = PixelAt(
+                highlighted, static_cast<UINT>(x), static_cast<UINT>(y));
+            for (std::size_t channel = 0; channel < 3; ++channel)
+            {
+                gain += after[channel] > before[channel]
+                    ? static_cast<std::uint64_t>(
+                        after[channel] - before[channel])
+                    : 0u;
+            }
+        }
+    }
+    return gain;
+}
+
 void WriteSolidBmp(const std::filesystem::path& path,
     std::uint8_t red, std::uint8_t green, std::uint8_t blue)
 {
@@ -661,6 +719,8 @@ int wmain(int argc, wchar_t** argv)
         temporary.path / L"border-standard.png";
     const auto zeroStrengthBorderOutput =
         temporary.path / L"edge-highlight-zero.png";
+    const auto borderlessOutput =
+        temporary.path / L"edge-highlight-borderless.png";
     const auto edgeHighlightOutput =
         temporary.path / L"edge-highlight-75.png";
     const auto wideEdgeHighlightOutput =
@@ -683,6 +743,12 @@ int wmain(int argc, wchar_t** argv)
             L"--storage", L"edgeHighlightWidth=2",
             L"--storage", L"edgeHighlightStrength=0",
             L"--host", host.wstring() });
+    const auto [borderlessExit, borderlessJson] = Run(snowwidget, {
+        L"preview", source.wstring(), borderlessOutput.wstring(),
+        L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+        L"--storage", L"borderAlpha=0",
+        L"--storage", L"edgeHighlightEnabled=0",
+        L"--host", host.wstring() });
     const auto [edgeHighlightExit, edgeHighlightJson] =
         Run(snowwidget, {
             L"preview", source.wstring(), edgeHighlightOutput.wstring(),
@@ -702,10 +768,12 @@ int wmain(int argc, wchar_t** argv)
             L"--storage", L"edgeHighlightStrength=0.75",
             L"--host", host.wstring() });
     Check(standardBorderExit == 0 && zeroStrengthBorderExit == 0 &&
+            borderlessExit == 0 &&
             edgeHighlightExit == 0 && wideEdgeHighlightExit == 0 &&
             standardBorderJson.find("\"ok\":true") != std::string::npos &&
             zeroStrengthBorderJson.find("\"ok\":true") !=
                 std::string::npos &&
+            borderlessJson.find("\"ok\":true") != std::string::npos &&
             edgeHighlightJson.find("\"ok\":true") !=
                 std::string::npos &&
             wideEdgeHighlightJson.find("\"ok\":true") !=
@@ -715,6 +783,8 @@ int wmain(int argc, wchar_t** argv)
         CheckOpaquePreview(standardBorderOutput, 192, 240);
     const RgbaBitmap zeroStrengthBorder =
         CheckOpaquePreview(zeroStrengthBorderOutput, 192, 240);
+    const RgbaBitmap borderless =
+        CheckOpaquePreview(borderlessOutput, 192, 240);
     const RgbaBitmap edgeHighlight =
         CheckOpaquePreview(edgeHighlightOutput, 192, 240);
     const RgbaBitmap wideEdgeHighlight =
@@ -724,6 +794,19 @@ int wmain(int argc, wchar_t** argv)
     Check(standardBorder.pixels != edgeHighlight.pixels &&
             edgeHighlight.pixels != wideEdgeHighlight.pixels,
         "recommended edge highlight and maximum width produce distinct borderless output");
+    constexpr RECT wholePanel{ 0, 0, 192, 240 };
+    Check(CountDarkenedPixels(borderless, edgeHighlight, wholePanel) == 0 &&
+            CountDarkenedPixels(borderless, wideEdgeHighlight,
+                wholePanel) == 0,
+        "edge highlights only add light to the existing panel pixels");
+    constexpr RECT outerTopLight{ 64, 0, 128, 1 };
+    constexpr RECT innerTopLight{ 64, 3, 128, 4 };
+    const std::uint64_t outerGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, outerTopLight);
+    const std::uint64_t innerGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, innerTopLight);
+    Check(outerGain > 0 && outerGain > innerGain * 3,
+        "edge highlight fades strongly from the outer edge toward zero inside");
     constexpr RECT topBorderStrip{ 0, 0, 192, 4 };
     constexpr RECT bottomBorderStrip{ 0, 236, 192, 240 };
     constexpr RECT leftBorderStrip{ 0, 0, 4, 240 };

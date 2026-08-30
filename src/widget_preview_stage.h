@@ -97,7 +97,7 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, bool lightTheme, POINT pixelOrigin = {});
 
-/** Draw the independent continuous edge reflection with brighter opposite corners. */
+/** Add an inward-fading edge reflection with brighter opposite corners. */
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
     float effectStrength);
