@@ -5,6 +5,7 @@
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <optional>
 #include <unordered_map>
@@ -91,6 +92,11 @@ struct PageLayoutPagePresenter::Impl
 
     struct RowControls
     {
+        muxc::Grid root{nullptr};
+        muxc::TextBlock title{nullptr};
+        muxc::TextBlock role{nullptr};
+        muxc::TextBlock dimensions{nullptr};
+        muxc::TextBlock content{nullptr};
         muxc::Button moveUp{nullptr};
         muxc::Button moveDown{nullptr};
     };
@@ -110,6 +116,7 @@ struct PageLayoutPagePresenter::Impl
     muxc::NumberBox columnsBox{nullptr};
     muxc::TextBlock rowsLabel{nullptr};
     muxc::NumberBox rowsBox{nullptr};
+    mux::DispatcherTimer refreshTimer{nullptr};
     std::unordered_map<std::wstring, RowControls> rowControls;
     PageLayoutSnapshot snapshot;
     std::wstring selectedPageId;
@@ -120,12 +127,15 @@ struct PageLayoutPagePresenter::Impl
     bool active = false;
     bool closed = false;
     bool confirmationPending = false;
+    bool pageDragActive = false;
 
     winrt::event_token selectionChangedToken{};
+    winrt::event_token dragStartingToken{};
     winrt::event_token dragCompletedToken{};
     winrt::event_token addPageToken{};
     winrt::event_token columnsChangedToken{};
     winrt::event_token rowsChangedToken{};
+    winrt::event_token refreshTickToken{};
 
     [[nodiscard]] std::wstring L(std::string_view key) const
     {
@@ -235,8 +245,14 @@ struct PageLayoutPagePresenter::Impl
                 selectedPageId = PageIdFromItem(pageList.SelectedItem());
                 UpdateGridEditor();
             });
+        dragStartingToken = pageList.DragItemsStarting(
+            [this](const auto&, const auto&) {
+                if (!closed)
+                    pageDragActive = true;
+            });
         dragCompletedToken = pageList.DragItemsCompleted(
             [this](const auto&, const auto&) {
+                pageDragActive = false;
                 if (closed || updating)
                     return;
                 UpdateOrderState();
@@ -248,6 +264,18 @@ struct PageLayoutPagePresenter::Impl
             [this](const auto&, const auto&) { ConfirmGrid(); });
         rowsChangedToken = rowsBox.ValueChanged(
             [this](const auto&, const auto&) { ConfirmGrid(); });
+
+        refreshTimer = mux::DispatcherTimer{};
+        refreshTimer.Interval(std::chrono::milliseconds(500));
+        refreshTickToken = refreshTimer.Tick(
+            [this](const auto&, const auto&) {
+                if (closed || !active || updating || confirmationPending ||
+                    pageDragActive)
+                {
+                    return;
+                }
+                RefreshSnapshot();
+            });
     }
 
     [[nodiscard]] std::vector<std::wstring> CurrentOrder() const
@@ -284,24 +312,20 @@ struct PageLayoutPagePresenter::Impl
     [[nodiscard]] std::wstring RoleLabel(
         const PageLayoutEntry& page) const
     {
-        if (page.activeOnLastMonitor)
-        {
-            if (page.role == PageLayoutRole::Overflow)
-                return L("settings.pages.role.currentLast");
-            return FormatText(L("settings.pages.role.current"),
-                {std::to_wstring(page.monitorOrdinal)});
-        }
         switch (page.role)
         {
         case PageLayoutRole::FixedMonitor:
+            if (page.monitorOrdinal == 1)
+                return L("settings.pages.role.first");
             return FormatText(L("settings.pages.role.fixed"),
                 {std::to_wstring(page.monitorOrdinal)});
         case PageLayoutRole::LastMonitorDefault:
-            return FormatText(L("settings.pages.role.lastDefault"),
-                {std::to_wstring(page.monitorOrdinal)});
+            return L("settings.pages.role.lastDefault");
         case PageLayoutRole::Overflow:
         default:
-            return L("settings.pages.role.overflow");
+            return page.activeOnLastMonitor
+                ? L("settings.pages.role.currentLast")
+                : L("settings.pages.role.overflow");
         }
     }
 
@@ -394,9 +418,83 @@ struct PageLayoutPagePresenter::Impl
         moveDown.Click([this, pageId = page.id](const auto&, const auto&) {
             MovePage(pageId, 1);
         });
-        rowControls[page.id] = {moveUp, moveDown};
+        rowControls[page.id] = {
+            row, title, role, dimensions, content, moveUp, moveDown};
         muxa::AutomationProperties::SetName(row, PageLabel(index));
         return row;
+    }
+
+    [[nodiscard]] bool PageListMatchesSnapshot(
+        const PageLayoutSnapshot& candidate) const
+    {
+        const auto items = pageList.Items();
+        if (items.Size() != candidate.pages.size())
+            return false;
+        for (std::uint32_t index = 0; index < items.Size(); ++index)
+        {
+            if (PageIdFromItem(items.GetAt(index)) !=
+                candidate.pages[index].id)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void RefreshPageRowsInPlace()
+    {
+        const bool wasUpdating = updating;
+        updating = true;
+        for (std::size_t index = 0; index < snapshot.pages.size(); ++index)
+        {
+            const auto& page = snapshot.pages[index];
+            const auto found = rowControls.find(page.id);
+            if (found == rowControls.end())
+                continue;
+            auto& controls = found->second;
+            controls.title.Text(PageLabel(index));
+            controls.role.Text(RoleLabel(page));
+            controls.dimensions.Text(FormatText(
+                L("settings.pages.gridValue"),
+                {std::to_wstring(page.columns),
+                 std::to_wstring(page.rows)}));
+            controls.content.Text(FormatText(
+                L("settings.pages.contentCount"),
+                {std::to_wstring(page.itemCount),
+                 std::to_wstring(page.widgetCount)}));
+
+            const std::wstring upText = FormatText(
+                L("settings.pages.moveUp"), {PageLabel(index)});
+            const std::wstring downText = FormatText(
+                L("settings.pages.moveDown"), {PageLabel(index)});
+            muxa::AutomationProperties::SetName(
+                controls.moveUp, upText);
+            muxa::AutomationProperties::SetName(
+                controls.moveDown, downText);
+            muxc::ToolTipService::SetToolTip(
+                controls.moveUp, winrt::box_value(upText));
+            muxc::ToolTipService::SetToolTip(
+                controls.moveDown, winrt::box_value(downText));
+            muxa::AutomationProperties::SetName(
+                controls.root, PageLabel(index));
+        }
+        updating = wasUpdating;
+        orderDirty = false;
+        UpdateOrderButtons();
+        UpdateGridEditor();
+    }
+
+    void PresentSnapshot(
+        PageLayoutSnapshot candidate,
+        std::optional<std::size_t> preferredIndex = {})
+    {
+        const bool updateInPlace = PageListMatchesSnapshot(candidate);
+        snapshot = std::move(candidate);
+        hasSnapshot = !snapshot.pages.empty() || snapshot.revision != 0;
+        if (updateInPlace)
+            RefreshPageRowsInPlace();
+        else
+            RebuildPageList(preferredIndex);
     }
 
     void RebuildPageList(std::optional<std::size_t> preferredIndex = {})
@@ -548,9 +646,7 @@ struct PageLayoutPagePresenter::Impl
         std::wstring successMessage,
         std::optional<std::size_t> preferredIndex = {})
     {
-        snapshot = std::move(result.snapshot);
-        hasSnapshot = !snapshot.pages.empty() || snapshot.revision != 0;
-        RebuildPageList(preferredIndex);
+        PresentSnapshot(std::move(result.snapshot), preferredIndex);
         if (result.Succeeded())
         {
             ShowFeedback(muxc::InfoBarSeverity::Success,
@@ -679,9 +775,10 @@ struct PageLayoutPagePresenter::Impl
             return;
         try
         {
-            snapshot = actions.capture();
-            hasSnapshot = snapshot.revision != 0;
-            RebuildPageList();
+            auto candidate = actions.capture();
+            if (hasSnapshot && candidate.revision == snapshot.revision)
+                return;
+            PresentSnapshot(std::move(candidate));
         }
         catch (...)
         {
@@ -728,7 +825,10 @@ struct PageLayoutPagePresenter::Impl
         confirmationPending = false;
         try
         {
+            refreshTimer.Stop();
+            refreshTimer.Tick(refreshTickToken);
             pageList.SelectionChanged(selectionChangedToken);
+            pageList.DragItemsStarting(dragStartingToken);
             pageList.DragItemsCompleted(dragCompletedToken);
             addPageButton.Click(addPageToken);
             columnsBox.ValueChanged(columnsChangedToken);
@@ -782,12 +882,14 @@ void PageLayoutPagePresenter::Activate()
         return;
     impl_->active = true;
     impl_->RefreshSnapshot();
+    impl_->refreshTimer.Start();
 }
 
 void PageLayoutPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed)
         return;
+    impl_->refreshTimer.Stop();
     impl_->active = false;
     impl_->confirmation->completed = {};
     impl_->confirmationPending = false;

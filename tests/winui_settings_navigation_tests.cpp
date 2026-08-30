@@ -522,6 +522,14 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             pages.find("settings.pages.role.currentLast") !=
                 std::string::npos &&
+            pages.find("settings.pages.role.first") !=
+                std::string::npos &&
+            pages.find("PageListMatchesSnapshot") !=
+                std::string::npos &&
+            pages.find("RefreshPageRowsInPlace") !=
+                std::string::npos &&
+            pages.find("refreshTimer.Interval(std::chrono::milliseconds(500))") !=
+                std::string::npos &&
             desktopIconsSection.find(
               "desktopPage_->DesktopIconsContent()") !=
                 std::string_view::npos &&
