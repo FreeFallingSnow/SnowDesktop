@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
 #include "../steam_app_identity.h"
@@ -171,6 +172,8 @@ bool LaunchSteamWorkshopPublisher(
     std::wstring commandLine = QuoteProcessArgument(manager.wstring()) +
         L" --development-root " +
         QuoteProcessArgument(developmentRoot.wstring()) +
+        L" --data-directory " +
+        QuoteProcessArgument(GetDataDirectoryPath()) +
         L" --language " + QuoteProcessArgument(managerLanguage) +
         L" --settings-file " +
         QuoteProcessArgument(GetGeneralSettingsPath());

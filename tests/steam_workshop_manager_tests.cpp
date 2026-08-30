@@ -346,6 +346,43 @@ void TestProjectStore()
         "removing a record does not delete source content");
 }
 
+void TestWorkshopManagerDataMigration()
+{
+    TemporaryDirectory temporary;
+    const auto legacyRoot = temporary.path / L"legacy-manager";
+    const auto dataDirectory = temporary.path / L"data";
+    const auto targetRoot = WorkshopManagerDataRoot(dataDirectory);
+    ProjectStore legacyStore(legacyRoot);
+    std::string error;
+    Check(legacyStore.Save(error),
+        "legacy Workshop Manager project store can be created");
+    Check(legacyStore.Save(error),
+        "legacy Workshop Manager project backup can be created");
+    std::ofstream(legacyRoot / L"projects.json.tmp", std::ios::binary)
+        << "stale temporary data";
+    std::filesystem::create_directory(legacyRoot / L"preview-cache");
+    std::ofstream(legacyRoot / L"preview-cache" / L"123.preview",
+        std::ios::binary) << "preview data";
+
+    Check(MigrateWorkshopManagerData(legacyRoot, targetRoot, error),
+        "Workshop Manager data migrates into the SnowDesktop data root");
+    Check(targetRoot == dataDirectory / L"SteamWorkshopManager" &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"projects.json") &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"projects.json.bak") &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"projects.json.tmp") &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"preview-cache" / L"123.preview"),
+        "project state, backup, temporary state, and previews share the data directory");
+    Check(!std::filesystem::exists(legacyRoot),
+        "successful Workshop Manager migration removes the empty legacy root");
+    ProjectStore migratedStore(targetRoot);
+    Check(migratedStore.Load(error),
+        "the migrated Workshop Manager project store remains readable");
+}
+
 void TestMetadataBinding()
 {
     const std::string packageId =
@@ -622,6 +659,7 @@ int wmain(int argc, wchar_t** argv)
     TestSteamSubscriptionSyncPlan();
     TestSteamWorkshopLocalCache();
     TestProjectStore();
+    TestWorkshopManagerDataMigration();
     TestMetadataBinding();
     TestCommandLineQuoting();
     TestPublishLifecycle();

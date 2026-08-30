@@ -28,7 +28,7 @@ struct PreviewTexture
 class PreviewCache
 {
 public:
-    explicit PreviewCache(std::filesystem::path root = {});
+    explicit PreviewCache(std::filesystem::path root);
     ~PreviewCache();
     PreviewCache(const PreviewCache&) = delete;
     PreviewCache& operator=(const PreviewCache&) = delete;

@@ -5,7 +5,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <shlobj.h>
 #include <winhttp.h>
 #include <wincodec.h>
 
@@ -26,18 +25,6 @@ namespace
 {
 constexpr std::uint64_t kMaximumDownloadBytes = 4ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaximumCacheBytes = 64ull * 1024ull * 1024ull;
-
-std::filesystem::path DefaultRoot()
-{
-    PWSTR value = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
-            KF_FLAG_DEFAULT, nullptr, &value)))
-        return {};
-    const auto result = std::filesystem::path(value) / L"SnowDesktop" /
-        L"SteamWorkshopManager" / L"preview-cache";
-    CoTaskMemFree(value);
-    return result;
-}
 
 std::wstring Utf8ToWide(std::string_view value)
 {
@@ -300,7 +287,7 @@ struct PreviewCache::Entry
 };
 
 PreviewCache::PreviewCache(std::filesystem::path root)
-    : root_(root.empty() ? DefaultRoot() : std::move(root))
+    : root_(std::move(root))
 {
 }
 

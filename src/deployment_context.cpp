@@ -14,6 +14,7 @@
 #include <shobjidl_core.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cwctype>
 #include <filesystem>
 #include <future>
@@ -36,6 +37,7 @@ namespace
 constexpr wchar_t kStartupTaskId[] = L"SnowDesktopStartup";
 constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
+constexpr wchar_t kRuntimeHookOwnerLockFilename[] = L".owner.lock";
 constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
 constexpr wchar_t kPackageFamilyName[] =
@@ -367,40 +369,138 @@ std::filesystem::path GetTemporaryDirectory()
     return std::filesystem::path(buffer);
 }
 
-std::filesystem::path CreateInjectableRuntimeDirectory()
+bool IsReparsePoint(const std::filesystem::path& path)
 {
-    const std::filesystem::path temporary = GetTemporaryDirectory();
-    if (temporary.empty())
-        return {};
-    const std::filesystem::path copiesRoot = temporary /
-        L"SnowDesktop" / L"RuntimeHooks";
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
 
+bool IsLegacyRuntimeDirectoryOwnerAlive(
+    const std::filesystem::path& directory)
+{
+    const std::wstring name = directory.filename().wstring();
+    const std::size_t suffix = name.rfind(L'-');
+    const std::size_t separator = suffix == std::wstring::npos
+        ? std::wstring::npos : name.rfind(L'-', suffix - 1);
+    if (separator == std::wstring::npos || suffix == std::wstring::npos ||
+        separator + 1 >= suffix)
+        return true;
+    const std::wstring processText =
+        name.substr(separator + 1, suffix - separator - 1);
+    wchar_t* end = nullptr;
+    const unsigned long processId =
+        std::wcstoul(processText.c_str(), &end, 10);
+    if (processId == 0 || !end || *end != L'\0')
+        return true;
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE,
+        static_cast<DWORD>(processId));
+    if (!process)
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    const DWORD state = WaitForSingleObject(process, 0);
+    CloseHandle(process);
+    return state == WAIT_TIMEOUT || state == WAIT_FAILED;
+}
+
+bool RuntimeDirectoryHasLiveOwner(const std::filesystem::path& directory)
+{
+    const auto ownerLock = directory / kRuntimeHookOwnerLockFilename;
+    const DWORD attributes = GetFileAttributesW(ownerLock.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return IsLegacyRuntimeDirectoryOwnerAlive(directory);
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return true;
+    HANDLE probe = CreateFileW(ownerLock.c_str(), DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (probe == INVALID_HANDLE_VALUE)
+        return true;
+    CloseHandle(probe);
+    return false;
+}
+
+void CleanupStaleRuntimeDirectories(
+    const std::filesystem::path& copiesRoot)
+{
     std::error_code error;
-    std::filesystem::create_directories(copiesRoot, error);
-    if (error)
-        return {};
-
-    // Injected modules can remain mapped after the owner exits. Remove only
-    // stale copies that Windows no longer considers busy; locked copies are
-    // kept until their target process releases them.
-    for (std::filesystem::directory_iterator iterator(copiesRoot, error), end;
+    for (std::filesystem::directory_iterator iterator(copiesRoot,
+             std::filesystem::directory_options::skip_permission_denied,
+             error), end;
          !error && iterator != end; iterator.increment(error))
     {
-        std::error_code cleanupError;
-        if (iterator->is_directory(cleanupError))
-            std::filesystem::remove_all(iterator->path(), cleanupError);
+        std::error_code entryError;
+        if (!iterator->is_directory(entryError) || entryError ||
+            IsReparsePoint(iterator->path()) ||
+            RuntimeDirectoryHasLiveOwner(iterator->path()))
+            continue;
+        std::filesystem::remove_all(iterator->path(), entryError);
     }
+}
 
-    const std::filesystem::path targetDirectory = copiesRoot /
-        (std::wstring(kVersion) + L"-" +
+class InjectableRuntimeDirectory
+{
+public:
+    InjectableRuntimeDirectory()
+    {
+        const std::filesystem::path temporary = GetTemporaryDirectory();
+        if (temporary.empty())
+            return;
+        copiesRoot_ = temporary / L"SnowDesktop" / L"RuntimeHooks";
+
+        std::error_code error;
+        std::filesystem::create_directories(copiesRoot_, error);
+        if (error || IsReparsePoint(copiesRoot_))
+        {
+            copiesRoot_.clear();
+            return;
+        }
+        CleanupStaleRuntimeDirectories(copiesRoot_);
+
+        path_ = copiesRoot_ / (std::wstring(kVersion) + L"-" +
             std::to_wstring(GetCurrentProcessId()) + L"-" +
             std::to_wstring(GetTickCount64()));
-    error.clear();
-    std::filesystem::create_directories(targetDirectory, error);
-    if (error)
-        return {};
-    return targetDirectory;
-}
+        std::filesystem::create_directories(path_, error);
+        if (error || IsReparsePoint(path_))
+        {
+            path_.clear();
+            return;
+        }
+        ownerHandle_ = CreateFileW(
+            (path_ / kRuntimeHookOwnerLockFilename).c_str(), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, CREATE_NEW,
+            FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_TEMPORARY, nullptr);
+        if (ownerHandle_ == INVALID_HANDLE_VALUE)
+        {
+            std::filesystem::remove_all(path_, error);
+            path_.clear();
+        }
+    }
+
+    ~InjectableRuntimeDirectory()
+    {
+        if (ownerHandle_ != INVALID_HANDLE_VALUE)
+            CloseHandle(ownerHandle_);
+        if (path_.empty())
+            return;
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+        error.clear();
+        std::filesystem::remove(copiesRoot_, error);
+        error.clear();
+        std::filesystem::remove(copiesRoot_.parent_path(), error);
+    }
+
+    InjectableRuntimeDirectory(const InjectableRuntimeDirectory&) = delete;
+    InjectableRuntimeDirectory& operator=(
+        const InjectableRuntimeDirectory&) = delete;
+
+    const std::filesystem::path& Path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path copiesRoot_;
+    std::filesystem::path path_;
+    HANDLE ownerHandle_ = INVALID_HANDLE_VALUE;
+};
 
 std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
 {
@@ -409,8 +509,8 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
     if (!std::filesystem::is_regular_file(source))
         return source.wstring();
 
-    static const std::filesystem::path targetDirectory =
-        CreateInjectableRuntimeDirectory();
+    static const InjectableRuntimeDirectory runtimeDirectory;
+    const std::filesystem::path& targetDirectory = runtimeDirectory.Path();
     if (targetDirectory.empty())
         return source.wstring();
 

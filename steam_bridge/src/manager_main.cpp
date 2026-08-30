@@ -330,6 +330,7 @@ std::optional<std::string> ReadMainLanguageSetting(
 
 struct ManagerArguments
 {
+    std::filesystem::path dataDirectory;
     std::filesystem::path developmentRoot;
     std::filesystem::path projectDirectory;
     std::filesystem::path settingsFile;
@@ -341,14 +342,22 @@ class WorkshopManagerApp
 public:
     explicit WorkshopManagerApp(ManagerArguments arguments,
         std::filesystem::path languageDirectory)
-        : developmentRoot_(std::move(arguments.developmentRoot)),
+        : managerRoot_(WorkshopManagerDataRoot(arguments.dataDirectory)),
+          developmentRoot_(std::move(arguments.developmentRoot)),
           projectDirectory_(std::move(arguments.projectDirectory)),
           settingsFile_(std::move(arguments.settingsFile)),
-          currentLanguage_(std::move(arguments.language))
+          currentLanguage_(std::move(arguments.language)),
+          store_(managerRoot_),
+          previewCache_(managerRoot_ / L"preview-cache")
     {
         std::string error;
         if (!localization_.Load(languageDirectory, currentLanguage_, error))
             SetMessage(false, error);
+        error.clear();
+        if (!MigrateWorkshopManagerData(
+                LegacyWorkshopManagerDataRoot(), managerRoot_, error))
+            SetMessage(false, error);
+        error.clear();
         std::error_code directoryError;
         if (!developmentRoot_.empty())
             std::filesystem::create_directories(
@@ -1123,6 +1132,7 @@ private:
     }
 
     ManagerLocalization localization_;
+    std::filesystem::path managerRoot_;
     std::filesystem::path developmentRoot_;
     std::filesystem::path projectDirectory_;
     std::filesystem::path settingsFile_;
@@ -1306,6 +1316,10 @@ ManagerArguments ReadArguments()
         {
             result.developmentRoot = arguments[++index];
         }
+        else if (std::wstring_view(arguments[index]) == L"--data-directory")
+        {
+            result.dataDirectory = arguments[++index];
+        }
         else if (std::wstring_view(arguments[index]) ==
             L"--project-directory")
         {
@@ -1323,6 +1337,8 @@ ManagerArguments ReadArguments()
         }
     }
     LocalFree(arguments);
+    if (result.dataDirectory.empty())
+        result.dataDirectory = ExecutableDirectory() / L"data";
     if (result.developmentRoot.empty())
         result.developmentRoot = ExecutableDirectory() / L"data" /
             L"widgets" / L"dev";

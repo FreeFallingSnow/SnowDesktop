@@ -21,6 +21,8 @@ namespace snowdesktop::steam_bridge
 {
 namespace
 {
+bool IsReparsePoint(const std::filesystem::path& path);
+
 std::string WideToUtf8(std::wstring_view value)
 {
     if (value.empty()) return {};
@@ -49,17 +51,38 @@ std::wstring Utf8ToWide(std::string_view value)
     return result;
 }
 
-std::filesystem::path DefaultRoot()
+bool MoveDataFile(const std::filesystem::path& source,
+    const std::filesystem::path& target, std::string& error)
 {
-    PWSTR value = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
-            KF_FLAG_DEFAULT, nullptr, &value)))
-        return {};
-    const std::filesystem::path result =
-        std::filesystem::path(value) / L"SnowDesktop" /
-        L"SteamWorkshopManager";
-    CoTaskMemFree(value);
-    return result;
+    std::error_code ec;
+    if (!std::filesystem::exists(source, ec)) return !ec;
+    if (ec || !std::filesystem::is_regular_file(source, ec) || ec ||
+        IsReparsePoint(source))
+    {
+        error = "legacy Workshop Manager data contains an unsafe file";
+        return false;
+    }
+    if (std::filesystem::exists(target, ec))
+        return !ec;
+    if (ec)
+    {
+        error = "cannot inspect the Workshop Manager data target";
+        return false;
+    }
+    std::filesystem::copy_file(source, target,
+        std::filesystem::copy_options::none, ec);
+    if (ec)
+    {
+        error = "cannot migrate Workshop Manager data into data directory";
+        return false;
+    }
+    std::filesystem::remove(source, ec);
+    if (ec)
+    {
+        error = "Workshop Manager data was copied but the legacy file could not be removed";
+        return false;
+    }
+    return true;
 }
 
 bool IsReparsePoint(const std::filesystem::path& path)
@@ -253,8 +276,103 @@ bool ProjectFromJson(const JsonValue& value, WorkshopProject& project,
 }
 
 ProjectStore::ProjectStore(std::filesystem::path root)
-    : root_(root.empty() ? DefaultRoot() : std::move(root))
+    : root_(std::move(root))
 {
+}
+
+std::filesystem::path WorkshopManagerDataRoot(
+    const std::filesystem::path& dataDirectory)
+{
+    if (dataDirectory.empty()) return {};
+    return dataDirectory / L"SteamWorkshopManager";
+}
+
+std::filesystem::path LegacyWorkshopManagerDataRoot()
+{
+    PWSTR value = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
+            KF_FLAG_DEFAULT, nullptr, &value)))
+        return {};
+    const std::filesystem::path result =
+        std::filesystem::path(value) / L"SnowDesktop" /
+        L"SteamWorkshopManager";
+    CoTaskMemFree(value);
+    return result;
+}
+
+bool MigrateWorkshopManagerData(const std::filesystem::path& legacyRoot,
+    const std::filesystem::path& targetRoot, std::string& error)
+{
+    if (legacyRoot.empty() || targetRoot.empty() ||
+        legacyRoot == targetRoot)
+        return true;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(legacyRoot, ec)) return !ec;
+    if (ec || !std::filesystem::is_directory(legacyRoot, ec) || ec ||
+        IsReparsePoint(legacyRoot) || IsReparsePoint(targetRoot))
+    {
+        error = "Workshop Manager data directory is unavailable or unsafe";
+        return false;
+    }
+    std::filesystem::create_directories(targetRoot, ec);
+    if (ec)
+    {
+        error = "cannot create Workshop Manager data directory";
+        return false;
+    }
+
+    for (const wchar_t* filename : { L"projects.json",
+             L"projects.json.bak", L"projects.json.tmp" })
+    {
+        if (!MoveDataFile(legacyRoot / filename,
+                targetRoot / filename, error))
+            return false;
+    }
+
+    const auto legacyCache = legacyRoot / L"preview-cache";
+    if (std::filesystem::exists(legacyCache, ec))
+    {
+        if (ec || !std::filesystem::is_directory(legacyCache, ec) || ec ||
+            IsReparsePoint(legacyCache))
+        {
+            error = "legacy Workshop Manager preview cache is unsafe";
+            return false;
+        }
+        const auto targetCache = targetRoot / L"preview-cache";
+        std::filesystem::create_directories(targetCache, ec);
+        if (ec)
+        {
+            error = "cannot create Workshop Manager preview cache";
+            return false;
+        }
+        for (std::filesystem::directory_iterator iterator(legacyCache,
+                 std::filesystem::directory_options::skip_permission_denied,
+                 ec), end;
+             !ec && iterator != end; iterator.increment(ec))
+        {
+            if (!iterator->is_regular_file(ec) || ec ||
+                IsReparsePoint(iterator->path()))
+            {
+                error = "legacy Workshop Manager preview cache contains an unsafe entry";
+                return false;
+            }
+            if (!MoveDataFile(iterator->path(),
+                    targetCache / iterator->path().filename(), error))
+                return false;
+        }
+        if (ec)
+        {
+            error = "cannot enumerate legacy Workshop Manager preview cache";
+            return false;
+        }
+        std::filesystem::remove(legacyCache, ec);
+    }
+    ec.clear();
+    std::filesystem::remove(legacyRoot, ec);
+    ec.clear();
+    std::filesystem::remove(legacyRoot.parent_path(), ec);
+    return true;
 }
 
 std::filesystem::path ProjectStore::StorePath() const
@@ -325,7 +443,7 @@ bool ProjectStore::Save(std::string& error) const
 {
     if (root_.empty())
     {
-        error = "LocalAppData is unavailable";
+        error = "SnowDesktop data directory is unavailable";
         return false;
     }
     std::error_code ec;

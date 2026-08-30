@@ -133,7 +133,8 @@ partially written, or in-progress cache states never trigger automatic removal.
 
 The supported graphical workflow is `SnowDesktopWorkshopManager.exe`. It keeps
 its schema-v1 project library at
-`%LOCALAPPDATA%\SnowDesktop\SteamWorkshopManager\projects.json`, discovers the
+`<SnowDesktop data>\SteamWorkshopManager\projects.json` (and migrates the
+former `%LOCALAPPDATA%` store on first launch), discovers the
 directory supplied with `--development-root`, and runs the separate
 `snowwidget.exe` process for authoritative validation and packaging. It never
 stores a Steam password or token. Removing a project removes only the local

@@ -35,7 +35,7 @@ struct WorkshopMetadata
 class ProjectStore
 {
 public:
-    explicit ProjectStore(std::filesystem::path root = {});
+    explicit ProjectStore(std::filesystem::path root);
 
     bool Load(std::string& error);
     bool Save(std::string& error) const;
@@ -54,6 +54,12 @@ private:
     std::filesystem::path root_;
     std::vector<WorkshopProject> projects_;
 };
+
+std::filesystem::path WorkshopManagerDataRoot(
+    const std::filesystem::path& dataDirectory);
+std::filesystem::path LegacyWorkshopManagerDataRoot();
+bool MigrateWorkshopManagerData(const std::filesystem::path& legacyRoot,
+    const std::filesystem::path& targetRoot, std::string& error);
 
 std::string BuildWorkshopMetadata(
     std::string_view packageId, std::string_view version);
