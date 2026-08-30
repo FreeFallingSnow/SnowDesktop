@@ -14,6 +14,7 @@ target_compile_definitions(SnowDesktopSteamAppIdentity INTERFACE
     SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID=${SNOWDESKTOP_STEAM_WINDOWS_DEPOT_ID})
 
 add_library(SnowDesktopSteamWorkshopCore STATIC
+    src/component_workshop_publish_execute.cpp
     src/steam_workshop_core.cpp)
 target_compile_features(SnowDesktopSteamWorkshopCore PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopSteamWorkshopCore PUBLIC
