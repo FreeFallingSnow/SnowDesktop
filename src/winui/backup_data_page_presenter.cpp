@@ -89,10 +89,20 @@ muxc::CommandBar NewCommandBar()
 {
     muxc::CommandBar commandBar{};
     commandBar.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+    commandBar.HorizontalContentAlignment(
+        mux::HorizontalAlignment::Stretch);
     commandBar.DefaultLabelPosition(
         muxc::CommandBarDefaultLabelPosition::Right);
     commandBar.IsDynamicOverflowEnabled(true);
     return commandBar;
+}
+
+muxc::TextBlock NewCommandBarTitle()
+{
+    muxc::TextBlock title{};
+    title.VerticalAlignment(mux::VerticalAlignment::Center);
+    title.TextWrapping(mux::TextWrapping::Wrap);
+    return title;
 }
 
 muxc::AppBarButton NewCommandButton(std::wstring_view glyph)
@@ -201,8 +211,8 @@ struct BackupDataPagePresenter::Impl
     {
         LayoutBackupEntry entry;
         muxc::ListViewItem item{nullptr};
-        controls::SettingRow settingRow;
         muxc::CommandBar commandBar{nullptr};
+        muxc::TextBlock title{nullptr};
         muxc::AppBarButton restore{nullptr};
         muxc::AppBarButton remove{nullptr};
         winrt::event_token restoreToken{};
@@ -213,8 +223,8 @@ struct BackupDataPagePresenter::Impl
     {
         FullDataBackupEntry entry;
         muxc::ListViewItem item{nullptr};
-        controls::SettingRow settingRow;
         muxc::CommandBar commandBar{nullptr};
+        muxc::TextBlock title{nullptr};
         muxc::AppBarButton restore{nullptr};
         muxc::AppBarButton exportArchive{nullptr};
         muxc::AppBarButton open{nullptr};
@@ -610,12 +620,13 @@ struct BackupDataPagePresenter::Impl
             row.item.IsTabStop(false);
 
             row.commandBar = NewCommandBar();
+            row.title = NewCommandBarTitle();
             row.restore = NewCommandButton(L"\xE777");
             row.remove = NewCommandButton(L"\xE74D");
+            row.commandBar.Content(row.title);
             row.commandBar.PrimaryCommands().Append(row.restore);
             row.commandBar.SecondaryCommands().Append(row.remove);
-            row.settingRow.Initialize(row.commandBar);
-            row.item.Content(row.settingRow.root);
+            row.item.Content(row.commandBar);
 
             const std::wstring id = row.entry.id;
             const std::wstring label = row.entry.displayName;
@@ -669,18 +680,19 @@ struct BackupDataPagePresenter::Impl
             row.item.IsTabStop(false);
 
             row.commandBar = NewCommandBar();
+            row.title = NewCommandBarTitle();
             row.restore = NewCommandButton(L"\xE777");
             row.exportArchive = NewCommandButton(L"\xEDE1");
             row.open = NewCommandButton(L"\xE8E5");
             row.remove = NewCommandButton(L"\xE74D");
+            row.commandBar.Content(row.title);
             row.commandBar.PrimaryCommands().Append(row.restore);
             row.commandBar.SecondaryCommands().Append(row.exportArchive);
             row.commandBar.SecondaryCommands().Append(row.open);
             row.commandBar.SecondaryCommands().Append(
                 muxc::AppBarSeparator{});
             row.commandBar.SecondaryCommands().Append(row.remove);
-            row.settingRow.Initialize(row.commandBar);
-            row.item.Content(row.settingRow.root);
+            row.item.Content(row.commandBar);
 
             const std::wstring id = row.entry.id;
             const std::wstring label = row.entry.displayName;
@@ -757,7 +769,7 @@ struct BackupDataPagePresenter::Impl
             L("app.settings.delete", L"Delete");
         for (auto& row : layoutRows)
         {
-            row.settingRow.SetText(row.entry.displayName);
+            row.title.Text(row.entry.displayName);
             SetCommandText(row.restore, restoreText);
             SetCommandText(row.remove, deleteText);
             muxa::AutomationProperties::SetName(row.item,
@@ -796,7 +808,7 @@ struct BackupDataPagePresenter::Impl
                       L"{0} · {1} files · {2}"),
                       {timestamp, std::to_wstring(row.entry.fileCount),
                           FormatBackupSize(row.entry.totalBytes)});
-            row.settingRow.SetText(label);
+            row.title.Text(label);
             SetCommandText(row.restore, restoreText);
             SetCommandText(row.exportArchive, exportText);
             SetCommandText(row.open, openText);

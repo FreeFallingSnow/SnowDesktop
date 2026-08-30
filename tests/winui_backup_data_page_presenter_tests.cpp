@@ -162,7 +162,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("controls::SettingRow migrationActionRow") !=
                 std::string::npos &&
-            source.find("row.settingRow.Initialize(row.commandBar)") !=
+            source.find("row.commandBar.Content(row.title)") !=
+                std::string::npos &&
+            source.find("row.item.Content(row.commandBar)") !=
                 std::string::npos &&
             source.find("migrationActionRow.SetControlAlignment(") !=
                 std::string::npos &&
@@ -172,7 +174,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find(
               "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
-        "backup rows keep responsive description/control layouts and native focus visuals");
+        "backup rows keep native focus visuals and include titles in the expanded command surface");
     Check(source.find("app.settings.save_current_layout") !=
                 std::string::npos &&
             source.find("layoutActions.Children().Append(layoutName)") !=
