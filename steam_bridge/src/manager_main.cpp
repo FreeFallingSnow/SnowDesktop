@@ -786,6 +786,10 @@ private:
             syncPackageLocalization_ = creating;
             titleBuffer_.clear();
             descriptionBuffer_.clear();
+            localizationPreviewProjectId_.clear();
+            localizationPreview_.clear();
+            localizationPreviewError_.clear();
+            localizationPreviewLoading_ = false;
         }
         ImGui::SeparatorText(T("发布", "Publish"));
         if (creating)
@@ -804,7 +808,94 @@ private:
             "复用组件包内的标题和说明",
             "Reuse component package titles and descriptions"),
             ImGui::GetFrameHeight());
-        ImGui::Checkbox("##package-localization", &syncPackageLocalization_);
+        if (ImGui::Checkbox("##package-localization",
+                &syncPackageLocalization_) && syncPackageLocalization_)
+            localizationPreviewProjectId_.clear();
+        if (syncPackageLocalization_)
+        {
+            if (localizationPreviewProjectId_ != project.localId &&
+                !busy_.load())
+            {
+                localizationPreviewProjectId_ = project.localId;
+                localizationPreview_.clear();
+                localizationPreviewError_.clear();
+                localizationPreviewLoading_ = true;
+                StartLocalizationPreview(project.localId);
+            }
+            ImGui::BeginDisabled(busy_.load());
+            if (SecondaryButton(T(
+                    "刷新文案预览", "Refresh text preview")))
+            {
+                localizationPreviewProjectId_ = project.localId;
+                localizationPreview_.clear();
+                localizationPreviewError_.clear();
+                localizationPreviewLoading_ = true;
+                StartLocalizationPreview(project.localId);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", T(
+                "发布时会重新读取组件包内的最新文案",
+                "The latest package text is read again when publishing"));
+            if (localizationPreviewLoading_)
+            {
+                ImGui::TextDisabled("%s", T(
+                    "正在读取多语言文案…",
+                    "Loading localized text…"));
+            }
+            else if (!localizationPreviewError_.empty())
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
+                    "%s: %s", T("文案预览失败", "Text preview failed"),
+                    localizationPreviewError_.c_str());
+            }
+            else if (localizationPreview_.empty())
+            {
+                ImGui::TextDisabled("%s", T(
+                    "组件包没有可发布到 Steam 的多语言文案",
+                    "The component package has no localized text publishable to Steam"));
+            }
+            else
+            {
+                const std::string previewLabel = T(
+                    "多语言文案预览（%zu 种 Steam 语言）",
+                    "Localized text preview (%zu Steam languages)",
+                    localizationPreview_.size());
+                if (ImGui::CollapsingHeader(previewLabel.c_str(),
+                        ImGuiTreeNodeFlags_DefaultOpen) &&
+                    ImGui::BeginTable("package-localization-preview", 3,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_Resizable |
+                        ImGuiTableFlags_SizingStretchProp |
+                        ImGuiTableFlags_ScrollY,
+                        ImVec2(0, 280.0f * gDpiScale)))
+                {
+                    ImGui::TableSetupColumn(T("Steam 语言", "Steam language"),
+                        ImGuiTableColumnFlags_WidthFixed,
+                        110.0f * gDpiScale);
+                    ImGui::TableSetupColumn(T("标题", "Title"),
+                        ImGuiTableColumnFlags_WidthStretch, 0.8f);
+                    ImGui::TableSetupColumn(T("说明", "Description"),
+                        ImGuiTableColumnFlags_WidthStretch, 2.2f);
+                    ImGui::TableHeadersRow();
+                    for (const auto& localized : localizationPreview_)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(localized.language.c_str());
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextWrapped("%s", localized.title.c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        if (localized.description.empty())
+                            ImGui::TextDisabled("—");
+                        else
+                            ImGui::TextWrapped("%s",
+                                localized.description.c_str());
+                    }
+                    ImGui::EndTable();
+                }
+            }
+        }
         if (creating && !syncPackageLocalization_)
         {
             std::array<char, 256> title{};
@@ -911,6 +1002,34 @@ private:
                 if (!store_.Save(error)) SetMessageUnlocked(false, error);
                 else SetMessageUnlocked(true, std::move(success));
             }
+        });
+    }
+
+    void StartLocalizationPreview(std::string localId)
+    {
+        StartWork([this, localId = std::move(localId)]
+        {
+            std::filesystem::path source;
+            {
+                std::lock_guard lock(mutex_);
+                const auto* project = FindProjectUnlocked(localId);
+                if (!project) return;
+                source = project->sourceDirectory;
+            }
+            WidgetInspection inspection;
+            std::string error;
+            std::vector<SteamWorkshopLocalization> preview;
+            if (packageTool_.Inspect(source, inspection, error))
+            {
+                preview = BuildSteamWorkshopLocalizations(
+                    inspection.name, inspection.description,
+                    inspection.localizations);
+            }
+            std::lock_guard lock(mutex_);
+            if (localizationPreviewProjectId_ != localId) return;
+            localizationPreview_ = std::move(preview);
+            localizationPreviewError_ = std::move(error);
+            localizationPreviewLoading_ = false;
         });
     }
 
@@ -1270,7 +1389,11 @@ private:
     std::string titleBuffer_;
     std::string descriptionBuffer_;
     std::string localizationStateProjectId_;
+    std::string localizationPreviewProjectId_;
+    std::vector<SteamWorkshopLocalization> localizationPreview_;
+    std::string localizationPreviewError_;
     bool localizationStateCreating_ = false;
+    bool localizationPreviewLoading_ = false;
     bool syncPackageLocalization_ = true;
     bool updatePreview_ = false;
     bool updateTags_ = false;
