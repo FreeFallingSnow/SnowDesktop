@@ -285,12 +285,14 @@ int main(int argc, char** argv)
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&
-            run.find("UnifiedAutoStartTaskState::Enabled") !=
+            run.find("ClassifyAutoStartOwnershipNotice") !=
+                std::string::npos &&
+            run.find("state.packaged && otherOwnerActive") ==
                 std::string::npos &&
             run.find("NonPackagedVersionOwnsStartup") !=
                 std::string::npos &&
             run.find("InstalledVersionOwnsStartup") != std::string::npos,
-        "DesktopApp projects active non-packaged or installed startup ownership without labeling Steam as portable");
+        "DesktopApp projects startup ownership by the active task owner so Steam detects portable and stale Steam targets");
     Check(host.find("personalization.updateGeneral") !=
                 std::string::npos &&
             host.find("actions.setDeveloperToolsEnabled") !=

@@ -19,6 +19,8 @@ void Check(bool condition, const char* message)
 int main()
 {
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
+    using snowdesktop::AutoStartOwnershipNotice;
+    using snowdesktop::ClassifyAutoStartOwnershipNotice;
     using snowdesktop::DecodePortableAutoStartApprovalState;
     using snowdesktop::HasActivePortableAutoStart;
     using snowdesktop::IsPortableAutoStartApprovalActive;
@@ -27,6 +29,7 @@ int main()
     using snowdesktop::PortableAutoStartRegistrationOwner;
     using snowdesktop::SelectAutoStartMigration;
     using snowdesktop::UnifiedAutoStartOwner;
+    using snowdesktop::UnifiedAutoStartTaskState;
     using snowdesktop::deployment::PackagedAutoStartState;
     using snowdesktop::deployment::ShouldFinalizePackagedAutoStartUserEnable;
 
@@ -104,6 +107,38 @@ int main()
                PortableAutoStartRegistrationOwner::Error,
                PortableAutoStartApprovalState::Enabled),
         "an unreadable Run registration is not reported as active");
+
+    Check(ClassifyAutoStartOwnershipNotice(true,
+              UnifiedAutoStartTaskState::Enabled, false,
+              UnifiedAutoStartOwner::Portable) ==
+            AutoStartOwnershipNotice::OtherVersion &&
+            ClassifyAutoStartOwnershipNotice(true,
+              UnifiedAutoStartTaskState::Enabled, false,
+              UnifiedAutoStartOwner::Steam) ==
+            AutoStartOwnershipNotice::OtherVersion,
+        "Steam and portable startup targets owned by another deployment show the path-aware notice");
+    Check(ClassifyAutoStartOwnershipNotice(true,
+              UnifiedAutoStartTaskState::Enabled, false,
+              UnifiedAutoStartOwner::Packaged) ==
+            AutoStartOwnershipNotice::InstalledVersion,
+        "an active packaged startup target shows the installed-version notice");
+    Check(ClassifyAutoStartOwnershipNotice(true,
+              UnifiedAutoStartTaskState::Enabled, true,
+              UnifiedAutoStartOwner::Steam) ==
+            AutoStartOwnershipNotice::None &&
+            ClassifyAutoStartOwnershipNotice(true,
+              UnifiedAutoStartTaskState::Disabled, false,
+              UnifiedAutoStartOwner::Portable) ==
+            AutoStartOwnershipNotice::None &&
+            ClassifyAutoStartOwnershipNotice(false,
+              UnifiedAutoStartTaskState::Enabled, false,
+              UnifiedAutoStartOwner::Packaged) ==
+            AutoStartOwnershipNotice::None &&
+            ClassifyAutoStartOwnershipNotice(true,
+              UnifiedAutoStartTaskState::Enabled, false,
+              UnifiedAutoStartOwner::Unknown) ==
+            AutoStartOwnershipNotice::None,
+        "current, disabled, unreadable, and unknown startup targets do not show ownership notices");
 
     constexpr auto noLegacy = SelectAutoStartMigration(
         UnifiedAutoStartOwner::Portable,

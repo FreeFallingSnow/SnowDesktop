@@ -606,22 +606,18 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         GeneralStartupConflict conflict;
         const snowdesktop::AutoStartQueryResult state =
             QueryAutoStartState();
-        const bool otherOwnerActive = state.stateKnown &&
-            state.taskStatus ==
-                snowdesktop::UnifiedAutoStartTaskState::Enabled &&
-            !state.taskOwnedByCurrentDeployment;
-        if (state.packaged && otherOwnerActive &&
-            (state.taskOwner ==
-                    snowdesktop::UnifiedAutoStartOwner::Portable ||
-                state.taskOwner ==
-                    snowdesktop::UnifiedAutoStartOwner::Steam))
+        const snowdesktop::AutoStartOwnershipNotice notice =
+            snowdesktop::ClassifyAutoStartOwnershipNotice(
+                state.stateKnown, state.taskStatus,
+                state.taskOwnedByCurrentDeployment, state.taskOwner);
+        if (notice == snowdesktop::AutoStartOwnershipNotice::OtherVersion)
         {
             conflict.kind =
                 GeneralStartupConflictKind::NonPackagedVersionOwnsStartup;
             conflict.ownerCommand = state.ownerCommand;
         }
-        else if (!state.packaged && otherOwnerActive &&
-            state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Packaged)
+        else if (notice ==
+            snowdesktop::AutoStartOwnershipNotice::InstalledVersion)
         {
             conflict.kind =
                 GeneralStartupConflictKind::InstalledVersionOwnsStartup;

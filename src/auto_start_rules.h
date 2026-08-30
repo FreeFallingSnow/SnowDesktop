@@ -25,6 +25,36 @@ enum class UnifiedAutoStartTaskState : std::uint8_t
     Unavailable,
 };
 
+enum class AutoStartOwnershipNotice : std::uint8_t
+{
+    None,
+    OtherVersion,
+    InstalledVersion,
+};
+
+[[nodiscard]] constexpr AutoStartOwnershipNotice
+ClassifyAutoStartOwnershipNotice(
+    bool stateKnown,
+    UnifiedAutoStartTaskState taskState,
+    bool taskOwnedByCurrentDeployment,
+    UnifiedAutoStartOwner taskOwner) noexcept
+{
+    if (!stateKnown || taskState != UnifiedAutoStartTaskState::Enabled ||
+        taskOwnedByCurrentDeployment)
+    {
+        return AutoStartOwnershipNotice::None;
+    }
+
+    if (taskOwner == UnifiedAutoStartOwner::Packaged)
+        return AutoStartOwnershipNotice::InstalledVersion;
+    if (taskOwner == UnifiedAutoStartOwner::Portable ||
+        taskOwner == UnifiedAutoStartOwner::Steam)
+    {
+        return AutoStartOwnershipNotice::OtherVersion;
+    }
+    return AutoStartOwnershipNotice::None;
+}
+
 enum class LegacyAutoStartState : std::uint8_t
 {
     Missing,
