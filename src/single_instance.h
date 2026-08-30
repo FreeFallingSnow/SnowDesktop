@@ -96,6 +96,13 @@ bool DataDirectoriesMatch(
     std::wstring_view left, std::wstring_view right);
 
 /**
+ * @brief Check whether a launch requests a different immutable runtime from
+ * the same managed Steam installation.
+ */
+bool IsManagedSteamRuntimeReplacement(
+    const InstanceInfo& running, const InstanceInfo& requested);
+
+/**
  * @brief Ask a specific running instance to show its settings.
  */
 bool NotifyExistingInstance(const InstanceInfo& instance);

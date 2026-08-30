@@ -148,6 +148,49 @@ void TestDeploymentDataResolution(const std::filesystem::path& root)
             std::filesystem::path(profileId),
         "a local Steam development instance reports its isolated profile data");
 }
+
+void TestManagedSteamRuntimeReplacement(const std::filesystem::path& root)
+{
+    using snowdesktop::single_instance::InstanceInfo;
+    using snowdesktop::single_instance::IsManagedSteamRuntimeReplacement;
+
+    const auto install = root / L"managed-replacement";
+    WriteText(install /
+        snowdesktop::deployment::kSteamLauncherFilename, "launcher");
+    const auto oldRuntime = install / L".snowdesktop" /
+        L"runtime" / L"build-old";
+    const auto newRuntime = install / L".snowdesktop" /
+        L"runtime" / L"build-new";
+    const auto oldExecutable = oldRuntime / L"SnowDesktop.exe";
+    const auto newExecutable = newRuntime / L"SnowDesktop.exe";
+    WriteText(oldExecutable, "old host");
+    WriteText(newExecutable, "new host");
+    WriteManagedSidecar(oldRuntime);
+    WriteManagedSidecar(newRuntime);
+
+    InstanceInfo running;
+    running.executablePath = oldExecutable.wstring();
+    InstanceInfo requested;
+    requested.executablePath = newExecutable.wstring();
+    Check(IsManagedSteamRuntimeReplacement(running, requested),
+        "different immutable runtimes in one managed Steam install require an automatic handoff");
+
+    requested.executablePath = oldExecutable.wstring();
+    Check(!IsManagedSteamRuntimeReplacement(running, requested),
+        "the same managed Steam runtime remains an ordinary same-instance activation");
+
+    const auto otherInstall = root / L"other-managed-replacement";
+    WriteText(otherInstall /
+        snowdesktop::deployment::kSteamLauncherFilename, "launcher");
+    const auto otherRuntime = otherInstall / L".snowdesktop" /
+        L"runtime" / L"build-new";
+    const auto otherExecutable = otherRuntime / L"SnowDesktop.exe";
+    WriteText(otherExecutable, "other host");
+    WriteManagedSidecar(otherRuntime);
+    requested.executablePath = otherExecutable.wstring();
+    Check(!IsManagedSteamRuntimeReplacement(running, requested),
+        "managed Steam runtimes from different installs retain the explicit version-conflict flow");
+}
 }
 
 int main()
@@ -160,6 +203,7 @@ int main()
     try
     {
         TestDeploymentDataResolution(root);
+        TestManagedSteamRuntimeReplacement(root);
     }
     catch (const std::exception& error)
     {

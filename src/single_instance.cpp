@@ -367,6 +367,37 @@ bool DataDirectoriesMatch(
     return NormalizePath(left) == NormalizePath(right);
 }
 
+bool IsManagedSteamRuntimeReplacement(
+    const InstanceInfo& running, const InstanceInfo& requested)
+{
+    if (running.packaged || requested.packaged ||
+        running.executablePath.empty() || requested.executablePath.empty())
+    {
+        return false;
+    }
+
+    const auto runningContext =
+        snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+            std::filesystem::path(running.executablePath), false);
+    const auto requestedContext =
+        snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+            std::filesystem::path(requested.executablePath), false);
+    if (runningContext.kind !=
+            snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged ||
+        requestedContext.kind !=
+            snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged)
+    {
+        return false;
+    }
+
+    return NormalizePath(runningContext.installRoot.wstring()) ==
+            NormalizePath(requestedContext.installRoot.wstring()) &&
+        NormalizePath(std::filesystem::path(running.executablePath)
+                .parent_path().wstring()) !=
+            NormalizePath(std::filesystem::path(requested.executablePath)
+                .parent_path().wstring());
+}
+
 bool NotifyExistingInstance(const InstanceInfo& instance)
 {
     if (!instance.controlWindow ||

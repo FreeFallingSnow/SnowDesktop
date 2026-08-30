@@ -27,6 +27,7 @@
 namespace
 {
 using snowdesktop::steam_runtime::ApplyResult;
+using snowdesktop::steam_runtime::PruneResult;
 
 constexpr wchar_t kDistributionDirectory[] = L"distribution";
 constexpr wchar_t kStateDirectory[] = L".snowdesktop";
@@ -1000,6 +1001,37 @@ std::optional<std::filesystem::path> CreateUniqueStagingDirectory(
     }
 }
 
+std::optional<std::filesystem::path> SelectUniqueStagingPath(
+    const std::filesystem::path& runtimeRoot, std::string& error)
+{
+    const std::wstring prefix = L".staging." +
+        std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(GetTickCount64());
+    for (std::uint32_t attempt = 0;; ++attempt)
+    {
+        const std::filesystem::path candidate = runtimeRoot /
+            (attempt == 0 ? prefix : prefix + L"." +
+                std::to_wstring(attempt));
+        const DWORD attributes = GetFileAttributesW(candidate.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD inspectError = GetLastError();
+            if (inspectError == ERROR_FILE_NOT_FOUND ||
+                inspectError == ERROR_PATH_NOT_FOUND)
+            {
+                return candidate;
+            }
+            error = "cannot inspect a retired Steam runtime staging path";
+            return std::nullopt;
+        }
+        if (attempt == std::numeric_limits<std::uint32_t>::max())
+        {
+            error = "cannot allocate a unique retired Steam runtime staging path";
+            return std::nullopt;
+        }
+    }
+}
+
 bool RemoveStagingDirectorySafely(const std::filesystem::path& staging,
     const std::filesystem::path& runtimeRoot, std::string& error) noexcept
 {
@@ -1558,5 +1590,140 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             "published Steam runtime validation failed: " + publishedError);
     }
     return activate(destination);
+}
+
+PruneResult PruneInactiveRuntimes(
+    const std::filesystem::path& installRoot,
+    const std::filesystem::path& currentExecutable)
+{
+    PruneResult result;
+    const auto context =
+        snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+            currentExecutable, false);
+    if (context.kind !=
+            snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged)
+    {
+        result.error =
+            "refusing to prune runtimes outside a managed Steam deployment";
+        return result;
+    }
+
+    std::error_code pathError;
+    if (!std::filesystem::equivalent(
+            installRoot, context.installRoot, pathError) || pathError)
+    {
+        result.error =
+            "the selected Steam runtime does not belong to the install root";
+        return result;
+    }
+
+    const std::filesystem::path stateRoot = installRoot / kStateDirectory;
+    const std::filesystem::path runtimeRoot = stateRoot / kRuntimeDirectory;
+    std::string error;
+    if (!ValidatePlainDirectoryNoReparse(
+            stateRoot, "Steam runtime state directory", error) ||
+        !ValidatePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", error))
+    {
+        result.error = std::move(error);
+        return result;
+    }
+
+    ExclusiveFile lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename);
+    if (!lock.valid())
+    {
+        result.error = "cannot acquire the Steam runtime cleanup lock";
+        return result;
+    }
+    if (!CleanupAbandonedStagingDirectories(runtimeRoot, error))
+    {
+        result.error = std::move(error);
+        return result;
+    }
+
+    std::string pointerError;
+    const auto active = ReadFallback(stateRoot, runtimeRoot, pointerError);
+    pathError.clear();
+    if (!active || !std::filesystem::equivalent(
+            active->first, currentExecutable, pathError) || pathError)
+    {
+        result.error = pointerError.empty()
+            ? "the selected executable is not the active Steam runtime"
+            : std::move(pointerError);
+        return result;
+    }
+
+    const std::filesystem::path currentRuntime =
+        currentExecutable.parent_path();
+    std::vector<std::filesystem::path> inactive;
+    std::error_code iteratorError;
+    std::filesystem::directory_iterator iterator(
+        runtimeRoot, std::filesystem::directory_options::none, iteratorError);
+    const std::filesystem::directory_iterator end;
+    if (iteratorError)
+    {
+        result.error = "cannot enumerate Steam runtimes for cleanup";
+        return result;
+    }
+    while (iterator != end)
+    {
+        const std::filesystem::path entry = iterator->path();
+        pathError.clear();
+        const bool isCurrent = std::filesystem::equivalent(
+            entry, currentRuntime, pathError);
+        if (!pathError && !isCurrent)
+        {
+            std::string validationError;
+            const auto manifest = ValidatePublishedRuntime(
+                entry, nullptr, validationError);
+            if (manifest && DirectoryIdMatchesManifest(
+                    entry.filename().string(), *manifest))
+            {
+                inactive.push_back(entry);
+            }
+        }
+        iterator.increment(iteratorError);
+        if (iteratorError)
+        {
+            result.error =
+                "cannot enumerate the complete Steam runtime directory for cleanup";
+            return result;
+        }
+    }
+
+    for (const std::filesystem::path& entry : inactive)
+    {
+        const auto staging = SelectUniqueStagingPath(runtimeRoot, error);
+        if (!staging)
+        {
+            result.error = std::move(error);
+            return result;
+        }
+        if (!MoveFileExW(entry.c_str(), staging->c_str(),
+                MOVEFILE_WRITE_THROUGH))
+        {
+            const DWORD moveError = GetLastError();
+            if (moveError == ERROR_ACCESS_DENIED ||
+                moveError == ERROR_SHARING_VIOLATION ||
+                moveError == ERROR_LOCK_VIOLATION)
+            {
+                ++result.retained;
+                continue;
+            }
+            result.error =
+                "cannot retire an inactive Steam runtime (Win32 error " +
+                std::to_string(moveError) + ')';
+            return result;
+        }
+        if (!RemoveStagingDirectorySafely(*staging, runtimeRoot, error))
+        {
+            result.error =
+                "cannot remove a retired Steam runtime: " + error;
+            return result;
+        }
+        ++result.removed;
+    }
+    result.ok = true;
+    return result;
 }
 }

@@ -485,6 +485,42 @@ snowdesktop::steam_runtime::ApplyResult PrepareRuntime(
     return result;
 }
 
+void TestInactiveRuntimePruning(const std::filesystem::path& root)
+{
+    const auto oldRuntime = PrepareRuntime(
+        root, "prune-old", "host old", "dll old");
+    const auto currentRuntime = PrepareRuntime(
+        root, "prune-current", "host current", "dll current");
+    if (!oldRuntime.ok || !currentRuntime.ok)
+        return;
+
+    const auto unknownDirectory = root / L".snowdesktop" /
+        L"runtime" / L"user-unknown";
+    WriteText(unknownDirectory / L"keep.txt", "not a published runtime");
+    {
+        OccupiedFile occupied(oldRuntime.executable);
+        Check(occupied.valid(),
+            "the inactive runtime can be held open during retirement");
+        const auto retained =
+            snowdesktop::steam_runtime::PruneInactiveRuntimes(
+                root, currentRuntime.executable);
+        Check(retained.ok && retained.removed == 0 &&
+                retained.retained == 1 &&
+                std::filesystem::exists(oldRuntime.executable) &&
+                std::filesystem::exists(currentRuntime.executable),
+            "runtime pruning retains an occupied old runtime without touching the current runtime");
+    }
+
+    const auto pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+        root, currentRuntime.executable);
+    Check(pruned.ok && pruned.removed == 1 && pruned.retained == 0 &&
+            !std::filesystem::exists(oldRuntime.executable) &&
+            std::filesystem::exists(currentRuntime.executable),
+        "runtime pruning removes the old runtime after its final handle closes");
+    Check(std::filesystem::exists(unknownDirectory / L"keep.txt"),
+        "runtime pruning never removes an unvalidated directory from the managed root");
+}
+
 void CorruptDistributionLibrary(const std::filesystem::path& root)
 {
     WriteText(root / L"distribution" / L"SnowDesktop.Runtime" /
@@ -1377,6 +1413,7 @@ int main()
         TestContextResolution(root / L"contexts");
         TestRuntimeDataPathPolicy(root / L"data-paths");
         TestRuntimeUpdate(root / L"update");
+        TestInactiveRuntimePruning(root / L"pruning");
         TestOccupiedSameBuildRecovery(root / L"occupied-recovery");
         TestTamperedActiveRuntimeBypassesFastPath(root / L"tampered-active");
         TestInvalidRuntimeFallbacks(root / L"invalid-fallbacks");

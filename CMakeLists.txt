@@ -661,6 +661,7 @@ add_executable(SnowDesktop WIN32
 
 add_executable(SnowDesktopLauncher WIN32
     src/steam_launcher_main.cpp
+    src/steam_runtime_context.cpp
     src/steam_runtime_manager.cpp
     src/steam_runtime_manager.h
     src/steam_runtime_context.h

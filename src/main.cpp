@@ -175,6 +175,27 @@ ExistingInstanceResolution ResolveExistingInstance(
     const snowdesktop::single_instance::InstanceInfo& requested,
     snowdesktop::single_instance::InstanceInfo* switchTarget)
 {
+    if (snowdesktop::single_instance::
+            IsManagedSteamRuntimeReplacement(running, requested))
+    {
+        if (snowdesktop::single_instance::RequestExistingInstanceExit(
+                running, 30000))
+        {
+            if (switchTarget)
+                *switchTarget = running;
+            return ExistingInstanceResolution::RetryLaunch;
+        }
+
+        const std::wstring message = _LFW(
+            "app.run.other_version_switch_failed",
+            running.version,
+            DeploymentSuffix(running));
+        MessageBoxW(nullptr, message.c_str(),
+            _LW("app.run.other_version_title"),
+            MB_OK | MB_ICONERROR);
+        return ExistingInstanceResolution::ExitNewInstance;
+    }
+
     const bool versionsMatch =
         running.version.empty() || requested.version.empty() ||
         snowdesktop::single_instance::VersionsMatch(
@@ -216,6 +237,22 @@ ExistingInstanceResolution ResolveExistingInstance(
         _LW("app.run.other_version_title"),
         MB_OK | MB_ICONERROR);
     return ExistingInstanceResolution::ExitNewInstance;
+}
+
+void RequestSteamRuntimePrune()
+{
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (context.kind != snowdesktop::deployment::
+            RuntimeDeploymentKind::SteamManaged ||
+        context.launcher.empty())
+    {
+        return;
+    }
+
+    ShellExecuteW(nullptr, L"open", context.launcher.c_str(),
+        L"--snowdesktop-launcher-prune-only",
+        context.installRoot.c_str(), SW_HIDE);
 }
 }
 
@@ -455,6 +492,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     {
         return 0;
     }
+
+    // The stable launcher owns runtime retirement. At this point this process
+    // is the primary instance, so a previous immutable Steam runtime can no
+    // longer be the active application and may be removed out of process.
+    RequestSteamRuntimePrune();
 
     /* 注册全局未处理异常过滤器与崩溃日志处理器 */
     SetUnhandledExceptionFilter(UnhandledFilter);

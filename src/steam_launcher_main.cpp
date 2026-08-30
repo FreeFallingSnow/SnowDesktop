@@ -122,6 +122,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     if (!rawArguments)
         return static_cast<int>(GetLastError());
     bool applyOnly = false;
+    bool pruneOnly = false;
     std::vector<std::wstring> forwarded;
     for (int index = 1; index < argumentCount; ++index)
     {
@@ -129,6 +130,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 L"--snowdesktop-launcher-apply-only") == 0)
         {
             applyOnly = true;
+        }
+        else if (wcscmp(rawArguments[index],
+                L"--snowdesktop-launcher-prune-only") == 0)
+        {
+            pruneOnly = true;
         }
         else
         {
@@ -143,6 +149,26 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         AppendLauncherLog(installRoot, applied.error);
     if (!applied.ok)
         return ERROR_INSTALL_FAILURE;
+    if (pruneOnly)
+    {
+        snowdesktop::steam_runtime::PruneResult pruned;
+        for (int attempt = 0; attempt < 40; ++attempt)
+        {
+            pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+                installRoot, applied.executable);
+            if (!pruned.ok)
+            {
+                AppendLauncherLog(installRoot, pruned.error);
+                return ERROR_INSTALL_FAILURE;
+            }
+            if (pruned.retained == 0)
+                return 0;
+            Sleep(250);
+        }
+        AppendLauncherLog(installRoot,
+            "inactive Steam runtime remains occupied after handoff");
+        return 0;
+    }
     if (applyOnly)
         return 0;
 
