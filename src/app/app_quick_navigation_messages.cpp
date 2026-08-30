@@ -584,7 +584,11 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         app->CloseQuickNavigation();
         return 0;
     }
-    if (message == WM_KEYDOWN && app->quickNavigationSearchCompositionText_.empty() &&
+    if (message == WM_KEYDOWN &&
+        snowdesktop::quick_navigation_rules::
+            ShouldRouteSearchEditKeyToResults(
+                wParam) &&
+        app->quickNavigationSearchCompositionText_.empty() &&
         app->HandleQuickNavigationKeyboardInput(wParam))
     {
         return 0;

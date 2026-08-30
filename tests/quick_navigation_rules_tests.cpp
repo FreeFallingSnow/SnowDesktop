@@ -511,6 +511,24 @@ void TestDeactivateRules()
 
 }
 
+void TestSearchEditKeyboardRouting()
+{
+    Check(
+        !rules::ShouldRouteSearchEditKeyToResults(
+            VK_LEFT) &&
+            !rules::ShouldRouteSearchEditKeyToResults(
+                VK_RIGHT) &&
+            !rules::ShouldRouteSearchEditKeyToResults(
+                VK_UP) &&
+            !rules::ShouldRouteSearchEditKeyToResults(
+                VK_DOWN),
+        "arrow keys in the focused search edit must remain available for caret movement");
+    Check(
+        rules::ShouldRouteSearchEditKeyToResults(
+            VK_RETURN),
+        "Enter in the focused search edit must still activate a search result");
+}
+
 void TestAnimatedPointerHitRules()
 {
     const RECT panel{ 400, 200, 1000, 800 };
@@ -547,6 +565,7 @@ int main()
     TestSectionLayout();
     TestAnimationRules();
     TestDeactivateRules();
+    TestSearchEditKeyboardRouting();
     TestAnimatedPointerHitRules();
     if (failures == 0)
     {
