@@ -108,7 +108,9 @@ struct PageLayoutPagePresenter::Impl
     muxc::Button cancelOrderButton{nullptr};
     muxc::Button applyOrderButton{nullptr};
     muxc::TextBlock selectedPageText{nullptr};
+    muxc::TextBlock columnsLabel{nullptr};
     muxc::NumberBox columnsBox{nullptr};
+    muxc::TextBlock rowsLabel{nullptr};
     muxc::NumberBox rowsBox{nullptr};
     muxc::InfoBar gridImpact{nullptr};
     muxc::Button applyGridButton{nullptr};
@@ -193,7 +195,7 @@ struct PageLayoutPagePresenter::Impl
 
         muxc::StackPanel columnsPanel;
         columnsPanel.Spacing(6.0);
-        muxc::TextBlock columnsLabel;
+        columnsLabel = muxc::TextBlock{};
         columnsLabel.TextWrapping(mux::TextWrapping::Wrap);
         columnsPanel.Children().Append(columnsLabel);
         columnsBox = muxc::NumberBox{};
@@ -209,7 +211,7 @@ struct PageLayoutPagePresenter::Impl
 
         muxc::StackPanel rowsPanel;
         rowsPanel.Spacing(6.0);
-        muxc::TextBlock rowsLabel;
+        rowsLabel = muxc::TextBlock{};
         rowsLabel.TextWrapping(mux::TextWrapping::Wrap);
         rowsPanel.Children().Append(rowsLabel);
         rowsBox = muxc::NumberBox{};
@@ -224,9 +226,6 @@ struct PageLayoutPagePresenter::Impl
         muxc::Grid::SetColumn(rowsPanel, 1);
         dimensions.Children().Append(rowsPanel);
         gridCard.content.Children().Append(dimensions);
-
-        columnsLabel.Tag(winrt::box_value(L"columns-label"));
-        rowsLabel.Tag(winrt::box_value(L"rows-label"));
 
         gridImpact = muxc::InfoBar{};
         gridImpact.IsClosable(false);
@@ -757,22 +756,8 @@ struct PageLayoutPagePresenter::Impl
         applyGridButton.Content(
             winrt::box_value(L("settings.pages.applyGrid")));
 
-        if (auto columnsPanel = columnsBox.Parent().try_as<muxc::StackPanel>())
-        {
-            if (columnsPanel.Children().Size() > 0)
-            {
-                columnsPanel.Children().GetAt(0).as<muxc::TextBlock>().Text(
-                    L("settings.pages.columns"));
-            }
-        }
-        if (auto rowsPanel = rowsBox.Parent().try_as<muxc::StackPanel>())
-        {
-            if (rowsPanel.Children().Size() > 0)
-            {
-                rowsPanel.Children().GetAt(0).as<muxc::TextBlock>().Text(
-                    L("settings.pages.rows"));
-            }
-        }
+        columnsLabel.Text(L("settings.pages.columns"));
+        rowsLabel.Text(L("settings.pages.rows"));
         muxa::AutomationProperties::SetName(
             pageList, L("settings.pages.manage"));
         muxa::AutomationProperties::SetName(

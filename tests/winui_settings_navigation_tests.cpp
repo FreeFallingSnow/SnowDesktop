@@ -503,6 +503,10 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             pages.find("CanReorderItems(true)") != std::string::npos &&
             pages.find("NumberBoxSpinButtonPlacementMode::Inline") !=
                 std::string::npos &&
+            pages.find("columnsLabel.Text(L(\"settings.pages.columns\"))") !=
+                std::string::npos &&
+            pages.find("rowsLabel.Text(L(\"settings.pages.rows\"))") !=
+                std::string::npos &&
             pages.find("settings.pages.grid.confirm.title") !=
                 std::string::npos &&
             desktopIconsSection.find(
