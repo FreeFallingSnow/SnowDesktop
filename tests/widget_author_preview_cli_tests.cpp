@@ -668,6 +668,7 @@ int wmain(int argc, wchar_t** argv)
     const auto [standardBorderExit, standardBorderJson] = Run(snowwidget, {
         L"preview", source.wstring(), standardBorderOutput.wstring(),
         L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+        L"--storage", L"borderAlpha=0.75",
         L"--storage", L"borderStyle=0", L"--storage", L"borderWidth=2",
         L"--storage", L"borderEffectStrength=0.75",
         L"--host", host.wstring() });
@@ -675,6 +676,7 @@ int wmain(int argc, wchar_t** argv)
         Run(snowwidget, {
             L"preview", source.wstring(), zeroStrengthBorderOutput.wstring(),
             L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderAlpha=0.75",
             L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=2",
             L"--storage", L"borderEffectStrength=0",
             L"--host", host.wstring() });
@@ -682,6 +684,7 @@ int wmain(int argc, wchar_t** argv)
         Run(snowwidget, {
             L"preview", source.wstring(), dimensionalBorderOutput.wstring(),
             L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderAlpha=0.75",
             L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=2",
             L"--storage", L"borderEffectStrength=0.75",
             L"--host", host.wstring() });
@@ -689,6 +692,7 @@ int wmain(int argc, wchar_t** argv)
         Run(snowwidget, {
             L"preview", source.wstring(), wideDimensionalBorderOutput.wstring(),
             L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderAlpha=0.75",
             L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=4",
             L"--storage", L"borderEffectStrength=0.75",
             L"--host", host.wstring() });
