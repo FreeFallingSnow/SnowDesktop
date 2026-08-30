@@ -102,6 +102,7 @@ struct PublishProgress
 struct PublishRequest
 {
     std::filesystem::path package;
+    bool updateContent = true;
     std::optional<std::filesystem::path> preview;
     std::optional<std::uint64_t> publishedFileId;
     std::string title;

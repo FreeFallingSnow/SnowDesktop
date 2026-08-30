@@ -323,6 +323,33 @@ bool PackageTool::Inspect(const std::filesystem::path& source,
         error = "snowwidget inspect returned an invalid manifest array";
         return false;
     }
+    if (const JsonValue* locales = manifest->Find("locales"))
+    {
+        if (!locales->IsObject())
+        {
+            error = "snowwidget inspect returned an invalid locales object";
+            return false;
+        }
+        for (const auto& [locale, value] : locales->object)
+        {
+            if (!value.IsObject())
+            {
+                error = "snowwidget inspect returned invalid locale metadata";
+                return false;
+            }
+            const auto title = JsonString(value, "title");
+            const auto localizedDescription =
+                JsonString(value, "description");
+            if (!title || !localizedDescription)
+            {
+                error = "snowwidget inspect returned incomplete locale metadata";
+                return false;
+            }
+            inspection.localizations.push_back(
+                WidgetLocalization{ locale, *title,
+                    *localizedDescription });
+        }
+    }
     if (!inspection.valid)
     {
         error = inspection.validationJson;

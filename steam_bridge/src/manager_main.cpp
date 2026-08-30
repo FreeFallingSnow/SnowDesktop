@@ -21,6 +21,7 @@
 #include "preview_cache.h"
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
+#include "workshop_localization.h"
 #include "workshop_project.h"
 #include "resource.h"
 
@@ -618,6 +619,7 @@ private:
                     tagsBuffer_ = JoinTags(project.tags);
                     titleBuffer_.clear();
                     descriptionBuffer_.clear();
+                    localizationStateProjectId_.clear();
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s", path.c_str());
@@ -775,13 +777,36 @@ private:
             if (!store_.Save(error)) SetMessageUnlocked(false, error);
             else SetMessageUnlocked(true, T("标签已保存", "Tags saved"));
         }
-        ImGui::SeparatorText(T("发布", "Publish"));
         const bool creating = !project.publishedFileId.has_value();
+        if (localizationStateProjectId_ != project.localId ||
+            localizationStateCreating_ != creating)
+        {
+            localizationStateProjectId_ = project.localId;
+            localizationStateCreating_ = creating;
+            syncPackageLocalization_ = creating;
+            titleBuffer_.clear();
+            descriptionBuffer_.clear();
+        }
+        ImGui::SeparatorText(T("发布", "Publish"));
         if (creating)
         {
             ImGui::TextWrapped("%s", T(
-                "首次创建必须填写初始标题和说明，项目会以私有状态创建。之后请在 Steam 网页维护资料与公开状态。",
-                "Creation requires an initial title and description. The item is created private; maintain its page and visibility on Steam afterward."));
+                "首次发布默认复用组件包内的多语言标题和说明，并以私有状态创建项目。关闭复用后可手动填写英文回退文案。",
+                "Creation uses the component package's localized titles and descriptions by default and creates the item private. Disable reuse to enter an English fallback manually."));
+        }
+        else
+        {
+            ImGui::TextWrapped("%s", T(
+                "更新默认保留网页端标题和说明。开启包内文案复用后，会同步组件包中 Steam 支持的全部本地化。",
+                "Updates preserve web-managed titles and descriptions by default. Enable package reuse to synchronize every supported localization from the component package."));
+        }
+        BeginSettingRow(T(
+            "复用组件包内的标题和说明",
+            "Reuse component package titles and descriptions"),
+            ImGui::GetFrameHeight());
+        ImGui::Checkbox("##package-localization", &syncPackageLocalization_);
+        if (creating && !syncPackageLocalization_)
+        {
             std::array<char, 256> title{};
             std::copy_n(titleBuffer_.c_str(),
                 std::min(titleBuffer_.size(), title.size() - 1), title.data());
@@ -802,11 +827,8 @@ private:
                         90.0f * gDpiScale)))
                 descriptionBuffer_ = description.data();
         }
-        else
+        if (!creating)
         {
-            ImGui::TextWrapped("%s", T(
-                "更新默认只上传 package.snowwidget 和关联 metadata，不覆盖网页端标题、说明或可见性。",
-                "Updates upload only package.snowwidget and association metadata; web-managed title, description, and visibility are preserved."));
             BeginSettingRow(T("同时更新主预览", "Also update primary preview"),
                 ImGui::GetFrameHeight());
             ImGui::Checkbox("##update-preview", &updatePreview_);
@@ -814,8 +836,10 @@ private:
                 ImGui::GetFrameHeight());
             ImGui::Checkbox("##update-tags", &updateTags_);
         }
+        const bool missingManualTitle = creating &&
+            !syncPackageLocalization_ && titleBuffer_.empty();
         ImGui::BeginDisabled(busy_.load() || submitStarted_.load() ||
-            project.packageId.empty());
+            project.packageId.empty() || missingManualTitle);
         if (BlueButton(creating ? T("创建私有项目并上传", "Create private item and upload") :
                 T("上传新版本", "Upload new version")))
             StartPublish(project.localId);
@@ -894,10 +918,11 @@ private:
     {
         const std::string title = titleBuffer_;
         const std::string description = descriptionBuffer_;
+        const bool syncPackageLocalization = syncPackageLocalization_;
         const bool updatePreview = updatePreview_;
         const bool updateTags = updateTags_;
         StartWork([this, localId = std::move(localId), title, description,
-                   updatePreview, updateTags]
+                   syncPackageLocalization, updatePreview, updateTags]
         {
             WorkshopProject snapshot;
             {
@@ -918,11 +943,38 @@ private:
                 return;
             }
             const bool creating = !snapshot.publishedFileId.has_value();
+            std::vector<SteamWorkshopLocalization> localizations;
+            if (syncPackageLocalization)
+            {
+                localizations = BuildSteamWorkshopLocalizations(
+                    inspection.name, inspection.description,
+                    inspection.localizations);
+            }
+            else if (creating)
+            {
+                localizations.push_back(
+                    SteamWorkshopLocalization{ "english", title,
+                        description });
+            }
+            if (creating && (localizations.empty() ||
+                    localizations.front().language != "english" ||
+                    localizations.front().title.empty()))
+            {
+                SetMessage(false, T(
+                    "组件包必须提供英文标题，或关闭复用后手动填写英文标题。",
+                    "The component package must provide an English title, or disable reuse and enter an English title manually."));
+                return;
+            }
             PublishRequest request;
             request.package = artifact.packagePath;
             request.publishedFileId = snapshot.publishedFileId;
-            request.title = creating ? title : std::string{};
-            if (creating) request.description = description;
+            if (!localizations.empty())
+            {
+                request.title = localizations.front().title;
+                if (!localizations.front().description.empty())
+                    request.description = localizations.front().description;
+                request.language = localizations.front().language;
+            }
             request.metadata = BuildWorkshopMetadata(
                 inspection.packageId, inspection.version);
             if (creating || updatePreview)
@@ -933,26 +985,28 @@ private:
             }
             if (creating || updateTags) request.tags = snapshot.tags;
             CoreError coreError;
-            auto result = steam_.Publish(request,
-                [this, &localId](const PublishProgress& value)
+            const auto progress = [this, &localId](
+                const PublishProgress& value)
+            {
+                if (value.stage == PublishStage::Created)
                 {
-                    if (value.stage == PublishStage::Created)
+                    std::string saveError;
+                    std::lock_guard lock(mutex_);
+                    if (auto* project = FindProjectUnlocked(localId))
                     {
-                        std::string saveError;
-                        std::lock_guard lock(mutex_);
-                        if (auto* project = FindProjectUnlocked(localId))
-                        {
-                            project->publishedFileId = value.publishedFileId;
-                            if (!store_.Save(saveError))
-                                SetMessageUnlocked(false, saveError);
-                        }
+                        project->publishedFileId = value.publishedFileId;
+                        if (!store_.Save(saveError))
+                            SetMessageUnlocked(false, saveError);
                     }
-                    submitStarted_.store(value.submitStarted);
-                    const float fraction = value.total == 0 ? 0.0f :
-                        static_cast<float>(static_cast<double>(value.processed) /
-                            static_cast<double>(value.total));
-                    progressFraction_.store(std::clamp(fraction, 0.0f, 1.0f));
-                }, coreError);
+                }
+                submitStarted_.store(value.submitStarted);
+                const float fraction = value.total == 0 ? 0.0f :
+                    static_cast<float>(static_cast<double>(value.processed) /
+                        static_cast<double>(value.total));
+                progressFraction_.store(std::clamp(fraction, 0.0f, 1.0f));
+            };
+            auto result = steam_.Publish(request,
+                progress, coreError);
             submitStarted_.store(false);
             progressFraction_.store(0.0f);
             if (!result)
@@ -975,7 +1029,44 @@ private:
                         return;
                     }
                 }
-                SetMessageUnlocked(true, result->needsLegalAgreement ?
+            }
+            bool needsLegalAgreement = result->needsLegalAgreement;
+            for (std::size_t index = 1; index < localizations.size(); ++index)
+            {
+                const auto& localized = localizations[index];
+                PublishRequest localizedRequest;
+                localizedRequest.updateContent = false;
+                localizedRequest.publishedFileId = result->publishedFileId;
+                localizedRequest.title = localized.title;
+                if (!localized.description.empty())
+                    localizedRequest.description = localized.description;
+                localizedRequest.language = localized.language;
+                CoreError localizedError;
+                const auto localizedResult = steam_.Publish(
+                    localizedRequest, progress, localizedError);
+                submitStarted_.store(false);
+                progressFraction_.store(0.0f);
+                if (!localizedResult)
+                {
+                    const std::string detail = localizedError.code + ": " +
+                        localizedError.message;
+                    SetMessage(false, T(
+                        "Steam 本地化 %s 提交失败：%s",
+                        "Workshop localization %s failed: %s",
+                        localized.language.c_str(), detail.c_str()));
+                    OpenSteamUrlWithWebFallback(
+                        SteamCommunityItemClientUrl(result->publishedFileId),
+                        result->communityUrl);
+                    return;
+                }
+                needsLegalAgreement = needsLegalAgreement ||
+                    localizedResult->needsLegalAgreement;
+            }
+            {
+                std::lock_guard lock(mutex_);
+                syncPackageLocalization_ = false;
+                localizationStateCreating_ = false;
+                SetMessageUnlocked(true, needsLegalAgreement ?
                     T("上传成功；请在 Steam 页面接受创意工坊协议",
                       "Upload complete; accept the Workshop agreement on Steam") :
                     T("上传成功；已打开 Steam 项目页面",
@@ -1178,6 +1269,9 @@ private:
     std::string tagsBuffer_;
     std::string titleBuffer_;
     std::string descriptionBuffer_;
+    std::string localizationStateProjectId_;
+    bool localizationStateCreating_ = false;
+    bool syncPackageLocalization_ = true;
     bool updatePreview_ = false;
     bool updateTags_ = false;
     bool messageSuccess_ = true;

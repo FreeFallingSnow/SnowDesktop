@@ -7,6 +7,7 @@
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
 #include "steam_workshop_sync.h"
+#include "workshop_localization.h"
 #include "workshop_project.h"
 
 #include <windows.h>
@@ -507,6 +508,43 @@ void TestPublishLifecycle()
         "publish cannot cancel after SubmitItemUpdate starts");
 }
 
+void TestWorkshopLocalization()
+{
+    Check(SteamApiLanguageForLocale("en-US") == "english" &&
+        SteamApiLanguageForLocale("zh-Hans-CN") == "schinese" &&
+        SteamApiLanguageForLocale("zh-Hant-HK") == "tchinese" &&
+        SteamApiLanguageForLocale("pt-BR") == "brazilian" &&
+        SteamApiLanguageForLocale("es-419") == "latam" &&
+        SteamApiLanguageForLocale("ko-KR") == "koreana" &&
+        !SteamApiLanguageForLocale("eo-001"),
+        "BCP-47 component locales map to Steam API language codes");
+
+    const std::vector<WidgetLocalization> source = {
+        { "zh-TW", "音訊頻譜", "繁體說明" },
+        { "es-419", "Espectro", "Descripción" },
+        { "en-US", "Audio Spectrum", "English description" },
+        { "eo-001", "Spektro", "Priskribo" },
+    };
+    const auto localized = BuildSteamWorkshopLocalizations(
+        "Fallback", "Fallback description", source);
+    Check(localized.size() == 3 &&
+        localized[0].language == "english" &&
+        localized[0].title == "Audio Spectrum" &&
+        localized[1].language == "latam" &&
+        localized[2].language == "tchinese",
+        "Workshop localizations are deduplicated and order English first");
+
+    const auto withFallback = BuildSteamWorkshopLocalizations(
+        "Fallback title", "Fallback description",
+        { { "ja-JP", "オーディオスペクトラム", "日本語の説明" } });
+    Check(withFallback.size() == 2 &&
+        withFallback[0].language == "english" &&
+        withFallback[0].title == "Fallback title" &&
+        withFallback[1].language == "japanese",
+        "manifest defaults supply the required English Workshop fallback");
+
+}
+
 void TestSteamWorkshopLocalCache()
 {
     TemporaryDirectory temporary;
@@ -651,6 +689,12 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     Check(tool.Inspect(source, inspection, error),
         "snowwidget inspect returns a validated manifest JSON object");
     if (!inspection.valid) return;
+    const auto localizations = BuildSteamWorkshopLocalizations(
+        inspection.name, inspection.description, inspection.localizations);
+    Check(inspection.localizations.size() >= 5 &&
+        localizations.size() >= 5 &&
+        localizations.front().language == "english",
+        "snowwidget inspect exposes reusable component package localizations");
     Check(tool.Pack(source, inspection, package, error),
         "package tool validates the pack result against inspect");
     Check(std::filesystem::is_regular_file(package.packagePath) &&
@@ -678,6 +722,7 @@ int wmain(int argc, wchar_t** argv)
     TestMetadataBinding();
     TestCommandLineQuoting();
     TestPublishLifecycle();
+    TestWorkshopLocalization();
     if (argc == 3)
     {
         TestAuthoringToolchain(argv[2], argv[1]);

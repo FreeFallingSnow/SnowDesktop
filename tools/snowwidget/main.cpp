@@ -8,6 +8,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cwchar>
 #include <cwctype>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -446,6 +448,25 @@ int wmain(int argc, wchar_t** argv)
         WriteStringArray(std::cout, manifest.permissions);
         std::cout << ",\"networkDomains\":";
         WriteStringArray(std::cout, manifest.networkDomains);
+        std::vector<std::pair<std::string,
+            const snowdesktop::widget::LocalizedMetadata*>> locales;
+        locales.reserve(manifest.locales.size());
+        for (const auto& [locale, localized] : manifest.locales)
+            locales.emplace_back(locale, &localized);
+        std::sort(locales.begin(), locales.end(),
+            [](const auto& left, const auto& right)
+            { return left.first < right.first; });
+        std::cout << ",\"locales\":{";
+        for (std::size_t index = 0; index < locales.size(); ++index)
+        {
+            if (index) std::cout << ',';
+            std::cout << JsonEscape(locales[index].first)
+                << ":{\"title\":"
+                << JsonEscape(locales[index].second->title)
+                << ",\"description\":"
+                << JsonEscape(locales[index].second->description) << '}';
+        }
+        std::cout << '}';
         std::cout << "},\"migration\":{\"required\":"
             << (manifest.schemaVersion < 2 || manifest.apiVersion < 2
                 ? "true" : "false")

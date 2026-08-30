@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "workshop_localization.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -23,6 +25,7 @@ struct WidgetInspection
     std::filesystem::path preview;
     std::vector<std::string> permissions;
     std::vector<std::string> networkDomains;
+    std::vector<WidgetLocalization> localizations;
     std::string validationJson;
 };
 

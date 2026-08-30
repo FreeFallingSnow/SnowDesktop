@@ -611,12 +611,20 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     const PublishRequest& request, const PublishProgressCallback& progress,
     CoreError& error)
 {
-    if (!ValidateFile(request.package, false, error)) return std::nullopt;
+    if (request.updateContent &&
+        !ValidateFile(request.package, false, error))
+        return std::nullopt;
     if (request.preview && !ValidateFile(*request.preview, true, error))
         return std::nullopt;
     const bool creating = !request.publishedFileId.has_value();
     PublishLifecycle lifecycle;
     lifecycle.Begin(creating);
+    if (creating && !request.updateContent)
+    {
+        SetError(error, kInvalidArguments, "content_required",
+            "creating a Workshop item requires component content");
+        return std::nullopt;
+    }
     if (creating && request.title.empty())
     {
         SetError(error, kInvalidArguments, "title_required",
@@ -643,36 +651,40 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     if (!RequireLoggedOn(error)) return std::nullopt;
     std::error_code ec;
     UploadDirectory upload;
-    std::filesystem::create_directories(stagingRoot_, ec);
-    const DWORD stagingAttributes = GetFileAttributesW(stagingRoot_.c_str());
-    if (ec || stagingRoot_.empty() ||
-        stagingAttributes == INVALID_FILE_ATTRIBUTES ||
-        (stagingAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-        (stagingAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+    if (request.updateContent)
     {
-        SetError(error, kSteamOperationFailed, "staging_failed",
-            "cannot prepare the data Workshop upload directory");
-        return std::nullopt;
-    }
-    upload.root = stagingRoot_ /
-        (L"upload-" + std::to_wstring(GetCurrentProcessId()) +
-         L"-" + std::to_wstring(std::chrono::steady_clock::now()
-             .time_since_epoch().count()));
-    std::filesystem::create_directory(upload.root, ec);
-    if (ec)
-    {
-        SetError(error, kSteamOperationFailed, "staging_failed",
-            "cannot create the temporary Workshop upload directory");
-        return std::nullopt;
-    }
-    std::filesystem::copy_file(request.package,
-        upload.root / L"package.snowwidget",
-        std::filesystem::copy_options::none, ec);
-    if (ec)
-    {
-        SetError(error, kSteamOperationFailed, "staging_failed",
-            "cannot stage package.snowwidget");
-        return std::nullopt;
+        std::filesystem::create_directories(stagingRoot_, ec);
+        const DWORD stagingAttributes =
+            GetFileAttributesW(stagingRoot_.c_str());
+        if (ec || stagingRoot_.empty() ||
+            stagingAttributes == INVALID_FILE_ATTRIBUTES ||
+            (stagingAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+            (stagingAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            SetError(error, kSteamOperationFailed, "staging_failed",
+                "cannot prepare the data Workshop upload directory");
+            return std::nullopt;
+        }
+        upload.root = stagingRoot_ /
+            (L"upload-" + std::to_wstring(GetCurrentProcessId()) +
+             L"-" + std::to_wstring(std::chrono::steady_clock::now()
+                 .time_since_epoch().count()));
+        std::filesystem::create_directory(upload.root, ec);
+        if (ec)
+        {
+            SetError(error, kSteamOperationFailed, "staging_failed",
+                "cannot create the temporary Workshop upload directory");
+            return std::nullopt;
+        }
+        std::filesystem::copy_file(request.package,
+            upload.root / L"package.snowwidget",
+            std::filesystem::copy_options::none, ec);
+        if (ec)
+        {
+            SetError(error, kSteamOperationFailed, "staging_failed",
+                "cannot stage package.snowwidget");
+            return std::nullopt;
+        }
     }
     ISteamUGC* ugc = SteamUGC();
     ISteamUtils* utils = SteamUtils();
@@ -716,12 +728,15 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             "Steam returned an invalid Workshop update handle");
         return std::nullopt;
     }
-    const std::string contentPath = WideToUtf8(upload.root.wstring());
-    if (!ugc->SetItemContent(update, contentPath.c_str()))
+    if (request.updateContent)
     {
-        SetError(error, kSteamOperationFailed, "content_rejected",
-            "Steam rejected the Workshop content directory");
-        return std::nullopt;
+        const std::string contentPath = WideToUtf8(upload.root.wstring());
+        if (!ugc->SetItemContent(update, contentPath.c_str()))
+        {
+            SetError(error, kSteamOperationFailed, "content_rejected",
+                "Steam rejected the Workshop content directory");
+            return std::nullopt;
+        }
     }
     if (request.preview)
     {
@@ -733,29 +748,32 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             return std::nullopt;
         }
     }
-    if (creating)
-    {
-        if (!ugc->SetItemTitle(update, request.title.c_str()) ||
-            !ugc->SetItemVisibility(update,
-                k_ERemoteStoragePublishedFileVisibilityPrivate))
-        {
-            SetError(error, kSteamOperationFailed, "initial_fields_rejected",
-                "Steam rejected the initial title or private visibility");
-            return std::nullopt;
-        }
-        if (request.description && !ugc->SetItemDescription(update,
-                request.description->c_str()))
-        {
-            SetError(error, kSteamOperationFailed, "description_rejected",
-                "Steam rejected the initial description");
-            return std::nullopt;
-        }
-    }
     if (request.language && !ugc->SetItemUpdateLanguage(update,
             request.language->c_str()))
     {
         SetError(error, kSteamOperationFailed, "language_rejected",
             "Steam rejected the Workshop language");
+        return std::nullopt;
+    }
+    if (!request.title.empty() &&
+        !ugc->SetItemTitle(update, request.title.c_str()))
+    {
+        SetError(error, kSteamOperationFailed, "title_rejected",
+            "Steam rejected the Workshop title");
+        return std::nullopt;
+    }
+    if (request.description && !ugc->SetItemDescription(update,
+            request.description->c_str()))
+    {
+        SetError(error, kSteamOperationFailed, "description_rejected",
+            "Steam rejected the Workshop description");
+        return std::nullopt;
+    }
+    if (creating && !ugc->SetItemVisibility(update,
+            k_ERemoteStoragePublishedFileVisibilityPrivate))
+    {
+        SetError(error, kSteamOperationFailed, "visibility_rejected",
+            "Steam rejected private Workshop visibility");
         return std::nullopt;
     }
     if (request.metadata && !ugc->SetItemMetadata(update,

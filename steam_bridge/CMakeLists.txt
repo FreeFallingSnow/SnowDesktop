@@ -25,6 +25,7 @@ add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/authoring_toolchain.cpp
     src/manager_localization.cpp
     src/package_tool.cpp
+    src/workshop_localization.cpp
     src/workshop_project.cpp)
 target_compile_features(SnowDesktopWorkshopManagerSupport PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopWorkshopManagerSupport PUBLIC
