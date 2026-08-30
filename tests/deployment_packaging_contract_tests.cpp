@@ -508,7 +508,7 @@ void TestAutoStartTransitionManifest(const std::string& manifest)
 void TestOwnedRuntimeStaging(const std::string& dropExtraction,
     const std::string& widgetPackages, const std::string& snowwidget,
     const std::string& packageTool, const std::string& workshopCore,
-    const std::string& workshopManager,
+    const std::string& workshopManager, const std::string& workshopSource,
     const std::string& workshopProjects)
 {
     Check(dropExtraction.find("GetTempPathW") == std::string::npos &&
@@ -541,6 +541,10 @@ void TestOwnedRuntimeStaging(const std::string& dropExtraction,
             workshopProjects.find("MigrateWorkshopManagerDataOnce") !=
                 std::string::npos,
         "the Workshop Manager shares the main data root and scans its former store only once");
+    Check(workshopSource.find("PackagePaths{}") == std::string::npos &&
+            workshopSource.find("PackagePaths::ForCurrentDeployment()") !=
+                std::string::npos,
+        "Workshop subscription validation uses the deployment data staging directory");
 }
 }
 
@@ -589,6 +593,7 @@ int main(int argc, char** argv)
             ReadText(root / "steam_bridge/src/package_tool.cpp"),
             ReadText(root / "steam_bridge/src/steam_workshop_core.cpp"),
             ReadText(root / "steam_bridge/src/manager_main.cpp"),
+            ReadText(root / "src/steam_workshop_source.cpp"),
             ReadText(root / "steam_bridge/src/workshop_project.cpp"));
     }
 

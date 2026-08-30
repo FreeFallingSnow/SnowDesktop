@@ -481,7 +481,8 @@ SteamWorkshopSource::ResolveInstalledFolder(
         return std::nullopt;
     }
 
-    WidgetPackageManager validationManager(PackagePaths{});
+    WidgetPackageManager validationManager(
+        PackagePaths::ForCurrentDeployment());
     PackageManifest manifest;
     const ValidationReport validation =
         validationManager.ValidateArchive(artifact, &manifest);
@@ -801,7 +802,8 @@ std::optional<PackageArtifact> SteamWorkshopSource::Materialize(
             filesystemError.message();
         return std::nullopt;
     }
-    WidgetPackageManager validationManager(PackagePaths{});
+    WidgetPackageManager validationManager(
+        PackagePaths::ForCurrentDeployment());
     PackageManifest copiedManifest;
     const ValidationReport copiedValidation =
         validationManager.ValidateArchive(destination, &copiedManifest);
