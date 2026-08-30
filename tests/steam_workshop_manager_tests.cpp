@@ -878,6 +878,11 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
             source.find("MergeMode = true") != std::string::npos &&
             source.find("GetGlyphRangesKorean()") != std::string::npos,
         "Workshop Manager merges a Korean system font and Hangul glyph range");
+    Check(source.find("BuildComponentPublishPlan(") != std::string::npos &&
+            source.find("ExecuteComponentPublishPlan(") !=
+                std::string::npos &&
+            source.find("steam_.Publish(") == std::string::npos,
+        "Workshop Manager and Agent CLI share one component publish planner and executor");
 }
 }
 
