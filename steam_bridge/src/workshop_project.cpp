@@ -375,6 +375,77 @@ bool MigrateWorkshopManagerData(const std::filesystem::path& legacyRoot,
     return true;
 }
 
+bool MigrateWorkshopManagerDataOnce(
+    const std::filesystem::path& targetRoot, std::string& error,
+    std::optional<std::filesystem::path> legacyRoot)
+{
+    error.clear();
+    if (targetRoot.empty() || IsReparsePoint(targetRoot))
+    {
+        error = "Workshop Manager data directory is unavailable or unsafe";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(targetRoot, ec);
+    if (ec || IsReparsePoint(targetRoot))
+    {
+        error = "cannot create Workshop Manager data directory";
+        return false;
+    }
+    const auto marker = targetRoot /
+        L".legacy-localappdata-migrated-v1";
+    if (std::filesystem::exists(marker, ec))
+    {
+        if (!ec && std::filesystem::is_regular_file(marker, ec) && !ec &&
+            !IsReparsePoint(marker))
+            return true;
+        error = "Workshop Manager migration marker is unsafe";
+        return false;
+    }
+    if (ec)
+    {
+        error = "cannot inspect Workshop Manager migration state";
+        return false;
+    }
+
+    if (!legacyRoot)
+    {
+        const auto resolved = LegacyWorkshopManagerDataRoot();
+        if (resolved.empty())
+        {
+            error = "cannot resolve the legacy Workshop Manager data directory";
+            return false;
+        }
+        legacyRoot = resolved;
+    }
+    if (!MigrateWorkshopManagerData(*legacyRoot, targetRoot, error))
+        return false;
+
+    HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        if (GetLastError() == ERROR_FILE_EXISTS &&
+            !IsReparsePoint(marker))
+            return true;
+        error = "cannot record Workshop Manager data migration";
+        return false;
+    }
+    static constexpr char content[] = "completed\n";
+    DWORD written = 0;
+    const bool saved = WriteFile(file, content,
+        static_cast<DWORD>(sizeof(content) - 1), &written, nullptr) &&
+        written == static_cast<DWORD>(sizeof(content) - 1);
+    CloseHandle(file);
+    if (!saved)
+    {
+        DeleteFileW(marker.c_str());
+        error = "cannot record Workshop Manager data migration";
+        return false;
+    }
+    return true;
+}
+
 std::filesystem::path ProjectStore::StorePath() const
 {
     return root_ / L"projects.json";

@@ -364,7 +364,8 @@ void TestWorkshopManagerDataMigration()
     std::ofstream(legacyRoot / L"preview-cache" / L"123.preview",
         std::ios::binary) << "preview data";
 
-    Check(MigrateWorkshopManagerData(legacyRoot, targetRoot, error),
+    Check(MigrateWorkshopManagerDataOnce(
+            targetRoot, error, legacyRoot),
         "Workshop Manager data migrates into the SnowDesktop data root");
     Check(targetRoot == dataDirectory / L"SteamWorkshopManager" &&
             std::filesystem::is_regular_file(
@@ -374,13 +375,23 @@ void TestWorkshopManagerDataMigration()
             std::filesystem::is_regular_file(
                 targetRoot / L"projects.json.tmp") &&
             std::filesystem::is_regular_file(
-                targetRoot / L"preview-cache" / L"123.preview"),
+                targetRoot / L"preview-cache" / L"123.preview") &&
+            std::filesystem::is_regular_file(targetRoot /
+                L".legacy-localappdata-migrated-v1"),
         "project state, backup, temporary state, and previews share the data directory");
     Check(!std::filesystem::exists(legacyRoot),
         "successful Workshop Manager migration removes the empty legacy root");
     ProjectStore migratedStore(targetRoot);
     Check(migratedStore.Load(error),
         "the migrated Workshop Manager project store remains readable");
+    std::filesystem::create_directories(legacyRoot);
+    std::ofstream(legacyRoot / L"projects.json.tmp", std::ios::binary)
+        << "must remain untouched after the migration marker";
+    Check(MigrateWorkshopManagerDataOnce(
+            targetRoot, error, legacyRoot) &&
+            std::filesystem::is_regular_file(
+                legacyRoot / L"projects.json.tmp"),
+        "the completed migration marker prevents later legacy-directory access");
 }
 
 void TestMetadataBinding()
@@ -594,7 +605,10 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
 void TestRealPackageTool(const std::filesystem::path& executable,
     const std::filesystem::path& repositoryRoot)
 {
-    PackageTool tool(executable);
+    TemporaryDirectory temporaryRoot;
+    const auto stagingRoot = temporaryRoot.path / L"data" /
+        L"SteamWorkshopManager" / L"staging" / L"packages";
+    PackageTool tool(executable, stagingRoot);
     const std::wstring capabilitiesCommand = L"\"" + executable.wstring() +
         L"\" capabilities";
     FILE* capabilitiesPipe = _wpopen(capabilitiesCommand.c_str(), L"rt");
@@ -640,6 +654,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     Check(tool.Pack(source, inspection, package, error),
         "package tool validates the pack result against inspect");
     Check(std::filesystem::is_regular_file(package.packagePath) &&
+        package.temporaryDirectory.parent_path() == stagingRoot &&
         package.packageId == inspection.packageId &&
         package.version == inspection.version && package.sha256.size() == 64,
         "packed package has matching ID, version, hash, and output file");

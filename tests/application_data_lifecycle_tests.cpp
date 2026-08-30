@@ -1720,6 +1720,12 @@ int main()
         L"temporary.txt", "excluded staging\n");
     Write(fullBackupData / L"widgets" / L"quarantine" /
         L"bad.txt", "excluded quarantine\n");
+    Write(fullBackupData / L"snowwidget" / L"preview-results" /
+        L"result.json", "excluded tool scratch\n");
+    Write(fullBackupData / L"SteamWorkshop" / L"staging" /
+        L"uploads" / L"package.snowwidget", "excluded upload staging\n");
+    Write(fullBackupData / L"SteamWorkshopManager" / L"staging" /
+        L"packages" / L"package.snowwidget", "excluded manager staging\n");
     std::filesystem::path longBackupRelative;
     for (int index = 0; index < 4; ++index)
     {
@@ -1789,8 +1795,16 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"widgets" / L"staging") &&
         !std::filesystem::exists(
-            createdFullBackup.backup.data / L"widgets" / L"quarantine"),
-        "complete backup excludes logs, dumps, runtime hooks, staging, and quarantine");
+            createdFullBackup.backup.data / L"widgets" / L"quarantine") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"snowwidget") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"SteamWorkshop" /
+                L"staging") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"SteamWorkshopManager" /
+                L"staging"),
+        "complete backup excludes logs, dumps, runtime hooks, tool scratch, staging, and quarantine");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.root / L"PrivateState") &&
         !std::filesystem::exists(

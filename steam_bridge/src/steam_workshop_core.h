@@ -127,7 +127,7 @@ using PublishProgressCallback = std::function<void(const PublishProgress&)>;
 class SteamWorkshopCore
 {
 public:
-    SteamWorkshopCore();
+    explicit SteamWorkshopCore(std::filesystem::path stagingRoot = {});
     ~SteamWorkshopCore();
     SteamWorkshopCore(const SteamWorkshopCore&) = delete;
     SteamWorkshopCore& operator=(const SteamWorkshopCore&) = delete;
@@ -141,8 +141,10 @@ public:
         std::chrono::seconds timeout, CoreError& error);
     std::optional<PublishResult> Publish(const PublishRequest& request,
         const PublishProgressCallback& progress, CoreError& error);
+    const std::filesystem::path& StagingRoot() const { return stagingRoot_; }
 
 private:
+    std::filesystem::path stagingRoot_;
     mutable std::mutex statusMutex_;
     SteamStatus status_;
 };

@@ -46,7 +46,8 @@ struct PackagedWidget
 class PackageTool
 {
 public:
-    explicit PackageTool(std::filesystem::path executable = {});
+    explicit PackageTool(std::filesystem::path executable = {},
+        std::filesystem::path stagingRoot = {});
 
     bool Inspect(const std::filesystem::path& source,
         WidgetInspection& inspection, std::string& error) const;
@@ -54,11 +55,13 @@ public:
         const WidgetInspection& expected, PackagedWidget& package,
         std::string& error) const;
     const std::filesystem::path& Executable() const { return executable_; }
+    const std::filesystem::path& StagingRoot() const { return stagingRoot_; }
 
 private:
     bool Run(const std::vector<std::wstring>& arguments,
         std::string& output, std::string& error, unsigned timeoutMs) const;
     std::filesystem::path executable_;
+    std::filesystem::path stagingRoot_;
 };
 
 std::wstring QuoteWindowsArgument(std::wstring_view argument);

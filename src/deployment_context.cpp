@@ -437,28 +437,71 @@ void CleanupStaleRuntimeDirectories(
     }
 }
 
-void CleanupLegacyRuntimeRoots()
+bool CleanupLegacyRuntimeRoots()
 {
     const std::filesystem::path temporary = GetTemporaryDirectory();
     if (temporary.empty())
-        return;
+        return false;
     const std::filesystem::path legacyParent = temporary / L"SnowDesktop";
     if (IsReparsePoint(legacyParent))
-        return;
+        return false;
+    bool complete = true;
     for (const wchar_t* name : {
              L"RuntimeHooks", L"TaskbarHook", L"ShellHook" })
     {
         const std::filesystem::path root = legacyParent / name;
         std::error_code error;
-        if (!std::filesystem::is_directory(root, error) || error ||
-            IsReparsePoint(root))
+        if (!std::filesystem::exists(root, error))
+        {
+            if (error) complete = false;
             continue;
+        }
+        if (error || !std::filesystem::is_directory(root, error) || error ||
+            IsReparsePoint(root))
+        {
+            complete = false;
+            continue;
+        }
         CleanupStaleRuntimeDirectories(root);
         error.clear();
         std::filesystem::remove(root, error);
+        error.clear();
+        if (std::filesystem::exists(root, error) || error)
+            complete = false;
     }
     std::error_code error;
     std::filesystem::remove(legacyParent, error);
+    return complete;
+}
+
+void CleanupLegacyRuntimeRootsOnce(const std::filesystem::path& data)
+{
+    const auto markerRoot = data / L"migrations";
+    const auto marker = markerRoot / L"legacy-shell-hook-temp-v1.done";
+    const DWORD attributes = GetFileAttributesW(marker.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+        return;
+    if (!CleanupLegacyRuntimeRoots())
+        return;
+
+    std::error_code error;
+    std::filesystem::create_directories(markerRoot, error);
+    if (error || IsReparsePoint(markerRoot))
+        return;
+    HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    static constexpr char content[] = "completed\n";
+    DWORD written = 0;
+    const bool saved = WriteFile(file, content,
+        static_cast<DWORD>(sizeof(content) - 1), &written, nullptr) &&
+        written == static_cast<DWORD>(sizeof(content) - 1);
+    CloseHandle(file);
+    if (!saved)
+        DeleteFileW(marker.c_str());
 }
 
 class InjectableRuntimeDirectory
@@ -478,7 +521,7 @@ public:
             copiesRoot_.clear();
             return;
         }
-        CleanupLegacyRuntimeRoots();
+        CleanupLegacyRuntimeRootsOnce(data);
         CleanupStaleRuntimeDirectories(copiesRoot_);
 
         path_ = copiesRoot_ / (std::wstring(kVersion) + L"-" +

@@ -28,6 +28,16 @@ namespace
 constexpr std::uint64_t kMaximumPackageBytes = 20ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaximumPreviewBytes = 1024ull * 1024ull - 1ull;
 
+std::filesystem::path ExecutableDirectory()
+{
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(),
+        static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) return {};
+    path.resize(length);
+    return std::filesystem::path(path).parent_path();
+}
+
 std::string WideToUtf8(std::wstring_view value)
 {
     if (value.empty()) return {};
@@ -224,7 +234,11 @@ struct UploadDirectory
 #endif
 }
 
-SteamWorkshopCore::SteamWorkshopCore()
+SteamWorkshopCore::SteamWorkshopCore(std::filesystem::path stagingRoot)
+    : stagingRoot_(stagingRoot.empty()
+        ? ExecutableDirectory() / L"data" / L"SteamWorkshop" /
+            L"staging" / L"uploads"
+        : std::move(stagingRoot))
 {
     status_.expectedAppId = kSteamAppId;
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -629,15 +643,19 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     if (!RequireLoggedOn(error)) return std::nullopt;
     std::error_code ec;
     UploadDirectory upload;
-    const auto temporaryRoot = std::filesystem::temp_directory_path(ec);
-    if (ec || temporaryRoot.empty())
+    std::filesystem::create_directories(stagingRoot_, ec);
+    const DWORD stagingAttributes = GetFileAttributesW(stagingRoot_.c_str());
+    if (ec || stagingRoot_.empty() ||
+        stagingAttributes == INVALID_FILE_ATTRIBUTES ||
+        (stagingAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (stagingAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
     {
         SetError(error, kSteamOperationFailed, "staging_failed",
-            "cannot resolve the temporary Workshop upload directory");
+            "cannot prepare the data Workshop upload directory");
         return std::nullopt;
     }
-    upload.root = temporaryRoot /
-        (L"SnowDesktopSteamUpload-" + std::to_wstring(GetCurrentProcessId()) +
+    upload.root = stagingRoot_ /
+        (L"upload-" + std::to_wstring(GetCurrentProcessId()) +
          L"-" + std::to_wstring(std::chrono::steady_clock::now()
              .time_since_epoch().count()));
     std::filesystem::create_directory(upload.root, ec);

@@ -118,6 +118,45 @@ std::filesystem::path CurrentExecutablePath()
     }
 }
 
+std::optional<std::filesystem::path> ToolOwnedDirectory(
+    std::wstring_view name)
+{
+    const auto executable = CurrentExecutablePath();
+    if (executable.empty()) return std::nullopt;
+    const auto directory = executable.parent_path() / L"data" /
+        L"snowwidget" / std::wstring(name);
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) return std::nullopt;
+    const DWORD attributes = GetFileAttributesW(directory.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return std::nullopt;
+    return directory;
+}
+
+std::optional<std::filesystem::path> CreateOwnedTransactionDirectory(
+    std::wstring_view area, std::wstring_view prefix)
+{
+    const auto root = ToolOwnedDirectory(area);
+    if (!root) return std::nullopt;
+    for (unsigned int attempt = 0; attempt < 100; ++attempt)
+    {
+        const auto candidate = *root /
+            (std::wstring(prefix) + L"-" +
+                std::to_wstring(GetCurrentProcessId()) + L"-" +
+                std::to_wstring(GetTickCount64()) + L"-" +
+                std::to_wstring(attempt));
+        std::error_code error;
+        if (std::filesystem::create_directory(candidate, error))
+            return candidate;
+        if (error && error != std::errc::file_exists)
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 std::optional<std::filesystem::path> FindPreviewHost(
     const std::filesystem::path& explicitHost)
 {
@@ -207,12 +246,27 @@ bool ParseInteger(std::wstring_view text, int minimum,
 
 std::optional<std::filesystem::path> CreateResultPath()
 {
-    wchar_t temporaryDirectory[MAX_PATH]{};
-    if (!GetTempPathW(MAX_PATH, temporaryDirectory)) return std::nullopt;
-    wchar_t temporaryFile[MAX_PATH]{};
-    if (!GetTempFileNameW(temporaryDirectory, L"swp", 0, temporaryFile))
-        return std::nullopt;
-    return std::filesystem::path(temporaryFile);
+    const auto directory = ToolOwnedDirectory(L"preview-results");
+    if (!directory) return std::nullopt;
+    for (unsigned int attempt = 0; attempt < 100; ++attempt)
+    {
+        const auto candidate = *directory /
+            (L"result-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                std::to_wstring(GetTickCount64()) + L"-" +
+                std::to_wstring(attempt) + L".json");
+        HANDLE file = CreateFileW(candidate.c_str(), GENERIC_WRITE, 0,
+            nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(file);
+            return candidate;
+        }
+        const DWORD createError = GetLastError();
+        if (createError != ERROR_FILE_EXISTS &&
+            createError != ERROR_ALREADY_EXISTS)
+            return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 std::string ReadUtf8File(const std::filesystem::path& path)
@@ -360,6 +414,8 @@ int wmain(int argc, wchar_t** argv)
     const std::wstring command = argv[1];
     const std::filesystem::path source = argv[2];
     snowdesktop::widget::PackagePaths paths;
+    if (const auto staging = ToolOwnedDirectory(L"package-staging"))
+        paths.staging = *staging;
     snowdesktop::widget::WidgetPackageManager manager(paths);
     snowdesktop::widget::ValidationReport report;
     snowdesktop::widget::PackageArtifact artifact;
@@ -701,18 +757,18 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << report.ToJson() << '\n';
             return 1;
         }
-        wchar_t temporaryRoot[MAX_PATH]{};
-        if (!GetTempPathW(MAX_PATH, temporaryRoot))
+        const auto transaction = CreateOwnedTransactionDirectory(
+            L"publish-staging", L"publish");
+        if (!transaction)
         {
-            std::cerr << "cannot resolve temporary directory\n";
+            std::cerr << "cannot create the data staging directory\n";
             return 1;
         }
-        const auto temporary = std::filesystem::path(temporaryRoot) /
-            (L"SnowDesktop-" + std::wstring(argv[2]).substr(
-                std::wstring(argv[2]).find_last_of(L"\\/") + 1) +
-                L".snowwidget");
+        const auto temporary = *transaction / L"package.snowwidget";
         if (!manager.ExportDirectory(source, temporary, artifact, report, error))
         {
+            std::error_code cleanupError;
+            std::filesystem::remove_all(*transaction, cleanupError);
             std::cerr << report.ToJson() << '\n' << error << '\n';
             return 1;
         }
@@ -723,7 +779,7 @@ int wmain(int argc, wchar_t** argv)
         request.description = manifest.description;
         const auto result = publisher.Publish(request);
         std::error_code ec;
-        std::filesystem::remove(temporary, ec);
+        std::filesystem::remove_all(*transaction, ec);
         if (!result.ok)
         {
             std::cerr << result.error << '\n';

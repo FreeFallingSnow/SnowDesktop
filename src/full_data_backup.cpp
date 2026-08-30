@@ -234,6 +234,8 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
         return true;
     if (_wcsicmp(first.c_str(), L"ShellHook") == 0)
         return true;
+    if (_wcsicmp(first.c_str(), L"snowwidget") == 0)
+        return true;
     if (_wcsicmp(first.c_str(), L"SnowDesktop.log") == 0 ||
         _wcsicmp(first.c_str(), L"SnowDesktop.log.1") == 0 ||
         _wcsicmp(first.c_str(), L"SnowDesktop_crash.log") == 0)
@@ -250,6 +252,14 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
                 return true;
             }
         }
+    }
+    if (_wcsicmp(first.c_str(), L"SteamWorkshop") == 0 ||
+        _wcsicmp(first.c_str(), L"SteamWorkshopManager") == 0)
+    {
+        ++part;
+        if (part != relative.end() &&
+            _wcsicmp(part->wstring().c_str(), L"staging") == 0)
+            return true;
     }
     return false;
 }

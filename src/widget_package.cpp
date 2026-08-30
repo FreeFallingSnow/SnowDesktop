@@ -2730,15 +2730,20 @@ ValidationReport WidgetPackageManager::ValidateArchive(
     ValidationReport report = validator_.ValidateArchive(archive);
     if (!report.Ok()) return report;
     std::error_code ec;
-    const auto temporaryRoot = std::filesystem::temp_directory_path(ec);
-    if (ec)
+    if (paths_.staging.empty())
     {
         report.Add(ValidationSeverity::Error, "archive.staging", archive,
-            "cannot resolve the validation staging directory");
+            "the validation staging directory is not configured");
         return report;
     }
-    const auto staging = temporaryRoot /
-        Utf8ToWide("SnowDesktopWidgetValidation-" + GenerateUuid());
+    std::filesystem::create_directories(paths_.staging, ec);
+    if (ec || HasReparsePoint(paths_.staging))
+    {
+        report.Add(ValidationSeverity::Error, "archive.staging", archive,
+            "cannot prepare the validation staging directory");
+        return report;
+    }
+    const auto staging = CreateStagingPath("validation");
     std::string error;
     report = {};
     if (!ExtractArchive(archive, staging, report, error))

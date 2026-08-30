@@ -60,6 +60,9 @@ std::filesystem::path WorkshopManagerDataRoot(
 std::filesystem::path LegacyWorkshopManagerDataRoot();
 bool MigrateWorkshopManagerData(const std::filesystem::path& legacyRoot,
     const std::filesystem::path& targetRoot, std::string& error);
+bool MigrateWorkshopManagerDataOnce(
+    const std::filesystem::path& targetRoot, std::string& error,
+    std::optional<std::filesystem::path> legacyRoot = std::nullopt);
 
 std::string BuildWorkshopMetadata(
     std::string_view packageId, std::string_view version);

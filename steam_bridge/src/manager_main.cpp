@@ -348,17 +348,36 @@ public:
           settingsFile_(std::move(arguments.settingsFile)),
           currentLanguage_(std::move(arguments.language)),
           store_(managerRoot_),
-          previewCache_(managerRoot_ / L"preview-cache")
+          packageTool_({}, managerRoot_ / L"staging" / L"packages"),
+          previewCache_(managerRoot_ / L"preview-cache"),
+          steam_(managerRoot_ / L"staging" / L"uploads")
     {
         std::string error;
         if (!localization_.Load(languageDirectory, currentLanguage_, error))
             SetMessage(false, error);
         error.clear();
-        if (!MigrateWorkshopManagerData(
-                LegacyWorkshopManagerDataRoot(), managerRoot_, error))
+        if (!MigrateWorkshopManagerDataOnce(managerRoot_, error))
             SetMessage(false, error);
         error.clear();
         std::error_code directoryError;
+        const auto stagingRoot = managerRoot_ / L"staging";
+        if (const DWORD attributes = GetFileAttributesW(stagingRoot.c_str());
+            attributes != INVALID_FILE_ATTRIBUTES &&
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            SetMessage(false, "Workshop Manager staging directory is unsafe");
+        }
+        else
+        {
+            std::filesystem::remove_all(stagingRoot, directoryError);
+            if (!directoryError)
+                std::filesystem::create_directories(
+                    stagingRoot, directoryError);
+            if (directoryError)
+                SetMessage(false,
+                    "cannot reset Workshop Manager data staging directory");
+        }
+        directoryError.clear();
         if (!developmentRoot_.empty())
             std::filesystem::create_directories(
                 developmentRoot_, directoryError);

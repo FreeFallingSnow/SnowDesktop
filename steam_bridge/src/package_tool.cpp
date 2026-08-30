@@ -134,9 +134,14 @@ void PackagedWidget::Cleanup()
     packagePath.clear();
 }
 
-PackageTool::PackageTool(std::filesystem::path executable)
+PackageTool::PackageTool(std::filesystem::path executable,
+    std::filesystem::path stagingRoot)
     : executable_(executable.empty() ? SiblingSnowwidget() :
-        std::move(executable))
+        std::move(executable)),
+      stagingRoot_(stagingRoot.empty()
+        ? executable_.parent_path() / L"data" / L"SteamWorkshopManager" /
+            L"staging" / L"packages"
+        : std::move(stagingRoot))
 {
 }
 
@@ -332,14 +337,22 @@ bool PackageTool::Pack(const std::filesystem::path& source,
 {
     package.Cleanup();
     std::error_code ec;
-    const auto temporaryRoot = std::filesystem::temp_directory_path(ec);
-    if (ec || temporaryRoot.empty())
+    std::filesystem::create_directories(stagingRoot_, ec);
+    if (ec || stagingRoot_.empty())
     {
-        error = "cannot resolve the temporary directory";
+        error = "cannot prepare the data package staging directory";
         return false;
     }
-    package.temporaryDirectory = temporaryRoot /
-        (L"SnowDesktopWorkshopManager-" +
+    const DWORD stagingAttributes = GetFileAttributesW(stagingRoot_.c_str());
+    if (stagingAttributes == INVALID_FILE_ATTRIBUTES ||
+        (stagingAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (stagingAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+    {
+        error = "the data package staging directory is unsafe";
+        return false;
+    }
+    package.temporaryDirectory = stagingRoot_ /
+        (L"package-" +
          std::to_wstring(GetCurrentProcessId()) + L"-" +
          std::to_wstring(std::chrono::steady_clock::now()
              .time_since_epoch().count()));

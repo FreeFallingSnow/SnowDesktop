@@ -134,11 +134,14 @@ partially written, or in-progress cache states never trigger automatic removal.
 The supported graphical workflow is `SnowDesktopWorkshopManager.exe`. It keeps
 its schema-v1 project library at
 `<SnowDesktop data>\SteamWorkshopManager\projects.json` (and migrates the
-former `%LOCALAPPDATA%` store on first launch), discovers the
+former `%LOCALAPPDATA%` store once, recording completion under the new data
+root so later launches do not scan the old directory), discovers the
 directory supplied with `--development-root`, and runs the separate
 `snowwidget.exe` process for authoritative validation and packaging. It never
 stores a Steam password or token. Removing a project removes only the local
-record.
+record. Manager package staging, Steam upload staging, previews, and the
+standalone CLI's scratch files all stay below the SnowDesktop `data` directory;
+they do not use the system temporary directory.
 
 New items are created private. On update, title, description, and visibility
 are left untouched; primary preview and tags change only when selected. After a

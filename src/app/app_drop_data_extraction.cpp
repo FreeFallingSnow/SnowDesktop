@@ -3,6 +3,62 @@
 
 // OLE file, URL, image and text payload extraction.
 
+namespace
+{
+std::filesystem::path DropContentDirectory()
+{
+    const std::filesystem::path root(
+        GetDataSubdirectoryPath(L"DropContent"));
+    const DWORD attributes = GetFileAttributesW(root.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return {};
+    return root;
+}
+
+std::wstring SafeDropFilename(std::wstring filename,
+    std::wstring_view fallback)
+{
+    for (auto& character : filename)
+    {
+        if (character < L' ' || character == L'\\' || character == L'/' ||
+            character == L':' || character == L'*' || character == L'?' ||
+            character == L'"' || character == L'<' || character == L'>' ||
+            character == L'|')
+            character = L'_';
+    }
+    while (!filename.empty() &&
+        (filename.back() == L' ' || filename.back() == L'.'))
+        filename.pop_back();
+    if (filename.empty() || filename == L"." || filename == L"..")
+        filename = fallback;
+    return filename;
+}
+
+std::filesystem::path UniqueDropContentPath(std::wstring filename,
+    std::wstring_view fallback)
+{
+    const auto root = DropContentDirectory();
+    if (root.empty()) return {};
+    filename = SafeDropFilename(std::move(filename), fallback);
+    const std::filesystem::path original(filename);
+    const std::wstring stem = original.stem().wstring();
+    const std::wstring extension = original.extension().wstring();
+    for (unsigned int suffix = 0; suffix < 10000; ++suffix)
+    {
+        const std::filesystem::path candidate = root /
+            (suffix == 0 ? filename :
+                stem + L" (" + std::to_wstring(suffix) + L")" + extension);
+        const DWORD attributes = GetFileAttributesW(candidate.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES &&
+            GetLastError() == ERROR_FILE_NOT_FOUND)
+            return candidate;
+    }
+    return {};
+}
+}
+
 std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
 {
     std::vector<std::wstring> paths;
@@ -75,7 +131,7 @@ bool DesktopApp::IsFileDownloadUrl(const std::wstring& url, std::wstring& fileNa
 /**
  * @brief 处理 URL 内容：文件链接则下载，否则创建 .lnk
  * @param url URL 字符串
- * @return 临时文件路径
+ * @return data 目录中的持久内容路径
  */
 std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
 {
@@ -84,27 +140,16 @@ std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
     std::wstring fileName;
     if (IsFileDownloadUrl(url, fileName))
     {
-        wchar_t tempPath[MAX_PATH]{};
-        GetTempPathW(MAX_PATH, tempPath);
-        wchar_t destPath[MAX_PATH]{};
-        PathCombineW(destPath, tempPath, fileName.c_str());
-
-        for (int i = 0; i < 100; ++i)
+        const auto destination = UniqueDropContentPath(
+            std::move(fileName), L"download");
+        if (!destination.empty())
         {
-            if (i > 0)
-            {
-                size_t dot = fileName.find_last_of(L'.');
-                std::wstring name = dot == std::wstring::npos
-                    ? fileName + L" (" + std::to_wstring(i) + L")"
-                    : fileName.substr(0, dot) + L" (" + std::to_wstring(i) + L")" + fileName.substr(dot);
-                PathCombineW(destPath, tempPath, name.c_str());
-            }
-            if (GetFileAttributesW(destPath) == INVALID_FILE_ATTRIBUTES)
-                break;
+            if (SUCCEEDED(URLDownloadToFileW(
+                    nullptr, url.c_str(), destination.c_str(), 0, nullptr)))
+                result = destination.wstring();
+            else
+                DeleteFileW(destination.c_str());
         }
-
-        if (SUCCEEDED(URLDownloadToFileW(nullptr, url.c_str(), destPath, 0, nullptr)))
-            result = destPath;
     }
 
     if (!result.empty()) return result;
@@ -124,18 +169,9 @@ std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
         hostName = hostName.substr(4);
     if (hostName.empty()) hostName = _LW("app.interact.link");
 
-    wchar_t tempPath[MAX_PATH]{};
-    GetTempPathW(MAX_PATH, tempPath);
-    wchar_t lnkPath[MAX_PATH]{};
-    for (int i = 0; i < 100; ++i)
-    {
-        std::wstring name = i == 0
-            ? hostName + L".lnk"
-            : hostName + L" (" + std::to_wstring(i) + L").lnk";
-        PathCombineW(lnkPath, tempPath, name.c_str());
-        if (GetFileAttributesW(lnkPath) == INVALID_FILE_ATTRIBUTES)
-            break;
-    }
+    const auto linkPath = UniqueDropContentPath(
+        hostName + L".lnk", L"link.lnk");
+    if (linkPath.empty()) return {};
 
     ComPtr<IShellLinkW> shellLink;
     if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -146,17 +182,19 @@ std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
         ComPtr<IPersistFile> persistFile;
         if (SUCCEEDED(shellLink.As(&persistFile)))
         {
-            if (SUCCEEDED(persistFile->Save(lnkPath, TRUE)))
-                result = lnkPath;
+            if (SUCCEEDED(persistFile->Save(linkPath.c_str(), TRUE)))
+                result = linkPath.wstring();
         }
     }
+    if (result.empty())
+        DeleteFileW(linkPath.c_str());
     return result;
 }
 
 /**
  * @brief 从数据对象中提取 URL 并处理（下载文件或创建 .lnk）
  * @param dataObject COM 数据对象
- * @return 临时文件路径列表
+ * @return data 目录中的持久内容路径列表
  */
 std::vector<std::wstring> DesktopApp::TryExtractUrlFromDataObject(IDataObject* dataObject)
 {
@@ -213,7 +251,7 @@ std::vector<std::wstring> DesktopApp::TryExtractUrlFromDataObject(IDataObject* d
 /**
  * @brief 从数据对象中提取位图图像并保存为 PNG 文件
  * @param dataObject COM 数据对象
- * @return 临时 PNG 文件路径列表
+ * @return data 目录中的持久 PNG 文件路径列表
  */
 std::vector<std::wstring> DesktopApp::TryExtractImageFromDataObject(IDataObject* dataObject)
 {
@@ -265,6 +303,7 @@ std::vector<std::wstring> DesktopApp::TryExtractImageFromDataObject(IDataObject*
     ComPtr<IWICImagingFactory> wicFactory;
     HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&wicFactory));
+    std::filesystem::path pngPath;
 
     if (SUCCEEDED(hr))
     {
@@ -273,21 +312,20 @@ std::vector<std::wstring> DesktopApp::TryExtractImageFromDataObject(IDataObject*
 
         if (SUCCEEDED(hr))
         {
-            wchar_t tempPath[MAX_PATH]{};
-            GetTempPathW(MAX_PATH, tempPath);
-            wchar_t pngPath[MAX_PATH]{};
             SYSTEMTIME st;
             GetLocalTime(&st);
             wchar_t nameBuf[64]{};
             swprintf_s(nameBuf, L"snow_image_%04d%02d%02d_%02d%02d%02d.png",
                 st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-            PathCombineW(pngPath, tempPath, nameBuf);
+            pngPath = UniqueDropContentPath(nameBuf, L"snow_image.png");
+            if (pngPath.empty()) hr = E_FAIL;
 
             ComPtr<IWICStream> stream;
-            hr = wicFactory->CreateStream(&stream);
+            if (SUCCEEDED(hr)) hr = wicFactory->CreateStream(&stream);
             if (SUCCEEDED(hr))
             {
-                hr = stream->InitializeFromFilename(pngPath, GENERIC_WRITE);
+                hr = stream->InitializeFromFilename(
+                    pngPath.c_str(), GENERIC_WRITE);
                 if (SUCCEEDED(hr))
                 {
                     ComPtr<IWICBitmapEncoder> encoder;
@@ -312,7 +350,8 @@ std::vector<std::wstring> DesktopApp::TryExtractImageFromDataObject(IDataObject*
                                         {
                                             hr = encoder->Commit();
                                             if (SUCCEEDED(hr))
-                                                paths.push_back(pngPath);
+                                                paths.push_back(
+                                                    pngPath.wstring());
                                         }
                                     }
                                 }
@@ -328,13 +367,15 @@ std::vector<std::wstring> DesktopApp::TryExtractImageFromDataObject(IDataObject*
     GlobalUnlock(med.hGlobal);
     ReleaseStgMedium(&med);
     ReleaseDC(nullptr, screenDc);
+    if (paths.empty() && !pngPath.empty())
+        DeleteFileW(pngPath.c_str());
     return paths;
 }
 
 /**
  * @brief 从数据对象中提取文本并保存为 UTF-8 .txt 文件
  * @param dataObject COM 数据对象
- * @return 临时 .txt 文件路径列表
+ * @return data 目录中的持久 .txt 文件路径列表
  */
 std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(IDataObject* dataObject)
 {
@@ -392,10 +433,6 @@ std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(IDataObject* 
 
     std::wstring baseName = firstLine.empty() ? L"snow_text" : firstLine;
 
-    wchar_t tempPath[MAX_PATH]{};
-    GetTempPathW(MAX_PATH, tempPath);
-    wchar_t txtPath[MAX_PATH]{};
-
     SYSTEMTIME st;
     GetLocalTime(&st);
     wchar_t timePart[32]{};
@@ -403,14 +440,16 @@ std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(IDataObject* 
         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
 
     std::wstring name = baseName + timePart + L".txt";
-    PathCombineW(txtPath, tempPath, name.c_str());
+    const auto textPath = UniqueDropContentPath(
+        std::move(name), L"snow_text.txt");
+    if (textPath.empty()) return paths;
 
     FILE* f = nullptr;
-    if (_wfopen_s(&f, txtPath, L"w,ccs=UTF-8") == 0 && f)
+    if (_wfopen_s(&f, textPath.c_str(), L"w,ccs=UTF-8") == 0 && f)
     {
         fputws(text.c_str(), f);
         fclose(f);
-        paths.push_back(txtPath);
+        paths.push_back(textPath.wstring());
     }
 
     return paths;

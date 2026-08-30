@@ -422,7 +422,9 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             deploymentSource.find(".owner.lock") != std::string::npos &&
             deploymentSource.find("RuntimeDirectoryHasLiveOwner") !=
                 std::string::npos &&
-            deploymentSource.find("CleanupLegacyRuntimeRoots") !=
+            deploymentSource.find("CleanupLegacyRuntimeRootsOnce") !=
+                std::string::npos &&
+            deploymentSource.find("legacy-shell-hook-temp-v1.done") !=
                 std::string::npos &&
             deploymentSource.find("~InjectableRuntimeDirectory") !=
                 std::string::npos,
@@ -492,6 +494,44 @@ void TestAutoStartTransitionManifest(const std::string& manifest)
                 std::string::npos,
         "the transition package retains the legacy StartupTask long enough to migrate its user state");
 }
+
+void TestOwnedRuntimeStaging(const std::string& dropExtraction,
+    const std::string& widgetPackages, const std::string& snowwidget,
+    const std::string& packageTool, const std::string& workshopCore,
+    const std::string& workshopManager,
+    const std::string& workshopProjects)
+{
+    Check(dropExtraction.find("GetTempPathW") == std::string::npos &&
+            dropExtraction.find("GetDataSubdirectoryPath(L\"DropContent\")") !=
+                std::string::npos,
+        "non-file drop content is materialized only below the SnowDesktop data root");
+    Check(widgetPackages.find("temp_directory_path") == std::string::npos &&
+            widgetPackages.find("CreateStagingPath(\"validation\")") !=
+                std::string::npos,
+        "component archive validation uses the configured data staging root");
+    Check(snowwidget.find("GetTempPathW") == std::string::npos &&
+            snowwidget.find("GetTempFileNameW") == std::string::npos &&
+            snowwidget.find("L\"data\"") != std::string::npos &&
+            snowwidget.find("L\"snowwidget\"") != std::string::npos &&
+            snowwidget.find("preview-results") != std::string::npos &&
+            snowwidget.find("publish-staging") != std::string::npos,
+        "snowwidget scratch files stay under its software data directory");
+    Check(packageTool.find("temp_directory_path") == std::string::npos &&
+            packageTool.find("stagingRoot_") != std::string::npos &&
+            packageTool.find("SteamWorkshopManager") != std::string::npos,
+        "Workshop packaging uses a manager data staging directory");
+    Check(workshopCore.find("temp_directory_path") == std::string::npos &&
+            workshopCore.find("stagingRoot_") != std::string::npos &&
+            workshopCore.find("SteamWorkshop") != std::string::npos,
+        "Steam uploads use a software data staging directory");
+    Check(workshopManager.find("managerRoot_ / L\"staging\"") !=
+                std::string::npos &&
+            workshopProjects.find(
+                ".legacy-localappdata-migrated-v1") != std::string::npos &&
+            workshopProjects.find("MigrateWorkshopManagerDataOnce") !=
+                std::string::npos,
+        "the Workshop Manager shares the main data root and scans its former store only once");
+}
 }
 
 int main(int argc, char** argv)
@@ -532,6 +572,14 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/build_debug.bat"));
         TestAutoStartTransitionManifest(
             ReadText(root / "packaging/AppxManifest.xml.in"));
+        TestOwnedRuntimeStaging(
+            ReadText(root / "src/app/app_drop_data_extraction.cpp"),
+            ReadText(root / "src/widget_package.cpp"),
+            ReadText(root / "tools/snowwidget/main.cpp"),
+            ReadText(root / "steam_bridge/src/package_tool.cpp"),
+            ReadText(root / "steam_bridge/src/steam_workshop_core.cpp"),
+            ReadText(root / "steam_bridge/src/manager_main.cpp"),
+            ReadText(root / "steam_bridge/src/workshop_project.cpp"));
     }
 
     if (failures != 0)
