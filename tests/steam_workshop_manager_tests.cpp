@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -707,6 +708,20 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     Check(!std::filesystem::exists(temporary),
         "package cleanup deletes only its package and empty unique directory");
 }
+
+void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
+{
+    std::ifstream input(repositoryRoot / L"steam_bridge" / L"src" /
+        L"manager_main.cpp", std::ios::binary);
+    const std::string source((std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    Check(input.good() || input.eof(),
+        "Workshop Manager source is readable for the font contract");
+    Check(source.find("malgun.ttf") != std::string::npos &&
+            source.find("MergeMode = true") != std::string::npos &&
+            source.find("GetGlyphRangesKorean()") != std::string::npos,
+        "Workshop Manager merges a Korean system font and Hangul glyph range");
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -727,6 +742,7 @@ int wmain(int argc, wchar_t** argv)
     {
         TestAuthoringToolchain(argv[2], argv[1]);
         TestRealPackageTool(argv[1], argv[2]);
+        TestManagerFontCoverage(argv[2]);
     }
     else Check(false, "test requires snowwidget.exe and repository root arguments");
     if (failures == 0)

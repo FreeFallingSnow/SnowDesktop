@@ -1655,11 +1655,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     const std::filesystem::path fonts =
         std::filesystem::path(windowsDirectory) / L"Fonts";
     const auto chineseFont = fonts / L"msyh.ttc";
+    const auto koreanFont = fonts / L"malgun.ttf";
     const auto regularFont = fonts / L"segoeui.ttf";
     const auto font = std::filesystem::exists(chineseFont) ?
         chineseFont : regularFont;
-    io.Fonts->AddFontFromFileTTF(WideToUtf8(font.wstring()).c_str(),
+    ImFont* managerFont = io.Fonts->AddFontFromFileTTF(
+        WideToUtf8(font.wstring()).c_str(),
         17.0f * scale, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+    if (!managerFont) managerFont = io.Fonts->AddFontDefault();
+    if (managerFont && std::filesystem::exists(koreanFont))
+    {
+        ImFontConfig koreanConfig{};
+        koreanConfig.MergeMode = true;
+        koreanConfig.PixelSnapH = true;
+        io.Fonts->AddFontFromFileTTF(
+            WideToUtf8(koreanFont.wstring()).c_str(),
+            17.0f * scale, &koreanConfig,
+            io.Fonts->GetGlyphRangesKorean());
+    }
     ImGui_ImplWin32_Init(window);
     ImGui_ImplDX11_Init(gDevice.Get(), gContext.Get());
     WorkshopManagerApp app(ReadArguments(), ExecutableDirectory() / L"lang");
