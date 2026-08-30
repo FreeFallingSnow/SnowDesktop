@@ -365,7 +365,10 @@ void TestProjectStore()
             std::ios::binary | std::ios::trunc) <<
             WriteJson(legacyJson, 2) << '\n';
         ProjectStore migrated(legacyRoot);
-        Check(migrated.Load(error) && migrated.Projects().size() == 2,
+        const bool migrationLoaded = migrated.Load(error);
+        if (!migrationLoaded)
+            std::cerr << "schema v1 migration error: " << error << '\n';
+        Check(migrationLoaded && migrated.Projects().size() == 2,
             "project store migrates schema v1 automatically");
         if (migrated.Projects().size() == 2)
         {
