@@ -11,7 +11,29 @@
 
 namespace snowdesktop::steam_bridge
 {
-inline constexpr int kProjectStoreSchemaVersion = 1;
+inline constexpr int kProjectStoreSchemaVersion = 2;
+
+enum class WorkshopTextSource
+{
+    Package,
+    Steam,
+    ManualEnglish,
+};
+
+enum class WorkshopAssetSource
+{
+    Local,
+    Steam,
+};
+
+struct WorkshopPublishPreferences
+{
+    WorkshopTextSource textSource = WorkshopTextSource::Package;
+    WorkshopAssetSource previewSource = WorkshopAssetSource::Local;
+    WorkshopAssetSource tagsSource = WorkshopAssetSource::Local;
+    std::string manualEnglishTitle;
+    std::string manualEnglishDescription;
+};
 
 struct WorkshopProject
 {
@@ -24,7 +46,11 @@ struct WorkshopProject
     std::string lastPublishedVersion;
     std::string lastPublishedSha256;
     std::string lastPublishedAt;
+    WorkshopPublishPreferences publishPreferences;
 };
+
+std::string_view WorkshopTextSourceName(WorkshopTextSource source);
+std::string_view WorkshopAssetSourceName(WorkshopAssetSource source);
 
 struct WorkshopMetadata
 {

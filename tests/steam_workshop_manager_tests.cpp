@@ -299,17 +299,95 @@ void TestProjectStore()
     project->packageId = "11111111-2222-3333-4444-555555555555";
     project->publishedFileId = 76561198000000001ull;
     project->tags = { "Widget", "Clock" };
-    Check(store.Save(error), "project store saves schema v1");
+    project->publishPreferences.textSource =
+        WorkshopTextSource::ManualEnglish;
+    project->publishPreferences.previewSource =
+        WorkshopAssetSource::Steam;
+    project->publishPreferences.tagsSource =
+        WorkshopAssetSource::Local;
+    project->publishPreferences.manualEnglishTitle = "Manual title";
+    project->publishPreferences.manualEnglishDescription =
+        "Manual description";
+    Check(store.Save(error), "project store saves schema v2");
     project->lastPublishedVersion = "1.2.3";
     Check(store.Save(error), "second save creates a backup and replaces atomically");
     Check(std::filesystem::is_regular_file(
         store.Root() / L"projects.json.bak"), "project store keeps .bak");
     ProjectStore loaded(store.Root());
-    Check(loaded.Load(error), "project store loads schema v1");
+    Check(loaded.Load(error), "project store loads schema v2");
     Check(loaded.Projects().size() == 1 &&
         loaded.Projects()[0].publishedFileId == 76561198000000001ull &&
-        loaded.Projects()[0].tags.size() == 2,
-        "project store round-trips strings, 64-bit IDs, and tags");
+        loaded.Projects()[0].tags.size() == 2 &&
+        loaded.Projects()[0].publishPreferences.textSource ==
+            WorkshopTextSource::ManualEnglish &&
+        loaded.Projects()[0].publishPreferences.previewSource ==
+            WorkshopAssetSource::Steam &&
+        loaded.Projects()[0].publishPreferences.tagsSource ==
+            WorkshopAssetSource::Local &&
+        loaded.Projects()[0].publishPreferences.manualEnglishTitle ==
+            "Manual title",
+        "project store round-trips IDs, tags, and per-project publish preferences");
+
+    const auto legacySource = temporary.path / L"legacy project";
+    std::filesystem::create_directory(legacySource);
+    std::ofstream(legacySource / L"widget.json") << "{}";
+    const auto legacyRoot = temporary.path / L"legacy-store";
+    ProjectStore legacy(legacyRoot);
+    WorkshopProject* legacyProject = nullptr;
+    Check(legacy.AddDirectory(legacySource, legacyProject, error) &&
+            legacyProject,
+        "legacy migration fixture adds a project");
+    if (legacyProject)
+    {
+        legacyProject->publishedFileId = 100;
+        const auto legacyUnboundSource =
+            temporary.path / L"legacy unbound project";
+        std::filesystem::create_directory(legacyUnboundSource);
+        std::ofstream(legacyUnboundSource / L"widget.json") << "{}";
+        WorkshopProject* legacyUnboundProject = nullptr;
+        Check(legacy.AddDirectory(legacyUnboundSource,
+                legacyUnboundProject, error) && legacyUnboundProject,
+            "legacy migration fixture adds an unbound project");
+        Check(legacy.Save(error),
+            "legacy migration fixture first saves a valid project store");
+        std::ifstream legacyInput(legacy.StorePath(), std::ios::binary);
+        const std::string legacyText(
+            (std::istreambuf_iterator<char>(legacyInput)), {});
+        JsonValue legacyJson;
+        Check(ParseJson(legacyText, legacyJson, error),
+            "legacy migration fixture parses its project store");
+        legacyJson.object["schemaVersion"] = JsonValue::Number(1);
+        for (auto& entry : legacyJson.object["projects"].array)
+            entry.object.erase("publishPreferences");
+        std::ofstream(legacy.StorePath(),
+            std::ios::binary | std::ios::trunc) <<
+            WriteJson(legacyJson, 2) << '\n';
+        ProjectStore migrated(legacyRoot);
+        Check(migrated.Load(error) && migrated.Projects().size() == 2,
+            "project store migrates schema v1 automatically");
+        if (migrated.Projects().size() == 2)
+        {
+            const auto& bound = migrated.Projects()[0].publishPreferences;
+            const auto& unbound = migrated.Projects()[1].publishPreferences;
+            Check(bound.textSource == WorkshopTextSource::Steam &&
+                    bound.previewSource ==
+                        WorkshopAssetSource::Steam &&
+                    bound.tagsSource == WorkshopAssetSource::Steam,
+                "a bound schema v1 project migrates to preserving Steam-managed fields");
+            Check(unbound.textSource == WorkshopTextSource::Package &&
+                    unbound.previewSource == WorkshopAssetSource::Local &&
+                    unbound.tagsSource == WorkshopAssetSource::Local,
+                "an unbound schema v1 project migrates to package and local sources");
+        }
+        std::ifstream migratedInput(migrated.StorePath(), std::ios::binary);
+        const std::string migratedText(
+            (std::istreambuf_iterator<char>(migratedInput)), {});
+        JsonValue migratedJson;
+        Check(ParseJson(migratedText, migratedJson, error) &&
+                JsonUnsigned(migratedJson, "schemaVersion") ==
+                    kProjectStoreSchemaVersion,
+            "schema v1 migration is persisted as schema v2");
+    }
     WorkshopProject* duplicate = nullptr;
     Check(loaded.AddDirectory(source, duplicate, error) &&
         loaded.Projects().size() == 1,

@@ -183,6 +183,21 @@ JsonValue ProjectToJson(const WorkshopProject& project)
         JsonValue::String(project.lastPublishedSha256);
     value.object["lastPublishedAt"] =
         JsonValue::String(project.lastPublishedAt);
+    JsonValue preferences = JsonValue::Object();
+    preferences.object["textSource"] = JsonValue::String(
+        std::string(WorkshopTextSourceName(
+            project.publishPreferences.textSource)));
+    preferences.object["previewSource"] = JsonValue::String(
+        std::string(WorkshopAssetSourceName(
+            project.publishPreferences.previewSource)));
+    preferences.object["tagsSource"] = JsonValue::String(
+        std::string(WorkshopAssetSourceName(
+            project.publishPreferences.tagsSource)));
+    preferences.object["manualEnglishTitle"] = JsonValue::String(
+        project.publishPreferences.manualEnglishTitle);
+    preferences.object["manualEnglishDescription"] = JsonValue::String(
+        project.publishPreferences.manualEnglishDescription);
+    value.object["publishPreferences"] = std::move(preferences);
     return value;
 }
 
@@ -200,8 +215,8 @@ bool ReadRequiredString(const JsonValue& object, std::string_view key,
     return true;
 }
 
-bool ProjectFromJson(const JsonValue& value, WorkshopProject& project,
-    std::string& error)
+bool ProjectFromJson(const JsonValue& value, unsigned schemaVersion,
+    WorkshopProject& project, std::string& error)
 {
     if (!value.IsObject())
     {
@@ -271,8 +286,92 @@ bool ProjectFromJson(const JsonValue& value, WorkshopProject& project,
         error = "project store publishedFileId must be a string or null";
         return false;
     }
+    if (schemaVersion == 1)
+    {
+        if (project.publishedFileId)
+        {
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Steam;
+            project.publishPreferences.previewSource =
+                WorkshopAssetSource::Steam;
+            project.publishPreferences.tagsSource =
+                WorkshopAssetSource::Steam;
+        }
+    }
+    else
+    {
+        const JsonValue* preferences = value.Find("publishPreferences");
+        if (!preferences || !preferences->IsObject())
+        {
+            error = "project store publishPreferences field is invalid";
+            return false;
+        }
+        const auto textSource = JsonString(*preferences, "textSource");
+        const auto previewSource = JsonString(*preferences, "previewSource");
+        const auto tagsSource = JsonString(*preferences, "tagsSource");
+        if (!textSource || !previewSource || !tagsSource ||
+            !ReadRequiredString(*preferences, "manualEnglishTitle",
+                project.publishPreferences.manualEnglishTitle, error) ||
+            !ReadRequiredString(*preferences, "manualEnglishDescription",
+                project.publishPreferences.manualEnglishDescription, error))
+            return false;
+        if (*textSource == "package")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Package;
+        else if (*textSource == "steam")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Steam;
+        else if (*textSource == "manual-english")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::ManualEnglish;
+        else
+        {
+            error = "project store textSource field is invalid";
+            return false;
+        }
+        const auto parseAssetSource = [&](std::string_view source,
+            WorkshopAssetSource& output, std::string_view field)
+        {
+            if (source == "local") output = WorkshopAssetSource::Local;
+            else if (source == "steam") output = WorkshopAssetSource::Steam;
+            else
+            {
+                error = "project store " + std::string(field) +
+                    " field is invalid";
+                return false;
+            }
+            return true;
+        };
+        if (!parseAssetSource(*previewSource,
+                project.publishPreferences.previewSource,
+                "previewSource") ||
+            !parseAssetSource(*tagsSource,
+                project.publishPreferences.tagsSource, "tagsSource"))
+            return false;
+    }
     return !project.localId.empty();
 }
+}
+
+std::string_view WorkshopTextSourceName(WorkshopTextSource source)
+{
+    switch (source)
+    {
+    case WorkshopTextSource::Package: return "package";
+    case WorkshopTextSource::Steam: return "steam";
+    case WorkshopTextSource::ManualEnglish: return "manual-english";
+    }
+    return "package";
+}
+
+std::string_view WorkshopAssetSourceName(WorkshopAssetSource source)
+{
+    switch (source)
+    {
+    case WorkshopAssetSource::Local: return "local";
+    case WorkshopAssetSource::Steam: return "steam";
+    }
+    return "local";
 }
 
 ProjectStore::ProjectStore(std::filesystem::path root)
@@ -481,7 +580,8 @@ bool ProjectStore::Load(std::string& error)
     }
     const auto schema = JsonUnsigned(root, "schemaVersion");
     const JsonValue* projects = root.Find("projects");
-    if (!schema || *schema != kProjectStoreSchemaVersion ||
+    if (!schema || (*schema != 1 &&
+            *schema != kProjectStoreSchemaVersion) ||
         !projects || !projects->IsArray())
     {
         error = "unsupported or malformed project store schema";
@@ -490,7 +590,7 @@ bool ProjectStore::Load(std::string& error)
     for (const auto& value : projects->array)
     {
         WorkshopProject project;
-        if (!ProjectFromJson(value, project, error))
+        if (!ProjectFromJson(value, *schema, project, error))
         {
             projects_.clear();
             return false;
@@ -506,6 +606,11 @@ bool ProjectStore::Load(std::string& error)
             return false;
         }
         projects_.push_back(std::move(project));
+    }
+    if (*schema == 1 && !Save(error))
+    {
+        projects_.clear();
+        return false;
     }
     return true;
 }

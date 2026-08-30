@@ -783,9 +783,17 @@ private:
         {
             localizationStateProjectId_ = project.localId;
             localizationStateCreating_ = creating;
-            syncPackageLocalization_ = creating;
-            titleBuffer_.clear();
-            descriptionBuffer_.clear();
+            syncPackageLocalization_ =
+                project.publishPreferences.textSource ==
+                WorkshopTextSource::Package;
+            updatePreview_ = project.publishPreferences.previewSource ==
+                WorkshopAssetSource::Local;
+            updateTags_ = project.publishPreferences.tagsSource ==
+                WorkshopAssetSource::Local;
+            titleBuffer_ =
+                project.publishPreferences.manualEnglishTitle;
+            descriptionBuffer_ =
+                project.publishPreferences.manualEnglishDescription;
             localizationPreviewProjectId_.clear();
             localizationPreview_.clear();
             localizationPreviewError_.clear();
@@ -809,8 +817,25 @@ private:
             "Reuse component package titles and descriptions"),
             ImGui::GetFrameHeight());
         if (ImGui::Checkbox("##package-localization",
-                &syncPackageLocalization_) && syncPackageLocalization_)
-            localizationPreviewProjectId_.clear();
+                &syncPackageLocalization_))
+        {
+            const WorkshopTextSource previous =
+                project.publishPreferences.textSource;
+            project.publishPreferences.textSource =
+                syncPackageLocalization_ ? WorkshopTextSource::Package :
+                (creating ? WorkshopTextSource::ManualEnglish :
+                    WorkshopTextSource::Steam);
+            std::string error;
+            if (!store_.Save(error))
+            {
+                project.publishPreferences.textSource = previous;
+                syncPackageLocalization_ = previous ==
+                    WorkshopTextSource::Package;
+                SetMessageUnlocked(false, error);
+            }
+            else if (syncPackageLocalization_)
+                localizationPreviewProjectId_.clear();
+        }
         if (syncPackageLocalization_)
         {
             if (localizationPreviewProjectId_ != project.localId &&
@@ -906,6 +931,12 @@ private:
             ImGui::SetNextItemWidth(kSettingControlWidthDip * gDpiScale);
             if (ImGui::InputText("##initial-title", title.data(), title.size()))
                 titleBuffer_ = title.data();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                project.publishPreferences.manualEnglishTitle = titleBuffer_;
+                std::string error;
+                if (!store_.Save(error)) SetMessageUnlocked(false, error);
+            }
             std::array<char, 4096> description{};
             std::copy_n(descriptionBuffer_.c_str(),
                 std::min(descriptionBuffer_.size(), description.size() - 1),
@@ -917,15 +948,48 @@ private:
                     ImVec2(kSettingControlWidthDip * gDpiScale,
                         90.0f * gDpiScale)))
                 descriptionBuffer_ = description.data();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                project.publishPreferences.manualEnglishDescription =
+                    descriptionBuffer_;
+                std::string error;
+                if (!store_.Save(error)) SetMessageUnlocked(false, error);
+            }
         }
         if (!creating)
         {
             BeginSettingRow(T("同时更新主预览", "Also update primary preview"),
                 ImGui::GetFrameHeight());
-            ImGui::Checkbox("##update-preview", &updatePreview_);
+            if (ImGui::Checkbox("##update-preview", &updatePreview_))
+            {
+                const WorkshopAssetSource previous =
+                    project.publishPreferences.previewSource;
+                project.publishPreferences.previewSource = updatePreview_ ?
+                    WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
+                std::string error;
+                if (!store_.Save(error))
+                {
+                    project.publishPreferences.previewSource = previous;
+                    updatePreview_ = previous == WorkshopAssetSource::Local;
+                    SetMessageUnlocked(false, error);
+                }
+            }
             BeginSettingRow(T("同时更新标签", "Also update tags"),
                 ImGui::GetFrameHeight());
-            ImGui::Checkbox("##update-tags", &updateTags_);
+            if (ImGui::Checkbox("##update-tags", &updateTags_))
+            {
+                const WorkshopAssetSource previous =
+                    project.publishPreferences.tagsSource;
+                project.publishPreferences.tagsSource = updateTags_ ?
+                    WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
+                std::string error;
+                if (!store_.Save(error))
+                {
+                    project.publishPreferences.tagsSource = previous;
+                    updateTags_ = previous == WorkshopAssetSource::Local;
+                    SetMessageUnlocked(false, error);
+                }
+            }
         }
         const bool missingManualTitle = creating &&
             !syncPackageLocalization_ && titleBuffer_.empty();
@@ -1183,7 +1247,6 @@ private:
             }
             {
                 std::lock_guard lock(mutex_);
-                syncPackageLocalization_ = false;
                 localizationStateCreating_ = false;
                 SetMessageUnlocked(true, needsLegalAgreement ?
                     T("上传成功；请在 Steam 页面接受创意工坊协议",
