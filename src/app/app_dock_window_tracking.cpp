@@ -386,6 +386,8 @@ void DesktopApp::RefreshDockRunningWindows(
         std::wstring title;
         std::wstring executablePath;
         std::wstring appUserModelId;
+        std::vector<std::wstring>
+            ancestorExecutablePaths;
         HWND window = nullptr;
         bool minimized = false;
         bool foreground = false;
@@ -441,10 +443,18 @@ void DesktopApp::RefreshDockRunningWindows(
         std::unordered_map<std::wstring, size_t>* runningCandidateIndices;
         const std::unordered_map<HWND, ULONGLONG>*
             pendingCloseWindows;
+        const DockProcessParentMap* processParents;
         std::unordered_map<DWORD, std::wstring> processPaths;
-    } context{ this, &targets, scoringForeground, actualForeground, &fixedIdentities,
+        std::unordered_map<DWORD,
+            std::vector<std::wstring>> processAncestors;
+    };
+    const DockProcessParentMap processParents =
+        generalSettings_.dockEnabled
+        ? QueryDockProcessParentMap()
+        : DockProcessParentMap{};
+    EnumContext context{ this, &targets, scoringForeground, actualForeground, &fixedIdentities,
         &runningCandidates, &runningCandidateIndices,
-        &dockPendingCloseWindows_ };
+        &dockPendingCloseWindows_, &processParents };
 
     if (generalSettings_.dockEnabled)
     {
@@ -473,6 +483,17 @@ void DesktopApp::RefreshDockRunningWindows(
             auto [pathIt, inserted] = context->processPaths.try_emplace(processId);
             if (inserted)
                 pathIt->second = QueryDockWindowExecutablePath(window);
+            auto [ancestorIt, ancestorsInserted] =
+                context->processAncestors.try_emplace(
+                    processId);
+            if (ancestorsInserted &&
+                context->processParents)
+            {
+                ancestorIt->second =
+                    QueryDockProcessAncestorExecutablePaths(
+                        processId,
+                        *context->processParents);
+            }
             const std::wstring appUserModelId = QueryDockWindowAppUserModelId(window);
 
             DWORD cloaked = 0;
@@ -486,29 +507,16 @@ void DesktopApp::RefreshDockRunningWindows(
 
             for (DockWindowTarget& target : *context->targets)
             {
-                const bool executableMatches = !target.identity.executablePath.empty() &&
-                    pathIt->second == target.identity.executablePath;
-                const bool appIdMatches = !target.identity.appUserModelId.empty() &&
-                    appUserModelId == target.identity.appUserModelId;
-                const bool steamPathMatches =
-                    target.identity.kind == DockAppIdentityKind::Steam &&
-                    IsDockPathInsideDirectory(pathIt->second,
-                        target.identity.steamInstallDirectory);
-                bool identityMatches = false;
-                switch (target.identity.kind)
-                {
-                case DockAppIdentityKind::Executable:
-                    identityMatches = executableMatches;
-                    break;
-                case DockAppIdentityKind::Applications:
-                    identityMatches = appIdMatches;
-                    break;
-                case DockAppIdentityKind::Steam:
-                    identityMatches = appIdMatches || steamPathMatches;
-                    break;
-                default:
-                    break;
-                }
+                const bool identityMatches =
+                    snowdesktop::dock_app_identity_rules::
+                        MatchesRunningApp(
+                            target.identity.kind,
+                            target.identity.executablePath,
+                            target.identity.appUserModelId,
+                            target.identity.steamInstallDirectory,
+                            pathIt->second,
+                            appUserModelId,
+                            ancestorIt->second);
                 if (!identityMatches || score <= target.score)
                     continue;
                 target.best = { window, IsIconic(window) != FALSE, true,
@@ -520,19 +528,16 @@ void DesktopApp::RefreshDockRunningWindows(
             bool fixed = false;
             for (const DockAppIdentity& identity : *context->fixedIdentities)
             {
-                const bool executableMatches = !identity.executablePath.empty() &&
-                    pathIt->second == identity.executablePath;
-                const bool appIdMatches = !identity.appUserModelId.empty() &&
-                    appUserModelId == identity.appUserModelId;
-                const bool steamPathMatches = identity.kind == DockAppIdentityKind::Steam &&
-                    IsDockPathInsideDirectory(pathIt->second,
-                        identity.steamInstallDirectory);
-                fixed = identity.kind == DockAppIdentityKind::Executable
-                    ? executableMatches
-                    : (identity.kind == DockAppIdentityKind::Applications
-                        ? appIdMatches
-                        : (identity.kind == DockAppIdentityKind::Steam &&
-                            (appIdMatches || steamPathMatches)));
+                fixed = snowdesktop::
+                    dock_app_identity_rules::
+                        MatchesRunningApp(
+                            identity.kind,
+                            identity.executablePath,
+                            identity.appUserModelId,
+                            identity.steamInstallDirectory,
+                            pathIt->second,
+                            appUserModelId,
+                            ancestorIt->second);
                 if (fixed) break;
             }
             if (fixed) return TRUE;
@@ -551,7 +556,9 @@ void DesktopApp::RefreshDockRunningWindows(
             if (candidateInserted)
             {
                 context->runningCandidates->push_back({ identityKey, std::move(title),
-                    pathIt->second, appUserModelId, window, IsIconic(window) != FALSE,
+                    pathIt->second, appUserModelId,
+                    ancestorIt->second,
+                    window, IsIconic(window) != FALSE,
                     DockWindowsShareActivationGroup(window, context->actualForeground), score });
             }
             else
@@ -561,6 +568,8 @@ void DesktopApp::RefreshDockRunningWindows(
                 if (score > candidate.score)
                 {
                     candidate.title = std::move(title);
+                    candidate.ancestorExecutablePaths =
+                        ancestorIt->second;
                     candidate.window = window;
                     candidate.minimized = IsIconic(window) != FALSE;
                     candidate.foreground = DockWindowsShareActivationGroup(
@@ -635,6 +644,8 @@ void DesktopApp::RefreshDockRunningWindows(
         info.title = std::move(candidate.title);
         info.executablePath = std::move(candidate.executablePath);
         info.appUserModelId = std::move(candidate.appUserModelId);
+        info.ancestorExecutablePaths =
+            std::move(candidate.ancestorExecutablePaths);
         info.window = candidate.window;
         info.minimized = candidate.minimized;
         info.foreground = candidate.foreground;

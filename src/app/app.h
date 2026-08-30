@@ -290,6 +290,8 @@ struct DockRunningAppInfo
     std::wstring title;
     std::wstring executablePath;
     std::wstring appUserModelId;
+    std::vector<std::wstring>
+        ancestorExecutablePaths;
     HWND window = nullptr;
     HBITMAP iconBitmap = nullptr;
     SIZE iconBitmapSize{};

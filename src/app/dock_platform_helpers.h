@@ -4,6 +4,7 @@
 #include <ctime>
 #include <limits>
 #include <numeric>
+#include <tlhelp32.h>
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
@@ -213,10 +214,9 @@ inline std::wstring ReadDockShellItemStringProperty(
     return result;
 }
 
-inline std::wstring QueryDockWindowExecutablePath(HWND window)
+inline std::wstring QueryDockProcessExecutablePath(
+    DWORD processId)
 {
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
     if (!processId) return {};
 
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
@@ -226,6 +226,62 @@ inline std::wstring QueryDockWindowExecutablePath(HWND window)
     const bool queried = QueryFullProcessImageNameW(process, 0, path, &pathLength) != FALSE;
     CloseHandle(process);
     return queried ? NormalizeDockExecutablePath(std::wstring(path, pathLength)) : std::wstring{};
+}
+
+inline std::wstring QueryDockWindowExecutablePath(HWND window)
+{
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    return QueryDockProcessExecutablePath(processId);
+}
+
+using DockProcessParentMap =
+    std::unordered_map<DWORD, DWORD>;
+
+inline DockProcessParentMap QueryDockProcessParentMap()
+{
+    DockProcessParentMap parents;
+    const HANDLE snapshot = CreateToolhelp32Snapshot(
+        TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return parents;
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            parents.insert_or_assign(
+                entry.th32ProcessID,
+                entry.th32ParentProcessID);
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return parents;
+}
+
+inline std::vector<std::wstring>
+QueryDockProcessAncestorExecutablePaths(
+    DWORD processId,
+    const DockProcessParentMap& parents)
+{
+    std::vector<std::wstring> paths;
+    std::unordered_set<DWORD> visited{ processId };
+    for (size_t depth = 0; depth < 32; ++depth)
+    {
+        const auto found = parents.find(processId);
+        if (found == parents.end() || !found->second ||
+            !visited.insert(found->second).second)
+            break;
+        processId = found->second;
+        std::wstring path =
+            QueryDockProcessExecutablePath(processId);
+        if (path.empty())
+            break;
+        paths.push_back(std::move(path));
+    }
+    return paths;
 }
 
 inline std::wstring QueryDockWindowAppUserModelId(HWND window)
@@ -417,11 +473,23 @@ inline bool DockWindowMatchesAppIdentity(
 {
     if (!window || !IsWindow(window)) return false;
     window = GetAncestor(window, GA_ROOT);
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
     const std::wstring executablePath = QueryDockWindowExecutablePath(window);
     const std::wstring appUserModelId =
         identity.kind == DockAppIdentityKind::Executable
         ? std::wstring{}
         : QueryDockWindowAppUserModelId(window);
+    std::vector<std::wstring> ancestorExecutablePaths;
+    if (identity.kind == DockAppIdentityKind::Executable &&
+        executablePath != identity.executablePath)
+    {
+        const DockProcessParentMap parents =
+            QueryDockProcessParentMap();
+        ancestorExecutablePaths =
+            QueryDockProcessAncestorExecutablePaths(
+                processId, parents);
+    }
     return snowdesktop::dock_app_identity_rules::
         MatchesRunningApp(
             identity.kind,
@@ -429,7 +497,8 @@ inline bool DockWindowMatchesAppIdentity(
             identity.appUserModelId,
             identity.steamInstallDirectory,
             executablePath,
-            appUserModelId);
+            appUserModelId,
+            ancestorExecutablePaths);
 }
 
 inline bool DockWindowsShareActivationGroup(HWND first, HWND second)

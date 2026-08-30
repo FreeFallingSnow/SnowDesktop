@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <span>
 #include <string>
 
 enum class DockAppIdentityKind
@@ -24,19 +26,50 @@ inline bool IsPathInsideDirectory(
         path[directory.size()] == L'\\';
 }
 
+inline bool MatchesExecutableProcessFamily(
+    const std::wstring& launcherExecutablePath,
+    const std::wstring& runningExecutablePath,
+    std::span<const std::wstring> ancestorExecutablePaths)
+{
+    if (launcherExecutablePath.empty() ||
+        runningExecutablePath.empty())
+        return false;
+    if (launcherExecutablePath == runningExecutablePath)
+        return true;
+
+    const size_t separator =
+        launcherExecutablePath.find_last_of(L'\\');
+    if (separator == std::wstring::npos || separator <= 2)
+        return false;
+    const std::wstring installDirectory =
+        launcherExecutablePath.substr(0, separator);
+    if (!IsPathInsideDirectory(
+            runningExecutablePath, installDirectory))
+        return false;
+    return std::find(
+        ancestorExecutablePaths.begin(),
+        ancestorExecutablePaths.end(),
+        launcherExecutablePath) !=
+        ancestorExecutablePaths.end();
+}
+
 inline bool MatchesRunningApp(
     DockAppIdentityKind kind,
     const std::wstring& identityExecutablePath,
     const std::wstring& identityAppUserModelId,
     const std::wstring& steamInstallDirectory,
     const std::wstring& runningExecutablePath,
-    const std::wstring& runningAppUserModelId)
+    const std::wstring& runningAppUserModelId,
+    std::span<const std::wstring>
+        ancestorExecutablePaths = {})
 {
     switch (kind)
     {
     case DockAppIdentityKind::Executable:
-        return !identityExecutablePath.empty() &&
-            identityExecutablePath == runningExecutablePath;
+        return MatchesExecutableProcessFamily(
+            identityExecutablePath,
+            runningExecutablePath,
+            ancestorExecutablePaths);
     case DockAppIdentityKind::Applications:
         return !identityAppUserModelId.empty() &&
             identityAppUserModelId == runningAppUserModelId;

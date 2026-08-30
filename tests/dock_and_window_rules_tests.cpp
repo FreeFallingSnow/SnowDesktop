@@ -2900,6 +2900,29 @@ int main(int argc, char** argv)
                 L"C:\\APPS\\EDITOR.EXE", L"", L"",
                 L"C:\\APPS\\OTHER.EXE", L""),
         "running executable identities must match only the same normalized executable path");
+    const std::vector<std::wstring> launcherAncestors{
+        L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+        L"C:\\WINDOWS\\EXPLORER.EXE",
+    };
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Executable,
+            L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+            L"", L"",
+            L"C:\\PROGRAMS\\SUITE\\UI\\HELPER.EXE",
+            L"", launcherAncestors) &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable,
+                L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+                L"", L"",
+                L"D:\\APPLICATIONS\\HELPER.EXE",
+                L"", launcherAncestors) &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable,
+                L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+                L"", L"",
+                L"C:\\PROGRAMS\\SUITE\\UI\\HELPER.EXE",
+                L"", std::span<const std::wstring>{}),
+        "an executable launcher must match a descendant window process only inside the same installation tree");
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Applications,
             L"", L"CONTOSO.EDITOR_123!APP", L"",
