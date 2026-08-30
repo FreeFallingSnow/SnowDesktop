@@ -73,7 +73,7 @@ std::wstring PageIdFromItem(
 
 struct ConfirmationBridge
 {
-    std::function<void()> confirmed;
+    std::function<void(bool)> completed;
 };
 
 } // namespace
@@ -105,15 +105,11 @@ struct PageLayoutPagePresenter::Impl
     muxc::InfoBar mappingNotice{nullptr};
     muxc::ListView pageList{nullptr};
     muxc::Button addPageButton{nullptr};
-    muxc::Button cancelOrderButton{nullptr};
-    muxc::Button applyOrderButton{nullptr};
     muxc::TextBlock selectedPageText{nullptr};
     muxc::TextBlock columnsLabel{nullptr};
     muxc::NumberBox columnsBox{nullptr};
     muxc::TextBlock rowsLabel{nullptr};
     muxc::NumberBox rowsBox{nullptr};
-    muxc::InfoBar gridImpact{nullptr};
-    muxc::Button applyGridButton{nullptr};
     std::unordered_map<std::wstring, RowControls> rowControls;
     PageLayoutSnapshot snapshot;
     std::wstring selectedPageId;
@@ -123,15 +119,13 @@ struct PageLayoutPagePresenter::Impl
     bool updating = false;
     bool active = false;
     bool closed = false;
+    bool confirmationPending = false;
 
     winrt::event_token selectionChangedToken{};
     winrt::event_token dragCompletedToken{};
     winrt::event_token addPageToken{};
-    winrt::event_token cancelOrderToken{};
-    winrt::event_token applyOrderToken{};
     winrt::event_token columnsChangedToken{};
     winrt::event_token rowsChangedToken{};
-    winrt::event_token applyGridToken{};
 
     [[nodiscard]] std::wstring L(std::string_view key) const
     {
@@ -164,17 +158,9 @@ struct PageLayoutPagePresenter::Impl
         pageList.MaxHeight(360.0);
         pagesCard.content.Children().Append(pageList);
 
-        muxc::StackPanel orderActions;
-        orderActions.Orientation(muxc::Orientation::Horizontal);
-        orderActions.Spacing(8.0);
-        orderActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         addPageButton = muxc::Button{};
-        cancelOrderButton = muxc::Button{};
-        applyOrderButton = muxc::Button{};
-        orderActions.Children().Append(addPageButton);
-        orderActions.Children().Append(cancelOrderButton);
-        orderActions.Children().Append(applyOrderButton);
-        pagesCard.content.Children().Append(orderActions);
+        addPageButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        pagesCard.content.Children().Append(addPageButton);
 
         InitializeCard(gridCard, cardStyle, root);
         selectedPageText = muxc::TextBlock{};
@@ -182,23 +168,25 @@ struct PageLayoutPagePresenter::Impl
         selectedPageText.TextWrapping(mux::TextWrapping::Wrap);
         gridCard.content.Children().Append(selectedPageText);
 
-        muxc::Grid dimensions;
-        dimensions.ColumnSpacing(12.0);
-        muxc::ColumnDefinition columnsDefinition;
-        muxc::ColumnDefinition rowsDefinition;
-        columnsDefinition.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        rowsDefinition.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        dimensions.ColumnDefinitions().Append(columnsDefinition);
-        dimensions.ColumnDefinitions().Append(rowsDefinition);
+        muxc::StackPanel dimensions;
+        dimensions.Orientation(muxc::Orientation::Vertical);
+        dimensions.Spacing(8.0);
 
-        muxc::StackPanel columnsPanel;
-        columnsPanel.Spacing(6.0);
+        muxc::Grid columnsRow;
+        columnsRow.ColumnSpacing(12.0);
+        muxc::ColumnDefinition columnsLabelDefinition;
+        columnsLabelDefinition.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition columnsInputDefinition;
+        columnsInputDefinition.Width(mux::GridLengthHelper::Auto());
+        columnsRow.ColumnDefinitions().Append(columnsLabelDefinition);
+        columnsRow.ColumnDefinitions().Append(columnsInputDefinition);
         columnsLabel = muxc::TextBlock{};
         columnsLabel.TextWrapping(mux::TextWrapping::Wrap);
-        columnsPanel.Children().Append(columnsLabel);
+        columnsLabel.VerticalAlignment(mux::VerticalAlignment::Center);
+        columnsRow.Children().Append(columnsLabel);
         columnsBox = muxc::NumberBox{};
+        columnsBox.MinWidth(180.0);
         columnsBox.Minimum(1.0);
         columnsBox.Maximum(50.0);
         columnsBox.SmallChange(1.0);
@@ -206,15 +194,25 @@ struct PageLayoutPagePresenter::Impl
             muxc::NumberBoxSpinButtonPlacementMode::Inline);
         columnsBox.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        columnsPanel.Children().Append(columnsBox);
-        dimensions.Children().Append(columnsPanel);
+        muxc::Grid::SetColumn(columnsBox, 1);
+        columnsRow.Children().Append(columnsBox);
+        dimensions.Children().Append(columnsRow);
 
-        muxc::StackPanel rowsPanel;
-        rowsPanel.Spacing(6.0);
+        muxc::Grid rowsRow;
+        rowsRow.ColumnSpacing(12.0);
+        muxc::ColumnDefinition rowsLabelDefinition;
+        rowsLabelDefinition.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition rowsInputDefinition;
+        rowsInputDefinition.Width(mux::GridLengthHelper::Auto());
+        rowsRow.ColumnDefinitions().Append(rowsLabelDefinition);
+        rowsRow.ColumnDefinitions().Append(rowsInputDefinition);
         rowsLabel = muxc::TextBlock{};
         rowsLabel.TextWrapping(mux::TextWrapping::Wrap);
-        rowsPanel.Children().Append(rowsLabel);
+        rowsLabel.VerticalAlignment(mux::VerticalAlignment::Center);
+        rowsRow.Children().Append(rowsLabel);
         rowsBox = muxc::NumberBox{};
+        rowsBox.MinWidth(180.0);
         rowsBox.Minimum(1.0);
         rowsBox.Maximum(50.0);
         rowsBox.SmallChange(1.0);
@@ -222,18 +220,10 @@ struct PageLayoutPagePresenter::Impl
             muxc::NumberBoxSpinButtonPlacementMode::Inline);
         rowsBox.ValidationMode(
             muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        rowsPanel.Children().Append(rowsBox);
-        muxc::Grid::SetColumn(rowsPanel, 1);
-        dimensions.Children().Append(rowsPanel);
+        muxc::Grid::SetColumn(rowsBox, 1);
+        rowsRow.Children().Append(rowsBox);
+        dimensions.Children().Append(rowsRow);
         gridCard.content.Children().Append(dimensions);
-
-        gridImpact = muxc::InfoBar{};
-        gridImpact.IsClosable(false);
-        gridImpact.IsOpen(false);
-        gridCard.content.Children().Append(gridImpact);
-        applyGridButton = muxc::Button{};
-        applyGridButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        gridCard.content.Children().Append(applyGridButton);
     }
 
     void HookEvents()
@@ -250,18 +240,13 @@ struct PageLayoutPagePresenter::Impl
                 if (closed || updating)
                     return;
                 UpdateOrderState();
+                ConfirmOrder();
             });
         addPageToken = addPageButton.Click(
             [this](const auto&, const auto&) { AddPage(); });
-        cancelOrderToken = cancelOrderButton.Click(
-            [this](const auto&, const auto&) { RebuildPageList(); });
-        applyOrderToken = applyOrderButton.Click(
-            [this](const auto&, const auto&) { ConfirmOrder(); });
         columnsChangedToken = columnsBox.ValueChanged(
-            [this](const auto&, const auto&) { UpdateGridImpact(); });
+            [this](const auto&, const auto&) { ConfirmGrid(); });
         rowsChangedToken = rowsBox.ValueChanged(
-            [this](const auto&, const auto&) { UpdateGridImpact(); });
-        applyGridToken = applyGridButton.Click(
             [this](const auto&, const auto&) { ConfirmGrid(); });
     }
 
@@ -467,8 +452,6 @@ struct PageLayoutPagePresenter::Impl
             found->second.moveUp.IsEnabled(index > 0);
             found->second.moveDown.IsEnabled(index + 1 < order.size());
         }
-        cancelOrderButton.IsEnabled(orderDirty);
-        applyOrderButton.IsEnabled(orderDirty);
     }
 
     void UpdateOrderState()
@@ -503,6 +486,17 @@ struct PageLayoutPagePresenter::Impl
         items.InsertAt(static_cast<std::uint32_t>(target), item);
         pageList.SelectedItem(item);
         UpdateOrderState();
+        ConfirmOrder();
+    }
+
+    void UpdateInteractionState()
+    {
+        const bool enabled = active && hasSnapshot && !confirmationPending;
+        pageList.IsEnabled(enabled);
+        addPageButton.IsEnabled(enabled);
+        const bool gridEnabled = enabled && SelectedPage() != nullptr;
+        columnsBox.IsEnabled(gridEnabled);
+        rowsBox.IsEnabled(gridEnabled);
     }
 
     void UpdateGridEditor()
@@ -510,10 +504,6 @@ struct PageLayoutPagePresenter::Impl
         const bool wasUpdating = updating;
         updating = true;
         const PageLayoutEntry* page = SelectedPage();
-        const bool available = page != nullptr;
-        columnsBox.IsEnabled(available);
-        rowsBox.IsEnabled(available);
-        applyGridButton.IsEnabled(false);
         if (page)
         {
             const auto index = static_cast<std::size_t>(
@@ -529,8 +519,8 @@ struct PageLayoutPagePresenter::Impl
             columnsBox.Value(1.0);
             rowsBox.Value(1.0);
         }
-        gridImpact.IsOpen(false);
         updating = wasUpdating;
+        UpdateInteractionState();
     }
 
     std::wstring ImpactMessage(const PageGridChangeImpact& impact) const
@@ -539,44 +529,6 @@ struct PageLayoutPagePresenter::Impl
             {std::to_wstring(impact.displacedItemCount),
              std::to_wstring(impact.displacedWidgetCount),
              std::to_wstring(impact.resizedWidgetCount)});
-    }
-
-    void UpdateGridImpact()
-    {
-        if (closed || updating)
-            return;
-        const PageLayoutEntry* page = SelectedPage();
-        if (!page)
-        {
-            applyGridButton.IsEnabled(false);
-            gridImpact.IsOpen(false);
-            return;
-        }
-        const int columns = IntegerValue(columnsBox);
-        const int rows = IntegerValue(rowsBox);
-        const bool changed = columns != page->columns || rows != page->rows;
-        applyGridButton.IsEnabled(changed);
-        if (!changed || !actions.analyzeGrid)
-        {
-            gridImpact.IsOpen(false);
-            return;
-        }
-        const auto impact = actions.analyzeGrid(page->id, columns, rows);
-        if (!impact.valid)
-        {
-            gridImpact.IsOpen(false);
-            return;
-        }
-        gridImpact.Severity(impact.RequiresConfirmation()
-                ? muxc::InfoBarSeverity::Warning
-                : muxc::InfoBarSeverity::Informational);
-        gridImpact.Title(impact.RequiresConfirmation()
-                ? L("settings.pages.gridImpact.title")
-                : L("settings.pages.gridImpact.none.title"));
-        gridImpact.Message(impact.RequiresConfirmation()
-                ? ImpactMessage(impact)
-                : L("settings.pages.gridImpact.none"));
-        gridImpact.IsOpen(true);
     }
 
     void ShowFeedback(
@@ -622,39 +574,50 @@ struct PageLayoutPagePresenter::Impl
         std::wstring title,
         std::wstring message,
         std::wstring primary,
-        std::function<void()> confirmed)
+        std::function<void(bool)> completed)
     {
         if (!actions.confirm)
         {
-            confirmed();
+            completed(true);
             return;
         }
-        confirmation->confirmed = std::move(confirmed);
+        confirmationPending = true;
+        UpdateInteractionState();
+        confirmation->completed =
+            [this, completed = std::move(completed)](bool accepted) mutable {
+                if (closed)
+                    return;
+                confirmationPending = false;
+                UpdateInteractionState();
+                completed(accepted);
+            };
         const auto bridge = confirmation;
         actions.confirm(std::move(title), std::move(message),
             std::move(primary), [bridge](bool accepted) {
-                if (accepted && bridge->confirmed)
+                if (bridge->completed)
                 {
-                    auto action = std::move(bridge->confirmed);
-                    bridge->confirmed = {};
-                    action();
-                }
-                else
-                {
-                    bridge->confirmed = {};
+                    auto completion = std::move(bridge->completed);
+                    bridge->completed = {};
+                    completion(accepted);
                 }
             });
     }
 
     void ConfirmOrder()
     {
-        if (!active || !hasSnapshot || !orderDirty || !actions.applyOrder)
+        if (!active || !hasSnapshot || !orderDirty ||
+            confirmationPending || !actions.applyOrder)
             return;
         RequestConfirmation(
             L("settings.pages.order.confirm.title"),
             L("settings.pages.order.confirm.message"),
-            L("settings.pages.applyOrder"),
-            [this]() { ApplyOrder(); });
+            L("settings.dialog.confirm"),
+            [this](bool accepted) {
+                if (accepted)
+                    ApplyOrder();
+                else
+                    RebuildPageList();
+            });
     }
 
     void ApplyOrder()
@@ -672,11 +635,15 @@ struct PageLayoutPagePresenter::Impl
 
     void ConfirmGrid()
     {
+        if (closed || updating || confirmationPending)
+            return;
         const PageLayoutEntry* page = SelectedPage();
         if (!active || !page || !actions.applyGrid)
             return;
         const int columns = IntegerValue(columnsBox);
         const int rows = IntegerValue(rowsBox);
+        if (columns == page->columns && rows == page->rows)
+            return;
         const auto impact = actions.analyzeGrid
             ? actions.analyzeGrid(page->id, columns, rows)
             : PageGridChangeImpact{};
@@ -686,9 +653,12 @@ struct PageLayoutPagePresenter::Impl
             RequestConfirmation(
                 L("settings.pages.grid.confirm.title"),
                 ImpactMessage(impact),
-                L("settings.pages.applyGrid"),
-                [this, pageId, columns, rows]() {
-                    ApplyGrid(pageId, columns, rows);
+                L("settings.dialog.confirm"),
+                [this, pageId, columns, rows](bool accepted) {
+                    if (accepted)
+                        ApplyGrid(pageId, columns, rows);
+                    else
+                        UpdateGridEditor();
                 });
             return;
         }
@@ -749,12 +719,6 @@ struct PageLayoutPagePresenter::Impl
         mappingNotice.Title(L("settings.pages.mapping.title"));
         mappingNotice.Message(L("settings.pages.mapping.message"));
         addPageButton.Content(winrt::box_value(L("app.menu.add_page")));
-        cancelOrderButton.Content(
-            winrt::box_value(L("settings.pages.cancelOrder")));
-        applyOrderButton.Content(
-            winrt::box_value(L("settings.pages.applyOrder")));
-        applyGridButton.Content(
-            winrt::box_value(L("settings.pages.applyGrid")));
 
         columnsLabel.Text(L("settings.pages.columns"));
         rowsLabel.Text(L("settings.pages.rows"));
@@ -776,17 +740,15 @@ struct PageLayoutPagePresenter::Impl
             return;
         active = false;
         closed = true;
-        confirmation->confirmed = {};
+        confirmation->completed = {};
+        confirmationPending = false;
         try
         {
             pageList.SelectionChanged(selectionChangedToken);
             pageList.DragItemsCompleted(dragCompletedToken);
             addPageButton.Click(addPageToken);
-            cancelOrderButton.Click(cancelOrderToken);
-            applyOrderButton.Click(applyOrderToken);
             columnsBox.ValueChanged(columnsChangedToken);
             rowsBox.ValueChanged(rowsChangedToken);
-            applyGridButton.Click(applyGridToken);
             pageList.Items().Clear();
         }
         catch (...)
@@ -843,7 +805,8 @@ void PageLayoutPagePresenter::Deactivate() noexcept
     if (!impl_ || impl_->closed)
         return;
     impl_->active = false;
-    impl_->confirmation->confirmed = {};
+    impl_->confirmation->completed = {};
+    impl_->confirmationPending = false;
 }
 
 mux::FrameworkElement PageLayoutPagePresenter::FocusTarget(

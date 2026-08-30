@@ -501,11 +501,21 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             pagesSection.find("generalPage_->PageNavigationContent()") !=
                 std::string_view::npos &&
             pages.find("CanReorderItems(true)") != std::string::npos &&
+            pages.find("dimensions.Orientation(muxc::Orientation::Vertical)") !=
+                std::string::npos &&
             pages.find("NumberBoxSpinButtonPlacementMode::Inline") !=
                 std::string::npos &&
             pages.find("columnsLabel.Text(L(\"settings.pages.columns\"))") !=
                 std::string::npos &&
             pages.find("rowsLabel.Text(L(\"settings.pages.rows\"))") !=
+                std::string::npos &&
+            pages.find("UpdateOrderState();\n                ConfirmOrder();") !=
+                std::string::npos &&
+            pages.find("[this](const auto&, const auto&) { ConfirmGrid(); }") !=
+                std::string::npos &&
+            pages.find("applyOrderButton") == std::string::npos &&
+            pages.find("applyGridButton") == std::string::npos &&
+            pages.find("L(\"settings.dialog.confirm\")") !=
                 std::string::npos &&
             pages.find("settings.pages.grid.confirm.title") !=
                 std::string::npos &&
