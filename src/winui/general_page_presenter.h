@@ -97,6 +97,9 @@ public:
     /** Desktop behavior and interaction settings, rendered on Desktop. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         DesktopBehaviorContent() const noexcept;
+    /** Page-navigation shortcuts, rendered on Pages & grid. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
+        PageNavigationContent() const noexcept;
     /** Legacy Dock shortcut/hotkey block, inserted after Dock enablement. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         DockShortcutContent() const noexcept;

@@ -215,14 +215,16 @@ void TestRoutes()
             static_cast<unsigned>(SettingsPage::AppearanceDesktopIcons) ==
                 16u &&
             static_cast<unsigned>(
-                SettingsPage::AppearanceIconBeautification) == 17u,
-        "appearance leaves append without changing existing route values");
+                SettingsPage::AppearanceIconBeautification) == 17u &&
+            static_cast<unsigned>(SettingsPage::DesktopPages) == 18u,
+        "new settings leaves append without changing existing route values");
 
     constexpr std::array appearanceLeaves{
         SettingsPage::AppearanceTheme,
         SettingsPage::AppearanceWidgets,
         SettingsPage::AppearanceDesktopIcons,
         SettingsPage::AppearanceIconBeautification,
+        SettingsPage::DesktopPages,
     };
     bool leafKeysAreUnique = true;
     for (std::size_t left = 0; left < appearanceLeaves.size(); ++left)
@@ -238,7 +240,7 @@ void TestRoutes()
         }
     }
     Check(leafKeysAreUnique,
-        "every Appearance leaf is valid and has a unique stable page key");
+        "every appended settings leaf is valid and has a unique stable page key");
 
     const SettingsRoute legacyAppearance = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization));
@@ -280,6 +282,9 @@ void TestRoutes()
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));
+    const SettingsRoute pageNavigation = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(
+            SettingsPage::General, "general.pageNavigation.next"));
     Check(desktopIcons.page == SettingsPage::AppearanceDesktopIcons &&
             iconBeautification.page ==
                 SettingsPage::AppearanceIconBeautification &&
@@ -287,8 +292,9 @@ void TestRoutes()
             desktopTabHeight.focusId == "desktop.categoryLayout" &&
             categoryRules.page == SettingsPage::DesktopCategories &&
             legacyCategoryLayout.page == SettingsPage::AppearanceWidgets &&
+            pageNavigation.page == SettingsPage::DesktopPages &&
             desktopBehavior.page == SettingsPage::Desktop,
-        "Desktop focus aliases route appearance, category, and behavior tasks to distinct owners");
+        "legacy focus aliases route appearance, page, category, and behavior tasks to distinct owners");
 }
 
 void TestLoadRouteAndImmutableSnapshots()

@@ -93,6 +93,7 @@
 #include "../crashlog.h"
 #include "../auto_start_rules.h"
 #include "../deployment_context.h"
+#include "../page_layout_settings.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -1935,6 +1936,22 @@ private:
     void AdjustGridColumns(int delta);
     /** @brief 将右键所在页面设置为指定行列预设。 */
     void SetGridDimensions(int columns, int rows);
+    /** @brief 捕获设置页使用的有序页面与网格快照。 */
+    snowdesktop::PageLayoutSnapshot CapturePageLayoutSnapshot() const;
+    /** @brief 分析按页面 ID 调整网格时会被重新安置的内容。 */
+    snowdesktop::PageGridChangeImpact AnalyzePageGridChange(
+        const std::wstring& pageId, int columns, int rows) const;
+    /** @brief 从设置页提交完整页面顺序。 */
+    snowdesktop::PageLayoutOperationResult ApplyPageOrderFromSettings(
+        std::uint64_t expectedRevision,
+        const std::vector<std::wstring>& pageIds);
+    /** @brief 从设置页按页面 ID 提交网格行列数。 */
+    snowdesktop::PageLayoutOperationResult ApplyPageGridFromSettings(
+        std::uint64_t expectedRevision,
+        const std::wstring& pageId, int columns, int rows);
+    /** @brief 从设置页新增页面。 */
+    snowdesktop::PageLayoutOperationResult AddPageFromSettings(
+        std::uint64_t expectedRevision);
     /** @brief 根据显示器宽高比和对角线英寸计算舒适的推荐网格。 */
     GridSpan CalculateRecommendedGridDimensions(
         int aspectWidth, int aspectHeight, float diagonalInches) const;

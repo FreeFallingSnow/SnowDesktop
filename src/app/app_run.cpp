@@ -627,6 +627,28 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return conflict;
     };
+    settingsHostOptions.pageLayoutPage.capture = [this]() {
+        return CapturePageLayoutSnapshot();
+    };
+    settingsHostOptions.pageLayoutPage.analyzeGrid = [this](
+        const std::wstring& pageId, int columns, int rows) {
+        return AnalyzePageGridChange(pageId, columns, rows);
+    };
+    settingsHostOptions.pageLayoutPage.applyOrder = [this](
+        std::uint64_t expectedRevision,
+        const std::vector<std::wstring>& pageIds) {
+        return ApplyPageOrderFromSettings(expectedRevision, pageIds);
+    };
+    settingsHostOptions.pageLayoutPage.applyGrid = [this](
+        std::uint64_t expectedRevision,
+        const std::wstring& pageId, int columns, int rows) {
+        return ApplyPageGridFromSettings(
+            expectedRevision, pageId, columns, rows);
+    };
+    settingsHostOptions.pageLayoutPage.addPage = [this](
+        std::uint64_t expectedRevision) {
+        return AddPageFromSettings(expectedRevision);
+    };
     settingsHostOptions.refreshExternalState = [this]() {
         if (!settingsController_)
             return;

@@ -528,8 +528,11 @@ void TestHostContract(const std::filesystem::path& repository)
             staticSearchMapsTo(
                 "desktop.categoryCounts", "DesktopCategories") &&
             staticSearchMapsTo(
-                "desktop.categoryRules", "DesktopCategories"),
-        "production search definitions route each Appearance leaf and keep category behavior with Categories");
+                "desktop.categoryRules", "DesktopCategories") &&
+            staticSearchMapsTo("pages.order", "DesktopPages") &&
+            staticSearchMapsTo("pages.grid", "DesktopPages") &&
+            staticSearchMapsTo("general.pageNavigation", "DesktopPages"),
+        "production search definitions route each settings leaf and keep page layout behavior with Pages");
     Check(staticSearchMapsTo(
               "dock.allowDesktopContentOverlap", "Dock") &&
             staticSearchMapsTo("dock.showOnlyWhenSummoned", "Dock") &&
@@ -547,8 +550,9 @@ void TestHostContract(const std::filesystem::path& repository)
             pageContextMapsTo(
               "AppearanceDesktopIcons", "app.settings.desktop_icons") &&
             pageContextMapsTo("AppearanceIconBeautification",
-              "app.settings.icon_beautify"),
-        "Appearance search results expose their localized leaf-page context");
+              "app.settings.icon_beautify") &&
+            pageContextMapsTo("DesktopPages", "settings.nav.pages"),
+        "settings search results expose their localized leaf-page context");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&

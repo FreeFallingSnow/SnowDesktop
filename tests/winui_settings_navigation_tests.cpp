@@ -168,6 +168,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         root / "src/winui/desktop_page_presenter.cpp");
     const std::string dock = ReadText(
         root / "src/winui/dock_page_presenter.cpp");
+    const std::string pages = ReadText(
+        root / "src/winui/page_layout_page_presenter.cpp");
     const std::string sharedControls = ReadText(
         root / "src/winui/settings_presenter_controls.h");
     const std::string shellXaml = ReadText(
@@ -181,7 +183,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
 
     Check(!shell.empty() && !shellHeader.empty() && !presenter.empty() &&
             !presenterHeader.empty() && !personalization.empty() &&
-            !desktop.empty() && !dock.empty() &&
+            !desktop.empty() && !dock.empty() && !pages.empty() &&
             !sharedControls.empty() && !shellXaml.empty() &&
             !recorder.empty() && !recorderHeader.empty() &&
             !recorderRules.empty(),
@@ -444,8 +446,10 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         "case SettingsPage::AppearanceWidgets:", personalizationCase);
     const auto desktopCase = shell.find(
         "case SettingsPage::Desktop:", widgetAppearanceCase);
+    const auto pagesCase = shell.find(
+        "case SettingsPage::DesktopPages:", desktopCase);
     const auto desktopIconsCase = shell.find(
-        "case SettingsPage::AppearanceDesktopIcons:", desktopCase);
+        "case SettingsPage::AppearanceDesktopIcons:", pagesCase);
     const auto beautificationCase = shell.find(
         "case SettingsPage::AppearanceIconBeautification:",
         desktopIconsCase);
@@ -466,7 +470,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         personalizationCase, widgetAppearanceCase);
     const auto widgetAppearanceSection = section(
         widgetAppearanceCase, desktopCase);
-    const auto desktopSection = section(desktopCase, desktopIconsCase);
+    const auto desktopSection = section(desktopCase, pagesCase);
+    const auto pagesSection = section(pagesCase, desktopIconsCase);
     const auto desktopIconsSection = section(
         desktopIconsCase, beautificationCase);
     const auto beautificationSection = section(
@@ -491,6 +496,15 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string_view::npos &&
             desktopSection.find("DesktopIconsContent()") ==
                 std::string_view::npos &&
+            pagesSection.find("pageLayoutPage_->Content()") !=
+                std::string_view::npos &&
+            pagesSection.find("generalPage_->PageNavigationContent()") !=
+                std::string_view::npos &&
+            pages.find("CanReorderItems(true)") != std::string::npos &&
+            pages.find("NumberBoxSpinButtonPlacementMode::Inline") !=
+                std::string::npos &&
+            pages.find("settings.pages.grid.confirm.title") !=
+                std::string::npos &&
             desktopIconsSection.find(
               "desktopPage_->DesktopIconsContent()") !=
                 std::string_view::npos &&
@@ -533,7 +547,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shell.find("result.route.page = result.focusId.starts_with") ==
                 std::string::npos,
-        "Appearance leaves, Desktop, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
+        "Appearance leaves, Desktop, Pages, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
 
     const auto generalItem = shellXaml.find("x:Name=\"GeneralItem\"");
     const auto homeItem = shellXaml.find("x:Name=\"HomeItem\"");
@@ -550,6 +564,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto desktopShellHeader = shellXaml.find(
         "x:Name=\"DesktopShellHeader\"");
     const auto desktopItem = shellXaml.find("x:Name=\"DesktopItem\"");
+    const auto pagesItem = shellXaml.find("x:Name=\"PagesItem\"");
     const auto categoriesItem = shellXaml.find(
         "x:Name=\"CategoriesItem\"");
     const auto dockItem = shellXaml.find("x:Name=\"DockItem\"");
@@ -587,7 +602,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 appearanceIconBeautificationItem &&
             appearanceIconBeautificationItem < desktopShellHeader &&
             desktopShellHeader < desktopItem &&
-            desktopItem < categoriesItem && categoriesItem < dockItem &&
+            desktopItem < pagesItem && pagesItem < categoriesItem &&
+            categoriesItem < dockItem &&
             dockItem < taskbarItem && taskbarItem < widgetsItem &&
             widgetsItem < dataHeader && dataHeader < backupItem &&
             backupItem < aboutItem && aboutItem < developerItem &&

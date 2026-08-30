@@ -295,6 +295,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/hotkey_recorder.cpp
     src/winui/hotkey_recorder.h
     src/winui/hotkey_recorder_rules.h
+    src/winui/page_layout_page_presenter.cpp
+    src/winui/page_layout_page_presenter.h
     src/winui/personalization_page_presenter.cpp
     src/winui/personalization_page_presenter.h
     src/winui/pch.h

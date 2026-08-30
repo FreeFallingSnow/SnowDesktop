@@ -170,6 +170,7 @@
                 </NavigationViewItem>
                 <NavigationViewItemHeader x:Name="DesktopShellHeader" />
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
+                <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
                 <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
                 <NavigationViewItem x:Name="DockItem" Tag="dock" />
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />

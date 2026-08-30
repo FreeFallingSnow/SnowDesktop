@@ -5,6 +5,50 @@
 
 // Desktop page topology, grid settings and page-to-monitor mapping.
 
+namespace
+{
+constexpr std::uint64_t kPageLayoutHashOffset = 1469598103934665603ull;
+constexpr std::uint64_t kPageLayoutHashPrime = 1099511628211ull;
+
+void MixPageLayoutHash(std::uint64_t& hash, std::uint64_t value) noexcept
+{
+    for (int shift = 0; shift < 64; shift += 8)
+    {
+        hash ^= (value >> shift) & 0xffu;
+        hash *= kPageLayoutHashPrime;
+    }
+}
+
+void MixPageLayoutHash(
+    std::uint64_t& hash, std::wstring_view value) noexcept
+{
+    MixPageLayoutHash(hash, value.size());
+    for (const wchar_t character : value)
+        MixPageLayoutHash(hash, static_cast<std::uint64_t>(character));
+}
+
+std::uint64_t PageLayoutRevision(
+    const snowdesktop::PageLayoutSnapshot& snapshot) noexcept
+{
+    std::uint64_t hash = kPageLayoutHashOffset;
+    MixPageLayoutHash(hash, snapshot.monitorCount);
+    MixPageLayoutHash(hash, snapshot.pages.size());
+    for (const auto& page : snapshot.pages)
+    {
+        MixPageLayoutHash(hash, page.id);
+        MixPageLayoutHash(hash, static_cast<std::uint64_t>(page.columns));
+        MixPageLayoutHash(hash, static_cast<std::uint64_t>(page.rows));
+        MixPageLayoutHash(hash, page.itemCount);
+        MixPageLayoutHash(hash, page.widgetCount);
+        MixPageLayoutHash(hash, static_cast<std::uint64_t>(page.role));
+        MixPageLayoutHash(hash, page.monitorOrdinal);
+        MixPageLayoutHash(hash, page.visible ? 1u : 0u);
+        MixPageLayoutHash(hash, page.activeOnLastMonitor ? 1u : 0u);
+    }
+    return hash == 0 ? 1 : hash;
+}
+}
+
 const GridPage* DesktopApp::GridPageFromPoint(POINT point) const
 {
     const GridPage* fallback = GetFirstPageGridPage();
@@ -39,6 +83,286 @@ const GridPage* DesktopApp::GridPageFromScreenPoint(POINT screenPoint) const
             return &page;
     }
     return GetFirstPageGridPage();
+}
+
+snowdesktop::PageLayoutSnapshot DesktopApp::CapturePageLayoutSnapshot() const
+{
+    snowdesktop::PageLayoutSnapshot snapshot;
+    const std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+    snapshot.monitorCount = monitorOrder.size();
+    snapshot.pages.reserve(savedPageIds_.size());
+
+    std::wstring activeLastPageId;
+    if (!monitorOrder.empty() && monitorOrder.back() < gridPages_.size())
+        activeLastPageId = gridPages_[monitorOrder.back()].id;
+
+    const std::size_t fixedPageCount = snapshot.monitorCount == 0
+        ? 0 : snapshot.monitorCount - 1;
+    for (std::size_t index = 0; index < savedPageIds_.size(); ++index)
+    {
+        snowdesktop::PageLayoutEntry entry;
+        entry.id = savedPageIds_[index];
+
+        if (const GridPage* visible = FindGridPage(gridPages_, entry.id))
+        {
+            entry.columns = std::max(1, visible->columns);
+            entry.rows = std::max(1, visible->rows);
+            entry.visible = true;
+        }
+        else
+        {
+            const auto columns = savedPageColumns_.find(entry.id);
+            const auto rows = savedPageRows_.find(entry.id);
+            entry.columns = columns == savedPageColumns_.end()
+                ? 1 : std::max(1, columns->second);
+            entry.rows = rows == savedPageRows_.end()
+                ? 1 : std::max(1, rows->second);
+        }
+
+        if (index < fixedPageCount)
+        {
+            entry.role = snowdesktop::PageLayoutRole::FixedMonitor;
+            entry.monitorOrdinal = index + 1;
+        }
+        else if (snapshot.monitorCount != 0 && index == fixedPageCount)
+        {
+            entry.role = snowdesktop::PageLayoutRole::LastMonitorDefault;
+            entry.monitorOrdinal = snapshot.monitorCount;
+        }
+        else
+        {
+            entry.role = snowdesktop::PageLayoutRole::Overflow;
+        }
+        entry.activeOnLastMonitor = !activeLastPageId.empty() &&
+            entry.id == activeLastPageId;
+
+        for (const auto& item : items_)
+        {
+            if (!item.name.empty() && item.gridCell.pageId == entry.id &&
+                !IsItemInAnyWidget(item))
+            {
+                ++entry.itemCount;
+            }
+        }
+        for (const auto& widget : widgets_)
+        {
+            if (widget.gridCell.pageId == entry.id &&
+                !IsGroupedWidget(widget) &&
+                !IsDockExclusiveWidgetId(widget.id))
+            {
+                ++entry.widgetCount;
+            }
+        }
+        snapshot.pages.push_back(std::move(entry));
+    }
+    snapshot.revision = PageLayoutRevision(snapshot);
+    return snapshot;
+}
+
+snowdesktop::PageGridChangeImpact DesktopApp::AnalyzePageGridChange(
+    const std::wstring& pageId, int columns, int rows) const
+{
+    snowdesktop::PageGridChangeImpact impact;
+    impact.pageId = pageId;
+    impact.columns = columns;
+    impact.rows = rows;
+    if (pageId.empty() || columns < 1 || columns > 50 ||
+        rows < 1 || rows > 50 ||
+        std::ranges::find(savedPageIds_, pageId) == savedPageIds_.end())
+    {
+        return impact;
+    }
+
+    if (const GridPage* page = FindGridPage(gridPages_, pageId))
+    {
+        impact.previousColumns = std::max(1, page->columns);
+        impact.previousRows = std::max(1, page->rows);
+    }
+    else
+    {
+        const auto savedColumns = savedPageColumns_.find(pageId);
+        const auto savedRows = savedPageRows_.find(pageId);
+        impact.previousColumns = savedColumns == savedPageColumns_.end()
+            ? 1 : std::max(1, savedColumns->second);
+        impact.previousRows = savedRows == savedPageRows_.end()
+            ? 1 : std::max(1, savedRows->second);
+    }
+    impact.valid = true;
+
+    for (const auto& widget : widgets_)
+    {
+        if (widget.gridCell.pageId != pageId || IsGroupedWidget(widget) ||
+            IsDockExclusiveWidgetId(widget.id))
+        {
+            continue;
+        }
+        const GridSpan clamped = ClampWidgetGridSpan(
+            widget, widget.gridSpan, columns, rows);
+        if (clamped.columns != widget.gridSpan.columns ||
+            clamped.rows != widget.gridSpan.rows)
+        {
+            ++impact.resizedWidgetCount;
+        }
+        if (widget.gridCell.column < 0 || widget.gridCell.row < 0 ||
+            widget.gridCell.column + clamped.columns > columns ||
+            widget.gridCell.row + clamped.rows > rows)
+        {
+            ++impact.displacedWidgetCount;
+        }
+    }
+    for (const auto& item : items_)
+    {
+        if (item.name.empty() || item.gridCell.pageId != pageId ||
+            IsItemInAnyWidget(item))
+        {
+            continue;
+        }
+        const int itemColumns = std::clamp(
+            item.gridSpan.columns, 1, std::max(1, columns));
+        const int itemRows = std::clamp(
+            item.gridSpan.rows, 1, std::max(1, rows));
+        if (item.gridCell.column < 0 || item.gridCell.row < 0 ||
+            item.gridCell.column + itemColumns > columns ||
+            item.gridCell.row + itemRows > rows)
+        {
+            ++impact.displacedItemCount;
+        }
+    }
+    return impact;
+}
+
+snowdesktop::PageLayoutOperationResult
+DesktopApp::ApplyPageOrderFromSettings(
+    std::uint64_t expectedRevision,
+    const std::vector<std::wstring>& pageIds)
+{
+    snowdesktop::PageLayoutOperationResult result;
+    const auto current = CapturePageLayoutSnapshot();
+    if (current.revision != expectedRevision)
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Stale;
+        result.snapshot = current;
+        return result;
+    }
+    if (!snowdesktop::IsValidPageOrder(savedPageIds_, pageIds))
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Invalid;
+        result.snapshot = current;
+        return result;
+    }
+    if (savedPageIds_ == pageIds)
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+        result.snapshot = current;
+        return result;
+    }
+
+    std::wstring activeLastPageId;
+    const std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+    if (!monitorOrder.empty() && monitorOrder.back() < gridPages_.size())
+        activeLastPageId = gridPages_[monitorOrder.back()].id;
+
+    savedPageIds_ = pageIds;
+    if (!activeLastPageId.empty())
+    {
+        const auto active = std::ranges::find(savedPageIds_, activeLastPageId);
+        if (active != savedPageIds_.end())
+        {
+            const std::size_t activeIndex = static_cast<std::size_t>(
+                std::distance(savedPageIds_.begin(), active));
+            const std::size_t lastDefaultIndex = monitorOrder.empty()
+                ? 0 : monitorOrder.size() - 1;
+            pageOffset_ = activeIndex >= lastDefaultIndex
+                ? static_cast<int>(activeIndex - lastDefaultIndex)
+                : 0;
+        }
+    }
+
+    CompactPageIds();
+    ApplyPageMapping();
+    SaveLayoutSlots();
+    LayoutItems();
+    RefreshIconBitmapResolution();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+
+    result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+    result.snapshot = CapturePageLayoutSnapshot();
+    return result;
+}
+
+snowdesktop::PageLayoutOperationResult
+DesktopApp::ApplyPageGridFromSettings(
+    std::uint64_t expectedRevision,
+    const std::wstring& pageId, int columns, int rows)
+{
+    snowdesktop::PageLayoutOperationResult result;
+    const auto current = CapturePageLayoutSnapshot();
+    if (current.revision != expectedRevision)
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Stale;
+        result.snapshot = current;
+        return result;
+    }
+    const auto impact = AnalyzePageGridChange(pageId, columns, rows);
+    if (!impact.valid)
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Invalid;
+        result.snapshot = current;
+        return result;
+    }
+    if (impact.previousColumns == columns && impact.previousRows == rows)
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+        result.snapshot = current;
+        return result;
+    }
+
+    savedPageColumns_[pageId] = columns;
+    savedPageRows_[pageId] = rows;
+    for (auto& page : gridPages_)
+    {
+        if (page.id != pageId)
+            continue;
+        page.columns = columns;
+        page.rows = rows;
+        ApplyIconSpacingToPage(page);
+        break;
+    }
+    ApplyDockWorkAreaReservation();
+    RelayoutDisplacedItems();
+    ApplyPageMapping();
+    SaveLayoutSlots();
+    LayoutItems();
+    RefreshIconBitmapResolution();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+
+    result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+    result.snapshot = CapturePageLayoutSnapshot();
+    return result;
+}
+
+snowdesktop::PageLayoutOperationResult DesktopApp::AddPageFromSettings(
+    std::uint64_t expectedRevision)
+{
+    snowdesktop::PageLayoutOperationResult result;
+    const auto current = CapturePageLayoutSnapshot();
+    if (current.revision != expectedRevision)
+    {
+        result.status = snowdesktop::PageLayoutOperationStatus::Stale;
+        result.snapshot = current;
+        return result;
+    }
+
+    AddNewPage();
+    result.snapshot = CapturePageLayoutSnapshot();
+    result.status = result.snapshot.revision == current.revision
+        ? snowdesktop::PageLayoutOperationStatus::Failed
+        : snowdesktop::PageLayoutOperationStatus::Succeeded;
+    return result;
 }
 
 /**

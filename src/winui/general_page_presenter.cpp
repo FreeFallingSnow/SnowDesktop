@@ -83,6 +83,7 @@ struct GeneralPagePresenter::Impl
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel desktopRoot{nullptr};
+    muxc::StackPanel pageNavigationRoot{nullptr};
     muxc::StackPanel dockShortcutRoot{nullptr};
 
     SettingsCard startupCard;
@@ -161,6 +162,8 @@ struct GeneralPagePresenter::Impl
         root.Spacing(8.0);
         desktopRoot = muxc::StackPanel{};
         desktopRoot.Spacing(8.0);
+        pageNavigationRoot = muxc::StackPanel{};
+        pageNavigationRoot.Spacing(8.0);
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
@@ -213,7 +216,7 @@ struct GeneralPagePresenter::Impl
         quickNavigationCard.content.Children().Append(
             quickNavigationHotkeyRow.row.root);
 
-        InitializeCard(pageNavigationCard, cardStyle, root);
+        InitializeCard(pageNavigationCard, cardStyle, pageNavigationRoot);
         pageNavigationToggle = muxc::ToggleSwitch{};
         pageNavigationToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -828,6 +831,11 @@ muxc::StackPanel GeneralPagePresenter::Root() const noexcept
 muxc::StackPanel GeneralPagePresenter::DesktopBehaviorContent() const noexcept
 {
     return impl_ ? impl_->desktopRoot : nullptr;
+}
+
+muxc::StackPanel GeneralPagePresenter::PageNavigationContent() const noexcept
+{
+    return impl_ ? impl_->pageNavigationRoot : nullptr;
 }
 
 muxc::StackPanel GeneralPagePresenter::DockShortcutContent() const noexcept

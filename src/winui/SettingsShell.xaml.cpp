@@ -127,6 +127,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.general", L"General"},
     LocalizedFallback{"settings.nav.personalization", L"Personalization"},
     LocalizedFallback{"settings.nav.desktop", L"Desktop"},
+    LocalizedFallback{"settings.nav.pages", L"Pages & grid"},
     LocalizedFallback{"settings.nav.group.desktopShell", L"Desktop & shell"},
     LocalizedFallback{"settings.nav.group.data", L"Data"},
     LocalizedFallback{"settings.nav.categories", L"Categories & rules"},
@@ -141,6 +142,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.page.general.description", L"Startup, language, navigation, hotkeys and everyday behavior."},
     LocalizedFallback{"settings.page.personalization.description", L"Theme, widget surfaces, desktop icons and icon beautification."},
     LocalizedFallback{"settings.page.desktop.description", L"Desktop behavior, display selection and pointer interaction."},
+    LocalizedFallback{"settings.page.pages.description", L"Reorder desktop pages and adjust each page's grid."},
     LocalizedFallback{"settings.page.categories.description", L"Manage category label counts and automatic matching rules."},
     LocalizedFallback{"settings.page.dock.description", L"Configure Dock behavior, placement and items."},
     LocalizedFallback{"settings.page.taskbar.description", L"Configure Windows taskbar behavior, default appearance and scenario overrides."},
@@ -333,6 +335,14 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                     L"SettingsShellCardButtonStyle")).as<mux::Style>());
         homeAboutPage_->SetActions(homeAboutPageActions_);
     };
+    const auto ensurePageLayout = [&]() {
+        if (pageLayoutPage_)
+            return;
+        pageLayoutPage_ = std::make_unique<
+            snowdesktop::winui::PageLayoutPagePresenter>(
+                localize, cardStyle());
+        pageLayoutPage_->SetActions(pageLayoutPageActions_);
+    };
     const auto ensureWidgets = [&]() {
         if (widgetsPage_)
             return;
@@ -366,6 +376,10 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::General:
     case SettingsPage::Desktop:
         ensureGeneral();
+        break;
+    case SettingsPage::DesktopPages:
+        ensureGeneral();
+        ensurePageLayout();
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
@@ -438,6 +452,11 @@ void SettingsShell::Close() noexcept
             homeAboutPage_->Deactivate();
             homeAboutPage_->Close();
         }
+        if (pageLayoutPage_)
+        {
+            pageLayoutPage_->Deactivate();
+            pageLayoutPage_->Close();
+        }
         if (widgetSettingsPage_)
         {
             widgetSettingsPage_->Deactivate();
@@ -471,6 +490,7 @@ void SettingsShell::Close() noexcept
     desktopPage_.reset();
     dockPage_.reset();
     homeAboutPage_.reset();
+    pageLayoutPage_.reset();
     widgetSettingsPage_.reset();
     widgetSettingsService_ = nullptr;
     widgetsPage_.reset();
@@ -480,6 +500,7 @@ void SettingsShell::Close() noexcept
     desktopPageActions_ = {};
     dockPageActions_ = {};
     homeAboutPageActions_ = {};
+    pageLayoutPageActions_ = {};
     widgetsPageActions_ = {};
     backupDataPageActions_ = {};
     localizer_ = {};
@@ -523,6 +544,11 @@ void SettingsShell::ReleaseSessionResources() noexcept
             homeAboutPage_->Deactivate();
             homeAboutPage_->Close();
         }
+        if (pageLayoutPage_)
+        {
+            pageLayoutPage_->Deactivate();
+            pageLayoutPage_->Close();
+        }
         if (widgetSettingsPage_)
         {
             widgetSettingsPage_->Deactivate();
@@ -557,6 +583,7 @@ void SettingsShell::ReleaseSessionResources() noexcept
     desktopPage_.reset();
     dockPage_.reset();
     homeAboutPage_.reset();
+    pageLayoutPage_.reset();
     widgetSettingsPage_.reset();
     widgetsPage_.reset();
     backupDataPage_.reset();
@@ -594,6 +621,7 @@ void SettingsShell::RefreshLocalizedText()
     DataHeader().Content(
         winrt::box_value(Localize("settings.nav.group.data")));
     DesktopItem().Content(winrt::box_value(Localize("settings.nav.desktop")));
+    PagesItem().Content(winrt::box_value(Localize("settings.nav.pages")));
     CategoriesItem().Content(
         winrt::box_value(Localize("settings.nav.categories")));
     DockItem().Content(winrt::box_value(Localize("settings.nav.dock")));
@@ -632,6 +660,8 @@ void SettingsShell::RefreshLocalizedText()
         dockPage_->RefreshLocalizedText();
     if (homeAboutPage_)
         homeAboutPage_->RefreshLocalizedText();
+    if (pageLayoutPage_)
+        pageLayoutPage_->RefreshLocalizedText();
     if (widgetSettingsPage_)
         widgetSettingsPage_->RefreshLocalizedText();
     if (widgetsPage_)
@@ -809,6 +839,14 @@ void SettingsShell::SetHomeAboutPageActions(
     homeAboutPageActions_ = std::move(actions);
     if (homeAboutPage_)
         homeAboutPage_->SetActions(homeAboutPageActions_);
+}
+
+void SettingsShell::SetPageLayoutPageActions(
+    snowdesktop::winui::PageLayoutPageActions actions)
+{
+    pageLayoutPageActions_ = std::move(actions);
+    if (pageLayoutPage_)
+        pageLayoutPage_->SetActions(pageLayoutPageActions_);
 }
 
 bool SettingsShell::ApplyHomeAboutStatusPatch(
@@ -1061,6 +1099,8 @@ void SettingsShell::SuspendInteraction() noexcept
             dockPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
+        if (pageLayoutPage_)
+            pageLayoutPage_->Deactivate();
         if (widgetSettingsPage_)
             widgetSettingsPage_->Deactivate();
         if (widgetsPage_)
@@ -1532,7 +1572,8 @@ void SettingsShell::HookEvents()
                      SettingsPage::AppearanceWidgets,
                      SettingsPage::AppearanceDesktopIcons,
                      SettingsPage::AppearanceIconBeautification,
-                     SettingsPage::Desktop, SettingsPage::DesktopCategories,
+                     SettingsPage::Desktop, SettingsPage::DesktopPages,
+                     SettingsPage::DesktopCategories,
                      SettingsPage::Dock, SettingsPage::Taskbar,
                      SettingsPage::Widgets,
                      SettingsPage::BackupAndData, SettingsPage::About,
@@ -1747,6 +1788,8 @@ void SettingsShell::ApplyNavigationIcons()
             L"\xE793"},
         IconDescriptor{DesktopItem(),
             L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
+        IconDescriptor{PagesItem(),
+            L"ms-appx:///Assets/Settings/Icons/pages.svg", L"\xE8A5"},
         IconDescriptor{CategoriesItem(),
             L"ms-appx:///Assets/Settings/Icons/categories.svg", L"\xE8B7"},
         IconDescriptor{DockItem(),
@@ -1856,7 +1899,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     const auto usesGeneralPresenter = [](SettingsPage page) {
         return page == SettingsPage::General ||
             page == SettingsPage::Desktop ||
-            page == SettingsPage::Dock;
+            page == SettingsPage::Dock ||
+            page == SettingsPage::DesktopPages;
     };
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
@@ -1901,6 +1945,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::Debug;
     if (leavingHomeAbout && homeAboutPage_)
         homeAboutPage_->Deactivate();
+    const bool leavingPageLayout = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::DesktopPages &&
+        pageRoute.page != SettingsPage::DesktopPages;
+    if (leavingPageLayout && pageLayoutPage_)
+        pageLayoutPage_->Deactivate();
     const bool leavingWidgetSettings = renderedPageRoute_ &&
         renderedPageRoute_->page == SettingsPage::WidgetSettings &&
         pageRoute.page != SettingsPage::WidgetSettings;
@@ -2034,6 +2083,28 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                        const mux::FrameworkElement& element) {
                     RegisterFocusTarget(std::move(focusId), element);
                 });
+            generalPage_->Activate();
+        }
+        break;
+    case SettingsPage::DesktopPages:
+        if (pageLayoutPage_ && generalPage_)
+        {
+            PageCards().Children().Append(pageLayoutPage_->Content());
+            PageCards().Children().Append(
+                generalPage_->PageNavigationContent());
+            for (const std::string_view focusId : {
+                     "pages.order", "pages.add", "pages.grid",
+                     "pages.columns", "pages.rows"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    pageLayoutPage_->FocusTarget(focusId));
+            }
+            generalPage_->RegisterFocusTargets(
+                [this](std::string focusId,
+                       const mux::FrameworkElement& element) {
+                    RegisterFocusTarget(std::move(focusId), element);
+                });
+            pageLayoutPage_->Activate();
             generalPage_->Activate();
         }
         break;
@@ -2358,6 +2429,8 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::AppearanceIconBeautification:
         return Localize("app.settings.icon_beautify");
     case SettingsPage::Desktop: return Localize("settings.nav.desktop");
+    case SettingsPage::DesktopPages:
+        return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:
         return Localize("settings.nav.categories");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
@@ -2394,6 +2467,8 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
         return Localize("settings.desktop.beautify.description");
     case SettingsPage::Desktop:
         return Localize("settings.page.desktop.description");
+    case SettingsPage::DesktopPages:
+        return Localize("settings.page.pages.description");
     case SettingsPage::DesktopCategories:
         return Localize("settings.page.categories.description");
     case SettingsPage::Dock:
@@ -2432,6 +2507,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::AppearanceIconBeautification:
         return AppearanceIconBeautificationItem();
     case SettingsPage::Desktop: return DesktopItem();
+    case SettingsPage::DesktopPages: return PagesItem();
     case SettingsPage::DesktopCategories: return CategoriesItem();
     case SettingsPage::Dock:
     case SettingsPage::DockAndTaskbar: return DockItem();

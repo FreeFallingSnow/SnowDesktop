@@ -228,15 +228,24 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "general.quickNavigation.hotkey",
         "app.settings.hotkey",
         "settings.general.quickNavigation.description"},
-    {SettingsPage::General, "general.pageNavigation",
+    {SettingsPage::DesktopPages, "general.pageNavigation",
         "settings.general.pageNavigation",
         "settings.general.pageNavigation.description"},
-    {SettingsPage::General, "general.pageNavigation.previous",
+    {SettingsPage::DesktopPages, "general.pageNavigation.previous",
         "app.settings.page_navigation_previous",
         "settings.general.pageNavigation.description"},
-    {SettingsPage::General, "general.pageNavigation.next",
+    {SettingsPage::DesktopPages, "general.pageNavigation.next",
         "app.settings.page_navigation_next",
         "settings.general.pageNavigation.description"},
+    {SettingsPage::DesktopPages, "pages.order",
+        "settings.pages.manage",
+        "settings.pages.manage.description"},
+    {SettingsPage::DesktopPages, "pages.add",
+        "app.menu.add_page",
+        "settings.pages.manage.description"},
+    {SettingsPage::DesktopPages, "pages.grid",
+        "settings.pages.grid",
+        "settings.pages.grid.description"},
     {SettingsPage::Desktop, "desktop.passthrough",
         "settings.general.desktopPassthrough",
         "settings.general.desktopPassthrough.description"},
@@ -1145,6 +1154,8 @@ struct SettingsWindowHost::Impl
                     return L("app.settings.icon_beautify");
                 case SettingsPage::Desktop:
                     return L("settings.nav.desktop");
+                case SettingsPage::DesktopPages:
+                    return L("settings.nav.pages");
                 case SettingsPage::DesktopCategories:
                     return L("settings.nav.categories");
                 case SettingsPage::Dock:
@@ -1852,6 +1863,29 @@ struct SettingsWindowHost::Impl
             return state->owner->options.startupConflict();
         };
         shell->SetGeneralPageActions(std::move(general));
+
+        PageLayoutPageActions pageLayout = options.pageLayoutPage;
+        pageLayout.confirm = [weak](
+                                 std::wstring title,
+                                 std::wstring message,
+                                 std::wstring primaryButtonText,
+                                 PageLayoutPageActions::
+                                     ConfirmationCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->shell)
+            {
+                if (completed)
+                    completed(false);
+                return;
+            }
+            state->owner->ShowGenerationConfirmation(
+                state->owner->shell->CurrentGeneration(),
+                std::move(title), std::move(message),
+                std::move(completed), true,
+                std::move(primaryButtonText));
+        };
+        shell->SetPageLayoutPageActions(std::move(pageLayout));
 
         PersonalizationPageActions personalization;
         personalization.update = [weak](

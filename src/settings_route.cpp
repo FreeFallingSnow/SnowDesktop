@@ -67,7 +67,13 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
     if (route.page == SettingsPage::General)
     {
-        if (route.focusId == "general.softwareDesktop")
+        if (route.focusId == "general.pageNavigation" ||
+            route.focusId == "general.pageNavigation.previous" ||
+            route.focusId == "general.pageNavigation.next")
+        {
+            route.page = SettingsPage::DesktopPages;
+        }
+        else if (route.focusId == "general.softwareDesktop")
         {
             route.page = SettingsPage::Desktop;
             route.focusId = "desktop.softwareDesktop";
@@ -194,6 +200,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::AppearanceWidgets:
     case SettingsPage::AppearanceDesktopIcons:
     case SettingsPage::AppearanceIconBeautification:
+    case SettingsPage::DesktopPages:
         break;
     default:
         return false;
@@ -228,6 +235,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
         return "appearance-desktop-icons";
     case SettingsPage::AppearanceIconBeautification:
         return "appearance-icon-beautification";
+    case SettingsPage::DesktopPages: return "desktop-pages";
     }
     return "home";
 }

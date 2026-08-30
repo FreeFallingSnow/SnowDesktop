@@ -15,6 +15,7 @@
 #include "dock_window_transition.h"
 #include "dock_app_identity_rules.h"
 #include "page_navigation_rules.h"
+#include "page_layout_settings.h"
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
@@ -45,6 +46,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
@@ -191,6 +193,18 @@ void CheckPopupWindowPairZOrderTransitions()
 int main(int argc, char** argv)
 {
     CheckPopupWindowPairZOrderTransitions();
+    const std::vector<std::wstring> savedPageOrder{
+        L"page-1", L"page-2", L"page-3"};
+    Check(snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-3", L"page-1", L"page-2"}),
+        "page settings must accept a complete permutation");
+    Check(!snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-1", L"page-1", L"page-3"}) &&
+            !snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-1", L"page-2"}) &&
+            !snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-1", L"page-2", L"unknown"}),
+        "page settings must reject duplicate, missing, or unknown page ids");
     namespace dockDrop =
         snowdesktop::dock_drop_rules;
     namespace floatingDock =

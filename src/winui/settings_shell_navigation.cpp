@@ -33,6 +33,7 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::AppearanceWidgets:
     case SettingsPage::AppearanceDesktopIcons:
     case SettingsPage::AppearanceIconBeautification:
+    case SettingsPage::DesktopPages:
         return true;
     default:
         return false;

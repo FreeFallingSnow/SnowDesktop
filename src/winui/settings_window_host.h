@@ -5,6 +5,7 @@
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
 #include "home_about_page_model.h"
+#include "page_layout_page_presenter.h"
 #include "widgets_page_backend.h"
 
 #include <windows.h>
@@ -56,6 +57,7 @@ struct SettingsWindowHostOptions
      * dispatch and snapshot publication are supplied by SettingsWindowHost. */
     WidgetsPageBackendOptions widgetsPage;
     BackupDataPageBackendOptions backupDataPage;
+    PageLayoutPageActions pageLayoutPage;
 
     /** Reconcile host-owned system state after a persisted-state reload. */
     std::function<void()> refreshExternalState;

@@ -9,6 +9,7 @@
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
 #include "home_about_page_presenter.h"
+#include "page_layout_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 #include "widget_settings_presenter.h"
@@ -112,6 +113,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::DockPageActions actions);
     void SetHomeAboutPageActions(
         snowdesktop::winui::HomeAboutPageActions actions);
+    void SetPageLayoutPageActions(
+        snowdesktop::winui::PageLayoutPageActions actions);
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
@@ -271,6 +274,7 @@ private:
     snowdesktop::winui::DesktopPageActions desktopPageActions_;
     snowdesktop::winui::DockPageActions dockPageActions_;
     snowdesktop::winui::HomeAboutPageActions homeAboutPageActions_;
+    snowdesktop::winui::PageLayoutPageActions pageLayoutPageActions_;
     snowdesktop::winui::WidgetsPageActions widgetsPageActions_;
     snowdesktop::winui::BackupDataPageActions backupDataPageActions_;
 
@@ -281,6 +285,8 @@ private:
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
     std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
         homeAboutPage_;
+    std::unique_ptr<snowdesktop::winui::PageLayoutPagePresenter>
+        pageLayoutPage_;
     snowdesktop::widget_runtime::WidgetSettingsService*
         widgetSettingsService_ = nullptr;
     std::unique_ptr<snowdesktop::winui::WidgetSettingsPresenter>
