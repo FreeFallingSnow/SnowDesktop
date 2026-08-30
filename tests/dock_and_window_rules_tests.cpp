@@ -2021,8 +2021,24 @@ int main(int argc, char** argv)
             true),
         "fixed-position Dock items must not show a sortable insertion indicator");
     Check(dockDrop::ShouldDrawSortableInsertionIndicator(
-            false),
+             false),
         "regular Dock items must retain the sortable insertion indicator");
+    const std::array<long, 2> insertionMidpoints{ 40, 80 };
+    const auto insertionMidpointAt =
+        [&](size_t index) {
+            return insertionMidpoints[index - 3];
+        };
+    Check(dockDrop::ResolveRedirectedInsertionIndex(
+              20, 3, 5, insertionMidpointAt) == 3 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              40, 3, 5, insertionMidpointAt) == 4 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              79, 3, 5, insertionMidpointAt) == 4 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              80, 3, 5, insertionMidpointAt) == 5 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              20, 7, 7, insertionMidpointAt) == 7,
+        "non-sortable Dock areas must redirect to the nearest real insertion boundary");
     Check((floatingDock::kWindowExStyle & WS_EX_TOPMOST) == 0,
         "floating Dock uses SetWindowPos to stay topmost instead of fixing WS_EX_TOPMOST to its window style");
     Check((floatingDock::kWindowExStyle & WS_EX_NOACTIVATE) != 0,

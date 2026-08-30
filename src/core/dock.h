@@ -189,6 +189,8 @@ private:
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
+    HitRegion RedirectDragToNearestInsertion(
+        POINT point, Slot*& outSlot);
 
     DesktopApp* app_ = nullptr;
     std::vector<DockEntry>* entries_ = nullptr;

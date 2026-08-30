@@ -1519,19 +1519,55 @@ size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
                 FolderEntryCount());
     const size_t begin = range.begin;
     const size_t end = range.end;
-    if (!IsPointInScrollViewport(pt) &&
-        !(folderSource && IsEdgeAttached()))
-        return end;
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
-    for (size_t i = begin; i < end && i < slots.size(); ++i)
+    return snowdesktop::dock_drop_rules::
+        ResolveRedirectedInsertionIndex(
+            IsVertical() ? pt.y : pt.x,
+            begin, end,
+            [&](size_t index) {
+                const RECT bounds =
+                    slots[index]->GetBounds();
+                return IsVertical()
+                    ? (bounds.top + bounds.bottom) / 2
+                    : (bounds.left + bounds.right) / 2;
+            });
+}
+
+HitRegion DockContainer::RedirectDragToNearestInsertion(
+    POINT point, Slot*& outSlot)
+{
+    outSlot = nullptr;
+    const bool folderSource = HasOnlyFolderDragSource();
+    const auto range = snowdesktop::dock_folder_rules::
+        GroupInsertRange(
+            folderSource,
+            SortableEntryCount(),
+            FolderEntryCount());
+    const size_t insertIndex = GetInsertIndexAtPoint(point);
+    const auto& slots = GetSlots();
+
+    if (insertIndex < range.end &&
+        insertIndex < slots.size() && slots[insertIndex])
     {
-        RECT bounds = slots[i]->GetBounds();
-        if (PtInRect(&bounds, pt))
-            return IsVertical()
-                ? (pt.y < (bounds.top + bounds.bottom) / 2 ? i : i + 1)
-                : (pt.x < (bounds.left + bounds.right) / 2 ? i : i + 1);
+        outSlot = slots[insertIndex].get();
+        return HitRegion::SortBefore;
     }
-    return end;
+    if (range.end > range.begin &&
+        range.end - 1 < slots.size() && slots[range.end - 1])
+    {
+        outSlot = slots[range.end - 1].get();
+        return HitRegion::SortAfter;
+    }
+
+    // Search is always the final synthetic slot. It gives an empty sortable
+    // group a stable presentation anchor while InsertIndexFor clamps the drop
+    // back to that group's sole boundary.
+    if (!slots.empty() && slots.back())
+    {
+        outSlot = slots.back().get();
+        return HitRegion::SortAfter;
+    }
+    return HitRegion::Empty;
 }
 
 void DockContainer::DrawInsertionPreview(
@@ -1567,14 +1603,18 @@ void DockContainer::DrawInsertionPreview(
             else
                 boundary.left = boundary.right;
         }
-        const float axis = static_cast<float>(
+        float axis = static_cast<float>(
             IsVertical() ? boundary.top : boundary.left);
-        if (!IsEdgeAttached() &&
-            ((IsVertical() &&
-                (axis < viewport.top || axis > viewport.bottom)) ||
-             (!IsVertical() &&
-                (axis < viewport.left || axis > viewport.right))))
-            return;
+        if (!IsEdgeAttached())
+        {
+            axis = IsVertical()
+                ? std::clamp(axis,
+                    static_cast<float>(viewport.top),
+                    static_cast<float>(viewport.bottom))
+                : std::clamp(axis,
+                    static_cast<float>(viewport.left),
+                    static_cast<float>(viewport.right));
+        }
         if (IsVertical())
             context->FillRoundedRectangle(D2D1::RoundedRect(
                 D2D1::RectF(static_cast<float>(bounds.left + 10), axis - 2.0f,
@@ -1591,20 +1631,24 @@ void DockContainer::DrawInsertionPreview(
         ? ItemPitch() + ScaledSeparatorGap() : 0;
     if (IsVertical())
     {
-        const float y = static_cast<float>(bounds.top + ScaledSpacing() / 2 +
+        float y = static_cast<float>(bounds.top + ScaledSpacing() / 2 +
             leadingOffset + static_cast<LONG>(insertIndex * ItemPitch()) -
             scrollOffset_);
-        if (y < viewport.top || y > viewport.bottom) return;
+        y = std::clamp(y,
+            static_cast<float>(viewport.top),
+            static_cast<float>(viewport.bottom));
         context->FillRoundedRectangle(D2D1::RoundedRect(
             D2D1::RectF(static_cast<float>(bounds.left + 10), y - 2.0f,
                 static_cast<float>(bounds.right - 10), y + 2.0f), 2.0f, 2.0f),
             brush.Get());
         return;
     }
-    const float x = static_cast<float>(bounds.left + ScaledSpacing() / 2 +
+    float x = static_cast<float>(bounds.left + ScaledSpacing() / 2 +
         leadingOffset + static_cast<LONG>(insertIndex * ItemPitch()) -
         scrollOffset_);
-    if (x < viewport.left || x > viewport.right) return;
+    x = std::clamp(x,
+        static_cast<float>(viewport.left),
+        static_cast<float>(viewport.right));
     context->FillRoundedRectangle(D2D1::RoundedRect(
         D2D1::RectF(x - 2.0f, static_cast<float>(bounds.top + 10),
             x + 2.0f, static_cast<float>(bounds.bottom - 10)), 2.0f, 2.0f),
@@ -2300,7 +2344,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     if (IsWindowsButtonPoint(pt))
     {
         resetDwell();
-        return HitRegion::Blocked;
+        return RedirectDragToNearestInsertion(pt, outSlot);
     }
     const bool pointInScrollViewport = IsPointInScrollViewport(pt);
     const auto& slots = GetSlots();
@@ -2336,10 +2380,11 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         if (dynamic_cast<DockFrequentItem*>(targetItem) ||
             dynamic_cast<DockRunningItem*>(targetItem))
         {
-            // Generated frequent and running items are not members of the
-            // sortable Dock list. Block without passing through to the grid.
+            // Generated frequent and running items are not sortable. Keep the
+            // Dock as the target, but redirect to the closest boundary in the
+            // payload's sortable main/folder group.
             resetDwell();
-            return HitRegion::Blocked;
+            return RedirectDragToNearestInsertion(pt, outSlot);
         }
 
         RECT handoffRect = bounds;
@@ -2462,7 +2507,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
             ? HitRegion::SortBefore : HitRegion::SortAfter;
     }
     resetDwell();
-    return HitRegion::Empty;
+    return RedirectDragToNearestInsertion(pt, outSlot);
 }
 
 std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,

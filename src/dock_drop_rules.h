@@ -41,6 +41,25 @@ inline bool ShouldDrawSortableInsertionIndicator(
     return !fixedPlacementSource;
 }
 
+// Dock controls and generated running/frequent items are not sortable slots.
+// Partition their pointer area by the midpoints of the current sortable group
+// so every otherwise inert surface resolves to a real insertion boundary.
+template <typename MidpointAt>
+inline std::size_t ResolveRedirectedInsertionIndex(
+    long pointerAxis,
+    std::size_t beginIndex,
+    std::size_t endIndex,
+    const MidpointAt& midpointAt)
+{
+    for (std::size_t index = beginIndex;
+         index < endIndex; ++index)
+    {
+        if (pointerAxis < midpointAt(index))
+            return index;
+    }
+    return endIndex;
+}
+
 inline bool IsFolderSourceTarget(
     snowdesktop::item_location::FolderTargetKind kind) noexcept
 {
