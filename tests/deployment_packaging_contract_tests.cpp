@@ -348,6 +348,11 @@ void TestSteamPipeAutomation(const std::string& steamPipe,
             steamPipe.find("[string]$Password") == std::string::npos &&
             steamPipe.find("-betapassword") == std::string::npos,
         "SteamPipe uses a pre-authenticated build account without accepting password arguments");
+    Check(steamPipe.find("Tee-Object -FilePath $logPath -Append") !=
+                std::string::npos &&
+            steamPipe.find("Tee-Object -LiteralPath $logPath -Append") ==
+                std::string::npos,
+        "SteamPipe appends SteamCMD output with a valid Tee-Object parameter set");
     Check(steamPipe.find("-not $Yes") != std::string::npos &&
             steamPipe.find("$ConfirmVersion -ne $version") !=
                 std::string::npos &&

@@ -338,7 +338,7 @@ $steamCmdArguments = @(
     "+quit"
 )
 & $steamCmd @steamCmdArguments 2>&1 |
-    Tee-Object -LiteralPath $logPath -Append
+    Tee-Object -FilePath $logPath -Append
 $steamCmdExitCode = $LASTEXITCODE
 if ($steamCmdExitCode -ne 0) {
     throw "SteamPipe $Mode failed with exit code $steamCmdExitCode. See $logPath"
