@@ -156,7 +156,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "all static page text uses the dynamic JSON localizer");
     Check(source.find("settings_presenter_controls.h") !=
                 std::string::npos &&
-            source.find("controls::SettingRow layoutCreateRow") !=
+            source.find("controls::SettingRow layoutCreateRow") ==
                 std::string::npos &&
             source.find("controls::SettingRow fullBackupActionsRow") ==
                 std::string::npos &&
@@ -179,11 +179,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
               "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
         "backup rows keep native focus visuals and center titles in the expanded command surface");
-    Check(source.find("app.settings.save_current_layout") !=
+    Check(source.find("app.settings.save_current_layout") ==
                 std::string::npos &&
-            source.find("layoutActions.Children().Append(layoutName)") !=
+            source.find("layoutActionBar.Content(layoutName)") !=
                 std::string::npos &&
-            source.find("layoutActions.Children().Append(layoutActionBar)") !=
+            source.find(
+              "layoutCard.content.Children().Append(layoutActionBar)") !=
                 std::string::npos &&
             source.find(
               "layoutActionBar.PrimaryCommands().Append(createLayoutButton)") !=
@@ -197,7 +198,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("layoutBackupSaveRunning") != std::string::npos &&
             source.find("layoutName.Text(L\"\")") != std::string::npos,
-        "layout backup keeps the name field and primary save action while moving folder access to overflow");
+        "layout backup places the name field and actions in one expanded command surface");
     Check(source.find("fullBackupActionBar = NewCommandBar()") !=
                 std::string::npos &&
             source.find("fullBackupHint = NewCommandBarHint()") !=

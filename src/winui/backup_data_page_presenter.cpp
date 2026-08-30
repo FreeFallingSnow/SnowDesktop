@@ -272,7 +272,6 @@ struct BackupDataPagePresenter::Impl
     muxc::Button cancelButton{nullptr};
 
     SettingsCard layoutCard;
-    controls::SettingRow layoutCreateRow;
     muxc::TextBox layoutName{nullptr};
     muxc::CommandBar layoutActionBar{nullptr};
     muxc::AppBarButton createLayoutButton{nullptr};
@@ -366,20 +365,16 @@ struct BackupDataPagePresenter::Impl
 
         InitializeCard(layoutCard, cardStyle, root);
         layoutCard.description.Visibility(mux::Visibility::Collapsed);
-        muxc::StackPanel layoutActions{};
-        layoutActions.Spacing(4.0);
         layoutName = muxc::TextBox{};
         layoutName.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         layoutName.UseSystemFocusVisuals(true);
         layoutActionBar = NewCommandBar();
         createLayoutButton = NewCommandButton(L"\xE74E");
         openDataDirectoryButton = NewCommandButton(L"\xE8B7");
+        layoutActionBar.Content(layoutName);
         layoutActionBar.PrimaryCommands().Append(createLayoutButton);
         layoutActionBar.SecondaryCommands().Append(
             openDataDirectoryButton);
-        layoutActions.Children().Append(layoutName);
-        layoutActions.Children().Append(layoutActionBar);
-        layoutCreateRow.Initialize(layoutActions);
         noLayoutBackups = NewEmptyMessage();
         noLayoutBackups.MinHeight(48.0);
         noLayoutBackups.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -388,7 +383,7 @@ struct BackupDataPagePresenter::Impl
         layoutList.IsItemClickEnabled(false);
         layoutList.MinHeight(48.0);
         layoutList.MaxHeight(132.0);
-        layoutCard.content.Children().Append(layoutCreateRow.root);
+        layoutCard.content.Children().Append(layoutActionBar);
         layoutCard.content.Children().Append(noLayoutBackups);
         layoutCard.content.Children().Append(layoutList);
 
@@ -853,8 +848,6 @@ struct BackupDataPagePresenter::Impl
         layoutCard.description.Text(L(
             "settings.backup.layout.description",
             L"Create and restore desktop-layout backups."));
-        layoutCreateRow.SetText(L(
-            "app.settings.save_current_layout", L"Save current layout"));
         layoutName.PlaceholderText(L(
             "app.settings.backup_name_hint", L"Backup name (optional)"));
         SetCommandText(createLayoutButton,
