@@ -1074,15 +1074,63 @@ private:
                 ImGui::Text("%s: %s", T("标题和说明", "Title and description"),
                     T("保留 Steam 当前内容", "Preserve current Steam text"));
             else
+            {
                 ImGui::Text(T("标题和说明：提交 %zu 种 Steam 语言",
                     "Title and description: submit %zu Steam languages",
                     plan.localizations.size()).c_str());
+                const std::string listingLabel = T(
+                    "本次提交的多语言文案（%zu 种）",
+                    "Localized text in this submission (%zu)",
+                    plan.localizations.size());
+                if (ImGui::CollapsingHeader(listingLabel.c_str(),
+                        ImGuiTreeNodeFlags_DefaultOpen) &&
+                    ImGui::BeginTable("prepared-localization-plan", 3,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_Resizable |
+                        ImGuiTableFlags_SizingStretchProp |
+                        ImGuiTableFlags_ScrollY,
+                        ImVec2(0, 280.0f * gDpiScale)))
+                {
+                    ImGui::TableSetupColumn(T("Steam 语言", "Steam language"),
+                        ImGuiTableColumnFlags_WidthFixed,
+                        110.0f * gDpiScale);
+                    ImGui::TableSetupColumn(T("标题", "Title"),
+                        ImGuiTableColumnFlags_WidthStretch, 0.8f);
+                    ImGui::TableSetupColumn(T("说明", "Description"),
+                        ImGuiTableColumnFlags_WidthStretch, 2.2f);
+                    ImGui::TableHeadersRow();
+                    for (const auto& localized : plan.localizations)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(localized.language.c_str());
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextWrapped("%s", localized.title.c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        if (localized.description.empty())
+                            ImGui::TextDisabled("—");
+                        else
+                            ImGui::TextWrapped("%s",
+                                localized.description.c_str());
+                    }
+                    ImGui::EndTable();
+                }
+            }
             ImGui::Text("%s: %s", T("主预览", "Primary preview"),
                 plan.preview ? T("使用本地预览", "Use local preview") :
                     T("保留 Steam 当前预览", "Preserve Steam preview"));
+            if (plan.preview)
+                ImGui::TextWrapped("%s",
+                    WideToUtf8(plan.preview->wstring()).c_str());
             ImGui::Text("%s: %s", T("标签", "Tags"),
                 plan.tags ? T("提交本地标签", "Submit local tags") :
                     T("保留 Steam 当前标签", "Preserve Steam tags"));
+            if (plan.tags)
+            {
+                const std::string tags = JoinTags(*plan.tags);
+                ImGui::TextWrapped("%s", tags.empty() ?
+                    T("（无标签）", "(no tags)") : tags.c_str());
+            }
             ImGui::TextWrapped("%s", T(
                 "确认按钮只提交上面这份已打包计划；修改发布设置后必须重新准备。",
                 "The confirmation button submits only this prepared package plan; changing publishing settings requires a new plan."));

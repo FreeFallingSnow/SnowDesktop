@@ -888,8 +888,10 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
             source.find("StartPreparedPublishUnlocked(") !=
                 std::string::npos &&
             source.find("Prepare publish plan") != std::string::npos &&
-            source.find("Confirm metadata update") != std::string::npos,
-        "Workshop Manager requires a visible prepared plan before create, content update, or metadata update confirmation");
+            source.find("Confirm metadata update") != std::string::npos &&
+            source.find("prepared-localization-plan") !=
+                std::string::npos,
+        "Workshop Manager requires a visible prepared plan with exact localized text before create, content update, or metadata update confirmation");
 }
 }
 
