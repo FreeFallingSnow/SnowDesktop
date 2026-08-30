@@ -107,6 +107,17 @@ muxc::TextBlock NewCommandBarTitle()
     return title;
 }
 
+muxc::TextBlock NewCommandBarHint()
+{
+    muxc::TextBlock hint{};
+    hint.VerticalAlignment(mux::VerticalAlignment::Center);
+    hint.TextWrapping(mux::TextWrapping::Wrap);
+    hint.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+    hint.MaxLines(2);
+    hint.Opacity(0.68);
+    return hint;
+}
+
 muxc::AppBarButton NewCommandButton(std::wstring_view glyph)
 {
     muxc::AppBarButton button{};
@@ -270,8 +281,8 @@ struct BackupDataPagePresenter::Impl
     muxc::ListView layoutList{nullptr};
 
     SettingsCard fullBackupCard;
-    controls::SettingRow fullBackupActionsRow;
     muxc::CommandBar fullBackupActionBar{nullptr};
+    muxc::TextBlock fullBackupHint{nullptr};
     muxc::AppBarButton createFullBackupButton{nullptr};
     muxc::AppBarButton importFullBackupButton{nullptr};
     muxc::AppBarButton openFullBackupDirectoryButton{nullptr};
@@ -384,16 +395,17 @@ struct BackupDataPagePresenter::Impl
         InitializeCard(fullBackupCard, cardStyle, root);
         fullBackupCard.description.Visibility(mux::Visibility::Collapsed);
         fullBackupActionBar = NewCommandBar();
+        fullBackupHint = NewCommandBarHint();
         createFullBackupButton = NewCommandButton(L"\xE710");
         importFullBackupButton = NewCommandButton(L"\xE8B5");
         openFullBackupDirectoryButton = NewCommandButton(L"\xE8B7");
+        fullBackupActionBar.Content(fullBackupHint);
         fullBackupActionBar.PrimaryCommands().Append(
             createFullBackupButton);
         fullBackupActionBar.PrimaryCommands().Append(
             importFullBackupButton);
         fullBackupActionBar.SecondaryCommands().Append(
             openFullBackupDirectoryButton);
-        fullBackupActionsRow.Initialize(fullBackupActionBar);
         noFullBackups = NewEmptyMessage();
         noFullBackups.MinHeight(48.0);
         noFullBackups.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -402,7 +414,7 @@ struct BackupDataPagePresenter::Impl
         fullBackupList.IsItemClickEnabled(false);
         fullBackupList.MinHeight(48.0);
         fullBackupList.MaxHeight(172.0);
-        fullBackupCard.content.Children().Append(fullBackupActionsRow.root);
+        fullBackupCard.content.Children().Append(fullBackupActionBar);
         fullBackupCard.content.Children().Append(noFullBackups);
         fullBackupCard.content.Children().Append(fullBackupList);
 
@@ -857,8 +869,7 @@ struct BackupDataPagePresenter::Impl
         fullBackupCard.description.Text(L(
             "app.settings.full_data_backup_description",
             L"Back up layouts, settings, widgets, and widget storage."));
-        fullBackupActionsRow.SetText(
-            std::wstring(fullBackupCard.description.Text().c_str()));
+        fullBackupHint.Text(fullBackupCard.description.Text());
         SetCommandText(createFullBackupButton, L(
             "app.settings.create_full_backup", L"Create complete backup"));
         SetCommandText(importFullBackupButton, L(
@@ -876,7 +887,7 @@ struct BackupDataPagePresenter::Impl
         migrationCard.description.Text(L(
             "app.settings.data_migration_description",
             L"Move complete data from another SnowDesktop copy."));
-        migrationActionRow.SetText(
+        migrationActionRow.SetText({},
             std::wstring(migrationCard.description.Text().c_str()));
         SetButtonText(migrateButton,
             L("app.settings.migrate_all_data", L"Move in complete data…"));

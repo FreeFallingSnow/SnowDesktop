@@ -158,7 +158,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("controls::SettingRow layoutCreateRow") !=
                 std::string::npos &&
-            source.find("controls::SettingRow fullBackupActionsRow") !=
+            source.find("controls::SettingRow fullBackupActionsRow") ==
                 std::string::npos &&
             source.find("controls::SettingRow migrationActionRow") !=
                 std::string::npos &&
@@ -200,6 +200,16 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "layout backup keeps the name field and primary save action while moving folder access to overflow");
     Check(source.find("fullBackupActionBar = NewCommandBar()") !=
                 std::string::npos &&
+            source.find("fullBackupHint = NewCommandBarHint()") !=
+                std::string::npos &&
+            source.find("fullBackupActionBar.Content(fullBackupHint)") !=
+                std::string::npos &&
+            source.find("fullBackupHint.Text(") !=
+                std::string::npos &&
+            source.find("hint.Opacity(0.68)") !=
+                std::string::npos &&
+            source.find("migrationActionRow.SetText({},") !=
+                std::string::npos &&
             source.find(
               "fullBackupActionBar.PrimaryCommands().Append(") !=
                 std::string::npos &&
@@ -223,7 +233,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.full_backup_item") !=
                 std::string::npos &&
             source.find("FormatBackupSize") != std::string::npos,
-        "complete-backup keeps create/restore primary and folder access in overflow without losing list metadata");
+        "complete-backup keeps explanatory text inside the expanded command surface without presenting it as a title");
     Check(source.find("commandBar.DefaultLabelPosition(") !=
                 std::string::npos &&
             source.find(
