@@ -240,7 +240,7 @@ struct PageLayoutPagePresenter::Impl
                 if (closed || updating)
                     return;
                 UpdateOrderState();
-                ConfirmOrder();
+                ApplyOrder();
             });
         addPageToken = addPageButton.Click(
             [this](const auto&, const auto&) { AddPage(); });
@@ -284,6 +284,13 @@ struct PageLayoutPagePresenter::Impl
     [[nodiscard]] std::wstring RoleLabel(
         const PageLayoutEntry& page) const
     {
+        if (page.activeOnLastMonitor)
+        {
+            if (page.role == PageLayoutRole::Overflow)
+                return L("settings.pages.role.currentLast");
+            return FormatText(L("settings.pages.role.current"),
+                {std::to_wstring(page.monitorOrdinal)});
+        }
         switch (page.role)
         {
         case PageLayoutRole::FixedMonitor:
@@ -331,13 +338,7 @@ struct PageLayoutPagePresenter::Impl
         title.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         muxc::TextBlock role;
-        std::wstring roleText = RoleLabel(page);
-        if (page.activeOnLastMonitor)
-        {
-            roleText += L" · ";
-            roleText += L("settings.pages.role.current");
-        }
-        role.Text(roleText);
+        role.Text(RoleLabel(page));
         role.Opacity(0.72);
         role.TextWrapping(mux::TextWrapping::Wrap);
         identity.Children().Append(title);
@@ -486,7 +487,7 @@ struct PageLayoutPagePresenter::Impl
         items.InsertAt(static_cast<std::uint32_t>(target), item);
         pageList.SelectedItem(item);
         UpdateOrderState();
-        ConfirmOrder();
+        ApplyOrder();
     }
 
     void UpdateInteractionState()
@@ -603,26 +604,9 @@ struct PageLayoutPagePresenter::Impl
             });
     }
 
-    void ConfirmOrder()
-    {
-        if (!active || !hasSnapshot || !orderDirty ||
-            confirmationPending || !actions.applyOrder)
-            return;
-        RequestConfirmation(
-            L("settings.pages.order.confirm.title"),
-            L("settings.pages.order.confirm.message"),
-            L("settings.dialog.confirm"),
-            [this](bool accepted) {
-                if (accepted)
-                    ApplyOrder();
-                else
-                    RebuildPageList();
-            });
-    }
-
     void ApplyOrder()
     {
-        if (closed || !active || !actions.applyOrder)
+        if (closed || !active || !orderDirty || !actions.applyOrder)
             return;
         const int selectedIndex = pageList.SelectedIndex();
         ApplyResult(actions.applyOrder(snapshot.revision, CurrentOrder()),

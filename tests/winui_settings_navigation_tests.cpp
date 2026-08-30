@@ -509,15 +509,18 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             pages.find("rowsLabel.Text(L(\"settings.pages.rows\"))") !=
                 std::string::npos &&
-            pages.find("UpdateOrderState();\n                ConfirmOrder();") !=
+            pages.find("UpdateOrderState();\n                ApplyOrder();") !=
                 std::string::npos &&
             pages.find("[this](const auto&, const auto&) { ConfirmGrid(); }") !=
                 std::string::npos &&
             pages.find("applyOrderButton") == std::string::npos &&
+            pages.find("void ConfirmOrder()") == std::string::npos &&
             pages.find("applyGridButton") == std::string::npos &&
             pages.find("L(\"settings.dialog.confirm\")") !=
                 std::string::npos &&
             pages.find("settings.pages.grid.confirm.title") !=
+                std::string::npos &&
+            pages.find("settings.pages.role.currentLast") !=
                 std::string::npos &&
             desktopIconsSection.find(
               "desktopPage_->DesktopIconsContent()") !=
