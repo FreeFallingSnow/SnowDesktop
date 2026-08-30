@@ -1525,7 +1525,9 @@ int main()
         !sourceTrustManager.Resolve(manifest.id).has_value(),
         "source artifacts cannot request undeclared permissions");
 
-    LocalCatalogPublisher publisher(root / L"catalog");
+    LocalCatalogPublisher publisher(root / L"catalog",
+        root / L"data" / L"widgets" / L"staging" /
+            L"local-catalog");
     PublishRequest request;
     request.artifact = artifact;
     request.title = "Package Test";

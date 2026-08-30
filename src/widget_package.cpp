@@ -4104,8 +4104,10 @@ std::vector<PackageUpdate> StaticCatalogSource::CheckUpdates(
 }
 
 LocalCatalogPublisher::LocalCatalogPublisher(
-    std::filesystem::path catalogDirectory)
-    : catalogDirectory_(std::move(catalogDirectory)) {}
+    std::filesystem::path catalogDirectory,
+    std::filesystem::path validationStaging)
+    : catalogDirectory_(std::move(catalogDirectory)),
+      validationStaging_(std::move(validationStaging)) {}
 std::string LocalCatalogPublisher::ProviderId() const { return "local-catalog"; }
 ProviderCapabilities LocalCatalogPublisher::Capabilities() const
 {
@@ -4121,7 +4123,9 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         result.error = "artifact identity is invalid";
         return result;
     }
-    WidgetPackageManager validationManager(PackagePaths{});
+    PackagePaths validationPaths;
+    validationPaths.staging = validationStaging_;
+    WidgetPackageManager validationManager(std::move(validationPaths));
     PackageManifest publishedManifest;
     const auto validation = validationManager.ValidateArchive(
         request.artifact.localPath, &publishedManifest);

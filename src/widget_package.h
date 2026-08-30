@@ -505,12 +505,14 @@ private:
 class LocalCatalogPublisher final : public IWidgetPackagePublisher
 {
 public:
-    explicit LocalCatalogPublisher(std::filesystem::path catalogDirectory);
+    LocalCatalogPublisher(std::filesystem::path catalogDirectory,
+        std::filesystem::path validationStaging);
     std::string ProviderId() const override;
     ProviderCapabilities Capabilities() const override;
     PublishResult Publish(const PublishRequest& request) override;
 
 private:
     std::filesystem::path catalogDirectory_;
+    std::filesystem::path validationStaging_;
 };
 }

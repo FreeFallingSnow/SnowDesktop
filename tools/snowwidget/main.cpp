@@ -772,7 +772,8 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << report.ToJson() << '\n' << error << '\n';
             return 1;
         }
-        snowdesktop::widget::LocalCatalogPublisher publisher(argv[3]);
+        snowdesktop::widget::LocalCatalogPublisher publisher(
+            argv[3], paths.staging);
         snowdesktop::widget::PublishRequest request;
         request.artifact = artifact;
         request.title = manifest.name;
