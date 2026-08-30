@@ -72,6 +72,16 @@
       "targets": [
         "SnowDesktopCoreTests"
       ]
+    },
+    {
+      "name": "fast-tests",
+      "displayName": "Release tests excluding integration",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "jobs": 4,
+      "targets": [
+        "SnowDesktopFastTests"
+      ]
     }
   ],
   "testPresets": [

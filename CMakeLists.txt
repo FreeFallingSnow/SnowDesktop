@@ -868,6 +868,7 @@ include(CTest)
 if (BUILD_TESTING)
     set(SNOWDESKTOP_TEST_TARGETS)
     set(SNOWDESKTOP_CORE_TEST_TARGETS)
+    set(SNOWDESKTOP_FAST_TEST_TARGETS)
 
     function(snowdesktop_add_test TEST_TARGET TEST_NAME)
         set(multiValueArgs
@@ -947,6 +948,11 @@ if (BUILD_TESTING)
             list(APPEND SNOWDESKTOP_CORE_TEST_TARGETS ${TEST_TARGET})
             set(SNOWDESKTOP_CORE_TEST_TARGETS
                 "${SNOWDESKTOP_CORE_TEST_TARGETS}" PARENT_SCOPE)
+        endif()
+        if (NOT "integration" IN_LIST SNOW_TEST_LABELS)
+            list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS ${TEST_TARGET})
+            set(SNOWDESKTOP_FAST_TEST_TARGETS
+                "${SNOWDESKTOP_FAST_TEST_TARGETS}" PARENT_SCOPE)
         endif()
     endfunction()
 
@@ -1998,6 +2004,9 @@ if (BUILD_TESTING)
     add_custom_target(
         SnowDesktopCoreTests
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
+    add_custom_target(
+        SnowDesktopFastTests
+        DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
     add_custom_target(
         SnowDesktopTests
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass

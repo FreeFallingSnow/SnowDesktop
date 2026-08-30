@@ -266,6 +266,8 @@ void TestBuildOutputLayout(const std::string& cmake,
             cmake.find("scripts/arrange_build_output.ps1") !=
                 std::string::npos &&
             cmake.find("-AllowMissingFirstPartyRuntime") !=
+                std::string::npos &&
+            cmake.find("SnowDesktopFastTests") !=
                 std::string::npos,
         "CTest executables and symbols use the dedicated configuration tests directory");
     Check(arranger.find("SnowDesktop.Runtime") != std::string::npos &&
@@ -298,6 +300,8 @@ void TestBuildOutputLayout(const std::string& cmake,
             testManager.find("^SnowDesktop.+Tests\\.exe$") !=
                 std::string::npos &&
             testManager.find("-LE\", \"^integration$") !=
+                std::string::npos &&
+            testManager.find("BuildPreset \"fast-tests\"") !=
                 std::string::npos &&
             testManager.find("rootTests.Count -ne 0") !=
                 std::string::npos &&

@@ -57,15 +57,23 @@ function Get-TestSelection {
 }
 
 function Invoke-FilteredTests {
-    param([string[]]$CTestFilterArguments)
+    param(
+        [string[]]$CTestFilterArguments,
+        [string]$BuildPreset = ""
+    )
 
     $selection = Get-TestSelection -CTestFilterArguments $CTestFilterArguments
     if ($selection.Tests.Count -eq 0) {
         throw "The requested filter did not match any configured tests."
     }
 
-    Write-Host "=== Building $($selection.Targets.Count) target(s) for $($selection.Tests.Count) selected test(s) ==="
-    if ($selection.Targets.Count -gt 0) {
+    if (-not [string]::IsNullOrWhiteSpace($BuildPreset)) {
+        Write-Host "=== Building the aggregate target for $($selection.Tests.Count) selected test(s) ==="
+        Invoke-Checked -FilePath "cmake" -Arguments @(
+            "--build", "--preset", $BuildPreset)
+    }
+    elseif ($selection.Targets.Count -gt 0) {
+        Write-Host "=== Building $($selection.Targets.Count) target(s) for $($selection.Tests.Count) selected test(s) ==="
         $buildArguments = @(
             "--build", "--preset", "tests", "--target"
         ) + $selection.Targets
@@ -133,7 +141,7 @@ switch ($Mode) {
     }
     "fast" {
         Invoke-FilteredTests -CTestFilterArguments @(
-            "-LE", "^integration$")
+            "-LE", "^integration$") -BuildPreset "fast-tests"
     }
     "label" {
         if ([string]::IsNullOrWhiteSpace($Filter)) {
