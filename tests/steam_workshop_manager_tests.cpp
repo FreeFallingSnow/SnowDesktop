@@ -328,10 +328,11 @@ void TestProjectStore()
             "Manual title",
         "project store round-trips IDs, tags, and per-project publish preferences");
 
-    const auto legacySource = temporary.path / L"legacy project";
-    std::filesystem::create_directory(legacySource);
+    const auto legacyFixtureRoot = temporary.path / L"legacy fixtures";
+    const auto legacySource = legacyFixtureRoot / L"bound";
+    std::filesystem::create_directories(legacySource);
     std::ofstream(legacySource / L"widget.json") << "{}";
-    const auto legacyRoot = temporary.path / L"legacy-store";
+    const auto legacyRoot = legacyFixtureRoot / L"store";
     ProjectStore legacy(legacyRoot);
     WorkshopProject* legacyProject = nullptr;
     Check(legacy.AddDirectory(legacySource, legacyProject, error) &&
@@ -341,7 +342,7 @@ void TestProjectStore()
     {
         legacyProject->publishedFileId = 100;
         const auto legacyUnboundSource =
-            temporary.path / L"legacy unbound project";
+            legacyFixtureRoot / L"unbound";
         std::filesystem::create_directory(legacyUnboundSource);
         std::ofstream(legacyUnboundSource / L"widget.json") << "{}";
         WorkshopProject* legacyUnboundProject = nullptr;
@@ -353,6 +354,7 @@ void TestProjectStore()
         std::ifstream legacyInput(legacy.StorePath(), std::ios::binary);
         const std::string legacyText(
             (std::istreambuf_iterator<char>(legacyInput)), {});
+        legacyInput.close();
         JsonValue legacyJson;
         Check(ParseJson(legacyText, legacyJson, error),
             "legacy migration fixture parses its project store");

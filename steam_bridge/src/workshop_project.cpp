@@ -215,7 +215,7 @@ bool ReadRequiredString(const JsonValue& object, std::string_view key,
     return true;
 }
 
-bool ProjectFromJson(const JsonValue& value, unsigned schemaVersion,
+bool ProjectFromJson(const JsonValue& value, std::uint64_t schemaVersion,
     WorkshopProject& project, std::string& error)
 {
     if (!value.IsObject())
