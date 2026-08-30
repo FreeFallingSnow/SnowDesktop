@@ -15,6 +15,14 @@ local RANGE_MINIMUM_FRACTION = 0.45
 local RANGE_PADDING_FRACTION = 0.05
 local RANGE_EXPAND = 0.55
 local RANGE_CONTRACT = 0.04
+local PREVIEW_PROFILE = {
+    0.079, 0.151, 0.246, 0.412, 0.317, 0.603, 0.436, 0.785,
+    0.523, 0.666, 0.388, 0.555, 0.333, 0.642, 0.452, 0.840,
+    0.579, 0.714, 0.420, 0.603, 0.365, 0.515, 0.317, 0.666,
+    0.476, 0.880, 0.626, 0.761, 0.444, 0.634, 0.373, 0.555,
+    0.341, 0.690, 0.499, 0.809, 0.579, 0.658, 0.412, 0.523,
+    0.333, 0.452, 0.285, 0.365, 0.198, 0.270, 0.143, 0.079,
+}
 
 local function finiteNumber(value, fallback)
     local number = tonumber(value)
@@ -203,20 +211,15 @@ function M.preview(count, sensitivity)
     local length = M.binCount(count)
     local gain = M.sensitivity(sensitivity) / DEFAULT_SENSITIVITY
     local result = {}
-    local function bell(position, center, width)
-        local distance = (position - center) / width
-        return math.exp(-distance * distance)
-    end
     for index = 1, length do
-        local position = (index - 1) / math.max(1, length - 1)
-        local envelope = 0.035 +
-            0.72 * bell(position, 0.22, 0.14) +
-            0.50 * bell(position, 0.48, 0.15) +
-            0.34 * bell(position, 0.70, 0.12) +
-            0.14 * bell(position, 0.88, 0.08)
-        local ripple = 0.78 + 0.22 *
-            (0.5 + 0.5 * math.sin(index * 2.17 + 0.4))
-        result[index] = M.clamp(envelope * ripple * gain,
+        local position = 1 + (index - 1) *
+            (#PREVIEW_PROFILE - 1) / math.max(1, length - 1)
+        local left = math.max(1, math.floor(position))
+        local right = math.min(#PREVIEW_PROFILE, left + 1)
+        local fraction = position - left
+        local value = PREVIEW_PROFILE[left] +
+            (PREVIEW_PROFILE[right] - PREVIEW_PROFILE[left]) * fraction
+        result[index] = M.clamp(value * gain,
             IDLE_MINIMUM, 0.88, IDLE_MINIMUM)
     end
     return result
