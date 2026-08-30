@@ -1,5 +1,6 @@
 #include "authoring_toolchain.h"
 #include "bridge_json.h"
+#include "component_workshop_publish.h"
 #include "manager_localization.h"
 #include "package_tool.h"
 #include "publish_lifecycle.h"
@@ -629,6 +630,79 @@ void TestWorkshopLocalization()
 
 }
 
+void TestComponentPublishPlan()
+{
+    TemporaryDirectory temporary;
+    const auto preview = temporary.path / L"preview.png";
+    const auto packagePath = temporary.path / L"package.snowwidget";
+    std::ofstream(preview, std::ios::binary) << "preview";
+    std::ofstream(packagePath, std::ios::binary) << "package";
+
+    WidgetInspection inspection;
+    inspection.valid = true;
+    inspection.packageId =
+        "11111111-2222-3333-4444-555555555555";
+    inspection.version = "1.2.3";
+    inspection.name = "Example widget";
+    inspection.description = "Example description";
+    inspection.preview = preview;
+    inspection.localizations = {
+        { "zh-CN", "示例组件", "示例说明" },
+    };
+    PackagedWidget package;
+    package.packagePath = packagePath;
+    package.packageId = inspection.packageId;
+    package.version = inspection.version;
+    package.sha256 = std::string(64, 'a');
+
+    WorkshopProject project;
+    project.packageId = inspection.packageId;
+    project.tags = { "Widget" };
+    ComponentPublishPlan plan;
+    ComponentPublishOptions options;
+    std::string error;
+    Check(BuildComponentPublishPlan(project, inspection, package,
+            options, plan, error) &&
+            plan.action == ComponentPublishAction::Create &&
+            plan.updateContent && plan.preview == preview &&
+            plan.tags && plan.tags->size() == 1 &&
+            plan.localizations.size() == 2 &&
+            plan.localizations.front().language == "english" &&
+            plan.localizations[1].language == "schinese",
+        "a new component plan creates a private-ready multilingual item from package and local sources");
+
+    project.publishedFileId = 100;
+    project.lastPublishedSha256 = package.sha256;
+    project.publishPreferences.textSource = WorkshopTextSource::Steam;
+    project.publishPreferences.previewSource = WorkshopAssetSource::Steam;
+    project.publishPreferences.tagsSource = WorkshopAssetSource::Steam;
+    Check(BuildComponentPublishPlan(project, inspection, package,
+            options, plan, error) &&
+            plan.action == ComponentPublishAction::UpdateMetadata &&
+            !plan.updateContent && plan.localizations.empty() &&
+            !plan.preview && !plan.tags,
+        "an unchanged bound component plan preserves Steam-managed listing fields without reuploading content");
+
+    project.publishPreferences.textSource = WorkshopTextSource::Package;
+    package.sha256 = std::string(64, 'b');
+    Check(BuildComponentPublishPlan(project, inspection, package,
+            options, plan, error) &&
+            plan.action == ComponentPublishAction::UpdateContent &&
+            plan.updateContent && plan.localizations.size() == 2,
+        "a changed bound component plan uploads content and synchronizes package localizations");
+
+    WorkshopProject invalidCreation;
+    invalidCreation.publishPreferences.textSource = WorkshopTextSource::Steam;
+    Check(!BuildComponentPublishPlan(invalidCreation, inspection, package,
+            options, plan, error) &&
+            error.find("cannot preserve Steam-managed text") !=
+                std::string::npos,
+        "a creation plan rejects preservation of nonexistent Steam text");
+    Check(ComponentPublishActionName(ComponentPublishAction::UpdateContent) ==
+            "update-content",
+        "component publish action names are stable for JSON CLI output");
+}
+
 void TestSteamWorkshopLocalCache()
 {
     TemporaryDirectory temporary;
@@ -821,6 +895,7 @@ int wmain(int argc, wchar_t** argv)
     TestCommandLineQuoting();
     TestPublishLifecycle();
     TestWorkshopLocalization();
+    TestComponentPublishPlan();
     if (argc == 3)
     {
         TestAuthoringToolchain(argv[2], argv[1]);
