@@ -250,9 +250,9 @@ void TestRoutes()
     const SettingsRoute legacyWidgetAppearance = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.backgroundColor"));
-    const SettingsRoute legacyBorderStyle = CanonicalizeSettingsRoute(
+    const SettingsRoute edgeHighlight = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
-            "personalization.borderStyle"));
+            "personalization.edgeHighlight"));
     const SettingsRoute legacyTabHeight = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.tabHeight"));
@@ -262,7 +262,7 @@ void TestRoutes()
     Check(legacyAppearance.page == SettingsPage::AppearanceTheme &&
             legacyTheme.page == SettingsPage::AppearanceTheme &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
-            legacyBorderStyle.page == SettingsPage::AppearanceTheme &&
+            edgeHighlight.page == SettingsPage::AppearanceTheme &&
             legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
             legacyTabHeight.focusId == "desktop.categoryLayout" &&
             legacyCounts.page == SettingsPage::DesktopCategories &&

@@ -666,19 +666,22 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         patch.acrylicEnabled = value == "1" || value == "true";
         return true;
     }
+    if (key == "edgeHighlightEnabled")
+    {
+        patch.edgeHighlightEnabled = value == "1" || value == "true";
+        return true;
+    }
     if (key == "borderStyle")
     {
         char* end = nullptr;
         const long parsed = std::strtol(value.c_str(), &end, 10);
         if (end == value.c_str() || !end || *end != '\0' ||
-            parsed < static_cast<long>(PanelBorderStyle::Standard) ||
-            parsed > static_cast<long>(PanelBorderStyle::Dimensional))
+            parsed < 0 || parsed > 1)
         {
             error = "invalidBorderStyle";
             return false;
         }
-        patch.borderStyle = NormalizePanelBorderStyle(
-            static_cast<int>(parsed));
+        patch.edgeHighlightEnabled = parsed == 1;
         return true;
     }
     if (key == "bg" || key == "border")
@@ -698,7 +701,7 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         return true;
     }
     if (key == "alpha" || key == "borderAlpha" ||
-        key == "gradientEndA" || key == "borderEffectStrength")
+        key == "gradientEndA" || key == "edgeHighlightStrength")
     {
         char* end = nullptr;
         const float parsed = std::strtof(value.c_str(), &end);
@@ -711,10 +714,10 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         if (key == "alpha") patch.backgroundOpacity = parsed;
         else if (key == "borderAlpha") patch.borderOpacity = parsed;
         else if (key == "gradientEndA") patch.gradientEndOpacity = parsed;
-        else patch.borderEffectStrength = parsed;
+        else patch.edgeHighlightStrength = parsed;
         return true;
     }
-    if (key == "borderWidth")
+    if (key == "borderWidth" || key == "edgeHighlightWidth")
     {
         char* end = nullptr;
         const float parsed = std::strtof(value.c_str(), &end);
@@ -723,10 +726,12 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
             parsed < kMinimumWidgetBorderWidth ||
             parsed > kMaximumWidgetBorderWidth)
         {
-            error = "invalidBorderWidth";
+            error = key == "borderWidth"
+                ? "invalidBorderWidth" : "invalidEdgeHighlightWidth";
             return false;
         }
-        patch.borderWidth = parsed;
+        if (key == "borderWidth") patch.borderWidth = parsed;
+        else patch.edgeHighlightWidth = parsed;
         return true;
     }
     if (key == "__contentTheme")
@@ -1217,24 +1222,24 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
     }
     if (session.snapshot.customStyle)
     {
-        const bool legacyDimensional =
+        const bool legacyEdgeHighlight =
             appearance.glassEnabled.value_or(false);
-        if (!preset->hostAppearanceValues.contains("borderStyle"))
-        {
-            appearance.borderStyle = legacyDimensional
-                ? PanelBorderStyle::Dimensional
-                : PanelBorderStyle::Standard;
-        }
+        if (!preset->hostAppearanceValues.contains("edgeHighlightEnabled") &&
+            !preset->hostAppearanceValues.contains("borderStyle"))
+            appearance.edgeHighlightEnabled = legacyEdgeHighlight;
         if (!preset->hostAppearanceValues.contains("borderWidth"))
-        {
-            appearance.borderWidth = legacyDimensional
-                ? kDefaultDimensionalBorderWidth : 1.0f;
-        }
+            appearance.borderWidth = 1.0f;
+        if (!preset->hostAppearanceValues.contains("edgeHighlightWidth"))
+            appearance.edgeHighlightWidth =
+                kDefaultEdgeHighlightWidth;
         if (!preset->hostAppearanceValues.contains(
-                "borderEffectStrength"))
+                "edgeHighlightStrength"))
         {
-            appearance.borderEffectStrength =
-                kDefaultDimensionalBorderStrength;
+            appearance.edgeHighlightStrength =
+                kDefaultEdgeHighlightStrength;
+        if (legacyEdgeHighlight &&
+            !preset->hostAppearanceValues.contains("borderAlpha"))
+            appearance.borderOpacity = 0.0f;
         }
     }
     if (session.snapshot.customStyle)

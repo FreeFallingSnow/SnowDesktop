@@ -660,65 +660,83 @@ int wmain(int argc, wchar_t** argv)
     const auto standardBorderOutput =
         temporary.path / L"border-standard.png";
     const auto zeroStrengthBorderOutput =
-        temporary.path / L"border-dimensional-zero.png";
-    const auto dimensionalBorderOutput =
-        temporary.path / L"border-dimensional-75.png";
-    const auto wideDimensionalBorderOutput =
-        temporary.path / L"border-dimensional-wide.png";
+        temporary.path / L"edge-highlight-zero.png";
+    const auto edgeHighlightOutput =
+        temporary.path / L"edge-highlight-75.png";
+    const auto wideEdgeHighlightOutput =
+        temporary.path / L"edge-highlight-wide.png";
     const auto [standardBorderExit, standardBorderJson] = Run(snowwidget, {
         L"preview", source.wstring(), standardBorderOutput.wstring(),
         L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
         L"--storage", L"borderAlpha=0.75",
-        L"--storage", L"borderStyle=0", L"--storage", L"borderWidth=2",
-        L"--storage", L"borderEffectStrength=0.75",
+        L"--storage", L"borderWidth=2",
+        L"--storage", L"edgeHighlightEnabled=0",
+        L"--storage", L"edgeHighlightStrength=0.75",
         L"--host", host.wstring() });
     const auto [zeroStrengthBorderExit, zeroStrengthBorderJson] =
         Run(snowwidget, {
             L"preview", source.wstring(), zeroStrengthBorderOutput.wstring(),
             L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
             L"--storage", L"borderAlpha=0.75",
-            L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=2",
-            L"--storage", L"borderEffectStrength=0",
+            L"--storage", L"borderWidth=2",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0",
             L"--host", host.wstring() });
-    const auto [dimensionalBorderExit, dimensionalBorderJson] =
+    const auto [edgeHighlightExit, edgeHighlightJson] =
         Run(snowwidget, {
-            L"preview", source.wstring(), dimensionalBorderOutput.wstring(),
+            L"preview", source.wstring(), edgeHighlightOutput.wstring(),
             L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
-            L"--storage", L"borderAlpha=0.75",
-            L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=2",
-            L"--storage", L"borderEffectStrength=0.75",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0.75",
             L"--host", host.wstring() });
-    const auto [wideDimensionalBorderExit, wideDimensionalBorderJson] =
+    const auto [wideEdgeHighlightExit, wideEdgeHighlightJson] =
         Run(snowwidget, {
-            L"preview", source.wstring(), wideDimensionalBorderOutput.wstring(),
+            L"preview", source.wstring(), wideEdgeHighlightOutput.wstring(),
             L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
-            L"--storage", L"borderAlpha=0.75",
-            L"--storage", L"borderStyle=1", L"--storage", L"borderWidth=4",
-            L"--storage", L"borderEffectStrength=0.75",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=4",
+            L"--storage", L"edgeHighlightStrength=0.75",
             L"--host", host.wstring() });
     Check(standardBorderExit == 0 && zeroStrengthBorderExit == 0 &&
-            dimensionalBorderExit == 0 && wideDimensionalBorderExit == 0 &&
+            edgeHighlightExit == 0 && wideEdgeHighlightExit == 0 &&
             standardBorderJson.find("\"ok\":true") != std::string::npos &&
             zeroStrengthBorderJson.find("\"ok\":true") !=
                 std::string::npos &&
-            dimensionalBorderJson.find("\"ok\":true") !=
+            edgeHighlightJson.find("\"ok\":true") !=
                 std::string::npos &&
-            wideDimensionalBorderJson.find("\"ok\":true") !=
+            wideEdgeHighlightJson.find("\"ok\":true") !=
                 std::string::npos,
-        "standard, zero-strength, recommended, and maximum-width borders render");
+        "ordinary border plus zero-strength, recommended, and maximum-width edge highlights render");
     const RgbaBitmap standardBorder =
         CheckOpaquePreview(standardBorderOutput, 192, 240);
     const RgbaBitmap zeroStrengthBorder =
         CheckOpaquePreview(zeroStrengthBorderOutput, 192, 240);
-    const RgbaBitmap dimensionalBorder =
-        CheckOpaquePreview(dimensionalBorderOutput, 192, 240);
-    const RgbaBitmap wideDimensionalBorder =
-        CheckOpaquePreview(wideDimensionalBorderOutput, 192, 240);
+    const RgbaBitmap edgeHighlight =
+        CheckOpaquePreview(edgeHighlightOutput, 192, 240);
+    const RgbaBitmap wideEdgeHighlight =
+        CheckOpaquePreview(wideEdgeHighlightOutput, 192, 240);
     Check(standardBorder.pixels == zeroStrengthBorder.pixels,
-        "zero-percent dimensional strength is pixel-identical to the standard border");
-    Check(standardBorder.pixels != dimensionalBorder.pixels &&
-            dimensionalBorder.pixels != wideDimensionalBorder.pixels,
-        "recommended dimensional strength and maximum width produce distinct preview output");
+        "zero-percent edge highlight is pixel-identical to the ordinary border");
+    Check(standardBorder.pixels != edgeHighlight.pixels &&
+            edgeHighlight.pixels != wideEdgeHighlight.pixels,
+        "recommended edge highlight and maximum width produce distinct borderless output");
+    constexpr RECT topBorderStrip{ 0, 0, 192, 4 };
+    constexpr RECT bottomBorderStrip{ 0, 236, 192, 240 };
+    constexpr RECT leftBorderStrip{ 0, 0, 4, 240 };
+    constexpr RECT rightBorderStrip{ 188, 0, 192, 240 };
+    Check(CountDifferingPixels(transparent, wideEdgeHighlight,
+                topBorderStrip) > 128 &&
+            CountDifferingPixels(transparent, wideEdgeHighlight,
+                bottomBorderStrip) > 128 &&
+            CountDifferingPixels(transparent, wideEdgeHighlight,
+                leftBorderStrip) > 128 &&
+            CountDifferingPixels(transparent, wideEdgeHighlight,
+                rightBorderStrip) > 128,
+        "maximum-width edge highlight remains visible on every canvas edge");
 
     constexpr std::array<std::wstring_view, 6> appearances{
         L"dark", L"light", L"glass-dark", L"glass-light",

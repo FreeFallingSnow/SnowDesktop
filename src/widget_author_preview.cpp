@@ -370,15 +370,17 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
         resolved.theme.cornerRadius = appearance.settings.cornerRadius;
         float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f;
         float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f;
-        PanelBorderStyle borderStyle = PanelBorderStyle::Standard;
         float borderWidth = 1.0f;
-        float borderEffectStrength = kDefaultDimensionalBorderStrength;
+        bool edgeHighlightEnabled = false;
+        float edgeHighlightWidth = kDefaultEdgeHighlightWidth;
+        float edgeHighlightStrength = kDefaultEdgeHighlightStrength;
         float gradient = resolved.theme.gradientEndA;
         bool glass = false, acrylic = false;
         if (engine.ReadCustomColors(kPreviewWidgetId,
                 bgR, bgG, bgB, resolved.theme.alpha,
                 borderR, borderG, borderB, resolved.theme.borderAlpha,
-                borderStyle, borderWidth, borderEffectStrength,
+                borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
+                edgeHighlightStrength,
                 gradient, glass, acrylic))
         {
             resolved.theme.bg =
@@ -390,10 +392,13 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 (static_cast<int>(std::lround(borderG * 255.0f)) << 8) |
                 static_cast<int>(std::lround(borderB * 255.0f));
             resolved.theme.gradientEndA = gradient;
-            resolved.material.widgetBorderStyle = borderStyle;
             resolved.material.widgetBorderWidth = borderWidth;
-            resolved.material.widgetBorderEffectStrength =
-                borderEffectStrength;
+            resolved.material.widgetEdgeHighlightEnabled =
+                edgeHighlightEnabled;
+            resolved.material.widgetEdgeHighlightWidth =
+                edgeHighlightWidth;
+            resolved.material.widgetEdgeHighlightStrength =
+                edgeHighlightStrength;
             resolved.material.glassEnabled = glass;
             resolved.material.acrylicEnabled = glass && acrylic;
         }
@@ -444,17 +449,42 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         const float strokeWidth = std::clamp(
             resolved.material.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
-        const bool dimensionalDrawn =
-            resolved.material.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
-            resolved.material.widgetBorderEffectStrength > 0.0005f &&
-            snowdesktop::widget_preview::DrawDimensionalBorder(
-                context, bounds, radius,
-                color(theme.border, theme.borderAlpha), strokeWidth,
-                resolved.material.widgetBorderEffectStrength);
-        if (!dimensionalDrawn)
+        const LONG borderInset = static_cast<LONG>(std::ceil(
+            strokeWidth * 0.5f));
+        RECT borderBounds = bounds;
+        InflateRect(&borderBounds, -borderInset, -borderInset);
+        if (!IsRectEmpty(&borderBounds))
+        {
+            const float borderRadius = std::max(
+                0.0f, radius - static_cast<float>(borderInset));
             context->DrawRoundedRectangle(
-                rounded, border.Get(), strokeWidth);
+                D2D1::RoundedRect(D2D1::RectF(
+                    static_cast<float>(borderBounds.left),
+                    static_cast<float>(borderBounds.top),
+                    static_cast<float>(borderBounds.right),
+                    static_cast<float>(borderBounds.bottom)),
+                    borderRadius, borderRadius), border.Get(), strokeWidth);
+        }
+    }
+    if (resolved.material.widgetEdgeHighlightEnabled &&
+        resolved.material.widgetEdgeHighlightStrength > 0.0005f)
+    {
+        const float edgeWidth = std::clamp(
+            resolved.material.widgetEdgeHighlightWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+        const LONG edgeInset = static_cast<LONG>(std::ceil(
+            (edgeWidth + 1.35f) * 0.5f));
+        RECT edgeBounds = bounds;
+        InflateRect(&edgeBounds, -edgeInset, -edgeInset);
+        if (!IsRectEmpty(&edgeBounds))
+        {
+            const float edgeRadius = std::max(
+                0.0f, radius - static_cast<float>(edgeInset));
+            (void)snowdesktop::widget_preview::DrawEdgeHighlight(
+                context, edgeBounds, edgeRadius,
+                color(theme.border, 1.0f), edgeWidth,
+                resolved.material.widgetEdgeHighlightStrength);
+        }
     }
 }
 

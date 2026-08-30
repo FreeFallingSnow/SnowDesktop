@@ -49,7 +49,8 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
     return key == "cornerRadius" || key == "barHeight" ||
         key == "bg" || key == "border" || key == "alpha" ||
         key == "borderAlpha" || key == "borderStyle" ||
-        key == "borderWidth" || key == "borderEffectStrength" ||
+        key == "borderWidth" || key == "edgeHighlightEnabled" ||
+        key == "edgeHighlightWidth" || key == "edgeHighlightStrength" ||
         key == "gradientEndA" ||
         key == "shadowAlpha" || key == "shadowBlur" ||
         key == "shadowOffsetY" || key == "highlightAlpha" ||
@@ -64,7 +65,8 @@ bool IsHostAppearancePresetKey(std::string_view key) noexcept
     return key == "followPersonalization" || key == "bg" ||
         key == "border" || key == "alpha" || key == "borderAlpha" ||
         key == "borderStyle" || key == "borderWidth" ||
-        key == "borderEffectStrength" || key == "gradientEndA" ||
+        key == "edgeHighlightEnabled" || key == "edgeHighlightWidth" ||
+        key == "edgeHighlightStrength" || key == "gradientEndA" ||
         key == "shadowAlpha" ||
         key == "shadowBlur" || key == "shadowOffsetY" ||
         key == "highlightAlpha" || key == "noiseAlpha" ||
@@ -519,16 +521,18 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     float borderB = 1.0f;
     float backgroundOpacity = 0.36f;
     float borderOpacity = 0.40f;
-    PanelBorderStyle borderStyle = PanelBorderStyle::Standard;
     float borderWidth = 1.0f;
-    float borderEffectStrength = kDefaultDimensionalBorderStrength;
+    bool edgeHighlightEnabled = false;
+    float edgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    float edgeHighlightStrength = kDefaultEdgeHighlightStrength;
     float gradientEndOpacity = 0.0f;
     bool glassEnabled = false;
     bool acrylicEnabled = false;
     (void)engine_.ReadCustomColors(widget.widgetId,
         bgR, bgG, bgB, backgroundOpacity,
         borderR, borderG, borderB, borderOpacity,
-        borderStyle, borderWidth, borderEffectStrength,
+        borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
+        edgeHighlightStrength,
         gradientEndOpacity, glassEnabled, acrylicEnabled);
     const auto colorToInteger = [](float red, float green, float blue) {
         const auto channel = [](float value) {
@@ -549,11 +553,13 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     appearance.backgroundOpacity = finiteOpacity(
         backgroundOpacity, 0.36f);
     appearance.borderOpacity = finiteOpacity(borderOpacity, 0.40f);
-    appearance.borderStyle = borderStyle;
     appearance.borderWidth = std::clamp(borderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    appearance.borderEffectStrength = finiteOpacity(
-        borderEffectStrength, kDefaultDimensionalBorderStrength);
+    appearance.edgeHighlightEnabled = edgeHighlightEnabled;
+    appearance.edgeHighlightWidth = std::clamp(edgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    appearance.edgeHighlightStrength = finiteOpacity(
+        edgeHighlightStrength, kDefaultEdgeHighlightStrength);
     appearance.gradientEndOpacity = finiteOpacity(
         gradientEndOpacity, 0.0f);
     appearance.glassEnabled = glassEnabled;
@@ -986,41 +992,38 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
     if (!setOpacity("alpha", appearance.backgroundOpacity) ||
         !setOpacity("borderAlpha", appearance.borderOpacity) ||
         !setOpacity("gradientEndA", appearance.gradientEndOpacity) ||
-        !setOpacity("borderEffectStrength",
-            appearance.borderEffectStrength))
+        !setOpacity("edgeHighlightStrength",
+            appearance.edgeHighlightStrength))
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "invalidAppearanceOpacity", std::move(appearanceError));
-    if (appearance.borderStyle &&
-        *appearance.borderStyle != PanelBorderStyle::Standard &&
-        *appearance.borderStyle != PanelBorderStyle::Dimensional)
-    {
-        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
-            "invalidBorderStyle");
-    }
-    if (appearance.borderStyle &&
-        !setAppearance("borderStyle",
-            std::to_string(static_cast<int>(*appearance.borderStyle)),
-            appearanceError))
-    {
+    const auto setWidth = [&](std::string key,
+                              const std::optional<float>& value,
+                              std::string_view errorCode) {
+        if (!value) return std::optional<WidgetSettingsBackendResult>{};
+        if (!std::isfinite(*value) ||
+            *value < kMinimumWidgetBorderWidth ||
+            *value > kMaximumWidgetBorderWidth)
+            return std::optional<WidgetSettingsBackendResult>{BackendResult(
+                WidgetSettingsBackendStatus::InvalidValue,
+                std::string(errorCode))};
+        if (!setAppearance(std::move(key), std::to_string(*value),
+                appearanceError))
+            return std::optional<WidgetSettingsBackendResult>{BackendResult(
+                WidgetSettingsBackendStatus::InvalidValue,
+                "appearanceWriteRejected", std::move(appearanceError))};
+        return std::optional<WidgetSettingsBackendResult>{};
+    };
+    if (const auto error = setWidth("borderWidth", appearance.borderWidth,
+            "invalidBorderWidth"))
+        return *error;
+    if (appearance.edgeHighlightEnabled &&
+        !setAppearance("edgeHighlightEnabled",
+            *appearance.edgeHighlightEnabled ? "1" : "0", appearanceError))
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "appearanceWriteRejected", std::move(appearanceError));
-    }
-    if (appearance.borderWidth)
-    {
-        if (!std::isfinite(*appearance.borderWidth) ||
-            *appearance.borderWidth < kMinimumWidgetBorderWidth ||
-            *appearance.borderWidth > kMaximumWidgetBorderWidth)
-        {
-            return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
-                "invalidBorderWidth");
-        }
-        if (!setAppearance("borderWidth",
-                std::to_string(*appearance.borderWidth), appearanceError))
-        {
-            return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
-                "appearanceWriteRejected", std::move(appearanceError));
-        }
-    }
+    if (const auto error = setWidth("edgeHighlightWidth",
+            appearance.edgeHighlightWidth, "invalidEdgeHighlightWidth"))
+        return *error;
     if (appearance.glassEnabled &&
         !setAppearance("glassEnabled",
             *appearance.glassEnabled ? "1" : "0", appearanceError))

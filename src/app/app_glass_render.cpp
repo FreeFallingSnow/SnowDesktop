@@ -1,13 +1,13 @@
 #include "app.h"
 #include "../widget_preview_stage.h"
 
-// Dimensional border rendering is independent from glass diagnostics.
+// Edge-highlight rendering is independent from glass diagnostics.
 
-bool DesktopApp::DrawDimensionalBorder(ID2D1DeviceContext* ctx, RECT frame,
+bool DesktopApp::DrawEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
     float radius, D2D1_COLOR_F color, float strokeWidth,
     float effectStrength)
 {
-    return snowdesktop::widget_preview::DrawDimensionalBorder(
+    return snowdesktop::widget_preview::DrawEdgeHighlight(
         ctx, frame, radius, color, strokeWidth, effectStrength);
 }
 

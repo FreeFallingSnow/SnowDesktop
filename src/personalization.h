@@ -27,25 +27,10 @@ constexpr int kFourThemeLight = 1;
 constexpr int kFourThemeAcrylicDark = 2;
 constexpr int kFourThemeAcrylicLight = 3;
 
-/** @brief Host-drawn panel border treatment, persisted as its integer value. */
-enum class PanelBorderStyle
-{
-    Standard = 0,
-    Dimensional = 1,
-};
-
 inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
 inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
-inline constexpr float kDefaultDimensionalBorderWidth = 2.0f;
-inline constexpr float kDefaultDimensionalBorderStrength = 0.75f;
-
-/** @brief Clamp a persisted panel border style without changing wire values. */
-constexpr PanelBorderStyle NormalizePanelBorderStyle(int style) noexcept
-{
-    return style == static_cast<int>(PanelBorderStyle::Dimensional)
-        ? PanelBorderStyle::Dimensional
-        : PanelBorderStyle::Standard;
-}
+inline constexpr float kDefaultEdgeHighlightWidth = 2.0f;
+inline constexpr float kDefaultEdgeHighlightStrength = 0.75f;
 
 /** @brief Clamp a persisted four-theme selection without changing its wire values. */
 constexpr int NormalizeFourThemeSelection(int selection)
@@ -133,14 +118,17 @@ struct PersonalizationSettings
      */
     float widgetBorderAlpha = 0.40f;
 
-    /** @brief Host panel border style, independent from the background material. */
-    PanelBorderStyle widgetBorderStyle = PanelBorderStyle::Standard;
-
     /** @brief Host panel border width in logical pixels, clamped to [0.5, 4.0]. */
     float widgetBorderWidth = 1.0f;
 
-    /** @brief Directional highlight/shadow strength, stored in [0.0, 1.0]. */
-    float widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
+    /** @brief Whether the independent upper-left/lower-right edge reflection is drawn. */
+    bool widgetEdgeHighlightEnabled = false;
+
+    /** @brief Edge-highlight width in logical pixels, clamped to [0.5, 4.0]. */
+    float widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+
+    /** @brief Edge-highlight intensity, stored in [0.0, 1.0]. */
+    float widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
 
     /**
      * @brief 渐变底部末端 Alpha

@@ -888,8 +888,8 @@ private:
     /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
     void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
         bool lightTheme, POINT screenOrigin);
-    /** @brief 绘制立体边框（左上高光、右下暗边、柔亮外缘）。 @return 成功绘制返回 true */
-    bool DrawDimensionalBorder(ID2D1DeviceContext* ctx, RECT frame,
+    /** @brief 绘制独立边缘高光（连续边缘色与左上、右下局部反射）。 @return 成功绘制返回 true */
+    bool DrawEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
         float radius, D2D1_COLOR_F color, float strokeWidth,
         float effectStrength);
     /** @brief 获取原生毛玻璃后端状态文本。 */

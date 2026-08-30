@@ -133,28 +133,26 @@ int main()
         PersonalizationSettings::AcrylicDarkPreset();
     const auto acrylicLightPreset =
         PersonalizationSettings::AcrylicLightPreset();
-    Check(darkPreset.widgetBorderStyle == PanelBorderStyle::Standard &&
-            lightPreset.widgetBorderStyle == PanelBorderStyle::Standard &&
+    Check(!darkPreset.widgetEdgeHighlightEnabled &&
+            !lightPreset.widgetEdgeHighlightEnabled &&
             darkPreset.widgetBorderWidth == 1.0f &&
             lightPreset.widgetBorderWidth == 1.0f,
-        "ordinary appearance presets keep the one-pixel standard border");
-    Check(glassDarkPreset.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
-            glassLightPreset.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
-            acrylicDarkPreset.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
-            acrylicLightPreset.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
-            glassDarkPreset.widgetBorderWidth ==
-                kDefaultDimensionalBorderWidth &&
-            acrylicLightPreset.widgetBorderWidth ==
-                kDefaultDimensionalBorderWidth &&
-            glassLightPreset.widgetBorderEffectStrength ==
-                kDefaultDimensionalBorderStrength &&
-            acrylicDarkPreset.widgetBorderEffectStrength ==
-                kDefaultDimensionalBorderStrength,
-        "glass and acrylic presets load the recommended dimensional border");
+        "ordinary appearance presets keep a one-pixel border without edge highlight");
+    Check(glassDarkPreset.widgetEdgeHighlightEnabled &&
+            glassLightPreset.widgetEdgeHighlightEnabled &&
+            acrylicDarkPreset.widgetEdgeHighlightEnabled &&
+            acrylicLightPreset.widgetEdgeHighlightEnabled &&
+            glassDarkPreset.widgetEdgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            acrylicLightPreset.widgetEdgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            glassDarkPreset.widgetBorderAlpha == 0.0f &&
+            acrylicLightPreset.widgetBorderAlpha == 0.0f &&
+            glassLightPreset.widgetEdgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength &&
+            acrylicDarkPreset.widgetEdgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength,
+        "glass and acrylic presets disable the border and load the recommended edge highlight");
 
     const auto personalizationPath =
         std::filesystem::temp_directory_path(error) /
@@ -166,22 +164,23 @@ int main()
     savedAppearance.backgroundPreset = kAppearancePresetCustom;
     savedAppearance.glassEnabled = false;
     savedAppearance.acrylicEnabled = false;
-    savedAppearance.widgetBorderStyle = PanelBorderStyle::Dimensional;
     savedAppearance.widgetBorderWidth = 3.5f;
-    savedAppearance.widgetBorderEffectStrength = 0.42f;
+    savedAppearance.widgetEdgeHighlightEnabled = true;
+    savedAppearance.widgetEdgeHighlightWidth = 2.5f;
+    savedAppearance.widgetEdgeHighlightStrength = 0.42f;
     Check(SavePersonalization(
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
     PersonalizationSettings loadedAppearance;
     Check(LoadPersonalization(
             personalizationPath.c_str(), loadedAppearance) &&
-            loadedAppearance.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
             loadedAppearance.widgetBorderWidth == 3.5f &&
-            std::abs(loadedAppearance.widgetBorderEffectStrength -
+            loadedAppearance.widgetEdgeHighlightEnabled &&
+            loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
+            std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
             !loadedAppearance.glassEnabled,
-        "border style, width, and strength round trip independently from glass");
+        "border and edge-highlight fields round trip independently from glass");
 
     {
         std::ofstream legacyGlass(
@@ -193,13 +192,14 @@ int main()
     }
     PersonalizationSettings migratedGlass;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
-            migratedGlass.widgetBorderStyle ==
-                PanelBorderStyle::Dimensional &&
-            migratedGlass.widgetBorderWidth ==
-                kDefaultDimensionalBorderWidth &&
-            migratedGlass.widgetBorderEffectStrength ==
-                kDefaultDimensionalBorderStrength,
-        "legacy glass appearance migrates to the recommended dimensional border");
+            migratedGlass.widgetEdgeHighlightEnabled &&
+            migratedGlass.widgetEdgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            migratedGlass.widgetEdgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength &&
+            migratedGlass.widgetBorderWidth == 1.0f &&
+            migratedGlass.widgetBorderAlpha == 0.0f,
+        "legacy glass appearance migrates to an independent edge highlight");
     {
         std::ofstream legacyOpaque(
             personalizationPath, std::ios::binary | std::ios::trunc);
@@ -210,10 +210,9 @@ int main()
     }
     PersonalizationSettings migratedOpaque;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedOpaque) &&
-            migratedOpaque.widgetBorderStyle ==
-                PanelBorderStyle::Standard &&
+            !migratedOpaque.widgetEdgeHighlightEnabled &&
             migratedOpaque.widgetBorderWidth == 1.0f,
-        "legacy non-glass appearance migrates to the standard border");
+        "legacy non-glass appearance keeps the ordinary border only");
     {
         std::ofstream explicitAcrylic(
             personalizationPath, std::ios::binary | std::ios::trunc);
@@ -221,20 +220,23 @@ int main()
                            "  \"backgroundPreset\": 10,\n"
                            "  \"glassEnabled\": true,\n"
                            "  \"acrylicEnabled\": true,\n"
-                           "  \"widgetBorderStyle\": 0,\n"
+                           "  \"widgetBorderStyle\": 1,\n"
                            "  \"widgetBorderWidth\": 99,\n"
-                           "  \"widgetBorderEffectStrength\": -1\n"
+                           "  \"widgetEdgeHighlightEnabled\": false,\n"
+                           "  \"widgetEdgeHighlightWidth\": 99,\n"
+                           "  \"widgetEdgeHighlightStrength\": -1\n"
                            "}\n";
     }
     PersonalizationSettings explicitAppearance;
     Check(LoadPersonalization(
             personalizationPath.c_str(), explicitAppearance) &&
-            explicitAppearance.widgetBorderStyle ==
-                PanelBorderStyle::Standard &&
+            !explicitAppearance.widgetEdgeHighlightEnabled &&
             explicitAppearance.widgetBorderWidth ==
                 kMaximumWidgetBorderWidth &&
-            explicitAppearance.widgetBorderEffectStrength == 0.0f,
-        "explicit acrylic border fields take priority and clamp to supported ranges");
+            explicitAppearance.widgetEdgeHighlightWidth ==
+                kMaximumWidgetBorderWidth &&
+            explicitAppearance.widgetEdgeHighlightStrength == 0.0f,
+        "explicit acrylic border and edge fields take priority and clamp to supported ranges");
     std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);

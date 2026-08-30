@@ -244,9 +244,12 @@ int main(int argc, char* argv[])
                 source.find("gradientEndA") != std::string::npos &&
                 source.find("borderStyle") != std::string::npos &&
                 source.find("borderWidth") != std::string::npos &&
-                source.find("borderEffectStrength") != std::string::npos &&
-                source.find("invalidBorderStyle") != std::string::npos &&
+                source.find("edgeHighlightEnabled") != std::string::npos &&
+                source.find("edgeHighlightWidth") != std::string::npos &&
+                source.find("edgeHighlightStrength") != std::string::npos &&
                 source.find("invalidBorderWidth") != std::string::npos &&
+                source.find("invalidEdgeHighlightWidth") !=
+                    std::string::npos &&
                 source.find("glassBlurRadius") != std::string::npos &&
                 source.find("glassEnabled") != std::string::npos &&
                 source.find("acrylicEnabled") != std::string::npos &&

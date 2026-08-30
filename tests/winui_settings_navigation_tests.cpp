@@ -484,10 +484,13 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string_view::npos &&
             personalizationSection.find("personalization.backgroundColor") !=
                 std::string_view::npos &&
-            personalizationSection.find("personalization.borderStyle") !=
+            personalizationSection.find("personalization.edgeHighlight") !=
                 std::string_view::npos &&
             personalizationSection.find(
-              "personalization.borderEffectStrength") !=
+              "personalization.edgeHighlightWidth") !=
+                std::string_view::npos &&
+            personalizationSection.find(
+              "personalization.edgeHighlightStrength") !=
                 std::string_view::npos &&
             widgetAppearanceSection.find(
               "personalizationPage_->WidgetLayoutContent()") !=

@@ -144,16 +144,18 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     if (stroke.a > 0.0f)
     {
         strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
-        const bool dimensionalDrawn = !selected &&
-            p.widgetBorderStyle == PanelBorderStyle::Dimensional &&
-            p.widgetBorderEffectStrength > 0.0005f &&
-            DrawDimensionalBorder(ctx, frame, radius, stroke, strokeWidth,
-                p.widgetBorderEffectStrength);
-        if (!dimensionalDrawn)
-        {
-            if (auto* strokeBrush = getBrush(stroke))
-                ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
-        }
+        if (auto* strokeBrush = getBrush(stroke))
+            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+    }
+    if (!selected && p.widgetEdgeHighlightEnabled &&
+        p.widgetEdgeHighlightStrength > 0.0005f)
+    {
+        D2D1_COLOR_F edgeColor = border;
+        edgeColor.a = 1.0f;
+        const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        (void)DrawEdgeHighlight(ctx, frame, radius, edgeColor, edgeWidth,
+            p.widgetEdgeHighlightStrength);
     }
 }
 

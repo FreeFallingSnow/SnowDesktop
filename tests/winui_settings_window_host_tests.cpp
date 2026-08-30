@@ -516,9 +516,11 @@ void TestHostContract(const std::filesystem::path& repository)
             staticSearchMapsTo(
                 "personalization.borderWidth", "AppearanceTheme") &&
             staticSearchMapsTo(
-                "personalization.borderStyle", "AppearanceTheme") &&
+                "personalization.edgeHighlight", "AppearanceTheme") &&
             staticSearchMapsTo(
-                "personalization.borderEffectStrength",
+                "personalization.edgeHighlightWidth", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.edgeHighlightStrength",
                 "AppearanceTheme") &&
             staticSearchMapsTo(
                 "personalization.cornerRadius", "AppearanceWidgets") &&

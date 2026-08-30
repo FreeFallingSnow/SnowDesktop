@@ -584,6 +584,10 @@ CalculateFloatingDockStableSourceRect(
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_
             : CurrentPersonalization();
+    const float visualEdgeWidth = appearance.widgetEdgeHighlightEnabled
+        ? std::max(appearance.widgetBorderWidth,
+            appearance.widgetEdgeHighlightWidth)
+        : appearance.widgetBorderWidth;
     RECT sourceRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
@@ -592,7 +596,7 @@ CalculateFloatingDockStableSourceRect(
                         ExpandHostForTitleLayer(
                             dockRect,
                             dockSettings_.position),
-                appearance.widgetBorderWidth);
+                visualEdgeWidth);
 
     return sourceRect;
 }
@@ -702,7 +706,10 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         ? floatingDockPersonalization_
         : CurrentPersonalization();
     const float dockBorderWidth = std::clamp(
-        dockAppearance.widgetBorderWidth,
+        dockAppearance.widgetEdgeHighlightEnabled
+            ? std::max(dockAppearance.widgetBorderWidth,
+                dockAppearance.widgetEdgeHighlightWidth)
+            : dockAppearance.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     const int borderOverdraw =
         snowdesktop::floating_dock_rules::ResolveBorderOverdraw(

@@ -88,8 +88,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "personalization numeric snapshots are quantized to their declared slider step");
 
     for (const char* member : {
-             "widgetAlpha", "widgetBorderAlpha", "widgetBorderStyle",
-             "widgetBorderWidth", "widgetBorderEffectStrength",
+             "widgetAlpha", "widgetBorderAlpha", "widgetBorderWidth",
+             "widgetEdgeHighlightEnabled", "widgetEdgeHighlightWidth",
+             "widgetEdgeHighlightStrength",
              "gradientEndA",
              "glassBlurRadius", "cornerRadius", "barHeight",
              "categorizedTabHeight",
@@ -157,14 +158,19 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("kAppearancePresetCustom") != std::string::npos,
         "all seven global appearance presets remain selectable");
     Check(source.find("personalization.borderWidth") != std::string::npos &&
-            source.find("personalization.borderStyle") != std::string::npos &&
-            source.find("personalization.borderEffectStrength") !=
+            source.find("personalization.edgeHighlight") !=
                 std::string::npos &&
-            source.find("PanelBorderStyle::Dimensional") !=
+            source.find("personalization.edgeHighlightWidth") !=
                 std::string::npos &&
-            source.find("borderEffectStrength.row.SetEnabled") !=
+            source.find("personalization.edgeHighlightStrength") !=
+                std::string::npos &&
+            source.find("edgeHighlightToggle.IsOn()") !=
+                std::string::npos &&
+            source.find("edgeHighlightWidth.row.SetEnabled") !=
+                std::string::npos &&
+            source.find("edgeHighlightStrength.row.SetEnabled") !=
                 std::string::npos,
-        "custom themes expose searchable border width, style, and conditional dimensional strength controls");
+        "custom themes expose searchable independent border and conditional edge-highlight controls");
     Check(source.find(
               "gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&

@@ -1680,9 +1680,13 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const float borderWidth = std::clamp(p.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     if (app_)
+    {
+        PersonalizationSettings fillSettings = p;
+        fillSettings.widgetEdgeHighlightEnabled = false;
         app_->DrawWidgetPanelBackground(context, bounds, panelRadius, fill,
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, borderWidth, &p, true,
-            reinterpret_cast<std::uintptr_t>(this));
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, borderWidth,
+            &fillSettings, true, reinterpret_cast<std::uintptr_t>(this));
+    }
 
     if (border.a > 0.0f)
     {
@@ -1720,22 +1724,23 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 context->DrawLine(start, end, borderBrush.Get(), borderWidth);
             }
             else
-            {
-                D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(
-                    D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
-                        static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
-                    panelRadius, panelRadius);
-                if (p.widgetBorderStyle != PanelBorderStyle::Dimensional ||
-                    p.widgetBorderEffectStrength <= 0.0005f ||
-                    !app_->DrawDimensionalBorder(context, bounds, panelRadius,
-                        border, borderWidth,
-                        p.widgetBorderEffectStrength))
-                {
-                    context->DrawRoundedRectangle(
-                        rr, borderBrush.Get(), borderWidth);
-                }
-            }
+                context->DrawRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(static_cast<float>(bounds.left),
+                        static_cast<float>(bounds.top),
+                        static_cast<float>(bounds.right),
+                        static_cast<float>(bounds.bottom)),
+                    panelRadius, panelRadius), borderBrush.Get(), borderWidth);
         }
+    }
+    if (!IsEdgeAttached() && p.widgetEdgeHighlightEnabled &&
+        p.widgetEdgeHighlightStrength > 0.0005f)
+    {
+        D2D1_COLOR_F edgeColor = border;
+        edgeColor.a = 1.0f;
+        const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        (void)app_->DrawEdgeHighlight(context, bounds, panelRadius,
+            edgeColor, edgeWidth, p.widgetEdgeHighlightStrength);
     }
 
 }

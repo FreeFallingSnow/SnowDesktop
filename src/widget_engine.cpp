@@ -3095,7 +3095,8 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
 {
     return key == "bg" || key == "border" || key == "alpha" ||
         key == "borderAlpha" || key == "borderStyle" ||
-        key == "borderWidth" || key == "borderEffectStrength" ||
+        key == "borderWidth" || key == "edgeHighlightEnabled" ||
+        key == "edgeHighlightWidth" || key == "edgeHighlightStrength" ||
         key == "gradientEndA" ||
         IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
@@ -21173,8 +21174,9 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag,
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
-    PanelBorderStyle& borderStyle, float& borderWidth,
-    float& borderEffectStrength, float& gradientEndA,
+    float& borderWidth, bool& edgeHighlightEnabled,
+    float& edgeHighlightWidth, float& edgeHighlightStrength,
+    float& gradientEndA,
     bool& glassEnabled, bool& acrylicEnabled) const
 {
     int idx = FindWidget(widgetId);
@@ -21221,20 +21223,27 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readBool("acrylicEnabled", acrylicEnabled, false);
 
     lua_getfield(state, -1, "borderStyle");
-    const bool borderStyleDeclared = lua_isinteger(state, -1);
-    if (borderStyleDeclared)
-    {
-        borderStyle = NormalizePanelBorderStyle(
-            static_cast<int>(lua_tointeger(state, -1)));
-    }
+    const bool legacyBorderStyleDeclared = lua_isinteger(state, -1);
+    const int legacyBorderStyle = legacyBorderStyleDeclared
+        ? static_cast<int>(lua_tointeger(state, -1)) : 0;
     lua_pop(state, 1);
     lua_getfield(state, -1, "borderWidth");
     const bool borderWidthDeclared = lua_isnumber(state, -1);
     if (borderWidthDeclared)
         borderWidth = static_cast<float>(lua_tonumber(state, -1));
     lua_pop(state, 1);
-    readFloat("borderEffectStrength", borderEffectStrength,
-        kDefaultDimensionalBorderStrength);
+    lua_getfield(state, -1, "edgeHighlightEnabled");
+    const bool edgeHighlightEnabledDeclared = !lua_isnil(state, -1);
+    if (edgeHighlightEnabledDeclared)
+        edgeHighlightEnabled = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "edgeHighlightWidth");
+    const bool edgeHighlightWidthDeclared = lua_isnumber(state, -1);
+    if (edgeHighlightWidthDeclared)
+        edgeHighlightWidth = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    readFloat("edgeHighlightStrength", edgeHighlightStrength,
+        kDefaultEdgeHighlightStrength);
 
     auto readStoredColor = [&](const char* key, float& r, float& g,
                                float& b) {
@@ -21263,19 +21272,8 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readStoredBool("glassEnabled", glassEnabled);
     readStoredBool("acrylicEnabled", acrylicEnabled);
 
-    const std::string storedBorderStyle =
+    const std::string storedLegacyBorderStyle =
         RuntimeGetStorageValue(widgetId, "borderStyle");
-    if (!storedBorderStyle.empty())
-    {
-        borderStyle = NormalizePanelBorderStyle(
-            std::atoi(storedBorderStyle.c_str()));
-    }
-    else if (!borderStyleDeclared)
-    {
-        borderStyle = glassEnabled
-            ? PanelBorderStyle::Dimensional
-            : PanelBorderStyle::Standard;
-    }
     const std::string storedBorderWidth =
         RuntimeGetStorageValue(widgetId, "borderWidth");
     if (!storedBorderWidth.empty())
@@ -21284,22 +21282,50 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             std::atof(storedBorderWidth.c_str()));
     }
     else if (!borderWidthDeclared)
-    {
-        borderWidth = glassEnabled
-            ? kDefaultDimensionalBorderWidth : 1.0f;
-    }
-    readStoredFloat("borderEffectStrength", borderEffectStrength);
+        borderWidth = 1.0f;
+    const std::string storedEdgeHighlightEnabled =
+        RuntimeGetStorageValue(widgetId, "edgeHighlightEnabled");
+    if (!storedEdgeHighlightEnabled.empty())
+        edgeHighlightEnabled = storedEdgeHighlightEnabled == "1" ||
+            storedEdgeHighlightEnabled == "true";
+    else if (!edgeHighlightEnabledDeclared)
+        edgeHighlightEnabled = !storedLegacyBorderStyle.empty()
+            ? std::atoi(storedLegacyBorderStyle.c_str()) == 1
+            : legacyBorderStyleDeclared
+                ? legacyBorderStyle == 1 : glassEnabled;
+    const std::string storedEdgeHighlightWidth =
+        RuntimeGetStorageValue(widgetId, "edgeHighlightWidth");
+    if (!storedEdgeHighlightWidth.empty())
+        edgeHighlightWidth = static_cast<float>(
+            std::atof(storedEdgeHighlightWidth.c_str()));
+    else if (!edgeHighlightWidthDeclared)
+        edgeHighlightWidth = ((!storedLegacyBorderStyle.empty() &&
+                std::atoi(storedLegacyBorderStyle.c_str()) == 1) ||
+            (storedLegacyBorderStyle.empty() && legacyBorderStyle == 1)) &&
+            (!storedBorderWidth.empty() || borderWidthDeclared)
+            ? borderWidth : kDefaultEdgeHighlightWidth;
+    const std::string storedEdgeHighlightStrength =
+        RuntimeGetStorageValue(widgetId, "edgeHighlightStrength");
+    if (!storedEdgeHighlightStrength.empty())
+        edgeHighlightStrength = static_cast<float>(
+            std::atof(storedEdgeHighlightStrength.c_str()));
+    else
+        readStoredFloat("borderEffectStrength", edgeHighlightStrength);
     if (!std::isfinite(borderWidth))
-    {
-        borderWidth = glassEnabled
-            ? kDefaultDimensionalBorderWidth : 1.0f;
-    }
-    if (!std::isfinite(borderEffectStrength))
-        borderEffectStrength = kDefaultDimensionalBorderStrength;
+        borderWidth = 1.0f;
+    if (!std::isfinite(edgeHighlightWidth))
+        edgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    if (!std::isfinite(edgeHighlightStrength))
+        edgeHighlightStrength = kDefaultEdgeHighlightStrength;
     borderWidth = std::clamp(borderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    borderEffectStrength = std::clamp(
-        borderEffectStrength, 0.0f, 1.0f);
+    edgeHighlightWidth = std::clamp(edgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    edgeHighlightStrength = std::clamp(
+        edgeHighlightStrength, 0.0f, 1.0f);
+    if (storedEdgeHighlightEnabled.empty() &&
+        !edgeHighlightEnabledDeclared && glassEnabled)
+        borderAlpha = 0.0f;
 
     lua_pop(state, 1);
     return true;

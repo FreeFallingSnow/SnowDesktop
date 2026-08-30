@@ -16,8 +16,9 @@ bool IsCustomThemeFocus(std::string_view focusId) noexcept
         focusId == "personalization.borderAlpha" ||
         focusId == "personalization.borderOpacity" ||
         focusId == "personalization.borderWidth" ||
-        focusId == "personalization.borderStyle" ||
-        focusId == "personalization.borderEffectStrength" ||
+        focusId == "personalization.edgeHighlight" ||
+        focusId == "personalization.edgeHighlightWidth" ||
+        focusId == "personalization.edgeHighlightStrength" ||
         focusId == "personalization.enableGradient" ||
         focusId == "personalization.gradientEndAlpha" ||
         focusId == "personalization.glass" ||

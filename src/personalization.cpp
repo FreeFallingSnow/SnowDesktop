@@ -104,13 +104,14 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
     PersonalizationSettings s = DarkPreset();
     s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.28f; s.widgetBorderAlpha = 0.30f;
+    s.widgetAlpha = 0.28f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassDark;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
-    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
-    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
-    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 24.0f;
     return s;
 }
@@ -119,14 +120,15 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
 {
     PersonalizationSettings s = LightPreset();
     s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
-    s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
-    s.widgetAlpha = 0.15f; s.widgetBorderAlpha = 0.35f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
+    s.widgetAlpha = 0.15f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassLight;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
-    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
-    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
-    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 22.0f;
     s.contentTheme = 0;
     return s;
@@ -138,14 +140,15 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
     // Match the neutral #202020 tint used by Windows dark shell panels.
     s.widgetBgR = 0.125f; s.widgetBgG = 0.125f; s.widgetBgB = 0.125f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.10f;
+    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicDark;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.acrylicEnabled = true;
-    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
-    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
-    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 0;
     return s;
@@ -156,15 +159,16 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
     PersonalizationSettings s = LightPreset();
     // Match the neutral #F3F3F3 tint used by Windows light shell panels.
     s.widgetBgR = 0.953f; s.widgetBgG = 0.953f; s.widgetBgB = 0.953f;
-    s.widgetBorderR = 0.0f; s.widgetBorderG = 0.0f; s.widgetBorderB = 0.0f;
-    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.08f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
+    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicLight;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.acrylicEnabled = true;
-    s.widgetBorderStyle = PanelBorderStyle::Dimensional;
-    s.widgetBorderWidth = kDefaultDimensionalBorderWidth;
-    s.widgetBorderEffectStrength = kDefaultDimensionalBorderStrength;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 1;
     return s;
@@ -307,13 +311,16 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "widgetBorderB", v)) s.widgetBorderB = (float)v;
     if (ReadDoubleField(text, "widgetAlpha", v)) s.widgetAlpha = (float)v;
     if (ReadDoubleField(text, "widgetBorderAlpha", v)) s.widgetBorderAlpha = (float)v;
-    bool borderStyleLoaded = false;
-    if (ReadDoubleField(text, "widgetBorderStyle", v) && std::isfinite(v))
-    {
-        s.widgetBorderStyle = NormalizePanelBorderStyle(
-            static_cast<int>(v));
-        borderStyleLoaded = true;
-    }
+    bool edgeHighlightEnabled = false;
+    const bool edgeHighlightEnabledLoaded = ReadBoolField(
+        text, "widgetEdgeHighlightEnabled", edgeHighlightEnabled);
+    if (edgeHighlightEnabledLoaded)
+        s.widgetEdgeHighlightEnabled = edgeHighlightEnabled;
+    int legacyBorderStyle = 0;
+    const bool legacyBorderStyleLoaded =
+        ReadDoubleField(text, "widgetBorderStyle", v) && std::isfinite(v);
+    if (legacyBorderStyleLoaded)
+        legacyBorderStyle = static_cast<int>(v);
     bool borderWidthLoaded = false;
     if (ReadDoubleField(text, "widgetBorderWidth", v) && std::isfinite(v))
     {
@@ -321,13 +328,28 @@ bool LoadPersonalization(
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
         borderWidthLoaded = true;
     }
-    bool borderStrengthLoaded = false;
-    if (ReadDoubleField(text, "widgetBorderEffectStrength", v) &&
+    bool edgeHighlightWidthLoaded = false;
+    if (ReadDoubleField(text, "widgetEdgeHighlightWidth", v) &&
         std::isfinite(v))
     {
-        s.widgetBorderEffectStrength = std::clamp(
+        s.widgetEdgeHighlightWidth = std::clamp(static_cast<float>(v),
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        edgeHighlightWidthLoaded = true;
+    }
+    bool edgeHighlightStrengthLoaded = false;
+    if (ReadDoubleField(text, "widgetEdgeHighlightStrength", v) &&
+        std::isfinite(v))
+    {
+        s.widgetEdgeHighlightStrength = std::clamp(
             static_cast<float>(v), 0.0f, 1.0f);
-        borderStrengthLoaded = true;
+        edgeHighlightStrengthLoaded = true;
+    }
+    else if (ReadDoubleField(text, "widgetBorderEffectStrength", v) &&
+        std::isfinite(v))
+    {
+        s.widgetEdgeHighlightStrength = std::clamp(
+            static_cast<float>(v), 0.0f, 1.0f);
+        edgeHighlightStrengthLoaded = true;
     }
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
@@ -364,35 +386,35 @@ bool LoadPersonalization(
     bool b3 = false;
     if (ReadBoolField(text, "showCategoryTabCounts", b3))
         s.showCategoryTabCounts = b3;
-    // Legacy releases tied the dimensional edge to glassEnabled and always
-    // used a one-pixel core stroke.  Missing new fields opt into the stronger
-    // replacement only for appearances that previously received that edge.
-    if (!borderStyleLoaded)
-    {
-        s.widgetBorderStyle = s.glassEnabled
-            ? PanelBorderStyle::Dimensional
-            : PanelBorderStyle::Standard;
-    }
+    // Legacy releases tied edge reflection to glass and used border alpha as
+    // its intensity. New edge-highlight fields take priority when present.
+    if (!edgeHighlightEnabledLoaded)
+        s.widgetEdgeHighlightEnabled = legacyBorderStyleLoaded
+            ? legacyBorderStyle == 1 : s.glassEnabled;
     if (!borderWidthLoaded)
-    {
-        s.widgetBorderWidth = s.glassEnabled
-            ? kDefaultDimensionalBorderWidth : 1.0f;
-    }
-    if (!borderStrengthLoaded)
-    {
-        s.widgetBorderEffectStrength =
-            kDefaultDimensionalBorderStrength;
-    }
+        s.widgetBorderWidth = 1.0f;
+    if (!edgeHighlightWidthLoaded)
+        s.widgetEdgeHighlightWidth = legacyBorderStyleLoaded &&
+            legacyBorderStyle == 1 && borderWidthLoaded
+            ? s.widgetBorderWidth : kDefaultEdgeHighlightWidth;
+    if (!edgeHighlightStrengthLoaded)
+        s.widgetEdgeHighlightStrength =
+            kDefaultEdgeHighlightStrength;
+    if (!edgeHighlightEnabledLoaded && s.glassEnabled)
+        s.widgetBorderAlpha = 0.0f;
     // Presets are immutable choices in the UI. Refresh persisted acrylic
     // values so palette refinements and the old placeholder migration are
     // applied without requiring users to reselect the theme.
     if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
         s.backgroundPreset == kAppearancePresetAcrylicLight)
     {
-        const PanelBorderStyle explicitBorderStyle = s.widgetBorderStyle;
         const float explicitBorderWidth = s.widgetBorderWidth;
-        const float explicitBorderStrength =
-            s.widgetBorderEffectStrength;
+        const bool explicitEdgeHighlightEnabled =
+            s.widgetEdgeHighlightEnabled;
+        const float explicitEdgeHighlightWidth =
+            s.widgetEdgeHighlightWidth;
+        const float explicitEdgeHighlightStrength =
+            s.widgetEdgeHighlightStrength;
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
@@ -408,12 +430,14 @@ bool LoadPersonalization(
         s.showCategoryTabCounts =
             showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
-        if (borderStyleLoaded)
-            s.widgetBorderStyle = explicitBorderStyle;
         if (borderWidthLoaded)
             s.widgetBorderWidth = explicitBorderWidth;
-        if (borderStrengthLoaded)
-            s.widgetBorderEffectStrength = explicitBorderStrength;
+        if (edgeHighlightEnabledLoaded)
+            s.widgetEdgeHighlightEnabled = explicitEdgeHighlightEnabled;
+        if (edgeHighlightWidthLoaded)
+            s.widgetEdgeHighlightWidth = explicitEdgeHighlightWidth;
+        if (edgeHighlightStrengthLoaded)
+            s.widgetEdgeHighlightStrength = explicitEdgeHighlightStrength;
     }
     return true;
 }
@@ -442,19 +466,24 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBorderB\": " << s.widgetBorderB << ",\n";
     file << "  \"widgetAlpha\": " << s.widgetAlpha << ",\n";
     file << "  \"widgetBorderAlpha\": " << s.widgetBorderAlpha << ",\n";
-    file << "  \"widgetBorderStyle\": "
-         << static_cast<int>(NormalizePanelBorderStyle(
-                static_cast<int>(s.widgetBorderStyle))) << ",\n";
     file << "  \"widgetBorderWidth\": "
          << (std::isfinite(s.widgetBorderWidth)
                 ? std::clamp(s.widgetBorderWidth,
                     kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
                 : 1.0f)
          << ",\n";
-    file << "  \"widgetBorderEffectStrength\": "
-         << (std::isfinite(s.widgetBorderEffectStrength)
-                ? std::clamp(s.widgetBorderEffectStrength, 0.0f, 1.0f)
-                : kDefaultDimensionalBorderStrength)
+    file << "  \"widgetEdgeHighlightEnabled\": "
+         << (s.widgetEdgeHighlightEnabled ? "true" : "false") << ",\n";
+    file << "  \"widgetEdgeHighlightWidth\": "
+         << (std::isfinite(s.widgetEdgeHighlightWidth)
+                ? std::clamp(s.widgetEdgeHighlightWidth,
+                    kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
+                : kDefaultEdgeHighlightWidth)
+         << ",\n";
+    file << "  \"widgetEdgeHighlightStrength\": "
+         << (std::isfinite(s.widgetEdgeHighlightStrength)
+                ? std::clamp(s.widgetEdgeHighlightStrength, 0.0f, 1.0f)
+                : kDefaultEdgeHighlightStrength)
          << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";

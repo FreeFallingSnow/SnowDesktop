@@ -475,8 +475,8 @@ inline RECT ExpandForBorderOverdraw(
     RECT visualRect,
     float borderWidth = 1.0f)
 {
-    // The dimensional border includes an antialiased outer pass wider than
-    // its logical core. Floating layers must reserve pixels dynamically so
+    // The independent edge highlight includes an antialiased outer pass wider
+    // than its logical core. Floating layers reserve pixels dynamically so
     // the configured maximum width is not clipped by the host region.
     const int borderOverdraw = ResolveBorderOverdraw(borderWidth);
     if (!IsRectEmpty(&visualRect))

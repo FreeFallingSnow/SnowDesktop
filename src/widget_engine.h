@@ -1048,8 +1048,9 @@ public:
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
-        PanelBorderStyle& borderStyle, float& borderWidth,
-        float& borderEffectStrength, float& gradientEndA,
+        float& borderWidth, bool& edgeHighlightEnabled,
+        float& edgeHighlightWidth, float& edgeHighlightStrength,
+        float& gradientEndA,
         bool& glassEnabled, bool& acrylicEnabled) const;
 
     /**

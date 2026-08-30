@@ -197,27 +197,32 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             effectSettings = PersonalizationSettings::DarkPreset();
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
-            PanelBorderStyle luaBorderStyle = PanelBorderStyle::Standard;
             float luaBorderWidth = 1.0f;
-            float luaBorderEffectStrength =
-                kDefaultDimensionalBorderStrength;
+            bool luaEdgeHighlightEnabled = false;
+            float luaEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+            float luaEdgeHighlightStrength =
+                kDefaultEdgeHighlightStrength;
             float luaGradientEndA = gradientEndA;
             bool luaGlassEnabled = false;
             bool luaAcrylicEnabled = false;
             if (engine->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
-                luaBorderStyle, luaBorderWidth,
-                luaBorderEffectStrength, luaGradientEndA,
+                luaBorderWidth, luaEdgeHighlightEnabled,
+                luaEdgeHighlightWidth, luaEdgeHighlightStrength,
+                luaGradientEndA,
                 luaGlassEnabled, luaAcrylicEnabled))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
                 effectSettings = PersonalizationSettings::DarkPreset();
-                effectSettings.widgetBorderStyle = luaBorderStyle;
                 effectSettings.widgetBorderWidth = luaBorderWidth;
-                effectSettings.widgetBorderEffectStrength =
-                    luaBorderEffectStrength;
+                effectSettings.widgetEdgeHighlightEnabled =
+                    luaEdgeHighlightEnabled;
+                effectSettings.widgetEdgeHighlightWidth =
+                    luaEdgeHighlightWidth;
+                effectSettings.widgetEdgeHighlightStrength =
+                    luaEdgeHighlightStrength;
                 effectSettings.glassEnabled = luaGlassEnabled;
                 effectSettings.acrylicEnabled =
                     luaGlassEnabled && luaAcrylicEnabled;

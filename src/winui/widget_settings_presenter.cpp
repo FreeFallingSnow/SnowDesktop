@@ -429,9 +429,10 @@ struct WidgetSettingsPresenter::Impl
         borderColorEditor;
     AppearanceScalarControl borderOpacity;
     AppearanceScalarControl borderWidth;
-    presenter_controls::SettingRow borderStyleRow;
-    muxc::ComboBox borderStyle{nullptr};
-    AppearanceScalarControl borderEffectStrength;
+    presenter_controls::SettingRow edgeHighlightRow;
+    muxc::ToggleSwitch edgeHighlightEnabled{nullptr};
+    AppearanceScalarControl edgeHighlightWidth;
+    AppearanceScalarControl edgeHighlightStrength;
     AppearanceScalarControl gradientEndOpacity;
     presenter_controls::SettingRow glassRow;
     muxc::ToggleSwitch glassEnabled{nullptr};
@@ -481,7 +482,7 @@ struct WidgetSettingsPresenter::Impl
 
     winrt::event_token followGlobalToggled{};
     winrt::event_token appearanceThemeChanged{};
-    winrt::event_token borderStyleChanged{};
+    winrt::event_token edgeHighlightToggled{};
     winrt::event_token glassToggled{};
     winrt::event_token acrylicToggled{};
     winrt::event_token contentThemeChanged{};
@@ -723,16 +724,22 @@ struct WidgetSettingsPresenter::Impl
             0.5, 1.0, L"px");
         customAppearanceHost.Children().Append(borderWidth.row.root);
 
-        borderStyle = muxc::ComboBox{};
-        borderStyle.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        borderStyle.MaxWidth(520.0);
-        borderStyleRow.Initialize(borderStyle);
-        customAppearanceHost.Children().Append(borderStyleRow.root);
+        edgeHighlightEnabled = muxc::ToggleSwitch{};
+        edgeHighlightEnabled.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        edgeHighlightRow.Initialize(edgeHighlightEnabled);
+        edgeHighlightRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        customAppearanceHost.Children().Append(edgeHighlightRow.root);
 
-        InitializeAppearanceScalar(borderEffectStrength,
+        InitializeAppearanceScalar(edgeHighlightWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
+            0.5, 1.0, L"px");
+        customAppearanceHost.Children().Append(edgeHighlightWidth.row.root);
+        InitializeAppearanceScalar(edgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01, L"%");
         customAppearanceHost.Children().Append(
-            borderEffectStrength.row.root);
+            edgeHighlightStrength.row.root);
         InitializeAppearanceScalar(gradientEndOpacity);
         customAppearanceHost.Children().Append(gradientEndOpacity.row.root);
 
@@ -856,10 +863,13 @@ struct WidgetSettingsPresenter::Impl
                         preset.widgetBorderG, preset.widgetBorderB);
                     patch.backgroundOpacity = preset.widgetAlpha;
                     patch.borderOpacity = preset.widgetBorderAlpha;
-                    patch.borderStyle = preset.widgetBorderStyle;
                     patch.borderWidth = preset.widgetBorderWidth;
-                    patch.borderEffectStrength =
-                        preset.widgetBorderEffectStrength;
+                    patch.edgeHighlightEnabled =
+                        preset.widgetEdgeHighlightEnabled;
+                    patch.edgeHighlightWidth =
+                        preset.widgetEdgeHighlightWidth;
+                    patch.edgeHighlightStrength =
+                        preset.widgetEdgeHighlightStrength;
                     patch.gradientEndOpacity = preset.gradientEndA;
                     patch.glassEnabled = preset.glassEnabled;
                     patch.acrylicEnabled = preset.acrylicEnabled;
@@ -882,22 +892,26 @@ struct WidgetSettingsPresenter::Impl
             [](auto& patch, float value) {
                 patch.borderWidth = value;
             });
-        borderStyleChanged = borderStyle.SelectionChanged(
+        edgeHighlightToggled = edgeHighlightEnabled.Toggled(
             [this](const auto&, const auto&) {
-                const int selected = borderStyle.SelectedIndex();
-                if (selected < 0) return;
-                borderEffectStrength.row.SetEnabled(
-                    selected == static_cast<int>(
-                        PanelBorderStyle::Dimensional));
+                const bool enabled = edgeHighlightEnabled.IsOn();
+                edgeHighlightWidth.row.SetEnabled(enabled);
+                edgeHighlightStrength.row.SetEnabled(
+                    enabled);
                 if (!CanMutate()) return;
                 wr::WidgetHostAppearancePatch patch;
-                patch.borderStyle = NormalizePanelBorderStyle(selected);
+                patch.edgeHighlightEnabled = enabled;
                 RunAppearancePatch(std::move(patch));
             });
-        HookAppearanceScalar(borderEffectStrength,
-            "__appearance.borderEffectStrength",
+        HookAppearanceScalar(edgeHighlightWidth,
+            "__appearance.edgeHighlightWidth",
             [](auto& patch, float value) {
-                patch.borderEffectStrength = value;
+                patch.edgeHighlightWidth = value;
+            });
+        HookAppearanceScalar(edgeHighlightStrength,
+            "__appearance.edgeHighlightStrength",
+            [](auto& patch, float value) {
+                patch.edgeHighlightStrength = value;
             });
         HookAppearanceScalar(gradientEndOpacity,
             "__appearance.gradientEndOpacity",
@@ -1712,7 +1726,8 @@ struct WidgetSettingsPresenter::Impl
             transientPreviewOwner.clear();
             for (AppearanceScalarControl* control : {
                     &backgroundOpacity, &borderOpacity,
-                    &borderWidth, &borderEffectStrength,
+                    &borderWidth, &edgeHighlightWidth,
+                    &edgeHighlightStrength,
                     &gradientEndOpacity })
             {
                 if (control->idleCommitTimer)
@@ -1807,13 +1822,16 @@ struct WidgetSettingsPresenter::Impl
             snapshot.hostAppearance.borderOpacity);
         PatchAppearanceScalar(borderWidth,
             snapshot.hostAppearance.borderWidth);
-        borderStyle.SelectedIndex(static_cast<int>(
-            snapshot.hostAppearance.borderStyle));
-        PatchAppearanceScalar(borderEffectStrength,
-            snapshot.hostAppearance.borderEffectStrength);
-        borderEffectStrength.row.SetEnabled(
-            snapshot.hostAppearance.borderStyle ==
-                PanelBorderStyle::Dimensional);
+        edgeHighlightEnabled.IsOn(
+            snapshot.hostAppearance.edgeHighlightEnabled);
+        PatchAppearanceScalar(edgeHighlightWidth,
+            snapshot.hostAppearance.edgeHighlightWidth);
+        PatchAppearanceScalar(edgeHighlightStrength,
+            snapshot.hostAppearance.edgeHighlightStrength);
+        edgeHighlightWidth.row.SetEnabled(
+            snapshot.hostAppearance.edgeHighlightEnabled);
+        edgeHighlightStrength.row.SetEnabled(
+            snapshot.hostAppearance.edgeHighlightEnabled);
         PatchAppearanceScalar(gradientEndOpacity,
             snapshot.hostAppearance.gradientEndOpacity);
         glassEnabled.IsOn(snapshot.hostAppearance.glassEnabled);
@@ -2093,7 +2111,8 @@ struct WidgetSettingsPresenter::Impl
         if (clearAppearance(backgroundOpacity) ||
             clearAppearance(borderOpacity) ||
             clearAppearance(borderWidth) ||
-            clearAppearance(borderEffectStrength) ||
+            clearAppearance(edgeHighlightWidth) ||
+            clearAppearance(edgeHighlightStrength) ||
             clearAppearance(gradientEndOpacity))
             return;
         const auto field = fieldsByKey.find(std::string(owner));
@@ -2683,22 +2702,19 @@ struct WidgetSettingsPresenter::Impl
         backgroundOpacity.row.SetText(
             L("app.settings.bg_opacity", L"Background opacity"));
         borderColorEditor->SetText(
-            L("app.settings.border_color", L"Border color"), {},
+            L("app.settings.border_color", L"Border & highlight color"), {},
             cancelText);
         borderOpacity.row.SetText(
             L("app.settings.border_opacity", L"Border opacity"));
         borderWidth.row.SetText(
             L("app.settings.border_width", L"Border width"));
-        borderStyleRow.SetText(
-            L("app.settings.border_style", L"Border style"));
-        borderStyle.Items().Clear();
-        borderStyle.Items().Append(winrt::box_value(L(
-            "app.settings.border_style_standard", L"Standard")));
-        borderStyle.Items().Append(winrt::box_value(L(
-            "app.settings.border_style_dimensional", L"Dimensional")));
-        borderEffectStrength.row.SetText(L(
-            "app.settings.border_effect_strength",
-            L"Dimensional border strength"));
+        edgeHighlightRow.SetText(
+            L("app.settings.edge_highlight", L"Edge highlight"));
+        edgeHighlightWidth.row.SetText(L(
+            "app.settings.edge_highlight_width", L"Edge highlight width"));
+        edgeHighlightStrength.row.SetText(L(
+            "app.settings.edge_highlight_strength",
+            L"Edge highlight strength"));
         gradientEndOpacity.row.SetText(L(
             "app.settings.gradient_end_alpha", L"Gradient end opacity"));
         glassRow.SetText(
@@ -2751,13 +2767,19 @@ struct WidgetSettingsPresenter::Impl
         muxa::AutomationProperties::SetName(
             borderWidth.number, borderWidth.row.label.Text());
         muxa::AutomationProperties::SetName(
-            borderStyle, borderStyleRow.label.Text());
+            edgeHighlightEnabled, edgeHighlightRow.label.Text());
         muxa::AutomationProperties::SetName(
-            borderEffectStrength.slider,
-            borderEffectStrength.row.label.Text());
+            edgeHighlightWidth.slider,
+            edgeHighlightWidth.row.label.Text());
         muxa::AutomationProperties::SetName(
-            borderEffectStrength.number,
-            borderEffectStrength.row.label.Text());
+            edgeHighlightWidth.number,
+            edgeHighlightWidth.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            edgeHighlightStrength.slider,
+            edgeHighlightStrength.row.label.Text());
+        muxa::AutomationProperties::SetName(
+            edgeHighlightStrength.number,
+            edgeHighlightStrength.row.label.Text());
         muxa::AutomationProperties::SetName(
             gradientEndOpacity.slider,
             gradientEndOpacity.row.label.Text());
@@ -3025,8 +3047,8 @@ struct WidgetSettingsPresenter::Impl
                 followGlobal.Toggled(followGlobalToggled);
             if (appearanceTheme && HasToken(appearanceThemeChanged))
                 appearanceTheme.SelectionChanged(appearanceThemeChanged);
-            if (borderStyle && HasToken(borderStyleChanged))
-                borderStyle.SelectionChanged(borderStyleChanged);
+            if (edgeHighlightEnabled && HasToken(edgeHighlightToggled))
+                edgeHighlightEnabled.Toggled(edgeHighlightToggled);
             if (glassEnabled && HasToken(glassToggled))
                 glassEnabled.Toggled(glassToggled);
             if (acrylicEnabled && HasToken(acrylicToggled))
@@ -3071,7 +3093,8 @@ struct WidgetSettingsPresenter::Impl
             unhookScalar(backgroundOpacity);
             unhookScalar(borderOpacity);
             unhookScalar(borderWidth);
-            unhookScalar(borderEffectStrength);
+            unhookScalar(edgeHighlightWidth);
+            unhookScalar(edgeHighlightStrength);
             unhookScalar(gradientEndOpacity);
             if (backgroundColorEditor)
             {

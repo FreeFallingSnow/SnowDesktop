@@ -153,14 +153,15 @@ struct PersonalizationPagePresenter::Impl
     muxc::ToggleSwitch gradientToggle{nullptr};
     muxc::ToggleSwitch glassToggle{nullptr};
     muxc::ToggleSwitch acrylicToggle{nullptr};
-    muxc::ComboBox borderStyleCombo{nullptr};
+    muxc::ToggleSwitch edgeHighlightToggle{nullptr};
     muxc::ComboBox contentThemeCombo{nullptr};
     ColorControl backgroundColor;
     ColorControl borderColor;
     ContinuousControl widgetAlpha;
     ContinuousControl borderAlpha;
     ContinuousControl borderWidth;
-    ContinuousControl borderEffectStrength;
+    ContinuousControl edgeHighlightWidth;
+    ContinuousControl edgeHighlightStrength;
     ContinuousControl gradientEndAlpha;
     ContinuousControl blurRadius;
     muxc::ComboBox contextMenuCombo{nullptr};
@@ -172,17 +173,18 @@ struct PersonalizationPagePresenter::Impl
     SettingRow quickNavigationThemeRow;
     SettingRow collectionPopupThemeRow;
     SettingRow gradientToggleRow;
-    SettingRow borderStyleRow;
+    SettingRow edgeHighlightRow;
     SettingRow glassRow;
     SettingRow acrylicRow;
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 9> continuousControls = {
+    std::array<ContinuousControl*, 10> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
-        &borderEffectStrength,
+        &edgeHighlightWidth,
+        &edgeHighlightStrength,
         &gradientEndAlpha,
         &blurRadius,
         &cornerRadius,
@@ -208,7 +210,7 @@ struct PersonalizationPagePresenter::Impl
     winrt::event_token quickNavigationThemeToken{};
     winrt::event_token collectionPopupThemeToken{};
     winrt::event_token gradientToken{};
-    winrt::event_token borderStyleToken{};
+    winrt::event_token edgeHighlightToken{};
     winrt::event_token glassToken{};
     winrt::event_token acrylicToken{};
     winrt::event_token contentThemeToken{};
@@ -305,8 +307,12 @@ struct PersonalizationPagePresenter::Impl
             &PersonalizationSettings::widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
             0.5, 1.0);
-        InitializeContinuousControl(borderEffectStrength,
-            &PersonalizationSettings::widgetBorderEffectStrength,
+        InitializeContinuousControl(edgeHighlightWidth,
+            &PersonalizationSettings::widgetEdgeHighlightWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
+            0.5, 1.0);
+        InitializeContinuousControl(edgeHighlightStrength,
+            &PersonalizationSettings::widgetEdgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01);
         InitializeContinuousControl(gradientEndAlpha,
             &PersonalizationSettings::gradientEndA,
@@ -317,7 +323,8 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(widgetAlpha, L"%");
         SetUnit(borderAlpha, L"%");
         SetUnit(borderWidth, L"px");
-        SetUnit(borderEffectStrength, L"%");
+        SetUnit(edgeHighlightWidth, L"px");
+        SetUnit(edgeHighlightStrength, L"%");
         SetUnit(gradientEndAlpha, L"%");
         SetUnit(blurRadius, L"px");
         widgetAppearanceCard.content.Children().Append(widgetAlpha.row.root);
@@ -326,14 +333,17 @@ struct PersonalizationPagePresenter::Impl
         widgetAppearanceCard.content.Children().Append(borderAlpha.row.root);
         widgetAppearanceCard.content.Children().Append(borderWidth.row.root);
 
-        borderStyleCombo = muxc::ComboBox{};
-        borderStyleCombo.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
-        borderStyleCombo.MaxWidth(520.0);
-        borderStyleRow.Initialize(borderStyleCombo);
-        widgetAppearanceCard.content.Children().Append(borderStyleRow.root);
+        edgeHighlightToggle = muxc::ToggleSwitch{};
+        edgeHighlightToggle.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        edgeHighlightRow.Initialize(edgeHighlightToggle);
+        edgeHighlightRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        widgetAppearanceCard.content.Children().Append(edgeHighlightRow.root);
         widgetAppearanceCard.content.Children().Append(
-            borderEffectStrength.row.root);
+            edgeHighlightWidth.row.root);
+        widgetAppearanceCard.content.Children().Append(
+            edgeHighlightStrength.row.root);
 
         gradientToggle = muxc::ToggleSwitch{};
         gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -567,15 +577,13 @@ struct PersonalizationPagePresenter::Impl
                             : 0.0f;
                     });
             });
-        borderStyleToken = borderStyleCombo.SelectionChanged(
+        edgeHighlightToken = edgeHighlightToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
-                const int value = borderStyleCombo.SelectedIndex();
-                if (value < 0) return;
+                const bool value = edgeHighlightToggle.IsOn();
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [value](PersonalizationSettings& settings) {
-                        settings.widgetBorderStyle =
-                            NormalizePanelBorderStyle(value);
+                        settings.widgetEdgeHighlightEnabled = value;
                     });
             });
         glassToken = glassToggle.Toggled(
@@ -778,8 +786,7 @@ struct PersonalizationPagePresenter::Impl
         gradientToggle.IsOn(settings.gradientEndA > 0.001f);
         glassToggle.IsOn(settings.glassEnabled);
         acrylicToggle.IsOn(settings.acrylicEnabled);
-        borderStyleCombo.SelectedIndex(
-            static_cast<int>(settings.widgetBorderStyle));
+        edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
@@ -812,10 +819,11 @@ struct PersonalizationPagePresenter::Impl
         widgetAlpha.row.SetEnabled(custom);
         borderAlpha.row.SetEnabled(custom);
         borderWidth.row.SetEnabled(custom);
-        borderStyleRow.SetEnabled(custom);
-        borderEffectStrength.row.SetEnabled(custom &&
-            borderStyleCombo.SelectedIndex() ==
-                static_cast<int>(PanelBorderStyle::Dimensional));
+        edgeHighlightRow.SetEnabled(custom);
+        edgeHighlightWidth.row.SetEnabled(custom &&
+            edgeHighlightToggle.IsOn());
+        edgeHighlightStrength.row.SetEnabled(custom &&
+            edgeHighlightToggle.IsOn());
         gradientToggleRow.SetEnabled(custom);
         gradientEndAlpha.row.SetEnabled(custom && gradientToggle.IsOn());
         glassRow.SetEnabled(custom);
@@ -929,22 +937,20 @@ struct PersonalizationPagePresenter::Impl
         SetColorText(backgroundColor,
             "app.settings.component_bg", L"Widget Background");
         SetColorText(borderColor,
-            "app.settings.component_border", L"Widget Border");
+            "app.settings.component_border", L"Border & Highlight Color");
         SetContinuousText(widgetAlpha,
             "app.settings.bg_opacity", L"Background Opacity");
         SetContinuousText(borderAlpha,
             "app.settings.border_opacity", L"Border Opacity");
         SetContinuousText(borderWidth,
             "app.settings.border_width", L"Border Width");
-        borderStyleRow.SetText(
-            L("app.settings.border_style", L"Border Style"));
-        ReplaceComboItems(borderStyleCombo, {
-            {"app.settings.border_style_standard", L"Standard"},
-            {"app.settings.border_style_dimensional", L"Dimensional"},
-        });
-        SetContinuousText(borderEffectStrength,
-            "app.settings.border_effect_strength",
-            L"Dimensional Border Strength");
+        edgeHighlightRow.SetText(
+            L("app.settings.edge_highlight", L"Edge Highlight"));
+        SetContinuousText(edgeHighlightWidth,
+            "app.settings.edge_highlight_width", L"Edge Highlight Width");
+        SetContinuousText(edgeHighlightStrength,
+            "app.settings.edge_highlight_strength",
+            L"Edge Highlight Strength");
         SetContinuousText(gradientEndAlpha,
             "app.settings.gradient_end_alpha", L"Gradient End Opacity");
         SetContinuousText(blurRadius,
@@ -982,7 +988,7 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
-            borderStyleCombo, borderStyleRow.label.Text());
+            edgeHighlightToggle, edgeHighlightRow.label.Text());
         muxa::AutomationProperties::SetName(
             glassToggle, glassRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1062,10 +1068,12 @@ struct PersonalizationPagePresenter::Impl
             return borderAlpha.slider;
         if (id == "personalization.borderWidth")
             return borderWidth.slider;
-        if (id == "personalization.borderStyle")
-            return borderStyleCombo;
-        if (id == "personalization.borderEffectStrength")
-            return borderEffectStrength.slider;
+        if (id == "personalization.edgeHighlight")
+            return edgeHighlightToggle;
+        if (id == "personalization.edgeHighlightWidth")
+            return edgeHighlightWidth.slider;
+        if (id == "personalization.edgeHighlightStrength")
+            return edgeHighlightStrength.slider;
         if (id == "personalization.gradientEndAlpha")
             return gradientEndAlpha.slider;
         if (id == "personalization.enableGradient")
@@ -1159,7 +1167,7 @@ struct PersonalizationPagePresenter::Impl
             collectionPopupThemeCombo.SelectionChanged(
                 collectionPopupThemeToken);
             gradientToggle.Toggled(gradientToken);
-            borderStyleCombo.SelectionChanged(borderStyleToken);
+            edgeHighlightToggle.Toggled(edgeHighlightToken);
             glassToggle.Toggled(glassToken);
             acrylicToggle.Toggled(acrylicToken);
             contentThemeCombo.SelectionChanged(contentThemeToken);
