@@ -53,6 +53,11 @@ bool BuildComponentPublishPlan(const WorkshopProject& project,
     }
     else if (preferences.textSource == WorkshopTextSource::ManualEnglish)
     {
+        if (preferences.manualEnglishTitle.empty())
+        {
+            error = "manual English text requires a title";
+            return false;
+        }
         plan.localizations.push_back(SteamWorkshopLocalization{
             "english", preferences.manualEnglishTitle,
             preferences.manualEnglishDescription });

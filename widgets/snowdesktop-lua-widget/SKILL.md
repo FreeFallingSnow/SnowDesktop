@@ -94,6 +94,62 @@ then scales it proportionally into the padded square and composites it over a
 center-cover crop of `--background`. It does not stretch the background or
 change the component to a square layout.
 
+## Workshop publishing
+
+When `bin\SnowDesktopSteamBridge.exe` is present, use it for component
+Workshop planning, creation, and updates. Do not automate the Workshop Manager
+UI. First run `bin\SnowDesktopSteamBridge.exe configuration` and require
+`ok=true`, `steamworksCompiled=true`, and
+`componentWorkflowProtocolVersion=1`. The executable must stay beside its
+bundled `steam_api64.dll`.
+
+Always pass the active SnowDesktop data directory explicitly. This keeps the
+project association, reuse policies, package staging, and publication history
+in the same `data\SteamWorkshopManager` store used by the Manager; never invent
+a second project-data directory beside the installed Skill.
+
+Plan before every external change:
+
+```powershell
+bin\SnowDesktopSteamBridge.exe workshop component-plan `
+  --source <widget-directory> --data-directory <SnowDesktop-data-directory>
+```
+
+The command inspects, validates, and packs the component into the data
+directory, then returns one JSON plan with `action` set to `create`,
+`update-content`, or `update-metadata`. Show the plan's listing localizations,
+preview policy, tags, visibility, package version, and SHA-256 to the user.
+Do not treat a successful plan as authorization to publish.
+
+After the user explicitly approves that exact plan, repeat the same source and
+policy options with the matching confirmation flag:
+
+```powershell
+bin\SnowDesktopSteamBridge.exe workshop component-publish `
+  --source <widget-directory> --data-directory <SnowDesktop-data-directory> `
+  --confirm-create
+```
+
+Use `--confirm-update` when the plan action starts with `update-`. Creation is
+always private. Publishing emits JSON Lines progress and one final result; keep
+the returned PublishedFileId even if a later localization fails. Do not pass
+`--open-page` unless the user asked to open Steam.
+
+The persistent source policies are:
+
+- `--text-source package` reuses every title and description localization from
+  `widget.json`; `steam` preserves the current Steam text during updates; and
+  `manual-english --title ... [--description ...]` submits manual English.
+- `--preview-source local` submits the manifest preview (or `--preview FILE`),
+  while `steam` preserves the existing Workshop preview during updates.
+- `--tags-source local` submits the persisted or repeated `--tag` values;
+  `steam` preserves existing Workshop tags during updates. Use `--clear-tags`
+  only with local tags.
+
+New items cannot preserve Steam-managed values because none exist yet.
+Changing only listing text, preview, tags, or visibility produces a
+metadata-only update when the packed component SHA-256 is unchanged.
+
 ## Required entry
 
 ```lua

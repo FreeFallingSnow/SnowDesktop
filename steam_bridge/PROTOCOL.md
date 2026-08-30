@@ -87,6 +87,39 @@ Callers must ignore unknown fields and event names for forward compatibility.
 `protocolVersion` changes only when an incompatible transport or content
 contract is introduced.
 
+## Component publishing workflow
+
+The higher-level creator commands share the Workshop Manager project store and
+package pipeline:
+
+```text
+workshop component-plan --source DIR --data-directory DIR [policy options]
+workshop component-publish --source DIR --data-directory DIR [same options]
+    (--confirm-create|--confirm-update)
+```
+
+`--data-directory` is mandatory so an Agent cannot silently create a second
+project store. Both commands use its `SteamWorkshopManager` child for project
+associations and staging. `component-plan` performs local inspection,
+validation, and packaging, but never initializes Steam or submits an item. Its
+single JSON result includes the action, content hash, localizations, preview,
+tags, visibility, and the exact required confirmation flag.
+
+`component-publish` rebuilds the plan and refuses to proceed unless the caller
+passes the matching confirmation. New items require `--confirm-create` and are
+always private; bound items require `--confirm-update`. It emits
+`component-plan` and `component-publish-progress` JSON Lines before the final
+result. A newly allocated PublishedFileId is persisted as soon as Steam returns
+it, including when upload or a later localization fails.
+
+Source policies are persistent per local project. Package text submits all
+supported manifest localizations; Steam text preserves the listing during an
+update; manual English requires an explicit title. Local preview/tags submit
+the corresponding project values, while Steam preview/tags preserve the
+remote values. Steam-managed sources are invalid for creation. When the packed
+SHA-256 is unchanged, listing, preview, tag, and visibility changes use a
+metadata-only update unless `--force-content` is specified.
+
 ## Author query and association
 
 `workshop list-published --page N` returns the current Steam user's published

@@ -839,14 +839,30 @@ add_subdirectory(steam_bridge)
 target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopWorkshopManagerSupport)
 
-add_dependencies(SnowDesktop snowwidget)
+add_dependencies(SnowDesktop snowwidget SnowDesktopSteamBridge)
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:snowwidget>"
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin/snowwidget.exe"
-    COMMENT "Embedding snowwidget CLI in the Agent Skill for SnowDesktop...")
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:SnowDesktopSteamBridge>"
+        "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin/SnowDesktopSteamBridge.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/steam_bridge/LICENSE"
+        "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin/SnowDesktopSteamBridge-LICENSE.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/steam_bridge/THIRD_PARTY_NOTICES.md"
+        "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin/SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md"
+    COMMENT "Embedding component authoring and Workshop CLIs in the Agent Skill...")
+if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
+    add_custom_command(TARGET SnowDesktop POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE_DIR:SnowDesktopSteamBridge>/steam_api64.dll"
+            "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin/steam_api64.dll"
+        COMMENT "Embedding the permitted Steamworks runtime for the Agent Skill Workshop CLI...")
+endif()
 
 include(CTest)
 if (BUILD_TESTING)

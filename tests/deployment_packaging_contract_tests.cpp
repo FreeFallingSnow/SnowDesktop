@@ -181,8 +181,14 @@ void TestPackagers(const std::string& module,
             release.find("widgets\\snowdesktop-lua-widget\\bin\\snowwidget.exe") !=
                 std::string::npos &&
             steam.find("SnowDesktopWorkshopManager.exe") !=
+                std::string::npos &&
+            steam.find("SnowDesktopSteamBridge.exe") !=
+                std::string::npos &&
+            steam.find("$bundledSkillPublisherFiles") !=
+                std::string::npos &&
+            steam.find("$payloadSkillPublisher") !=
                 std::string::npos,
-        "only the Steam payload includes the Workshop manager while every release keeps the Agent Skill tool");
+        "only the Steam payload includes the Workshop manager and complete Agent publishing CLI while every release keeps the authoring tool");
     Check(release.find("SnowDesktopLauncher.exe") == std::string::npos &&
             release.find("SnowDesktop.runtime-context.json") ==
                 std::string::npos &&

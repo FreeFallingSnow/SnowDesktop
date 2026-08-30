@@ -38,7 +38,8 @@ target_link_libraries(SnowDesktopWorkshopManagerSupport PUBLIC
 
 add_executable(SnowDesktopSteamBridge src/main.cpp)
 target_link_libraries(SnowDesktopSteamBridge PRIVATE
-    SnowDesktopSteamWorkshopCore)
+    SnowDesktopSteamWorkshopCore
+    SnowDesktopWorkshopManagerSupport)
 
 add_executable(SnowDesktopWorkshopManager WIN32
     src/manager_main.cpp
@@ -103,14 +104,23 @@ add_custom_command(TARGET SnowDesktopWorkshopManager POST_BUILD
         "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget"
     COMMENT "Copying the SnowDesktop authoring Skill...")
 
-add_dependencies(SnowDesktopWorkshopManager snowwidget)
+add_dependencies(SnowDesktopWorkshopManager snowwidget SnowDesktopSteamBridge)
 add_custom_command(TARGET SnowDesktopWorkshopManager POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E make_directory
         "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "$<TARGET_FILE:snowwidget>"
         "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin/snowwidget.exe"
-    COMMENT "Embedding snowwidget CLI in the Workshop Manager Agent Skill...")
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:SnowDesktopSteamBridge>"
+        "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin/SnowDesktopSteamBridge.exe"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+        "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin/SnowDesktopSteamBridge-LICENSE.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+        "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin/SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md"
+    COMMENT "Embedding component authoring and Workshop CLIs in the Workshop Manager Agent Skill...")
 
 if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
     if (NOT WIN32)
@@ -156,6 +166,11 @@ if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
                 "$<TARGET_FILE_DIR:${STEAM_EXE}>/steam_api64.dll"
             COMMENT "Copying the permitted Steamworks redistributable...")
     endforeach()
+    add_custom_command(TARGET SnowDesktopWorkshopManager POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${STEAMWORKS_REDISTRIBUTABLE}"
+            "$<TARGET_FILE_DIR:SnowDesktopWorkshopManager>/widgets/snowdesktop-lua-widget/bin/steam_api64.dll"
+        COMMENT "Embedding the permitted Steamworks runtime for the Agent Skill Workshop CLI...")
     message(STATUS "SnowDesktop Steam tools: Steamworks support enabled")
 else()
     target_compile_definitions(SnowDesktopSteamWorkshopCore PUBLIC

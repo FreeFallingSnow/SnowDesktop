@@ -137,6 +137,29 @@ if ((Get-Sha256 -Path $bundledSkillCli) -ne
     (Get-Sha256 -Path (Join-Path $buildOutput "snowwidget.exe"))) {
     throw "The Agent Skill CLI does not match the standalone snowwidget.exe."
 }
+$bundledSkillBin = Split-Path -Parent $bundledSkillCli
+$bundledSkillPublisherFiles = @(
+    "SnowDesktopSteamBridge.exe",
+    "steam_api64.dll",
+    "SnowDesktopSteamBridge-LICENSE.txt",
+    "SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md"
+)
+foreach ($name in $bundledSkillPublisherFiles) {
+    $path = Join-Path $bundledSkillBin $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Built Agent Skill Workshop CLI file is missing: $path"
+    }
+}
+if ((Get-Sha256 -Path (Join-Path $bundledSkillBin `
+            "SnowDesktopSteamBridge.exe")) -ne
+        (Get-Sha256 -Path (Join-Path $buildOutput `
+            "SnowDesktopSteamBridge.exe")) -or
+    (Get-Sha256 -Path (Join-Path $bundledSkillBin `
+            "steam_api64.dll")) -ne
+        (Get-Sha256 -Path (Join-Path (Join-Path $buildOutput `
+            $runtimeDirectory) "steam_api64.dll"))) {
+    throw "The Agent Skill Workshop CLI or Steam runtime is stale."
+}
 
 $bridgePath = Join-Path $buildOutput "SnowDesktopSteamBridge.exe"
 $configurationText = & $bridgePath configuration
@@ -225,6 +248,10 @@ $payloadSkillBin = Join-Path $distribution `
 New-Item -ItemType Directory -Path $payloadSkillBin -Force | Out-Null
 Copy-Item -LiteralPath $bundledSkillCli `
     -Destination (Join-Path $payloadSkillBin "snowwidget.exe") -Force
+foreach ($name in $bundledSkillPublisherFiles) {
+    Copy-Item -LiteralPath (Join-Path $bundledSkillBin $name) `
+        -Destination (Join-Path $payloadSkillBin $name) -Force
+}
 
 $forbidden = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
     Where-Object {
@@ -244,8 +271,16 @@ if ($forbiddenDirectory.Count -ne 0) {
 }
 $steamDlls = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
     Where-Object { $_.Name -like "steam_api*.dll" })
-if ($steamDlls.Count -ne 1 -or $steamDlls[0].Name -cne "steam_api64.dll") {
-    throw "The payload must contain exactly one permitted steam_api64.dll."
+$expectedSteamDlls = @(
+    (Join-Path (Join-Path $distribution $runtimeDirectory) `
+        "steam_api64.dll"),
+    (Join-Path $payloadSkillBin "steam_api64.dll")
+)
+if ($steamDlls.Count -ne $expectedSteamDlls.Count -or
+    @($expectedSteamDlls | Where-Object {
+        -not (Test-Path -LiteralPath $_ -PathType Leaf)
+    }).Count -ne 0) {
+    throw "The payload must contain only the two permitted steam_api64.dll runtime copies."
 }
 $payloadSkillCli = Join-Path $distribution `
     "widgets\snowdesktop-lua-widget\bin\snowwidget.exe"
@@ -253,6 +288,14 @@ if (-not (Test-Path -LiteralPath $payloadSkillCli -PathType Leaf) -or
     (Get-Sha256 -Path $payloadSkillCli) -ne
         (Get-Sha256 -Path (Join-Path $distribution "snowwidget.exe"))) {
     throw "The Steam payload contains an unavailable or stale Agent Skill CLI."
+}
+$payloadSkillPublisher = Join-Path $payloadSkillBin `
+    "SnowDesktopSteamBridge.exe"
+if (-not (Test-Path -LiteralPath $payloadSkillPublisher -PathType Leaf) -or
+    (Get-Sha256 -Path $payloadSkillPublisher) -ne
+        (Get-Sha256 -Path (Join-Path $distribution `
+            "SnowDesktopSteamBridge.exe"))) {
+    throw "The Steam payload contains an unavailable or stale Agent Skill Workshop CLI."
 }
 
 Copy-Item -LiteralPath $launcherSource `

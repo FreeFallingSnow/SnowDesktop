@@ -11,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -22,8 +23,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "component_workshop_publish.h"
+#include "package_tool.h"
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
+#include "workshop_project.h"
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
 #include <steam/steam_api.h>
@@ -67,6 +71,16 @@ std::wstring Utf8ToWide(std::string_view value)
         static_cast<int>(value.size()), result.data(), length) != length)
         return {};
     return result;
+}
+
+std::string NowIso8601()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    gmtime_s(&utc, &now);
+    char buffer[32]{};
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    return buffer;
 }
 
 bool OpenUrl(std::string_view url)
@@ -151,7 +165,17 @@ void PrintUsage()
            " [--item ID] [--preview FILE] [--title TEXT]"
            " [--description TEXT] [--tag TAG] [--metadata JSON]"
            " [--language STEAM_LANGUAGE] [--visibility private|friends|public|unlisted]"
-           " [--change-note TEXT] [--timeout-seconds N] [--open-page]\n\n"
+           " [--change-note TEXT] [--timeout-seconds N] [--open-page]\n"
+        << "  SnowDesktopSteamBridge.exe workshop component-plan --source DIR"
+           " --data-directory DIR [--item ID]"
+           " [--text-source package|steam|manual-english]"
+           " [--preview-source local|steam] [--tags-source local|steam]"
+           " [--preview FILE] [--title TEXT] [--description TEXT]"
+           " [--tag TAG|--clear-tags] [--visibility private|friends|public|unlisted]"
+           " [--change-note TEXT] [--timeout-seconds N] [--force-content]\n"
+        << "  SnowDesktopSteamBridge.exe workshop component-publish --source DIR"
+           " [component-plan options] (--confirm-create|--confirm-update)"
+           " [--open-page]\n\n"
         << "All successful command output is JSON. Long-running download and"
            " publish commands emit JSON Lines progress events before the final result.\n";
 }
@@ -165,6 +189,7 @@ int PrintConfiguration()
         snowdesktop::steam_bridge::kSteamAppId
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
+              << ",\"componentWorkflowProtocolVersion\":1"
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";
@@ -875,6 +900,368 @@ std::optional<ERemoteStoragePublishedFileVisibility> ParseVisibility(
     return std::nullopt;
 }
 
+bool ApplyComponentSources(const ParsedOptions& options,
+    snowdesktop::steam_bridge::WorkshopProject& project,
+    std::string& error)
+{
+    using namespace snowdesktop::steam_bridge;
+    if (const auto source = options.Value(L"--text-source"))
+    {
+        if (*source == L"package")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Package;
+        else if (*source == L"steam")
+            project.publishPreferences.textSource = WorkshopTextSource::Steam;
+        else if (*source == L"manual-english")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::ManualEnglish;
+        else
+        {
+            error = "--text-source must be package, steam, or manual-english";
+            return false;
+        }
+    }
+    const auto parseAssetSource = [&](std::wstring_view option,
+        WorkshopAssetSource& destination)
+    {
+        const auto source = options.Value(option);
+        if (!source) return true;
+        if (*source == L"local") destination = WorkshopAssetSource::Local;
+        else if (*source == L"steam")
+            destination = WorkshopAssetSource::Steam;
+        else
+        {
+            error = WideToUtf8(option) + " must be local or steam";
+            return false;
+        }
+        return true;
+    };
+    if (!parseAssetSource(L"--preview-source",
+            project.publishPreferences.previewSource) ||
+        !parseAssetSource(L"--tags-source",
+            project.publishPreferences.tagsSource))
+        return false;
+    if (const auto title = options.Value(L"--title"))
+        project.publishPreferences.manualEnglishTitle = WideToUtf8(*title);
+    if (const auto description = options.Value(L"--description"))
+        project.publishPreferences.manualEnglishDescription =
+            WideToUtf8(*description);
+    if ((options.Value(L"--title") || options.Value(L"--description")) &&
+        project.publishPreferences.textSource !=
+            WorkshopTextSource::ManualEnglish)
+    {
+        error = "--title and --description require --text-source manual-english";
+        return false;
+    }
+    if (const auto preview = options.Value(L"--preview"))
+        project.primaryPreview = *preview;
+    if (options.HasFlag(L"--clear-tags") &&
+        options.repeated.contains(L"--tag"))
+    {
+        error = "--clear-tags cannot be combined with --tag";
+        return false;
+    }
+    if (options.HasFlag(L"--clear-tags")) project.tags.clear();
+    else if (options.repeated.contains(L"--tag"))
+    {
+        project.tags.clear();
+        for (const auto& tag : options.Values(L"--tag"))
+            project.tags.push_back(WideToUtf8(tag));
+    }
+    return true;
+}
+
+void PrintComponentPlan(
+    const snowdesktop::steam_bridge::WorkshopProject& project,
+    const snowdesktop::steam_bridge::ComponentPublishPlan& plan,
+    bool registered, bool event)
+{
+    using namespace snowdesktop::steam_bridge;
+    std::cout << '{';
+    if (event) std::cout << "\"event\":\"component-plan\",";
+    std::cout << "\"ok\":true,\"protocolVersion\":1,\"registered\":"
+              << (registered ? "true" : "false")
+              << ",\"localId\":";
+    WriteJsonString(std::cout, project.localId);
+    std::cout << ",\"sourceDirectory\":";
+    WriteJsonString(std::cout,
+        WideToUtf8(project.sourceDirectory.wstring()));
+    std::cout << ",\"action\":";
+    WriteJsonString(std::cout, ComponentPublishActionName(plan.action));
+    std::cout << ",\"confirmationRequired\":";
+    WriteJsonString(std::cout,
+        plan.action == ComponentPublishAction::Create ?
+            "confirm-create" : "confirm-update");
+    std::cout << ",\"publishedFileId\":";
+    if (plan.publishedFileId)
+        WriteJsonString(std::cout, std::to_string(*plan.publishedFileId));
+    else std::cout << "null";
+    std::cout << ",\"package\":{\"id\":";
+    WriteJsonString(std::cout, plan.packageId);
+    std::cout << ",\"version\":";
+    WriteJsonString(std::cout, plan.version);
+    std::cout << ",\"sha256\":";
+    WriteJsonString(std::cout, plan.sha256);
+    std::cout << ",\"uploadContent\":"
+              << (plan.updateContent ? "true" : "false") << '}';
+    std::cout << ",\"listing\":{\"source\":";
+    WriteJsonString(std::cout,
+        WorkshopTextSourceName(project.publishPreferences.textSource));
+    std::cout << ",\"localizations\":[";
+    for (std::size_t index = 0; index < plan.localizations.size(); ++index)
+    {
+        if (index) std::cout << ',';
+        const auto& localized = plan.localizations[index];
+        std::cout << "{\"language\":";
+        WriteJsonString(std::cout, localized.language);
+        std::cout << ",\"title\":";
+        WriteJsonString(std::cout, localized.title);
+        std::cout << ",\"description\":";
+        WriteJsonString(std::cout, localized.description);
+        std::cout << '}';
+    }
+    std::cout << "]},\"preview\":{\"source\":";
+    WriteJsonString(std::cout,
+        WorkshopAssetSourceName(project.publishPreferences.previewSource));
+    std::cout << ",\"path\":";
+    if (plan.preview)
+        WriteJsonString(std::cout, WideToUtf8(plan.preview->wstring()));
+    else std::cout << "null";
+    std::cout << "},\"tags\":{\"source\":";
+    WriteJsonString(std::cout,
+        WorkshopAssetSourceName(project.publishPreferences.tagsSource));
+    std::cout << ",\"values\":";
+    if (!plan.tags) std::cout << "null";
+    else
+    {
+        std::cout << '[';
+        for (std::size_t index = 0; index < plan.tags->size(); ++index)
+        {
+            if (index) std::cout << ',';
+            WriteJsonString(std::cout, (*plan.tags)[index]);
+        }
+        std::cout << ']';
+    }
+    std::cout << "},\"visibility\":";
+    if (plan.action == ComponentPublishAction::Create)
+        WriteJsonString(std::cout, "private");
+    else if (plan.visibility)
+        std::cout << *plan.visibility;
+    else std::cout << "null";
+    std::cout << "}\n";
+}
+
+int PrintComponentPublishError(int exitCode, std::string_view code,
+    std::string_view message, std::optional<std::uint64_t> item,
+    std::string_view language)
+{
+    std::cerr << "{\"ok\":false,\"error\":{\"code\":";
+    WriteJsonString(std::cerr, code);
+    std::cerr << ",\"message\":";
+    WriteJsonString(std::cerr, message);
+    std::cerr << "},\"publishedFileId\":";
+    if (item) WriteJsonString(std::cerr, std::to_string(*item));
+    else std::cerr << "null";
+    std::cerr << ",\"failedLanguage\":";
+    if (language.empty()) std::cerr << "null";
+    else WriteJsonString(std::cerr, language);
+    std::cerr << "}\n";
+    return exitCode;
+}
+
+int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
+{
+    using namespace snowdesktop::steam_bridge;
+    const auto source = options.Value(L"--source");
+    const auto dataDirectoryValue = options.Value(L"--data-directory");
+    if (!source || !dataDirectoryValue)
+        return PrintError(kInvalidArguments, "invalid_arguments",
+            "component workflow requires --source and --data-directory");
+    const std::filesystem::path dataDirectory = *dataDirectoryValue;
+    const auto managerRoot = WorkshopManagerDataRoot(dataDirectory);
+    ProjectStore store(managerRoot);
+    std::string message;
+    if (!store.Load(message))
+        return PrintError(kSteamOperationFailed, "project_store_failed",
+            message);
+    const std::size_t projectCount = store.Projects().size();
+    WorkshopProject* project = nullptr;
+    if (!store.AddDirectory(*source, project, message) || !project)
+        return PrintError(kInvalidArguments, "invalid_component_source",
+            message);
+    const bool registered = store.Projects().size() == projectCount;
+    if (const auto item = options.Value(L"--item"))
+    {
+        std::uint64_t parsed = 0;
+        if (!ParsePositiveInteger(*item, parsed))
+            return PrintError(kInvalidArguments, "invalid_arguments",
+                "--item must be a positive Workshop PublishedFileId");
+        if (project->publishedFileId && *project->publishedFileId != parsed)
+            return PrintError(kInvalidArguments, "project_item_mismatch",
+                "--item does not match the local project binding");
+        project->publishedFileId = parsed;
+        if (!registered)
+        {
+            project->publishPreferences.textSource =
+                WorkshopTextSource::Steam;
+            project->publishPreferences.previewSource =
+                WorkshopAssetSource::Steam;
+            project->publishPreferences.tagsSource =
+                WorkshopAssetSource::Steam;
+        }
+    }
+    if (!ApplyComponentSources(options, *project, message))
+        return PrintError(kInvalidArguments, "invalid_arguments", message);
+
+    PackageTool packageTool({}, managerRoot / L"staging" / L"packages");
+    WidgetInspection inspection;
+    PackagedWidget artifact;
+    if (!packageTool.Inspect(project->sourceDirectory,
+            inspection, message) ||
+        !packageTool.Pack(project->sourceDirectory,
+            inspection, artifact, message))
+        return PrintError(kInvalidArguments, "component_validation_failed",
+            message);
+
+    ComponentPublishOptions publishOptions;
+    publishOptions.forceContent = options.HasFlag(L"--force-content");
+    if (const auto note = options.Value(L"--change-note"))
+        publishOptions.changeNote = WideToUtf8(*note);
+    const int timeout = ReadTimeoutSeconds(options, 1800, 7200, message);
+    if (timeout == 0)
+        return PrintError(kInvalidArguments, "invalid_arguments", message);
+    publishOptions.timeout = std::chrono::seconds(timeout);
+    if (const auto visibilityValue = options.Value(L"--visibility"))
+    {
+        const auto visibility = ParseVisibility(visibilityValue, message);
+        if (!visibility)
+            return PrintError(kInvalidArguments, "invalid_arguments",
+                message);
+        publishOptions.visibility = static_cast<int>(*visibility);
+    }
+
+    ComponentPublishPlan plan;
+    if (!BuildComponentPublishPlan(*project, inspection, artifact,
+            publishOptions, plan, message))
+        return PrintError(kInvalidArguments, "publish_plan_failed", message);
+    if (plan.action == ComponentPublishAction::Create &&
+        publishOptions.visibility && *publishOptions.visibility !=
+            static_cast<int>(
+                k_ERemoteStoragePublishedFileVisibilityPrivate))
+        return PrintError(kInvalidArguments, "invalid_visibility",
+            "new component items are always created private");
+    if (!execute)
+    {
+        PrintComponentPlan(*project, plan, registered, false);
+        return 0;
+    }
+
+    const bool confirmCreate = options.HasFlag(L"--confirm-create");
+    const bool confirmUpdate = options.HasFlag(L"--confirm-update");
+    const bool creating = plan.action == ComponentPublishAction::Create;
+    if (confirmCreate == confirmUpdate || creating != confirmCreate)
+    {
+        return PrintError(kInvalidArguments, "confirmation_required",
+            creating ?
+                "review component-plan, then pass --confirm-create" :
+                "review component-plan, then pass --confirm-update");
+    }
+    project->packageId = inspection.packageId;
+    if (!store.Save(message))
+        return PrintError(kSteamOperationFailed, "project_store_failed",
+            message);
+
+    PrintComponentPlan(*project, plan, registered, true);
+    SteamWorkshopCore steam(managerRoot / L"staging" / L"uploads");
+    ComponentPublishResult result;
+    CoreError coreError;
+    std::string progressStoreError;
+    const bool published = ExecuteComponentPublishPlan(plan, steam,
+        [&](const ComponentPublishProgress& progress)
+        {
+            if (progress.steam.stage == PublishStage::Created)
+            {
+                project->publishedFileId =
+                    progress.steam.publishedFileId;
+                if (!store.Save(progressStoreError) &&
+                    progressStoreError.empty())
+                    progressStoreError =
+                        "cannot persist the created Workshop item";
+            }
+            std::cout << "{\"event\":\"component-publish-progress\","
+                         "\"submissionIndex\":"
+                      << progress.submissionIndex
+                      << ",\"submissionTotal\":"
+                      << progress.submissionTotal
+                      << ",\"language\":";
+            if (progress.language.empty()) std::cout << "null";
+            else WriteJsonString(std::cout, progress.language);
+            std::cout << ",\"stage\":";
+            WriteJsonString(std::cout,
+                PublishStageName(progress.steam.stage));
+            std::cout << ",\"publishedFileId\":";
+            if (progress.steam.publishedFileId)
+                WriteJsonString(std::cout,
+                    std::to_string(progress.steam.publishedFileId));
+            else std::cout << "null";
+            std::cout << ",\"status\":" << progress.steam.steamStatus
+                      << ",\"processed\":" << progress.steam.processed
+                      << ",\"total\":" << progress.steam.total
+                      << ",\"submitStarted\":"
+                      << (progress.steam.submitStarted ? "true" : "false")
+                      << "}\n" << std::flush;
+        }, result, coreError);
+    if (result.publishedFileId)
+        project->publishedFileId = result.publishedFileId;
+    if (result.baseSubmitted)
+    {
+        project->packageId = plan.packageId;
+        project->lastPublishedVersion = plan.version;
+        project->lastPublishedSha256 = plan.sha256;
+        project->lastPublishedAt = NowIso8601();
+    }
+    std::string saveError;
+    if (!store.Save(saveError) && progressStoreError.empty())
+        progressStoreError = saveError;
+    if (!published)
+    {
+        const std::optional<std::uint64_t> item =
+            project->publishedFileId;
+        return PrintComponentPublishError(coreError.exitCode,
+            coreError.code, coreError.message, item,
+            result.failedLanguage);
+    }
+    if (!progressStoreError.empty())
+        return PrintComponentPublishError(kSteamOperationFailed,
+            "project_store_failed", progressStoreError,
+            project->publishedFileId, {});
+    if (options.HasFlag(L"--open-page"))
+        OpenCommunityItem(result.publishedFileId, result.communityUrl);
+    std::cout << "{\"ok\":true,\"protocolVersion\":1,"
+                 "\"action\":";
+    WriteJsonString(std::cout, ComponentPublishActionName(plan.action));
+    std::cout << ",\"publishedFileId\":";
+    WriteJsonString(std::cout, std::to_string(result.publishedFileId));
+    std::cout << ",\"created\":"
+              << (result.created ? "true" : "false")
+              << ",\"contentUploaded\":"
+              << (result.contentUploaded ? "true" : "false")
+              << ",\"localizedSubmissions\":"
+              << result.localizedSubmissions
+              << ",\"needsLegalAgreement\":"
+              << (result.needsLegalAgreement ? "true" : "false")
+              << ",\"packageId\":";
+    WriteJsonString(std::cout, plan.packageId);
+    std::cout << ",\"version\":";
+    WriteJsonString(std::cout, plan.version);
+    std::cout << ",\"sha256\":";
+    WriteJsonString(std::cout, plan.sha256);
+    std::cout << ",\"communityUrl\":";
+    WriteJsonString(std::cout, result.communityUrl);
+    std::cout << "}\n";
+    return 0;
+}
+
 int ListPublishedWorkshopItems(const ParsedOptions& options)
 {
     std::uint64_t rawPage = 1;
@@ -1089,6 +1476,29 @@ int RunWorkshopCommand(const std::wstring& command,
             return PrintError(kInvalidArguments, "invalid_arguments",
                 "workshop eula-status accepts no options");
         return PrintWorkshopEulaStatus();
+    }
+    if (command == L"component-plan" || command == L"component-publish")
+    {
+        const bool execute = command == L"component-publish";
+        std::set<std::wstring> flags = {
+            L"--clear-tags", L"--force-content"
+        };
+        if (execute)
+        {
+            flags.insert(L"--confirm-create");
+            flags.insert(L"--confirm-update");
+            flags.insert(L"--open-page");
+        }
+        if (!ParseOptions(arguments,
+            { L"--source", L"--data-directory", L"--item",
+              L"--text-source", L"--preview-source",
+              L"--tags-source", L"--preview", L"--title",
+              L"--description", L"--visibility", L"--change-note",
+              L"--timeout-seconds" },
+            { L"--tag" }, flags, options, error))
+            return PrintError(kInvalidArguments,
+                "invalid_arguments", error);
+        return RunComponentWorkshopCommand(options, execute);
     }
     if (command == L"publish")
     {
