@@ -1252,16 +1252,30 @@ int main()
     };
     appearanceBackend.descriptor.scriptPresets.push_back(
         explicitBorderPreset);
-    WidgetSettingPresetSchema invalidBorderPreset;
-    invalidBorderPreset.id = "invalid-border";
-    invalidBorderPreset.label = "Invalid border";
-    invalidBorderPreset.hostAppearanceValues = {
-        { "borderStyle", "2" },
-        { "borderWidth", "4.5" },
+    WidgetSettingPresetSchema invalidBorderStrengthPreset;
+    invalidBorderStrengthPreset.id = "invalid-border-strength";
+    invalidBorderStrengthPreset.label = "Invalid border strength";
+    invalidBorderStrengthPreset.hostAppearanceValues = {
         { "borderEffectStrength", "1.1" },
     };
     appearanceBackend.descriptor.scriptPresets.push_back(
-        invalidBorderPreset);
+        invalidBorderStrengthPreset);
+    WidgetSettingPresetSchema invalidBorderStylePreset;
+    invalidBorderStylePreset.id = "invalid-border-style";
+    invalidBorderStylePreset.label = "Invalid border style";
+    invalidBorderStylePreset.hostAppearanceValues = {
+        { "borderStyle", "2" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidBorderStylePreset);
+    WidgetSettingPresetSchema invalidBorderWidthPreset;
+    invalidBorderWidthPreset.id = "invalid-border-width";
+    invalidBorderWidthPreset.label = "Invalid border width";
+    invalidBorderWidthPreset.hostAppearanceValues = {
+        { "borderWidth", "4.5" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidBorderWidthPreset);
     // Opaque entries authored in a preset are ignored without preventing the
     // ordinary and host appearance values from applying.
     appearanceBackend.descriptor.scriptPresets[0].values["token"] =
@@ -1334,11 +1348,22 @@ int main()
         *appearanceSnapshot);
     const std::size_t appearanceTransactionsBeforeInvalid =
         appearanceBackend.appearanceTransactions.size();
-    const auto invalidBorderResult = appearanceService.ApplyPreset(
-        appearanceGuard, "invalid-border");
-    Check(invalidBorderResult.status ==
+    const auto invalidBorderStrengthResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border-strength");
+    const auto invalidBorderStyleResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border-style");
+    const auto invalidBorderWidthResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border-width");
+    Check(invalidBorderStrengthResult.status ==
                 WidgetSettingMutationStatus::InvalidValue &&
-            invalidBorderResult.errorCode == "invalidBorderStyle" &&
+            invalidBorderStrengthResult.errorCode ==
+                "invalidAppearanceOpacity" &&
+            invalidBorderStyleResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidBorderStyleResult.errorCode == "invalidBorderStyle" &&
+            invalidBorderWidthResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidBorderWidthResult.errorCode == "invalidBorderWidth" &&
             appearanceBackend.appearanceTransactions.size() ==
                 appearanceTransactionsBeforeInvalid,
         "invalid component border preset ranges are rejected before persistence");
