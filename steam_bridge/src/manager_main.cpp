@@ -1127,9 +1127,9 @@ private:
                     T("保留 Steam 当前标签", "Preserve Steam tags"));
             if (plan.tags)
             {
-                const std::string tags = JoinTags(*plan.tags);
-                ImGui::TextWrapped("%s", tags.empty() ?
-                    T("（无标签）", "(no tags)") : tags.c_str());
+                const std::string plannedTags = JoinTags(*plan.tags);
+                ImGui::TextWrapped("%s", plannedTags.empty() ?
+                    T("（无标签）", "(no tags)") : plannedTags.c_str());
             }
             ImGui::TextWrapped("%s", T(
                 "确认按钮只提交上面这份已打包计划；修改发布设置后必须重新准备。",
