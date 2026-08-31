@@ -102,6 +102,7 @@
     "app.settings.widgets_agent_skill_description": "选择需要安装 Skill 的智能体。应用后会安装或更新已选目标，并卸载未选目标；每份 Skill 都自带 snowwidget CLI。",
     "app.settings.widgets_skill_not_installed": "未安装",
     "app.settings.widgets_skill_update_available": "有更新",
+    "app.settings.widgets_skill_versions": "已安装版本 %s · 最新版本 %s",
     "app.settings.widgets_skill_current": "已是最新",
     "app.settings.widgets_skill_unavailable": "不可用",
     "app.settings.widgets_skill_shared": "共享 Agent Skills（推荐）",

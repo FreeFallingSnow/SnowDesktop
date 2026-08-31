@@ -102,6 +102,7 @@
   "app.settings.widgets_agent_skill_description": "Choisissez les assistants qui doivent recevoir le Skill. L’application de la sélection installe ou met à jour les cibles sélectionnées et désinstalle les autres. Chaque Skill inclut sa propre CLI snowwidget.",
   "app.settings.widgets_skill_not_installed": "Non installé",
   "app.settings.widgets_skill_update_available": "Mise à jour disponible",
+  "app.settings.widgets_skill_versions": "Version installée %s · Dernière version %s",
   "app.settings.widgets_skill_current": "À jour",
   "app.settings.widgets_skill_unavailable": "Indisponible",
   "app.settings.widgets_skill_shared": "Agent Skills partagés (recommandé)",

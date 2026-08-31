@@ -1163,6 +1163,7 @@ struct WidgetsPageBackend::Impl final
             state->agentSkills.push_back({
                 AgentSkillKindFor(status.agent.kind), status.agent.id,
                 status.target.wstring(), AgentSkillStateFor(status.state),
+                status.installedRevision, status.bundledRevision,
                 selected, installed});
             agentSkillStatuses.push_back(std::move(status));
         }

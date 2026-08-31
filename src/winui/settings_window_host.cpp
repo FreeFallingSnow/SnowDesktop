@@ -4,6 +4,8 @@
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
+#include "authoring_toolchain.h"
+#include "../widget_engine.h"
 #include "../widget_settings_service.h"
 
 #include <shobjidl.h>
@@ -1384,6 +1386,56 @@ struct SettingsWindowHost::Impl
         default:
             return L("app.settings.full_data_backups");
         }
+    }
+
+    void RefreshAgentSkillNavigationState() noexcept
+    {
+        if (!shell)
+            return;
+
+        bool updateAvailable = false;
+        try
+        {
+            int selectedTargets =
+                GeneralSettings::kAllAgentSkillTargetsMask;
+            if (controller)
+            {
+                const auto snapshot = controller->Snapshot();
+                if (snapshot)
+                {
+                    selectedTargets =
+                        snapshot->values.general.agentSkillTargetMask;
+                }
+            }
+
+            const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
+            const auto bundledSkill =
+                packagePaths.builtin / L"snowdesktop-lua-widget";
+            const auto bundledCli =
+                bundledSkill / L"bin" / L"snowwidget.exe";
+            for (auto target :
+                snowdesktop::steam_bridge::DefaultAgentSkillTargets())
+            {
+                const int bit = 1 << static_cast<int>(target.kind);
+                if ((selectedTargets & bit) == 0)
+                    continue;
+                std::string error;
+                const auto status =
+                    snowdesktop::steam_bridge::InspectAgentSkill(
+                        bundledSkill, bundledCli, std::move(target), error);
+                if (status.state == snowdesktop::steam_bridge::
+                        SkillInstallState::UpdateAvailable)
+                {
+                    updateAvailable = true;
+                    break;
+                }
+            }
+        }
+        catch (...)
+        {
+            updateAvailable = false;
+        }
+        shell->SetAgentSkillUpdateAvailable(updateAvailable);
     }
 
     void ConfigureWidgetsPageBackend()
@@ -3254,6 +3306,7 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     }
     const auto snapshot = impl_->controller->Snapshot();
     impl_->ApplySnapshotNow(snapshot);
+    impl_->RefreshAgentSkillNavigationState();
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))
         ShowWindow(impl_->window, SW_RESTORE);

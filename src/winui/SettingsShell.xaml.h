@@ -166,6 +166,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetConditionalPagesVisible(
         bool developerToolsVisible,
         bool debugVisible);
+    /** Shows an accessible attention dot when a selected Agent Skill is stale. */
+    void SetAgentSkillUpdateAvailable(bool available);
 
     /**
      * Replaces AutoSuggestBox results for the current query.  A result from a
@@ -226,6 +228,7 @@ private:
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
     [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
+    void RenderAgentSkillUpdateBadge();
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
     void ScheduleFocus();
@@ -319,6 +322,7 @@ private:
     bool focusSearchWhenPaneOpens_ = false;
     bool sessionActive_ = false;
     bool closed_ = false;
+    bool agentSkillUpdateAvailable_ = false;
     std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};

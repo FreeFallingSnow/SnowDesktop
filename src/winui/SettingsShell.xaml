@@ -182,7 +182,13 @@
                 <NavigationViewItem x:Name="AboutItem" Tag="about" />
                 <NavigationViewItem x:Name="DeveloperItem"
                                     Tag="developer-tools"
-                                    Visibility="Collapsed" />
+                                    Visibility="Collapsed">
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge x:Name="DeveloperSkillUpdateBadge"
+                                   Style="{StaticResource AttentionDotInfoBadgeStyle}"
+                                   Visibility="Collapsed" />
+                    </NavigationViewItem.InfoBadge>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="DebugItem"
                                     Tag="debug"
                                     Visibility="Collapsed" />

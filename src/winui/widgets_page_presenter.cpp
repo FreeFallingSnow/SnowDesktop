@@ -1880,8 +1880,19 @@ struct WidgetsPagePresenter::Impl
             selected.HorizontalAlignment(mux::HorizontalAlignment::Right);
             selected.UseSystemFocusVisuals(true);
             const std::wstring label = AgentSkillTargetLabel(skill.kind);
+            const std::wstring installedVersion = skill.installedRevision == 0
+                ? L"—" : std::to_wstring(skill.installedRevision);
+            const unsigned int latestRevision = std::max(
+                skill.installedRevision, skill.bundledRevision);
+            const std::wstring latestVersion = latestRevision == 0
+                ? L"—" : std::to_wstring(latestRevision);
+            const std::wstring versions = FormatValues(L(
+                "app.settings.widgets_skill_versions",
+                L"Installed version %s · Latest version %s"),
+                {installedVersion, latestVersion});
             const std::wstring stateAndPath = JoinMetadata(
-                {AgentSkillStateLabel(skill.state), skill.targetPath});
+                {AgentSkillStateLabel(skill.state), versions,
+                 skill.targetPath});
             SetAutomation(selected, label, stateAndPath);
             HookClick(selected,
                 [this, selected, bit = AgentSkillTargetBit(skill.kind)](

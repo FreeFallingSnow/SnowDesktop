@@ -631,6 +631,7 @@ void SettingsShell::RefreshLocalizedText()
     AboutItem().Content(winrt::box_value(Localize("app.settings.about")));
     DeveloperItem().Content(
         winrt::box_value(Localize("app.settings.widgets_developer_tools")));
+    RenderAgentSkillUpdateBadge();
     DebugItem().Content(winrt::box_value(Localize("app.settings.debug")));
     SettingsSearchBox().PlaceholderText(
         Localize("settings.search.placeholder"));
@@ -1026,11 +1027,23 @@ void SettingsShell::SetWidgetsPageActions(
 bool SettingsShell::ApplyWidgetsPageSnapshot(
     const snowdesktop::winui::WidgetsPageSnapshot& snapshot)
 {
-    return !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
+    const bool applied = !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
         widgetsPage_ &&
         IsWidgetsBackendPage(navigation_.Route().page) &&
         navigation_.Generation() == snapshot.generation &&
         widgetsPage_->ApplySnapshot(snapshot);
+    if (!applied)
+        return false;
+
+    const bool updateAvailable = std::any_of(
+        snapshot.agentSkills.begin(), snapshot.agentSkills.end(),
+        [](const auto& skill) {
+            return skill.selected && skill.state ==
+                snowdesktop::winui::WidgetAgentSkillInstallState::
+                    UpdateAvailable;
+        });
+    SetAgentSkillUpdateAvailable(updateAvailable);
+    return true;
 }
 
 void SettingsShell::SetBackupDataPageActions(
@@ -1244,6 +1257,17 @@ void SettingsShell::SetConditionalPagesVisible(
         if (routeRequested_)
             routeRequested_(*replacement);
     }
+}
+
+void SettingsShell::SetAgentSkillUpdateAvailable(bool available)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
+        agentSkillUpdateAvailable_ == available)
+    {
+        return;
+    }
+    agentSkillUpdateAvailable_ = available;
+    RenderAgentSkillUpdateBadge();
 }
 
 bool SettingsShell::SetSearchResults(
@@ -2337,6 +2361,21 @@ void SettingsShell::RenderConditionalPages()
         navigation_.Visibility().debug
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
+}
+
+void SettingsShell::RenderAgentSkillUpdateBadge()
+{
+    DeveloperSkillUpdateBadge().Visibility(agentSkillUpdateAvailable_
+        ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    std::wstring automationName =
+        Localize("app.settings.widgets_developer_tools");
+    if (agentSkillUpdateAvailable_)
+    {
+        automationName += L", ";
+        automationName +=
+            Localize("app.settings.widgets_skill_update_available");
+    }
+    muxa::AutomationProperties::SetName(DeveloperItem(), automationName);
 }
 
 void SettingsShell::RenderControllerStatus(

@@ -102,6 +102,7 @@
   "app.settings.widgets_agent_skill_description": "Skill을 설치할 도우미를 선택합니다. 선택을 적용하면 선택한 대상에는 설치 또는 업데이트하고, 선택하지 않은 대상에서는 제거합니다. 각 Skill에는 전용 snowwidget CLI가 포함됩니다.",
   "app.settings.widgets_skill_not_installed": "설치되지 않음",
   "app.settings.widgets_skill_update_available": "업데이트 있음",
+  "app.settings.widgets_skill_versions": "설치된 버전 %s · 최신 버전 %s",
   "app.settings.widgets_skill_current": "최신 상태",
   "app.settings.widgets_skill_unavailable": "사용할 수 없음",
   "app.settings.widgets_skill_shared": "공유 Agent Skills(권장)",
