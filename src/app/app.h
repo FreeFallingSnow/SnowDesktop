@@ -886,6 +886,11 @@ private:
         bool registerBackdrop = true,
         std::uintptr_t backdropOwnerKey = 0,
         float effectScale = 1.0f);
+    /** @brief 将独立边缘高光叠加到组件内容之上。 @return 成功绘制返回 true */
+    bool DrawWidgetPanelEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
+        float radius, D2D1_COLOR_F fill,
+        const PersonalizationSettings* effectSettings = nullptr,
+        float effectScale = 1.0f);
     /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
     void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
         bool lightTheme, POINT screenOrigin);

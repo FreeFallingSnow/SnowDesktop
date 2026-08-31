@@ -147,17 +147,31 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         if (auto* strokeBrush = getBrush(stroke))
             ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
     }
-    if (!selected && p.widgetEdgeHighlightEnabled &&
-        p.widgetEdgeHighlightStrength > 0.0005f)
-    {
-        // Edge light belongs to the panel material, not to the optional
-        // outline. Keep it stable when the border is transparent or recolored.
-        const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
-            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
-            std::max(0.0f, effectScale);
-        (void)DrawEdgeHighlight(ctx, frame, radius, fill, edgeWidth,
-            p.widgetEdgeHighlightStrength);
-    }
+    if (!selected)
+        (void)DrawWidgetPanelEdgeHighlight(
+            ctx, frame, radius, fill, &p, effectScale);
+}
+
+bool DesktopApp::DrawWidgetPanelEdgeHighlight(
+    ID2D1DeviceContext* ctx, RECT frame, float radius,
+    D2D1_COLOR_F fill, const PersonalizationSettings* effectSettings,
+    float effectScale)
+{
+    if (!ctx || IsRectEmptyRect(frame)) return false;
+    const PersonalizationSettings p = effectSettings
+        ? *effectSettings
+        : CurrentPersonalization();
+    if (!p.widgetEdgeHighlightEnabled ||
+        p.widgetEdgeHighlightStrength <= 0.0005f)
+        return false;
+
+    // Edge light belongs to the panel material, not to the optional outline.
+    // Keep it stable when the border is transparent or recolored.
+    const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
+        std::max(0.0f, effectScale);
+    return DrawEdgeHighlight(ctx, frame, std::max(0.0f, radius), fill,
+        edgeWidth, p.widgetEdgeHighlightStrength);
 }
 
 void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,

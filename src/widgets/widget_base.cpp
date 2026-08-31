@@ -2458,8 +2458,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     };
 
     // ── 1. Background + border ────────────────────────────────
+    PersonalizationSettings backgroundAppearance = borderAppearance;
+    backgroundAppearance.widgetEdgeHighlightEnabled = false;
     app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
-        selected, strokeW, appearanceOverride, ShouldRegisterBackdrop());
+        selected, strokeW, &backgroundAppearance, ShouldRegisterBackdrop());
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
@@ -2611,6 +2613,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── Scrollbar (on top of everything, hover only) ──────────
     DrawScrollbar(context, hovered);
+
+    // The material reflection must remain visible after component content and
+    // the bottom gradient have been composited. Selection keeps its flat
+    // accent outline without an additional reflection.
+    if (!selected)
+        (void)app_->DrawWidgetPanelEdgeHighlight(
+            context, frame, radius, fillColor, &borderAppearance);
 }
 
 void WidgetContainer::DrawPreview(ID2D1DeviceContext* context, RECT frame,

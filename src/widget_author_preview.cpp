@@ -466,16 +466,29 @@ void DrawHostBackground(ID2D1DeviceContext* context,
                     borderRadius, borderRadius), border.Get(), strokeWidth);
         }
     }
-    if (resolved.material.widgetEdgeHighlightEnabled &&
-        resolved.material.widgetEdgeHighlightStrength > 0.0005f)
-    {
-        const float edgeWidth = std::clamp(
-            resolved.material.widgetEdgeHighlightWidth,
-            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
-        (void)snowdesktop::widget_preview::DrawEdgeHighlight(
-            context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
-            resolved.material.widgetEdgeHighlightStrength);
-    }
+}
+
+void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
+    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale)
+{
+    if (!resolved.material.widgetEdgeHighlightEnabled ||
+        resolved.material.widgetEdgeHighlightStrength <= 0.0005f)
+        return;
+    const LuaWidgetTheme& theme = resolved.theme;
+    const auto color = [](int rgb, float alpha) {
+        return D2D1::ColorF(
+            static_cast<float>((rgb >> 16) & 0xff) / 255.0f,
+            static_cast<float>((rgb >> 8) & 0xff) / 255.0f,
+            static_cast<float>(rgb & 0xff) / 255.0f,
+            std::clamp(alpha, 0.0f, 1.0f));
+    };
+    const float radius = std::max(0.0f, theme.cornerRadius * scale);
+    const float edgeWidth = std::clamp(
+        resolved.material.widgetEdgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+    (void)snowdesktop::widget_preview::DrawEdgeHighlight(
+        context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
+        resolved.material.widgetEdgeHighlightStrength);
 }
 
 std::string FirstValidationError(
@@ -791,6 +804,8 @@ PreviewRenderResult RenderWidgetPreview(
         context.Get(), resolvedStyle, componentBounds, dpiScale);
     engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
         request.columns, request.rows);
+    DrawHostEdgeHighlight(
+        context.Get(), resolvedStyle, componentBounds, dpiScale);
     graphicsResult = context->EndDraw();
     if (FAILED(graphicsResult))
     {

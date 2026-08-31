@@ -266,10 +266,12 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const float configuredStroke = std::clamp(
         effectSettings.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    PersonalizationSettings backgroundEffects = effectSettings;
+    backgroundEffects.widgetEdgeHighlightEnabled = false;
     app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
         fillColor, borderColor, selected,
         selected ? std::max(1.6f, configuredStroke) : configuredStroke,
-        customStyle ? &effectSettings : nullptr,
+        &backgroundEffects,
         !preview && registerBackdrop);
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -565,7 +567,6 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const bool showCompactMoveHandle =
         snowdesktop::widget_chrome_rules::ShowsCompactMoveHandle(
             data_->showTitle, hovered);
-    if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 
     if (showBottomBar)
     {
@@ -627,6 +628,15 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
         }
     }
+
+    // Draw the independent material reflection after Lua content and the host
+    // bottom gradient so neither can erase the right/bottom transmitted light.
+    if (!selected)
+        (void)app_->DrawWidgetPanelEdgeHighlight(
+            context, frame, static_cast<float>(Cu(cornerRadiusCu)),
+            fillColor, &effectSettings);
+
+    if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 
     const D2D1_COLOR_F handleFill = selected
         ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
