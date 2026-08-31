@@ -856,10 +856,10 @@ int wmain(int argc, wchar_t** argv)
         borderless, wideEdgeHighlight, topLightStrip);
     const std::uint64_t topLeftCornerChangedPixels = CountDifferingPixels(
         borderless, wideEdgeHighlight, topLeftCornerLight);
-    Check(topGain * 2 > bottomGain * 3 &&
-            leftGain * 2 > rightGain * 3 &&
-            bottomGain > 0 && rightGain > 0,
-        "top-left light drives the primary bevel reflection while the opposite bevel stays weaker");
+    Check(topGain > bottomGain && leftGain > rightGain &&
+            bottomGain * 10 > topGain * 7 &&
+            rightGain * 10 > leftGain * 7,
+        "the broad opposite transmission stays clearly visible while the top-left reflection remains primary");
     Check(topChangedPixels > 0 && topLeftCornerChangedPixels > 0 &&
             topLeftCornerGain * topChangedPixels * 5 <
                 topGain * topLeftCornerChangedPixels * 7,

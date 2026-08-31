@@ -575,6 +575,7 @@ namespace
 {
 constexpr std::size_t kMaximumEdgeHighlightMaskCacheEntries = 32;
 constexpr float kEdgeHighlightLightAngleDegrees = 315.0f;
+constexpr float kEdgeHighlightTransmittedStrength = 0.72f;
 constexpr float kPi = 3.14159265358979323846f;
 
 struct RoundedRectDistance
@@ -712,8 +713,9 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     // without introducing an omnidirectional base stroke.
                     const float primary = std::pow(
                         std::max(alignment, 0.0f), 0.65f);
-                    const float transmitted = 0.55f * std::pow(
-                        std::max(-alignment, 0.0f), 0.80f);
+                    const float transmitted =
+                        kEdgeHighlightTransmittedStrength * std::pow(
+                            std::max(-alignment, 0.0f), 0.80f);
                     // Build one optical cross-section from two scales: a
                     // narrow crest gives the bevel a definite reflection,
                     // while a wider, lower-energy shoulder dissolves into the
