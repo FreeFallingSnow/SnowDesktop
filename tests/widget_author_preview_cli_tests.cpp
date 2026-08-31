@@ -680,15 +680,18 @@ int wmain(int argc, wchar_t** argv)
     const auto acrylicOutput = temporary.path / L"acrylic.png";
     const auto [transparentExit, transparentJson] = Run(snowwidget, {
         L"preview", source.wstring(), transparentOutput.wstring(),
-        L"--appearance", L"dark", L"--host", host.wstring() });
+        L"--appearance", L"dark", L"--storage",
+        L"edgeHighlightEnabled=0", L"--host", host.wstring() });
     const auto [glassExit, glassJson] = Run(snowwidget, {
         L"preview", source.wstring(), glassOutput.wstring(),
         L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
+        L"--storage", L"edgeHighlightEnabled=0",
         L"--host", host.wstring() });
     const auto [acrylicExit, acrylicJson] = Run(snowwidget, {
         L"preview", source.wstring(), acrylicOutput.wstring(),
         L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
-        L"--storage", L"acrylicEnabled=1", L"--host", host.wstring() });
+        L"--storage", L"acrylicEnabled=1", L"--storage",
+        L"edgeHighlightEnabled=0", L"--host", host.wstring() });
     Check(transparentExit == 0 && glassExit == 0 && acrylicExit == 0 &&
             transparentJson.find("\"ok\":true") != std::string::npos &&
             glassJson.find("\"ok\":true") != std::string::npos &&
@@ -723,6 +726,8 @@ int wmain(int argc, wchar_t** argv)
         temporary.path / L"edge-highlight-borderless.png";
     const auto edgeHighlightOutput =
         temporary.path / L"edge-highlight-75.png";
+    const auto glassEdgeHighlightOutput =
+        temporary.path / L"glass-edge-highlight-75.png";
     const auto alternateHiddenBorderOutput =
         temporary.path / L"edge-highlight-hidden-border-color.png";
     const auto wideEdgeHighlightOutput =
@@ -760,6 +765,16 @@ int wmain(int argc, wchar_t** argv)
             L"--storage", L"edgeHighlightWidth=2",
             L"--storage", L"edgeHighlightStrength=0.75",
             L"--host", host.wstring() });
+    const auto [glassEdgeHighlightExit, glassEdgeHighlightJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(),
+            glassEdgeHighlightOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0.75",
+            L"--host", host.wstring() });
     const auto [wideEdgeHighlightExit, wideEdgeHighlightJson] =
         Run(snowwidget, {
             L"preview", source.wstring(), wideEdgeHighlightOutput.wstring(),
@@ -782,13 +797,16 @@ int wmain(int argc, wchar_t** argv)
             L"--host", host.wstring() });
     Check(standardBorderExit == 0 && zeroStrengthBorderExit == 0 &&
             borderlessExit == 0 &&
-            edgeHighlightExit == 0 && wideEdgeHighlightExit == 0 &&
+            edgeHighlightExit == 0 && glassEdgeHighlightExit == 0 &&
+            wideEdgeHighlightExit == 0 &&
             alternateHiddenBorderExit == 0 &&
             standardBorderJson.find("\"ok\":true") != std::string::npos &&
             zeroStrengthBorderJson.find("\"ok\":true") !=
                 std::string::npos &&
             borderlessJson.find("\"ok\":true") != std::string::npos &&
             edgeHighlightJson.find("\"ok\":true") !=
+                std::string::npos &&
+            glassEdgeHighlightJson.find("\"ok\":true") !=
                 std::string::npos &&
             wideEdgeHighlightJson.find("\"ok\":true") !=
                 std::string::npos &&
@@ -803,6 +821,8 @@ int wmain(int argc, wchar_t** argv)
         CheckOpaquePreview(borderlessOutput, 192, 240);
     const RgbaBitmap edgeHighlight =
         CheckOpaquePreview(edgeHighlightOutput, 192, 240);
+    const RgbaBitmap glassEdgeHighlight =
+        CheckOpaquePreview(glassEdgeHighlightOutput, 192, 240);
     const RgbaBitmap alternateHiddenBorder =
         CheckOpaquePreview(alternateHiddenBorderOutput, 192, 240);
     const RgbaBitmap wideEdgeHighlight =
@@ -819,6 +839,13 @@ int wmain(int argc, wchar_t** argv)
             CountDarkenedPixels(borderless, wideEdgeHighlight,
                 wholePanel) == 0,
         "edge highlights only add light to the existing panel pixels");
+    Check(transparent.pixels != customMaterialGlass.pixels &&
+            transparent.pixels != edgeHighlight.pixels &&
+            customMaterialGlass.pixels != glassEdgeHighlight.pixels &&
+            edgeHighlight.pixels != glassEdgeHighlight.pixels &&
+            CountDarkenedPixels(customMaterialGlass,
+                glassEdgeHighlight, wholePanel) == 0,
+        "glass and edge-highlight toggles render all four explicit combinations without either control changing the other");
     constexpr RECT outerTopLight{ 64, 0, 128, 1 };
     constexpr RECT peakTopLight{ 64, 1, 128, 2 };
     constexpr RECT softShoulderTopLight{ 64, 3, 128, 4 };

@@ -899,7 +899,26 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight),
         cornerRadius, strokeWidth);
     if (!mask)
-        return false;
+    {
+        // A8 opacity masks are optional on some Direct2D devices. Preserve a
+        // visible edge instead of dropping the treatment entirely, but keep
+        // the fallback inset so a maximum-width stroke is not clipped by a
+        // tightly bounded render target.
+        const float inset = strokeWidth * 0.5f;
+        const D2D1_RECT_F fallbackRect = D2D1::RectF(
+            outerRect.left + inset, outerRect.top + inset,
+            outerRect.right - inset, outerRect.bottom - inset);
+        if (fallbackRect.right <= fallbackRect.left ||
+            fallbackRect.bottom <= fallbackRect.top)
+            return false;
+        const float fallbackRadius = std::max(0.0f,
+            cornerRadius - inset);
+        context->DrawRoundedRectangle(
+            D2D1::RoundedRect(fallbackRect,
+                fallbackRadius, fallbackRadius),
+            reflectionBrush.Get(), strokeWidth);
+        return true;
+    }
 
     // The mask contains only the normal-facing primary reflection and a
     // weaker, softer transmitted reflection on the opposite bevel. There is
