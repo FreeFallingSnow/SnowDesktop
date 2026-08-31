@@ -667,6 +667,7 @@ add_executable(SnowDesktopLauncher WIN32
     src/steam_runtime_manager.cpp
     src/steam_runtime_manager.h
     src/steam_runtime_context.h
+    src/app_icon.rc
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
 target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
 target_include_directories(SnowDesktopLauncher PRIVATE src)
@@ -1322,6 +1323,16 @@ if (BUILD_TESTING)
         SOURCES tests/deployment_packaging_contract_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS build contract packaging winui)
+
+    snowdesktop_add_test(
+        SnowDesktopLauncherIconResourceTests
+        launcher_icon_resource
+        SOURCES tests/launcher_icon_resource_tests.cpp
+        INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopLauncher>"
+        LABELS build contract deployment shell steam)
+    add_dependencies(SnowDesktopLauncherIconResourceTests
+        SnowDesktopLauncher)
 
     snowdesktop_add_test(
         SnowDesktopSteamRuntimeUpdateTests
