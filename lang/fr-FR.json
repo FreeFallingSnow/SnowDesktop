@@ -577,7 +577,7 @@
   "app.settings.update_parse_failed": "Impossible d'analyser les informations de version",
   "app.settings.backup_before_restore_suffix": " (Avant la restauration)",
   "app.settings.bg_color": "Couleur de fond",
-  "app.settings.border_color": "Couleur de bordure et de reflet",
+  "app.settings.border_color": "Couleur de la bordure",
   "app.dock.position": "Position du Dock",
   "app.dock.layout": "Disposition du Dock",
   "app.dock.bottom": "Bas",

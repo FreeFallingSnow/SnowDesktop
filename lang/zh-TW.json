@@ -577,7 +577,7 @@
   "app.settings.update_parse_failed": "無法解析版本訊息",
   "app.settings.backup_before_restore_suffix": "（還原前備份）",
   "app.settings.bg_color": "背景顏色",
-  "app.settings.border_color": "邊框與高光顏色",
+  "app.settings.border_color": "邊框顏色",
   "app.dock.position": "Dock 位置",
   "app.dock.layout": "欄體形式",
   "app.dock.bottom": "底部",

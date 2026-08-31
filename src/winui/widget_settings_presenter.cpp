@@ -2702,7 +2702,7 @@ struct WidgetSettingsPresenter::Impl
         backgroundOpacity.row.SetText(
             L("app.settings.bg_opacity", L"Background opacity"));
         borderColorEditor->SetText(
-            L("app.settings.border_color", L"Border & highlight color"), {},
+            L("app.settings.border_color", L"Border color"), {},
             cancelText);
         borderOpacity.row.SetText(
             L("app.settings.border_opacity", L"Border opacity"));

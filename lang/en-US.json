@@ -577,7 +577,7 @@
     "app.settings.update_parse_failed": "Unable to parse version information",
     "app.settings.backup_before_restore_suffix": " (Before Restore)",
     "app.settings.bg_color": "Background Color",
-    "app.settings.border_color": "Border & Highlight Color",
+    "app.settings.border_color": "Border Color",
     "app.dock.position": "Dock Position",
     "app.dock.layout": "Dock Style",
     "app.dock.bottom": "Bottom",
