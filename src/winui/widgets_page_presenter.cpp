@@ -1835,9 +1835,14 @@ struct WidgetsPagePresenter::Impl
         firstDeveloperDiagnosticTarget = nullptr;
 
         int pendingTargets = 0;
+        int updateTargets = 0;
+        bool skillScopeChanged = false;
         bool selectedTargetUnavailable = false;
+        unsigned int latestRevision = 0;
         for (const auto& skill : agentSkills)
         {
+            latestRevision = std::max(
+                latestRevision, skill.bundledRevision);
             const bool needsInstall =
                 skill.state == WidgetAgentSkillInstallState::NotInstalled ||
                 skill.state ==
@@ -1847,6 +1852,13 @@ struct WidgetsPagePresenter::Impl
             {
                 ++pendingTargets;
             }
+            if (skill.selected && skill.installed && skill.state ==
+                    WidgetAgentSkillInstallState::UpdateAvailable)
+            {
+                ++updateTargets;
+            }
+            if (skill.selected != skill.installed)
+                skillScopeChanged = true;
             if (skill.selected && skill.state ==
                     WidgetAgentSkillInstallState::Unavailable)
             {
@@ -1855,8 +1867,13 @@ struct WidgetsPagePresenter::Impl
         }
         const bool selectionApplied = !agentSkills.empty() &&
             pendingTargets == 0 && !selectedTargetUnavailable;
+        const bool updateOnly = updateTargets > 0 &&
+            !skillScopeChanged && !selectedTargetUnavailable;
         const std::wstring applyLabel = pendingTargets > 0
-            ? L("app.settings.widgets_skill_sync_all", L"Apply Selection")
+            ? updateOnly
+                ? L("app.settings.widgets_update", L"Update")
+                : L("app.settings.widgets_skill_sync_all",
+                    L"Apply Selection")
             : selectionApplied
                 ? L("app.settings.widgets_skill_all_current",
                     L"Selection Applied")
@@ -1866,9 +1883,13 @@ struct WidgetsPagePresenter::Impl
         agentSkillApplyButton.IsEnabled(pendingTargets != 0 &&
             static_cast<bool>(actions.invoke));
         agentSkillRefreshButton.IsEnabled(static_cast<bool>(actions.invoke));
+        const std::wstring latestVersion = latestRevision == 0
+            ? L"—" : std::to_wstring(latestRevision);
         agentSkillActionsRow.SetText(L(
             "app.settings.widgets_skill_all_agents",
-            L"All compatible assistants"));
+            L"All compatible assistants"), FormatValues(L(
+                "app.settings.widgets_skill_latest_version",
+                L"Latest version %s"), {latestVersion}));
         SetAutomation(agentSkillApplyButton, applyLabel,
             developerOverridesCard.description.Text());
 
@@ -1882,16 +1903,11 @@ struct WidgetsPagePresenter::Impl
             const std::wstring label = AgentSkillTargetLabel(skill.kind);
             const std::wstring installedVersion = skill.installedRevision == 0
                 ? L"—" : std::to_wstring(skill.installedRevision);
-            const unsigned int latestRevision = std::max(
-                skill.installedRevision, skill.bundledRevision);
-            const std::wstring latestVersion = latestRevision == 0
-                ? L"—" : std::to_wstring(latestRevision);
-            const std::wstring versions = FormatValues(L(
-                "app.settings.widgets_skill_versions",
-                L"Installed version %s · Latest version %s"),
-                {installedVersion, latestVersion});
+            const std::wstring version = FormatValues(L(
+                "app.settings.widgets_skill_installed_version",
+                L"Installed version %s"), {installedVersion});
             const std::wstring stateAndPath = JoinMetadata(
-                {AgentSkillStateLabel(skill.state), versions,
+                {AgentSkillStateLabel(skill.state), version,
                  skill.targetPath});
             SetAutomation(selected, label, stateAndPath);
             HookClick(selected,
