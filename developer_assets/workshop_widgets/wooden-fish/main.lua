@@ -57,7 +57,7 @@ end
 
 local function drawInstrument(cx, cy, size, pressed, hovered, focused,
     feedback, colors)
-    local bodyDrop = pressed and layout.cu(2.5) or 0
+    local bodyDrop = pressed and layout.cu(1.5) or 0
     local bodyY = cy - size / 2 + bodyDrop
 
     if hovered or feedback then
@@ -71,10 +71,14 @@ local function drawInstrument(cx, cy, size, pressed, hovered, focused,
     draw.imageFit(woodenFishImage, cx - size / 2, bodyY, size, size,
         "contain", "center", pressed and 0.97 or 1.0, "linear")
 
-    local malletSize = size * 0.64
-    local malletDrop = pressed and layout.cu(7) or 0
-    local malletX = cx - size * 0.06
-    local malletY = cy - size * 0.61 + malletDrop
+    -- The mallet sprite is anchored by its lower-left head. Keep that head
+    -- over the upper-right shoulder beside the slit, which is the striking
+    -- surface, instead of laying the handle across the front opening.
+    local malletSize = size * 0.56
+    local malletDropX = pressed and -layout.cu(1.5) or 0
+    local malletDropY = pressed and layout.cu(4.5) or 0
+    local malletX = cx + size * 0.15 + malletDropX
+    local malletY = cy - size * 0.70 + malletDropY
     draw.imageFit(malletImage, malletX, malletY,
         malletSize, malletSize, "contain", "center", 1.0, "linear")
 
