@@ -1776,6 +1776,44 @@ std::filesystem::path ExecutableDirectory()
     return std::filesystem::path(path).parent_path();
 }
 
+bool IsPlainFile(const std::filesystem::path& path)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & (FILE_ATTRIBUTE_DIRECTORY |
+            FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DEVICE)) == 0;
+}
+
+std::filesystem::path DefaultDataDirectory()
+{
+    const std::filesystem::path executableDirectory = ExecutableDirectory();
+    if (executableDirectory.empty()) return {};
+
+    // Steam launch options and old shortcuts have sometimes pointed directly
+    // at an executable under distribution/ or a versioned runtime.  Keep the
+    // no-argument Manager compatible without writing mutable data into either
+    // immutable payload tree.
+    const std::filesystem::path distributionRoot =
+        executableDirectory.parent_path();
+    if (executableDirectory.filename() == L"distribution" &&
+        IsPlainFile(distributionRoot / L"SnowDesktopLauncher.exe") &&
+        IsPlainFile(distributionRoot / L"SnowDesktop.steam.json"))
+    {
+        return distributionRoot / L"data";
+    }
+
+    const std::filesystem::path runtimeRoot =
+        executableDirectory.parent_path().parent_path().parent_path();
+    if (IsPlainFile(executableDirectory /
+            L"SnowDesktop.runtime-context.json") &&
+        IsPlainFile(runtimeRoot / L"SnowDesktopLauncher.exe") &&
+        IsPlainFile(runtimeRoot / L"SnowDesktop.steam.json"))
+    {
+        return runtimeRoot / L"data";
+    }
+    return executableDirectory / L"data";
+}
+
 ManagerArguments ReadArguments()
 {
     int count = 0;
@@ -1813,12 +1851,12 @@ ManagerArguments ReadArguments()
     }
     LocalFree(arguments);
     if (result.dataDirectory.empty())
-        result.dataDirectory = ExecutableDirectory() / L"data";
+        result.dataDirectory = DefaultDataDirectory();
     if (result.developmentRoot.empty())
-        result.developmentRoot = ExecutableDirectory() / L"data" /
+        result.developmentRoot = result.dataDirectory /
             L"widgets" / L"dev";
     if (!settingsSpecified && !languageSpecified)
-        result.settingsFile = ExecutableDirectory() / L"data" /
+        result.settingsFile = result.dataDirectory /
             L"SnowDesktop.general.json";
     if (!result.settingsFile.empty())
     {
@@ -1878,6 +1916,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     const UINT dpi = GetDpiForWindow(window);
     const float scale = std::max(1.0f, static_cast<float>(dpi) / 96.0f);

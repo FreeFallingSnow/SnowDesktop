@@ -1379,6 +1379,49 @@ void TestUnexpectedRuntimeEntries(const std::filesystem::path& root)
         L"unexpected-directory", true,
         "fast path rejects a runtime containing an unexpected directory",
         "fallback rejects a runtime containing an unexpected directory");
+    verifyRejected(root / L"legacy-imgui", "legacy-imgui-runtime",
+        L"imgui.ini", false,
+        "fast path still rejects a runtime containing legacy ImGui settings",
+        "fallback still rejects a runtime containing legacy ImGui settings");
+    verifyRejected(root / L"legacy-data", "legacy-data-runtime",
+        L"data", true,
+        "fast path still rejects a runtime containing a legacy data directory",
+        "fallback still rejects a runtime containing a legacy data directory");
+}
+
+void TestLegacyDistributionWrites(const std::filesystem::path& root)
+{
+    WriteDistribution(root, "1.0.5.0", "legacy-distribution-writes",
+        "host clean", "dll clean");
+    WriteText(root / L"distribution" / L"data" /
+        L"SteamWorkshopManager" / L"projects.json", "legacy user data");
+    WriteText(root / L"distribution" / L"imgui.ini", "legacy settings");
+    WriteText(root / L"distribution" / L"unknown.dll", "unlisted library");
+    WriteText(root / L"distribution" / L"unexplained" /
+        L"nested.bin", "unlisted nested file");
+
+    const auto result =
+        snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(result.ok && !result.usedFallback &&
+            !std::filesystem::exists(
+                result.executable.parent_path() / L"data") &&
+            !std::filesystem::exists(
+                result.executable.parent_path() / L"imgui.ini") &&
+            !std::filesystem::exists(
+                result.executable.parent_path() / L"unknown.dll") &&
+            !std::filesystem::exists(
+                result.executable.parent_path() / L"unexplained"),
+        "unlisted distribution entries do not block or enter a clean immutable runtime");
+    Check(ReadText(root / L"distribution" / L"data" /
+                L"SteamWorkshopManager" / L"projects.json") ==
+                "legacy user data" &&
+            ReadText(root / L"distribution" / L"imgui.ini") ==
+                "legacy settings" &&
+            ReadText(root / L"distribution" / L"unknown.dll") ==
+                "unlisted library" &&
+            ReadText(root / L"distribution" / L"unexplained" /
+                L"nested.bin") == "unlisted nested file",
+        "unlisted distribution entries remain untouched while the runtime is repaired");
 }
 
 void TestSteamAutoStartRules()
@@ -1427,6 +1470,7 @@ int main()
         TestManifestSizeBoundaries(root / L"manifest-size-boundaries");
         TestCompletionMarkerIsFinalFence();
         TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
+        TestLegacyDistributionWrites(root / L"legacy-distribution-writes");
         TestSteamAutoStartRules();
     }
     catch (const std::exception& exception)

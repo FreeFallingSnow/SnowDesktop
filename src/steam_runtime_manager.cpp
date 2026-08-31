@@ -720,7 +720,7 @@ bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
 
 bool ValidateExactPayloadTree(const std::filesystem::path& root,
     const DistributionManifest& manifest, bool includeRuntimeMetadata,
-    std::string& error)
+    bool ignoreUnexpectedEntries, std::string& error)
 {
     if (!ValidatePlainDirectoryNoReparse(
             root, "Steam payload root", error))
@@ -743,6 +743,31 @@ bool ValidateExactPayloadTree(const std::filesystem::path& root,
         expectedFiles.insert(ExactPathKey(kRuntimeManifestFilename));
         expectedFiles.insert(ExactPathKey(
             snowdesktop::deployment::kSteamRuntimeContextFilename));
+    }
+
+    if (ignoreUnexpectedEntries)
+    {
+        // The Steam-controlled distribution is only a reconstruction source.
+        // Validate every manifest path and later hash every listed file, but
+        // do not inspect or copy unrelated local residue. This also keeps an
+        // unknown inaccessible or reparse-point entry from blocking repair.
+        for (const std::wstring& directory : expectedDirectories)
+        {
+            if (!ValidatePlainDirectoryNoReparse(root / directory,
+                    "Steam distribution directory", error))
+            {
+                return false;
+            }
+        }
+        for (const std::wstring& file : expectedFiles)
+        {
+            if (!ValidatePlainFileNoReparse(root / file,
+                    "Steam distribution file", error))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     std::set<std::wstring> actualFiles;
@@ -893,7 +918,8 @@ std::optional<DistributionManifest> ValidatePublishedRuntime(
         return std::nullopt;
     }
 
-    if (!ValidateExactPayloadTree(runtime, *manifest, true, error))
+    if (!ValidateExactPayloadTree(
+            runtime, *manifest, true, false, error))
     {
         return std::nullopt;
     }
@@ -1485,7 +1511,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     const std::filesystem::path distribution =
         installRoot / kDistributionDirectory;
     if (!ValidateExactPayloadTree(
-            distribution, *manifest, false, error))
+            distribution, *manifest, false, true, error))
     {
         return FailureOrFallback(stateRoot, runtimeRoot, error);
     }

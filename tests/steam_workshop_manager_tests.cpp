@@ -961,6 +961,13 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
             source.find("prepared-localization-plan") !=
                 std::string::npos,
         "Workshop Manager requires a visible prepared plan with exact localized text before create, content update, or metadata update confirmation");
+    Check(source.find("io.IniFilename = nullptr") != std::string::npos &&
+            source.find("DefaultDataDirectory()") != std::string::npos &&
+            source.find("executableDirectory.filename() == L\"distribution\"") !=
+                std::string::npos &&
+            source.find("result.developmentRoot = result.dataDirectory") !=
+                std::string::npos,
+        "Workshop Manager keeps ImGui settings and default data out of immutable Steam payloads");
 }
 }
 

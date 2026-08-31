@@ -190,8 +190,7 @@ bool LaunchSteamWorkshopPublisher(
         snowdesktop::BuildSnowDesktopSteamChildEnvironment();
     if (environment.empty())
         return false;
-    const std::wstring workingDirectory =
-        manager.parent_path().wstring();
+    const std::wstring workingDirectory = GetDataDirectoryPath();
     if (!CreateProcessW(manager.c_str(), commandLine.data(), nullptr,
             nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT,
             environment.data(), workingDirectory.c_str(), &startup,
