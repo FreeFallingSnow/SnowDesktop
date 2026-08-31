@@ -154,6 +154,27 @@ int main()
                 kDefaultEdgeHighlightStrength,
         "glass and acrylic presets disable the border and load the recommended edge highlight");
 
+    const auto quickNavigationAcrylic =
+        MakeQuickNavigationAppearancePreset(
+            kAppearancePresetAcrylicDark);
+    const auto collectionPopupAcrylic =
+        MakeCollectionPopupAppearancePreset(
+            kAppearancePresetAcrylicDark);
+    const auto collectionPopupDark =
+        MakeCollectionPopupAppearancePreset(
+            kAppearancePresetDark);
+    Check(quickNavigationAcrylic.widgetBorderAlpha > 0.0f &&
+            quickNavigationAcrylic.widgetEdgeHighlightEnabled &&
+            collectionPopupAcrylic.widgetBorderAlpha == 0.0f &&
+            collectionPopupAcrylic.widgetEdgeHighlightEnabled &&
+            collectionPopupAcrylic.widgetEdgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            collectionPopupAcrylic.widgetEdgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength &&
+            collectionPopupDark.widgetBorderAlpha > 0.0f &&
+            !collectionPopupDark.widgetEdgeHighlightEnabled,
+        "collection acrylic keeps the popup palette but replaces the Quick Navigation outline with an independent edge highlight");
+
     const auto personalizationPath =
         std::filesystem::temp_directory_path(error) /
         (L"SnowDesktopPersonalizationTests-" +

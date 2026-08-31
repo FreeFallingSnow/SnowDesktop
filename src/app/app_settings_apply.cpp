@@ -1836,7 +1836,7 @@ void DesktopApp::ApplyCollectionPopupAppearance()
     const int presetId =
         AppearancePresetFromFourThemeSelection(selection);
     collectionPopupAppearance_ =
-        MakeQuickNavigationAppearancePreset(presetId);
+        MakeCollectionPopupAppearancePreset(presetId);
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =

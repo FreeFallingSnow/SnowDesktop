@@ -265,6 +265,20 @@ case kAppearancePresetAcrylicLight:
     return s;
 }
 
+PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId)
+{
+    PersonalizationSettings s =
+        MakeQuickNavigationAppearancePreset(presetId);
+    if (s.widgetEdgeHighlightEnabled)
+    {
+        // Collection popups participate in the independent edge-light
+        // treatment. Keep the readability-tuned panel tint, but do not stack
+        // the Quick Navigation outline underneath the additive bevel.
+        s.widgetBorderAlpha = 0.0f;
+    }
+    return s;
+}
+
 /**
  * @brief 获取个性化配置文件的完整路径
  *

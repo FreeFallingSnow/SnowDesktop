@@ -4236,6 +4236,9 @@ int main(int argc, char** argv)
         const std::string popupRenderSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_popup_render.cpp");
+        const std::string panelRenderPrimitivesSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_render_primitives.cpp");
         const std::string compositionAnimationSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_composition_animation_overlay.cpp");
@@ -4286,6 +4289,13 @@ int main(int argc, char** argv)
                     floatingPopupMessageHandler) != std::string::npos,
             "floating Dock and popup hosts must flush content composition "
             "after native-menu modal-loop messages");
+        Check(popupRenderSource.find(
+                  "&collectionPopupAppearance_, false, 0, popupMetrics.scale") !=
+                    std::string::npos &&
+                panelRenderPrimitivesSource.find(
+                  "std::max(0.0f, effectScale)") !=
+                    std::string::npos,
+            "collection popup edge highlights must scale with the popup while ordinary border scaling stays independent");
 
         const std::string menuIconsSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /

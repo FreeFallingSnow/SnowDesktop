@@ -216,6 +216,9 @@ PersonalizationSettings MakeAppearancePreset(int presetId);
 /** @brief 根据预设 ID 创建针对快捷搜索可读性优化的外观主题。 */
 PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
 
+/** @brief 创建集合弹窗主题，保留弹窗可读性配色并拆分普通边框与边缘高光。 */
+PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId);
+
 /**
  * @brief 从 JSON 文件加载个性化设置
  * @param path   JSON 配置文件路径（UTF-16 宽字符）

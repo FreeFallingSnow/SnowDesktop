@@ -103,7 +103,7 @@ void DesktopApp::DrawCollectionPopup(
         std::clamp(collectionPopupAppearance_.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
             popupMetrics.scale,
-        &collectionPopupAppearance_, false);
+        &collectionPopupAppearance_, false, 0, popupMetrics.scale);
 
     const auto headerBounds =
         snowdesktop::collection_popup_layout::

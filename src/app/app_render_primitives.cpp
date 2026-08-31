@@ -63,7 +63,7 @@ void DesktopApp::DrawD2DRoundedRectangle(
 void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
     const PersonalizationSettings* effectSettings, bool registerBackdrop,
-    std::uintptr_t backdropOwnerKey)
+    std::uintptr_t backdropOwnerKey, float effectScale)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -153,7 +153,8 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         // Edge light belongs to the panel material, not to the optional
         // outline. Keep it stable when the border is transparent or recolored.
         const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
-            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
+            std::max(0.0f, effectScale);
         (void)DrawEdgeHighlight(ctx, frame, radius, fill, edgeWidth,
             p.widgetEdgeHighlightStrength);
     }

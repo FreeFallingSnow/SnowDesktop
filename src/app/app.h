@@ -884,7 +884,8 @@ private:
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
         const PersonalizationSettings* effectSettings = nullptr,
         bool registerBackdrop = true,
-        std::uintptr_t backdropOwnerKey = 0);
+        std::uintptr_t backdropOwnerKey = 0,
+        float effectScale = 1.0f);
     /** @brief 在圆角区域内绘制稳定平铺的低透明亚克力颗粒。 */
     void DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame, float radius,
         bool lightTheme, POINT screenOrigin);
@@ -3174,7 +3175,7 @@ private:
     bool collectionPopupGlassTheme_ = false;
     float collectionPopupBlurRadius_ = 24.0f;
     PersonalizationSettings collectionPopupAppearance_ =
-        MakeQuickNavigationAppearancePreset(kAppearancePresetDark);
+        MakeCollectionPopupAppearancePreset(kAppearancePresetDark);
     bool desktopIconsHidden_ = false;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
