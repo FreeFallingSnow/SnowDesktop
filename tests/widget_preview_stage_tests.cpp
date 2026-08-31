@@ -1,6 +1,7 @@
 #include "widget_preview_stage.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <unordered_set>
@@ -208,6 +209,26 @@ int main()
     Check(CropWallpaper(monitor, { 0, 0, 4, 3 },
             { 3, 2, 5, 3 }).pixels.empty(),
         "desktop wallpaper crop rejects rectangles outside the monitor frame");
+
+    const D2D1_COLOR_F opaqueReflection =
+        ResolveEdgeHighlightReflection(
+            D2D1::ColorF(0.10f, 0.30f, 0.60f, 1.0f), 0.75f);
+    const D2D1_COLOR_F translucentReflection =
+        ResolveEdgeHighlightReflection(
+            D2D1::ColorF(0.10f, 0.30f, 0.60f, 0.25f), 0.75f);
+    const D2D1_COLOR_F transparentReflection =
+        ResolveEdgeHighlightReflection(
+            D2D1::ColorF(0.10f, 0.30f, 0.60f, 0.0f), 0.75f);
+    Check(translucentReflection.r > opaqueReflection.r &&
+            translucentReflection.g > opaqueReflection.g &&
+            translucentReflection.b > opaqueReflection.b &&
+            std::abs(translucentReflection.a - opaqueReflection.a) <
+                0.0001f,
+        "transparent panel material mixes its reflected edge color toward white without weakening the configured light strength");
+    Check(std::abs(transparentReflection.r - 1.0f) < 0.0001f &&
+            std::abs(transparentReflection.g - 1.0f) < 0.0001f &&
+            std::abs(transparentReflection.b - 1.0f) < 0.0001f,
+        "fully transparent panel material reflects the neutral white incident-light estimate");
 
     const AcrylicNoisePixels darkNoise = GenerateAcrylicNoise(false);
     const AcrylicNoisePixels repeatedNoise = GenerateAcrylicNoise(false);

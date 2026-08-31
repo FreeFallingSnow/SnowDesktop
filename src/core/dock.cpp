@@ -1735,12 +1735,10 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (!IsEdgeAttached() && p.widgetEdgeHighlightEnabled &&
         p.widgetEdgeHighlightStrength > 0.0005f)
     {
-        D2D1_COLOR_F edgeColor = fill;
-        edgeColor.a = 1.0f;
         const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
         (void)app_->DrawEdgeHighlight(context, bounds, panelRadius,
-            edgeColor, edgeWidth, p.widgetEdgeHighlightStrength);
+            fill, edgeWidth, p.widgetEdgeHighlightStrength);
     }
 
 }

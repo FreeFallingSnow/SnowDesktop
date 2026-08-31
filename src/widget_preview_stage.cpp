@@ -840,12 +840,37 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
 }
 } // namespace
 
+D2D1_COLOR_F ResolveEdgeHighlightReflection(
+    D2D1_COLOR_F material, float effectStrength)
+{
+    const float strength = std::clamp(effectStrength, 0.0f, 1.0f);
+    const auto mix = [](float value, float target, float amount) {
+        return std::clamp(
+            value + (target - value) * amount, 0.0f, 1.0f);
+    };
+    // The live desktop color behind a transparent panel is unavailable to
+    // this shared renderer. White is the neutral incident-light estimate:
+    // surface = material * opacity + white * (1 - opacity).
+    const float materialOpacity = std::clamp(material.a, 0.0f, 1.0f);
+    const D2D1_COLOR_F surface = D2D1::ColorF(
+        mix(1.0f, material.r, materialOpacity),
+        mix(1.0f, material.g, materialOpacity),
+        mix(1.0f, material.b, materialOpacity),
+        1.0f);
+    const float whiteMix = 0.42f + 0.16f * strength;
+    return D2D1::ColorF(
+        mix(surface.r, 1.0f, whiteMix),
+        mix(surface.g, 1.0f, whiteMix),
+        mix(surface.b, 1.0f, whiteMix),
+        0.05f + 0.34f * strength);
+}
+
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
     float effectStrength)
 {
     const float strength = std::clamp(effectStrength, 0.0f, 1.0f);
-    if (!context || color.a <= 0.0f || strength <= 0.0005f ||
+    if (!context || strength <= 0.0005f ||
         IsRectEmpty(&bounds))
         return false;
     const LONG pixelWidth = bounds.right - bounds.left;
@@ -859,19 +884,11 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     strokeWidth = std::min(std::max(0.5f, strokeWidth), availableDepth);
     if (strokeWidth <= 0.0f)
         return false;
-    const auto mix = [](float value, float target, float amount) {
-        return std::clamp(
-            value + (target - value) * amount, 0.0f, 1.0f);
-    };
     // Preserve the panel hue so the light feels embedded in the material.
     // The previous near-white tint made a transparent border color look like
     // an unrelated outline even when the border itself was disabled.
-    const float whiteMix = 0.42f + 0.16f * strength;
-    const D2D1_COLOR_F reflected = D2D1::ColorF(
-        mix(color.r, 1.0f, whiteMix),
-        mix(color.g, 1.0f, whiteMix),
-        mix(color.b, 1.0f, whiteMix),
-        color.a * (0.05f + 0.34f * strength));
+    const D2D1_COLOR_F reflected =
+        ResolveEdgeHighlightReflection(color, strength);
     ComPtr<ID2D1SolidColorBrush> reflectionBrush;
     if (FAILED(context->CreateSolidColorBrush(
             reflected, &reflectionBrush)) || !reflectionBrush)

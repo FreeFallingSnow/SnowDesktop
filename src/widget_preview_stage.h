@@ -97,7 +97,11 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, bool lightTheme, POINT pixelOrigin = {});
 
-/** Add a normal-driven bevel reflection without drawing a perimeter stroke. */
+/** Resolve the additive reflection color from straight material RGB/opacity. */
+D2D1_COLOR_F ResolveEdgeHighlightReflection(
+    D2D1_COLOR_F material, float effectStrength);
+
+/** Add a normal-driven bevel reflection from straight material RGB/opacity. */
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
     float effectStrength);
