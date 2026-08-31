@@ -315,6 +315,10 @@ hoverStyle = { background = "surfaceVariant" }
 `contentTheme`/`context.theme.mode` 决定前景。预览时应分别覆盖材质与前景主题，至少检查
 `--appearance acrylic-light --storage followPersonalization=0 --storage __contentTheme=0/1`
 以及对应的深色材质组合，不能只检查 dark/light 外观默认配对。
+内置预设的默认值不是按名称后缀推导：`dark/glass-dark/glass-light/acrylic-dark` 默认
+`contentTheme=0`（浅色/白色前景），`light/acrylic-light` 默认 `contentTheme=1`
+（深色/黑色前景）。其中 `glass-light` 默认仍是浅色文字；组件和工具不得把所有 `*-light`
+直接解释为深色文字。
 `textPrimary/textSecondary/textDisabled` 直接表达前景层级；`surface/surfaceVariant` 仍会混入
 组件背景色，组件必须验证它们与独立前景组合后的对比度。若内部表面和所选前景不能保持可读，
 应按 `contentTheme` 选择对比明确的内部表面调色板，而不是重新读取背景亮度来决定前景。
@@ -794,8 +798,8 @@ view.virtualList({
     itemExtent = 44,
     firstIndex = range.firstIndex,
     busy = model.loading,
-    loadingContent = view.text({ key = "loading", text = l10n.t("loading") }),
-    emptyContent = view.text({ key = "empty", text = l10n.t("noResults") }),
+    loadingContent = view.text({ key = "loading", text = l10n.tr("loading") }),
+    emptyContent = view.text({ key = "empty", text = l10n.tr("noResults") }),
     children = items,
 })
 ```
