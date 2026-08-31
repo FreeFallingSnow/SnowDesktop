@@ -847,27 +847,27 @@ int wmain(int argc, wchar_t** argv)
                 glassEdgeHighlight, wholePanel) == 0,
         "glass and edge-highlight toggles render all four explicit combinations without either control changing the other");
     constexpr RECT outerTopLight{ 64, 0, 128, 1 };
-    constexpr RECT peakTopLight{ 64, 1, 128, 2 };
+    constexpr RECT nearRimTopLight{ 64, 1, 128, 2 };
     constexpr RECT softShoulderTopLight{ 64, 3, 128, 4 };
-    constexpr RECT innerTopTail{ 64, 5, 128, 6 };
-    constexpr RECT deepInterior{ 8, 8, 184, 232 };
+    constexpr RECT innerTopTail{ 64, 7, 128, 8 };
+    constexpr RECT deepInterior{ 11, 11, 181, 229 };
     const std::uint64_t outerGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, outerTopLight);
-    const std::uint64_t peakGain = SumBrightnessGain(
-        borderless, wideEdgeHighlight, peakTopLight);
+    const std::uint64_t nearRimGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, nearRimTopLight);
     const std::uint64_t shoulderGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, softShoulderTopLight);
     const std::uint64_t tailGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, innerTopTail);
-    Check(peakGain > outerGain && outerGain > shoulderGain &&
-            shoulderGain > tailGain * 4 && tailGain > 0 &&
+    Check(outerGain > nearRimGain && nearRimGain > shoulderGain &&
+            shoulderGain > tailGain && tailGain > 0 &&
             CountDifferingPixels(borderless, wideEdgeHighlight,
                 deepInterior) == 0,
-        "bevel reflection combines an inset crest with a soft shoulder that fades before the panel interior");
-    constexpr RECT topLightStrip{ 64, 0, 128, 7 };
-    constexpr RECT bottomLightStrip{ 64, 233, 128, 240 };
-    constexpr RECT leftLightStrip{ 0, 80, 7, 160 };
-    constexpr RECT rightLightStrip{ 185, 80, 192, 160 };
+        "bevel reflection peaks at the outer rim and fades monotonically through a soft shoulder before the panel interior");
+    constexpr RECT topLightStrip{ 64, 0, 128, 10 };
+    constexpr RECT bottomLightStrip{ 64, 230, 128, 240 };
+    constexpr RECT leftLightStrip{ 0, 80, 10, 160 };
+    constexpr RECT rightLightStrip{ 182, 80, 192, 160 };
     const std::uint64_t topGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, topLightStrip);
     const std::uint64_t bottomGain = SumBrightnessGain(
@@ -883,10 +883,10 @@ int wmain(int argc, wchar_t** argv)
         borderless, wideEdgeHighlight, topLightStrip);
     const std::uint64_t topLeftCornerChangedPixels = CountDifferingPixels(
         borderless, wideEdgeHighlight, topLeftCornerLight);
-    Check(topGain > bottomGain && leftGain > rightGain &&
-            bottomGain * 10 > topGain * 7 &&
-            rightGain * 10 > leftGain * 7,
-        "the broad opposite transmission stays clearly visible while the top-left reflection remains primary");
+    Check(topGain > bottomGain * 2 && leftGain > rightGain * 2 &&
+            bottomGain * 10 > topGain * 3 &&
+            rightGain * 10 > leftGain * 3,
+        "the crest-free opposite transmission remains visible at roughly one-third to one-half of the primary reflection");
     Check(topChangedPixels > 0 && topLeftCornerChangedPixels > 0 &&
             topLeftCornerGain * topChangedPixels * 5 <
                 topGain * topLeftCornerChangedPixels * 7,

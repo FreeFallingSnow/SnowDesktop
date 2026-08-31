@@ -575,7 +575,7 @@ namespace
 {
 constexpr std::size_t kMaximumEdgeHighlightMaskCacheEntries = 32;
 constexpr float kEdgeHighlightLightAngleDegrees = 315.0f;
-constexpr float kEdgeHighlightTransmittedStrength = 0.72f;
+constexpr float kEdgeHighlightTransmittedStrength = 0.40f;
 constexpr float kPi = 3.14159265358979323846f;
 
 struct RoundedRectDistance
@@ -678,7 +678,7 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
         std::min(static_cast<float>(width), static_cast<float>(height)) *
             0.5f - 0.01f);
     const float haloDepth = std::min(availableDepth,
-        std::max(coreDepth * 1.5f, coreDepth + 1.5f));
+        std::max(coreDepth * 2.5f, coreDepth + 3.0f));
     constexpr std::array<float, 2> sampleOffsets{ 0.25f, 0.75f };
 
     for (UINT32 y = 0; y < height; ++y)
@@ -716,23 +716,23 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float transmitted =
                         kEdgeHighlightTransmittedStrength * std::pow(
                             std::max(-alignment, 0.0f), 0.80f);
-                    // Build one optical cross-section from two scales: a
-                    // narrow crest gives the bevel a definite reflection,
-                    // while a wider, lower-energy shoulder dissolves into the
-                    // panel instead of ending as a visible stroke boundary.
-                    const float specularCrest = corePosition < 1.0f
-                        ? SmoothStep(-0.04f, 0.18f, corePosition) *
-                            (1.0f - SmoothStep(
-                                0.20f, 0.70f, corePosition))
-                        : 0.0f;
+                    // A glass lip is brightest at the rim and then loses
+                    // energy continuously into the material. Keep a narrow
+                    // crest for the lit bevel and a broader, lower shoulder
+                    // for the inward bloom; this avoids a second contour
+                    // where two independently peaked bands would meet.
+                    const float specularCrest =
+                        1.0f - SmoothStep(0.02f, 0.55f, corePosition);
                     const float softShoulder =
-                        SmoothStep(-0.04f, 0.24f, haloPosition) *
-                        (1.0f - SmoothStep(
-                            0.16f, 1.0f, haloPosition));
+                        1.0f - SmoothStep(0.05f, 1.0f, haloPosition);
                     const float primaryBand =
-                        0.42f * specularCrest + 0.58f * softShoulder;
+                        0.68f * specularCrest + 0.32f * softShoulder;
+                    // The opposite bevel receives only broad transmitted
+                    // light. Omitting its sharp crest keeps the bottom-right
+                    // response readable without turning the treatment into a
+                    // uniform luminous outline.
                     const float transmittedBand =
-                        0.15f * specularCrest + 0.85f * softShoulder;
+                        0.55f * softShoulder;
                     accumulated += coverage *
                         (primary * primaryBand +
                             transmitted * transmittedBand);
