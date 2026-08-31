@@ -742,31 +742,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return generalSettings_.widgetDeveloperToolsEnabled;
     };
-    settingsHostOptions.widgetsPage.agentSkillTargetMask = [this]() {
-        if (settingsController_)
-        {
-            const auto snapshot = settingsController_->Snapshot();
-            if (snapshot)
-                return snapshot->values.general.agentSkillTargetMask;
-        }
-        return generalSettings_.agentSkillTargetMask;
-    };
-    settingsHostOptions.widgetsPage.setAgentSkillTargetMask = [this](
-        int mask) {
-        if (!settingsController_)
-            return false;
-        const auto snapshot = settingsController_->Snapshot();
-        if (!snapshot || !snapshot->sessionActive)
-            return false;
-        mask = std::clamp(mask, 0,
-            GeneralSettings::kAllAgentSkillTargetsMask);
-        GeneralSettings general = snapshot->values.general;
-        general.agentSkillTargetMask = mask;
-        settingsController_->UpdateGeneral(std::move(general),
-            snowdesktop::SettingsUpdateMode::PreviewAndCommit);
-        const auto updated = settingsController_->Snapshot();
-        return updated && updated->values.general.agentSkillTargetMask == mask;
-    };
     settingsHostOptions.widgetsPage.openDevelopmentFolder = [this]() {
         const auto paths = WidgetEngine::GetWidgetPackagePaths();
         if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",

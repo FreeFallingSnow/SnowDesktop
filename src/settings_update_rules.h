@@ -45,7 +45,6 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.dockEnabled == after.dockEnabled &&
         before.widgetDeveloperToolsEnabled ==
             after.widgetDeveloperToolsEnabled &&
-        before.agentSkillTargetMask == after.agentSkillTargetMask &&
         std::strcmp(before.language, after.language) == 0;
 }
 

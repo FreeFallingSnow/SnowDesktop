@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "선택한 버전으로 모든 인스턴스를 다시 로드할 수 없어 이전 패키지 버전을 복원했습니다.",
     "app.settings.widgets_error_version_restore_failed": "선택한 버전으로 모든 인스턴스를 다시 로드할 수 없으며 이전 버전 복원도 실패했습니다: {0}",
     "app.settings.widgets_error_publisher_unavailable": "Steam 창작마당 게시 도구를 사용할 수 없습니다.",
-    "app.settings.widgets_error_skill_selection_save": "Agent Skill 선택을 저장할 수 없습니다.",
     "app.settings.widgets_error_development_folder_open": "개발 구성 요소 폴더를 열 수 없습니다.",
     "app.settings.widgets_error_workshop_item_stale": "창작마당 항목이 오래되었거나 사용할 수 없습니다.",
     "app.settings.widgets_error_uninstall_unavailable": "이 구성 요소를 제거할 수 없습니다.",

@@ -16,6 +16,7 @@
 #include <cwctype>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <span>
 #include <stop_token>
@@ -1013,6 +1014,7 @@ struct WidgetsPageBackend::Impl final
     std::vector<SteamWorkshopInstallFailure> workshopInstallFailures;
     std::vector<snowdesktop::steam_bridge::SkillInstallStatus>
         agentSkillStatuses;
+    std::optional<int> agentSkillSelectionOverride;
     std::uint64_t generation = 0;
     std::uint64_t activation = 0;
     std::uint64_t revision = 0;
@@ -1089,22 +1091,6 @@ struct WidgetsPageBackend::Impl final
         return "en-US";
     }
 
-    int CaptureAgentSkillTargetMask() const noexcept
-    {
-        int mask = kAllAgentSkillTargetsMask;
-        if (options.agentSkillTargetMask)
-        {
-            try
-            {
-                mask = options.agentSkillTargetMask();
-            }
-            catch (...)
-            {
-            }
-        }
-        return std::clamp(mask, 0, kAllAgentSkillTargetsMask);
-    }
-
     void CaptureAgentSkillState()
     {
         agentSkillStatuses.clear();
@@ -1133,7 +1119,7 @@ struct WidgetsPageBackend::Impl final
             }
         }
 
-        state->agentSkillTargetMask = CaptureAgentSkillTargetMask();
+        int detectedTargetMask = 0;
         for (auto target :
             snowdesktop::steam_bridge::DefaultAgentSkillTargets())
         {
@@ -1149,8 +1135,6 @@ struct WidgetsPageBackend::Impl final
             }
 
             const int bit = AgentSkillTargetBit(status.agent.kind);
-            const bool selected =
-                (state->agentSkillTargetMask & bit) != 0;
             using snowdesktop::steam_bridge::SkillInstallState;
             bool installed = status.state == SkillInstallState::Current ||
                 status.state == SkillInstallState::UpdateAvailable;
@@ -1160,6 +1144,11 @@ struct WidgetsPageBackend::Impl final
                 installed = std::filesystem::exists(
                     status.target, pathError) && !pathError;
             }
+            if (installed)
+                detectedTargetMask |= bit;
+            const bool selected = agentSkillSelectionOverride
+                ? ((*agentSkillSelectionOverride & bit) != 0)
+                : installed;
             state->agentSkills.push_back({
                 AgentSkillKindFor(status.agent.kind), status.agent.id,
                 status.target.wstring(), AgentSkillStateFor(status.state),
@@ -1167,6 +1156,8 @@ struct WidgetsPageBackend::Impl final
                 selected, installed});
             agentSkillStatuses.push_back(std::move(status));
         }
+        state->agentSkillTargetMask = agentSkillSelectionOverride
+            .value_or(detectedTargetMask);
     }
 
     void SetFeedback(WidgetsPageFeedbackSeverity severity,
@@ -3344,33 +3335,13 @@ struct WidgetsPageBackend::Impl final
         if (BusyForMutation()) return ReportBusy();
         const int mask = std::clamp(request.agentSkillTargetMask,
             0, kAllAgentSkillTargetsMask);
-        if (!options.setAgentSkillTargetMask)
+        agentSkillSelectionOverride = mask;
+        state->agentSkillTargetMask = mask;
+        for (auto& skill : state->agentSkills)
         {
-            SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L("app.settings.widgets_error_skill_selection_save",
-                    L"The Agent Skill selection cannot be saved."),
-                "settings.status.error");
-            Publish();
-            return false;
+            const int bit = 1 << static_cast<int>(skill.kind);
+            skill.selected = (mask & bit) != 0;
         }
-        bool applied = false;
-        try
-        {
-            applied = options.setAgentSkillTargetMask(mask);
-        }
-        catch (...)
-        {
-        }
-        if (!applied)
-        {
-            SetFeedback(WidgetsPageFeedbackSeverity::Error,
-                L("app.settings.widgets_error_skill_selection_save",
-                    L"The Agent Skill selection could not be saved."),
-                "settings.status.error");
-            Publish();
-            return false;
-        }
-        CaptureAgentSkillState();
         Publish();
         return true;
     }
@@ -3423,6 +3394,7 @@ struct WidgetsPageBackend::Impl final
                 if (firstError.empty()) firstError = std::move(error);
             }
         }
+        agentSkillSelectionOverride.reset();
         CaptureAgentSkillState();
         state->developerActionStatus = FormatAgentSkillCounts(
             L(failed == 0

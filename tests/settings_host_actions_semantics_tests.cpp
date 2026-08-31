@@ -322,17 +322,15 @@ int main(int argc, char** argv)
             host.find("Action::TriggerCrashTest") !=
                 std::string::npos,
         "About links and legacy Debug controls use localized generation-gated host actions and confirmation");
-    Check(run.find("widgetsPage.agentSkillTargetMask") !=
+    Check(run.find("widgetsPage.agentSkillTargetMask") ==
                 std::string::npos &&
-            run.find("widgetsPage.setAgentSkillTargetMask") !=
-                std::string::npos &&
-            run.find("general.agentSkillTargetMask = mask") !=
+            run.find("widgetsPage.setAgentSkillTargetMask") ==
                 std::string::npos &&
             run.find("widgetsPage.openDevelopmentFolder") !=
                 std::string::npos &&
             run.find("WidgetEngine::GetWidgetPackagePaths()") !=
                 std::string::npos,
-        "Developer Tools reads and persists the controller-owned Agent Skill selection and opens the authoritative workspace");
+        "Developer Tools does not persist detected Agent Skill installation scope and opens the authoritative workspace");
     Check(run.find("WidgetSettingsService searchReader(") !=
                 std::string::npos &&
             run.find("searchReader.Load(widget.id)") !=

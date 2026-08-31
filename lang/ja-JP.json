@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "選択したバージョンではすべてのインスタンスを再読み込みできなかったため、以前のパッケージ バージョンを復元しました。",
     "app.settings.widgets_error_version_restore_failed": "選択したバージョンではすべてのインスタンスを再読み込みできず、以前のバージョンの復元にも失敗しました：{0}",
     "app.settings.widgets_error_publisher_unavailable": "Workshop Creator Manager を利用できません。",
-    "app.settings.widgets_error_skill_selection_save": "Agent Skill の選択内容を保存できませんでした。",
     "app.settings.widgets_error_development_folder_open": "開発コンポーネント フォルダーを開けませんでした。",
     "app.settings.widgets_error_workshop_item_stale": "Workshop アイテムは古いか、利用できません。",
     "app.settings.widgets_error_uninstall_unavailable": "このコンポーネントはアンインストールできません。",

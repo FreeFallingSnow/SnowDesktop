@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "La versión seleccionada no pudo volver a cargar todas las instancias; se restauró la versión anterior del paquete.",
     "app.settings.widgets_error_version_restore_failed": "La versión seleccionada no pudo volver a cargar todas las instancias y también falló la restauración de la versión anterior: {0}",
     "app.settings.widgets_error_publisher_unavailable": "El administrador de creación del Workshop no está disponible.",
-    "app.settings.widgets_error_skill_selection_save": "No se pudo guardar la selección de Agent Skill.",
     "app.settings.widgets_error_development_folder_open": "No se pudo abrir la carpeta de componentes de desarrollo.",
     "app.settings.widgets_error_workshop_item_stale": "El elemento del Workshop está desactualizado o no disponible.",
     "app.settings.widgets_error_uninstall_unavailable": "Este componente no se puede desinstalar.",

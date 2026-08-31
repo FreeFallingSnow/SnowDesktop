@@ -76,9 +76,6 @@ struct WidgetsPageBackendOptions
     std::function<std::string()> locale;
     std::function<std::vector<WidgetsPageHostInstance>()> instances;
     std::function<bool()> developerOverridesVisible;
-    /** Controller-owned persistence for the legacy Agent Skill target mask. */
-    std::function<int()> agentSkillTargetMask;
-    std::function<bool(int mask)> setAgentSkillTargetMask;
     /** Do not capture runtime paths/logs while both gated pages are hidden. */
     std::function<bool()> diagnosticsVisible;
     SnapshotChangedCallback snapshotChanged;

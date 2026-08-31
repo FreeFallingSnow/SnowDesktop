@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "所選版本無法重新載入所有執行個體；已還原先前的套件版本。",
     "app.settings.widgets_error_version_restore_failed": "所選版本無法重新載入所有執行個體，且還原先前版本也失敗：{0}",
     "app.settings.widgets_error_publisher_unavailable": "工作坊創作者管理器無法使用。",
-    "app.settings.widgets_error_skill_selection_save": "無法儲存 Agent Skill 選取項目。",
     "app.settings.widgets_error_development_folder_open": "無法開啟開發元件目錄。",
     "app.settings.widgets_error_workshop_item_stale": "工作坊項目已過期或無法使用。",
     "app.settings.widgets_error_uninstall_unavailable": "無法解除安裝此元件。",

@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "Mit der ausgewählten Version konnten nicht alle Instanzen neu geladen werden; die vorherige Paketversion wurde wiederhergestellt.",
     "app.settings.widgets_error_version_restore_failed": "Mit der ausgewählten Version konnten nicht alle Instanzen neu geladen werden, und auch die Wiederherstellung der vorherigen Version ist fehlgeschlagen: {0}",
     "app.settings.widgets_error_publisher_unavailable": "Der Workshop-Creator-Manager ist nicht verfügbar.",
-    "app.settings.widgets_error_skill_selection_save": "Die Agent-Skill-Auswahl konnte nicht gespeichert werden.",
     "app.settings.widgets_error_development_folder_open": "Der Ordner für Entwicklungskomponenten konnte nicht geöffnet werden.",
     "app.settings.widgets_error_workshop_item_stale": "Das Workshop-Element ist veraltet oder nicht verfügbar.",
     "app.settings.widgets_error_uninstall_unavailable": "Diese Komponente kann nicht deinstalliert werden.",

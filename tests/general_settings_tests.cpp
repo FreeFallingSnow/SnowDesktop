@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -37,7 +38,6 @@ int main()
     GeneralSettings saved;
     saved.demoModeEnabled = true;
     saved.widgetDeveloperToolsEnabled = true;
-    saved.agentSkillTargetMask = 0x15;
     saved.quickNavTheme = kFourThemeAcrylicDark;
     saved.collectionPopupTheme = kFourThemeAcrylicLight;
     saved.pageNavigationKeyboardEnabled = false;
@@ -54,7 +54,6 @@ int main()
         "general settings load succeeds");
     Check(loaded.demoModeEnabled &&
         loaded.widgetDeveloperToolsEnabled &&
-        loaded.agentSkillTargetMask == 0x15 &&
         loaded.quickNavTheme == kFourThemeAcrylicDark &&
         loaded.collectionPopupTheme == kFourThemeAcrylicLight &&
         !loaded.pageNavigationKeyboardEnabled &&
@@ -63,7 +62,15 @@ int main()
         loaded.pageNavigationNextModifiers == MOD_ALT &&
         loaded.pageNavigationNextVirtualKey == VK_END &&
         std::strcmp(loaded.language, "zh-CN") == 0,
-        "general flags, page keys, four-theme selections, and Agent Skill targets persist");
+        "general flags, page keys, and four-theme selections persist");
+
+    {
+        std::ifstream persisted(path, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(persisted)),
+            std::istreambuf_iterator<char>());
+        Check(text.find("agentSkillTargetMask") == std::string::npos,
+            "detected Agent Skill installations are not persisted as settings");
+    }
 
     {
         std::ofstream invalid(path, std::ios::binary | std::ios::trunc);
@@ -83,7 +90,10 @@ int main()
 
     {
         std::ofstream legacy(path, std::ios::binary | std::ios::trunc);
-        legacy << "{\n  \"language\": \"system\"\n}\n";
+        legacy << "{\n"
+                  "  \"agentSkillTargetMask\": 21,\n"
+                  "  \"language\": \"system\"\n"
+                  "}\n";
     }
     GeneralSettings migrated;
     Check(LoadGeneralSettings(path.c_str(), migrated),
@@ -95,10 +105,8 @@ int main()
         migrated.pageNavigationPreviousModifiers == 0 &&
         migrated.pageNavigationPreviousVirtualKey == VK_PRIOR &&
         migrated.pageNavigationNextModifiers == 0 &&
-        migrated.pageNavigationNextVirtualKey == VK_NEXT &&
-        migrated.agentSkillTargetMask ==
-            GeneralSettings::kAllAgentSkillTargetsMask,
-        "legacy settings preserve the dark popup and page-navigation defaults");
+        migrated.pageNavigationNextVirtualKey == VK_NEXT,
+        "legacy settings ignore the obsolete Agent Skill mask and preserve defaults");
 
     Check(FourThemeSelectionFromAppearancePreset(
             kAppearancePresetDark) == kFourThemeDark &&

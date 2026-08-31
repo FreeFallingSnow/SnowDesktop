@@ -240,7 +240,6 @@ void TestInjectedHostCapabilities(const std::string& header,
              "pickPackage", "confirmInstall", "openWorkshop",
              "workshopAvailable",
              "openWorkshopItem", "addPackageToDesktop",
-             "agentSkillTargetMask", "setAgentSkillTargetMask",
              "openDevelopmentFolder",
              "developmentProjectCreated",
              "canPublishDevelopmentPackage",
@@ -252,6 +251,12 @@ void TestInjectedHostCapabilities(const std::string& header,
         Check(header.find(boundary) != std::string::npos,
             "host-only capability is an explicit injected boundary");
     }
+
+    Check(header.find("setAgentSkillTargetMask") == std::string::npos &&
+            source.find("agentSkillSelectionOverride") !=
+                std::string::npos &&
+            source.find("InspectAgentSkill") != std::string::npos,
+        "Agent Skill installation scope comes from probing with only a session-local pending selection");
 
     Check(source.find("options.canSynchronizeSource(") !=
                 std::string::npos &&
@@ -439,7 +444,6 @@ void TestUserVisibleFeedbackLocalization(const std::string& source)
              "app.settings.widgets_error_version_reload_restored",
              "app.settings.widgets_error_version_restore_failed",
              "app.settings.widgets_error_publisher_unavailable",
-             "app.settings.widgets_error_skill_selection_save",
              "app.settings.widgets_error_development_folder_open",
              "app.settings.widgets_error_workshop_item_stale",
              "app.settings.widgets_error_uninstall_unavailable",

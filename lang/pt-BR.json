@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "A versão selecionada não conseguiu recarregar todas as instâncias; a versão anterior do pacote foi restaurada.",
     "app.settings.widgets_error_version_restore_failed": "A versão selecionada não conseguiu recarregar todas as instâncias, e a restauração da versão anterior também falhou: {0}",
     "app.settings.widgets_error_publisher_unavailable": "O Gerenciador de criação do Steam Workshop não está disponível.",
-    "app.settings.widgets_error_skill_selection_save": "Não foi possível salvar a seleção do Agent Skill.",
     "app.settings.widgets_error_development_folder_open": "Não foi possível abrir a pasta de componentes em desenvolvimento.",
     "app.settings.widgets_error_workshop_item_stale": "O item do Workshop está desatualizado ou indisponível.",
     "app.settings.widgets_error_uninstall_unavailable": "Este componente não pode ser desinstalado.",

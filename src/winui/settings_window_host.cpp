@@ -1396,18 +1396,6 @@ struct SettingsWindowHost::Impl
         bool updateAvailable = false;
         try
         {
-            int selectedTargets =
-                GeneralSettings::kAllAgentSkillTargetsMask;
-            if (controller)
-            {
-                const auto snapshot = controller->Snapshot();
-                if (snapshot)
-                {
-                    selectedTargets =
-                        snapshot->values.general.agentSkillTargetMask;
-                }
-            }
-
             const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
             const auto bundledSkill =
                 packagePaths.builtin / L"snowdesktop-lua-widget";
@@ -1416,9 +1404,6 @@ struct SettingsWindowHost::Impl
             for (auto target :
                 snowdesktop::steam_bridge::DefaultAgentSkillTargets())
             {
-                const int bit = 1 << static_cast<int>(target.kind);
-                if ((selectedTargets & bit) == 0)
-                    continue;
                 std::string error;
                 const auto status =
                     snowdesktop::steam_bridge::InspectAgentSkill(

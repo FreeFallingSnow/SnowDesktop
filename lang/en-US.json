@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "The selected version could not reload every instance; the previous package version was restored.",
     "app.settings.widgets_error_version_restore_failed": "The selected version could not reload every instance, and restoring the previous version also failed: {0}",
     "app.settings.widgets_error_publisher_unavailable": "The Workshop Creator Manager is unavailable.",
-    "app.settings.widgets_error_skill_selection_save": "The Agent Skill selection could not be saved.",
     "app.settings.widgets_error_development_folder_open": "The development components folder cannot be opened.",
     "app.settings.widgets_error_workshop_item_stale": "The Workshop item is stale or unavailable.",
     "app.settings.widgets_error_uninstall_unavailable": "This component cannot be uninstalled.",

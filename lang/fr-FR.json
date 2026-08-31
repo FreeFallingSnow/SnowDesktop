@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "La version sélectionnée n’a pas pu recharger toutes les instances ; la version précédente du package a été restaurée.",
     "app.settings.widgets_error_version_restore_failed": "La version sélectionnée n’a pas pu recharger toutes les instances et la restauration de la version précédente a également échoué : {0}",
     "app.settings.widgets_error_publisher_unavailable": "Le gestionnaire de création du Workshop n’est pas disponible.",
-    "app.settings.widgets_error_skill_selection_save": "Impossible d’enregistrer la sélection de l’Agent Skill.",
     "app.settings.widgets_error_development_folder_open": "Impossible d’ouvrir le dossier des composants de développement.",
     "app.settings.widgets_error_workshop_item_stale": "L’élément du Workshop est obsolète ou indisponible.",
     "app.settings.widgets_error_uninstall_unavailable": "Ce composant ne peut pas être désinstallé.",

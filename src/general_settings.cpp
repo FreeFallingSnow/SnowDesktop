@@ -140,13 +140,6 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     }
     if (ReadIntField(text, "collectionPopupTheme", theme))
         settings.collectionPopupTheme = std::clamp(theme, 0, 3);
-    int agentSkillTargetMask = 0;
-    if (ReadIntField(text, "agentSkillTargetMask", agentSkillTargetMask) &&
-        agentSkillTargetMask >= 0 &&
-        agentSkillTargetMask <= GeneralSettings::kAllAgentSkillTargetsMask)
-    {
-        settings.agentSkillTargetMask = agentSkillTargetMask;
-    }
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     return true;
 }
@@ -185,8 +178,6 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"widgetDeveloperToolsEnabled\": "
          << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
          << ",\n";
-    file << "  \"agentSkillTargetMask\": "
-         << settings.agentSkillTargetMask << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
     return true;

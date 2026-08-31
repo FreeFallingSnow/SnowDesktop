@@ -231,7 +231,6 @@
     "app.settings.widgets_error_version_reload_restored": "所选版本无法重新加载所有实例；已恢复先前的包版本。",
     "app.settings.widgets_error_version_restore_failed": "所选版本无法重新加载所有实例，且恢复先前版本也失败：{0}",
     "app.settings.widgets_error_publisher_unavailable": "创意工坊创作者管理器不可用。",
-    "app.settings.widgets_error_skill_selection_save": "无法保存 Agent Skill 选择。",
     "app.settings.widgets_error_development_folder_open": "无法打开开发组件目录。",
     "app.settings.widgets_error_workshop_item_stale": "创意工坊项目已过期或不可用。",
     "app.settings.widgets_error_uninstall_unavailable": "无法卸载此组件。",
