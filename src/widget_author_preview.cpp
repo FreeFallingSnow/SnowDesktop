@@ -473,7 +473,7 @@ void DrawHostBackground(ID2D1DeviceContext* context,
             resolved.material.widgetEdgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
         (void)snowdesktop::widget_preview::DrawEdgeHighlight(
-            context, bounds, radius, color(theme.border, 1.0f), edgeWidth,
+            context, bounds, radius, color(theme.bg, 1.0f), edgeWidth,
             resolved.material.widgetEdgeHighlightStrength);
     }
 }

@@ -150,7 +150,9 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     if (!selected && p.widgetEdgeHighlightEnabled &&
         p.widgetEdgeHighlightStrength > 0.0005f)
     {
-        D2D1_COLOR_F edgeColor = border;
+        // Edge light belongs to the panel material, not to the optional
+        // outline. Keep it stable when the border is transparent or recolored.
+        D2D1_COLOR_F edgeColor = fill;
         edgeColor.a = 1.0f;
         const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);

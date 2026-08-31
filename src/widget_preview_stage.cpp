@@ -672,6 +672,12 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
         (kEdgeHighlightLightAngleDegrees - 90.0f) * kPi / 180.0f;
     const float lightX = std::cos(angleRadians);
     const float lightY = std::sin(angleRadians);
+    const float coreDepth = bevelDepth;
+    const float availableDepth = std::max(0.0f,
+        std::min(static_cast<float>(width), static_cast<float>(height)) *
+            0.5f - 0.01f);
+    const float haloDepth = std::min(availableDepth,
+        std::max(coreDepth * 1.5f, coreDepth + 1.5f));
     constexpr std::array<float, 2> sampleOffsets{ 0.25f, 0.75f };
 
     for (UINT32 y = 0; y < height; ++y)
@@ -692,10 +698,11 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float coverage = 1.0f - SmoothStep(
                         -0.55f, 0.45f, sample.distance);
                     const float edgeDistance = std::max(-sample.distance, 0.0f);
-                    if (coverage <= 0.0f || edgeDistance >= bevelDepth)
+                    if (coverage <= 0.0f || edgeDistance >= haloDepth)
                         continue;
 
-                    const float depth = edgeDistance / bevelDepth;
+                    const float corePosition = edgeDistance / coreDepth;
+                    const float haloPosition = edgeDistance / haloDepth;
                     const float alignment = sample.normalX * lightX +
                         sample.normalY * lightY;
                     // Treat the source as a broad area light. A tight
@@ -707,17 +714,23 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                         std::max(alignment, 0.0f), 0.65f);
                     const float transmitted = 0.55f * std::pow(
                         std::max(-alignment, 0.0f), 0.80f);
-                    // A bevel reflection is a filled light band, not a line
-                    // sitting on the perimeter. Let the energy rise just
-                    // inside the boundary, then leave a longer inward tail.
-                    // This also makes the configured width describe optical
-                    // depth instead of merely making a stroke thicker.
+                    // Build one optical cross-section from two scales: a
+                    // narrow crest gives the bevel a definite reflection,
+                    // while a wider, lower-energy shoulder dissolves into the
+                    // panel instead of ending as a visible stroke boundary.
+                    const float specularCrest = corePosition < 1.0f
+                        ? SmoothStep(-0.04f, 0.18f, corePosition) *
+                            (1.0f - SmoothStep(
+                                0.20f, 0.70f, corePosition))
+                        : 0.0f;
+                    const float softShoulder =
+                        SmoothStep(-0.04f, 0.24f, haloPosition) *
+                        (1.0f - SmoothStep(
+                            0.16f, 1.0f, haloPosition));
                     const float primaryBand =
-                        SmoothStep(-0.02f, 0.22f, depth) *
-                        (1.0f - SmoothStep(0.28f, 1.0f, depth));
+                        0.42f * specularCrest + 0.58f * softShoulder;
                     const float transmittedBand =
-                        SmoothStep(-0.02f, 0.30f, depth) *
-                        (1.0f - SmoothStep(0.20f, 1.0f, depth));
+                        0.15f * specularCrest + 0.85f * softShoulder;
                     accumulated += coverage *
                         (primary * primaryBand +
                             transmitted * transmittedBand);
@@ -850,12 +863,15 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         return std::clamp(
             value + (target - value) * amount, 0.0f, 1.0f);
     };
-    const float whiteMix = 0.76f + 0.10f * strength;
+    // Preserve the panel hue so the light feels embedded in the material.
+    // The previous near-white tint made a transparent border color look like
+    // an unrelated outline even when the border itself was disabled.
+    const float whiteMix = 0.42f + 0.16f * strength;
     const D2D1_COLOR_F reflected = D2D1::ColorF(
         mix(color.r, 1.0f, whiteMix),
         mix(color.g, 1.0f, whiteMix),
         mix(color.b, 1.0f, whiteMix),
-        color.a * (0.04f + 0.28f * strength));
+        color.a * (0.05f + 0.34f * strength));
     ComPtr<ID2D1SolidColorBrush> reflectionBrush;
     if (FAILED(context->CreateSolidColorBrush(
             reflected, &reflectionBrush)) || !reflectionBrush)

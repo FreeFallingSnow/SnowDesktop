@@ -723,6 +723,8 @@ int wmain(int argc, wchar_t** argv)
         temporary.path / L"edge-highlight-borderless.png";
     const auto edgeHighlightOutput =
         temporary.path / L"edge-highlight-75.png";
+    const auto alternateHiddenBorderOutput =
+        temporary.path / L"edge-highlight-hidden-border-color.png";
     const auto wideEdgeHighlightOutput =
         temporary.path / L"edge-highlight-wide.png";
     const auto [standardBorderExit, standardBorderJson] = Run(snowwidget, {
@@ -767,9 +769,21 @@ int wmain(int argc, wchar_t** argv)
             L"--storage", L"edgeHighlightWidth=4",
             L"--storage", L"edgeHighlightStrength=0.75",
             L"--host", host.wstring() });
+    const auto [alternateHiddenBorderExit, alternateHiddenBorderJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(),
+            alternateHiddenBorderOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"border=16711680",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0.75",
+            L"--host", host.wstring() });
     Check(standardBorderExit == 0 && zeroStrengthBorderExit == 0 &&
             borderlessExit == 0 &&
             edgeHighlightExit == 0 && wideEdgeHighlightExit == 0 &&
+            alternateHiddenBorderExit == 0 &&
             standardBorderJson.find("\"ok\":true") != std::string::npos &&
             zeroStrengthBorderJson.find("\"ok\":true") !=
                 std::string::npos &&
@@ -777,8 +791,10 @@ int wmain(int argc, wchar_t** argv)
             edgeHighlightJson.find("\"ok\":true") !=
                 std::string::npos &&
             wideEdgeHighlightJson.find("\"ok\":true") !=
+                std::string::npos &&
+            alternateHiddenBorderJson.find("\"ok\":true") !=
                 std::string::npos,
-        "ordinary border plus zero-strength, recommended, and maximum-width edge highlights render");
+        "ordinary border plus zero-strength, recommended, alternate-border, and maximum-width edge highlights render");
     const RgbaBitmap standardBorder =
         CheckOpaquePreview(standardBorderOutput, 192, 240);
     const RgbaBitmap zeroStrengthBorder =
@@ -787,6 +803,8 @@ int wmain(int argc, wchar_t** argv)
         CheckOpaquePreview(borderlessOutput, 192, 240);
     const RgbaBitmap edgeHighlight =
         CheckOpaquePreview(edgeHighlightOutput, 192, 240);
+    const RgbaBitmap alternateHiddenBorder =
+        CheckOpaquePreview(alternateHiddenBorderOutput, 192, 240);
     const RgbaBitmap wideEdgeHighlight =
         CheckOpaquePreview(wideEdgeHighlightOutput, 192, 240);
     Check(standardBorder.pixels == zeroStrengthBorder.pixels,
@@ -794,6 +812,8 @@ int wmain(int argc, wchar_t** argv)
     Check(standardBorder.pixels != edgeHighlight.pixels &&
             edgeHighlight.pixels != wideEdgeHighlight.pixels,
         "recommended edge highlight and maximum width produce distinct borderless output");
+    Check(edgeHighlight.pixels == alternateHiddenBorder.pixels,
+        "a transparent border color does not tint the panel-material edge highlight");
     constexpr RECT wholePanel{ 0, 0, 192, 240 };
     Check(CountDarkenedPixels(borderless, edgeHighlight, wholePanel) == 0 &&
             CountDarkenedPixels(borderless, wideEdgeHighlight,
@@ -801,23 +821,26 @@ int wmain(int argc, wchar_t** argv)
         "edge highlights only add light to the existing panel pixels");
     constexpr RECT outerTopLight{ 64, 0, 128, 1 };
     constexpr RECT peakTopLight{ 64, 1, 128, 2 };
-    constexpr RECT innerTopTail{ 64, 3, 128, 4 };
+    constexpr RECT softShoulderTopLight{ 64, 3, 128, 4 };
+    constexpr RECT innerTopTail{ 64, 5, 128, 6 };
     constexpr RECT deepInterior{ 8, 8, 184, 232 };
     const std::uint64_t outerGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, outerTopLight);
     const std::uint64_t peakGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, peakTopLight);
+    const std::uint64_t shoulderGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, softShoulderTopLight);
     const std::uint64_t tailGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, innerTopTail);
-    Check(peakGain > outerGain && outerGain > tailGain * 3 &&
-            tailGain > 0 &&
+    Check(peakGain > outerGain && outerGain > shoulderGain &&
+            shoulderGain > tailGain * 4 && tailGain > 0 &&
             CountDifferingPixels(borderless, wideEdgeHighlight,
                 deepInterior) == 0,
-        "bevel reflection peaks just inside the edge and fades to zero before the panel interior");
-    constexpr RECT topLightStrip{ 64, 0, 128, 4 };
-    constexpr RECT bottomLightStrip{ 64, 236, 128, 240 };
-    constexpr RECT leftLightStrip{ 0, 80, 4, 160 };
-    constexpr RECT rightLightStrip{ 188, 80, 192, 160 };
+        "bevel reflection combines an inset crest with a soft shoulder that fades before the panel interior");
+    constexpr RECT topLightStrip{ 64, 0, 128, 7 };
+    constexpr RECT bottomLightStrip{ 64, 233, 128, 240 };
+    constexpr RECT leftLightStrip{ 0, 80, 7, 160 };
+    constexpr RECT rightLightStrip{ 185, 80, 192, 160 };
     const std::uint64_t topGain = SumBrightnessGain(
         borderless, wideEdgeHighlight, topLightStrip);
     const std::uint64_t bottomGain = SumBrightnessGain(
@@ -833,7 +856,8 @@ int wmain(int argc, wchar_t** argv)
         borderless, wideEdgeHighlight, topLightStrip);
     const std::uint64_t topLeftCornerChangedPixels = CountDifferingPixels(
         borderless, wideEdgeHighlight, topLeftCornerLight);
-    Check(topGain > bottomGain * 2 && leftGain > rightGain * 2 &&
+    Check(topGain * 2 > bottomGain * 3 &&
+            leftGain * 2 > rightGain * 3 &&
             bottomGain > 0 && rightGain > 0,
         "top-left light drives the primary bevel reflection while the opposite bevel stays weaker");
     Check(topChangedPixels > 0 && topLeftCornerChangedPixels > 0 &&
