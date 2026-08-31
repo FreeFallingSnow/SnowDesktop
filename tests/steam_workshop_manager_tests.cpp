@@ -847,7 +847,7 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         auto status = InspectAgentSkill(
             bundled, snowwidget, target, error);
         Check(status.state == SkillInstallState::NotInstalled &&
-            status.bundledRevision == 7,
+            status.bundledRevision == 8,
             "each supported agent reports a clean not-installed state");
         Check(InstallOrUpdateAgentSkill(status, error),
             "Agent Skill installs transactionally into every selected root");
