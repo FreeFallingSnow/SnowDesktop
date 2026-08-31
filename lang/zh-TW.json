@@ -331,7 +331,7 @@
   "app.settings.light_acrylic": "淺色亞克力",
   "app.settings.custom": "自訂",
   "app.settings.component_bg": "元件背景",
-  "app.settings.component_border": "邊框與高光顏色",
+  "app.settings.component_border": "邊框顏色",
   "app.settings.bg_opacity": "背景不透明度",
   "app.settings.border_opacity": "邊框不透明度",
   "app.settings.border_width": "邊框寬度",

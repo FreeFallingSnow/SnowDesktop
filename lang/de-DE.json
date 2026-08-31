@@ -331,7 +331,7 @@
   "app.settings.light_acrylic": "Helles Acryl",
   "app.settings.custom": "Benutzerdefiniert",
   "app.settings.component_bg": "Widget-Hintergrund",
-  "app.settings.component_border": "Rahmen- und Glanzlichtfarbe",
+  "app.settings.component_border": "Rahmenfarbe",
   "app.settings.bg_opacity": "Hintergrunddeckkraft",
   "app.settings.border_opacity": "Randdeckkraft",
   "app.settings.border_width": "Rahmenbreite",

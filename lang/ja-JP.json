@@ -331,7 +331,7 @@
   "app.settings.light_acrylic": "ライトアクリル",
   "app.settings.custom": "カスタム",
   "app.settings.component_bg": "ウィジェットの背景",
-  "app.settings.component_border": "境界線とハイライトの色",
+  "app.settings.component_border": "境界線の色",
   "app.settings.bg_opacity": "背景の不透明度",
   "app.settings.border_opacity": "境界線の不透明度",
   "app.settings.border_width": "境界線の幅",

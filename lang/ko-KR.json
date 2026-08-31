@@ -331,7 +331,7 @@
   "app.settings.light_acrylic": "라이트 아크릴",
   "app.settings.custom": "커스텀",
   "app.settings.component_bg": "위젯 배경",
-  "app.settings.component_border": "테두리 및 하이라이트 색상",
+  "app.settings.component_border": "테두리 색상",
   "app.settings.bg_opacity": "배경 불투명도",
   "app.settings.border_opacity": "테두리 불투명도",
   "app.settings.border_width": "테두리 두께",

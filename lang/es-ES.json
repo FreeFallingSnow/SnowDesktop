@@ -331,7 +331,7 @@
   "app.settings.light_acrylic": "Acrílico claro",
   "app.settings.custom": "Personalizado",
   "app.settings.component_bg": "Fondo del componente",
-  "app.settings.component_border": "Color del borde y del realce",
+  "app.settings.component_border": "Color del borde",
   "app.settings.bg_opacity": "Opacidad del fondo",
   "app.settings.border_opacity": "Opacidad del borde",
   "app.settings.border_width": "Ancho del borde",

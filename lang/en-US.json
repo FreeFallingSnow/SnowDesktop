@@ -331,7 +331,7 @@
     "app.settings.light_acrylic": "Light Acrylic",
     "app.settings.custom": "Custom",
     "app.settings.component_bg": "Widget Background",
-    "app.settings.component_border": "Border & Highlight Color",
+    "app.settings.component_border": "Border Color",
     "app.settings.bg_opacity": "Background Opacity",
     "app.settings.border_opacity": "Border Opacity",
     "app.settings.border_width": "Border Width",

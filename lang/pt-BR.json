@@ -331,7 +331,7 @@
   "app.settings.light_acrylic": "Acrílico claro",
   "app.settings.custom": "Personalizado",
   "app.settings.component_bg": "Fundo do widget",
-  "app.settings.component_border": "Cor da borda e do realce",
+  "app.settings.component_border": "Cor da borda",
   "app.settings.bg_opacity": "Opacidade de fundo",
   "app.settings.border_opacity": "Opacidade da borda",
   "app.settings.border_width": "Largura da borda",

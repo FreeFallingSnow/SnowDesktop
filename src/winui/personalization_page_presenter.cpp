@@ -937,7 +937,7 @@ struct PersonalizationPagePresenter::Impl
         SetColorText(backgroundColor,
             "app.settings.component_bg", L"Widget Background");
         SetColorText(borderColor,
-            "app.settings.component_border", L"Border & Highlight Color");
+            "app.settings.component_border", L"Border Color");
         SetContinuousText(widgetAlpha,
             "app.settings.bg_opacity", L"Background Opacity");
         SetContinuousText(borderAlpha,
