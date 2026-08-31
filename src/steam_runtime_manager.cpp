@@ -1208,6 +1208,73 @@ bool ParseCanonicalUnsigned(std::wstring_view text, std::uint64_t maximum,
     return true;
 }
 
+bool IsLowerHex(std::wstring_view text, std::size_t expectedSize) noexcept
+{
+    return text.size() == expectedSize &&
+        std::all_of(text.begin(), text.end(), [](wchar_t character) {
+            return (character >= L'0' && character <= L'9') ||
+                (character >= L'a' && character <= L'f');
+        });
+}
+
+bool IsPackagedRuntimeDirectoryName(std::wstring_view name) noexcept
+{
+    const std::size_t digestSeparator = name.rfind(L'-');
+    if (digestSeparator == std::wstring_view::npos ||
+        !IsLowerHex(name.substr(digestSeparator + 1), 16))
+    {
+        return false;
+    }
+
+    std::wstring_view version = name.substr(0, digestSeparator);
+    std::array<std::uint64_t, 4> components{};
+    for (std::size_t index = 0; index < components.size(); ++index)
+    {
+        const std::size_t separator = version.find(L'.');
+        const bool finalComponent = index + 1 == components.size();
+        if ((finalComponent && separator != std::wstring_view::npos) ||
+            (!finalComponent && separator == std::wstring_view::npos))
+        {
+            return false;
+        }
+        const std::wstring_view component = finalComponent
+            ? version : version.substr(0, separator);
+        if (!ParseCanonicalUnsigned(component, 65535,
+                index == 0, components[index]))
+        {
+            return false;
+        }
+        if (!finalComponent)
+            version.remove_prefix(separator + 1);
+    }
+    return components[3] == 0;
+}
+
+bool IsRecoveryRuntimeDirectoryName(std::wstring_view name) noexcept
+{
+    constexpr std::wstring_view prefix = L"recovery-";
+    if (!name.starts_with(prefix))
+        return false;
+    name.remove_prefix(prefix.size());
+    if (name.size() < 64 || !IsLowerHex(name.substr(0, 64), 64))
+        return false;
+    name.remove_prefix(64);
+    if (name.empty())
+        return true;
+    if (name.front() != L'-')
+        return false;
+    name.remove_prefix(1);
+    std::uint64_t attempt = 0;
+    return ParseCanonicalUnsigned(name,
+        std::numeric_limits<std::uint64_t>::max(), true, attempt);
+}
+
+bool IsLauncherOwnedRuntimeDirectoryName(std::wstring_view name) noexcept
+{
+    return IsPackagedRuntimeDirectoryName(name) ||
+        IsRecoveryRuntimeDirectoryName(name);
+}
+
 bool IsStagingDirectoryName(std::wstring_view name) noexcept
 {
     constexpr std::wstring_view prefix = L".staging.";
@@ -1699,11 +1766,13 @@ PruneResult PruneInactiveRuntimes(
             entry, currentRuntime, pathError);
         if (!pathError && !isCurrent)
         {
-            std::string validationError;
-            const auto manifest = ValidatePublishedRuntime(
-                entry, nullptr, validationError);
-            if (manifest && DirectoryIdMatchesManifest(
-                    entry.filename().string(), *manifest))
+            const DWORD attributes = GetFileAttributesW(entry.c_str());
+            if (attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+                (attributes & (FILE_ATTRIBUTE_REPARSE_POINT |
+                    FILE_ATTRIBUTE_DEVICE)) == 0 &&
+                IsLauncherOwnedRuntimeDirectoryName(
+                    entry.filename().wstring()))
             {
                 inactive.push_back(entry);
             }

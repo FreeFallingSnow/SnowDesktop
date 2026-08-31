@@ -35,8 +35,9 @@ struct PruneResult
     const std::filesystem::path& installRoot);
 
 /**
- * Remove every validated, inactive published runtime except the selected
- * executable's runtime. Occupied directories are retained for a later retry.
+ * Remove every launcher-owned inactive runtime except the selected
+ * executable's runtime, including runtimes polluted by unexpected files.
+ * Occupied directories are retained for a later retry.
  */
 [[nodiscard]] PruneResult PruneInactiveRuntimes(
     const std::filesystem::path& installRoot,

@@ -488,15 +488,25 @@ snowdesktop::steam_runtime::ApplyResult PrepareRuntime(
 void TestInactiveRuntimePruning(const std::filesystem::path& root)
 {
     const auto oldRuntime = PrepareRuntime(
-        root, "prune-old", "host old", "dll old");
+        root, "1.0.5.0-1111111111111111", "host old", "dll old");
     const auto currentRuntime = PrepareRuntime(
-        root, "prune-current", "host current", "dll current");
+        root, "1.0.5.0-2222222222222222", "host current", "dll current");
     if (!oldRuntime.ok || !currentRuntime.ok)
         return;
 
-    const auto unknownDirectory = root / L".snowdesktop" /
-        L"runtime" / L"user-unknown";
+    const auto runtimeRoot = root / L".snowdesktop" / L"runtime";
+    WriteText(oldRuntime.executable.parent_path() / L"imgui.ini",
+        "unexpected runtime residue");
+    WriteText(oldRuntime.executable.parent_path() / L"data" /
+        L"snowwidget" / L"staging" / L"residue.txt",
+        "unexpected runtime data");
+
+    const auto unknownDirectory = runtimeRoot / L"user-unknown";
     WriteText(unknownDirectory / L"keep.txt", "not a published runtime");
+    const auto similarUnknownDirectory =
+        runtimeRoot / L"1.0.5.0-not-a-runtime-digest";
+    WriteText(similarUnknownDirectory / L"keep.txt",
+        "not a launcher-owned runtime");
     {
         OccupiedFile occupied(oldRuntime.executable);
         Check(occupied.valid(),
@@ -516,9 +526,11 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
     Check(pruned.ok && pruned.removed == 1 && pruned.retained == 0 &&
             !std::filesystem::exists(oldRuntime.executable) &&
             std::filesystem::exists(currentRuntime.executable),
-        "runtime pruning removes the old runtime after its final handle closes");
+        "runtime pruning removes a polluted old runtime after its final handle closes");
     Check(std::filesystem::exists(unknownDirectory / L"keep.txt"),
-        "runtime pruning never removes an unvalidated directory from the managed root");
+        "runtime pruning preserves an unrelated directory in the managed root");
+    Check(std::filesystem::exists(similarUnknownDirectory / L"keep.txt"),
+        "runtime pruning preserves a directory outside launcher naming rules");
 }
 
 void CorruptDistributionLibrary(const std::filesystem::path& root)
