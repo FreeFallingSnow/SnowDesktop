@@ -1,4 +1,4 @@
 interface:
   display_name: "SnowDesktop Lua 组件"
   short_description: "编写、调试和打包 SnowDesktop Lua 桌面组件"
-  default_prompt: "Use $snowdesktop-lua-widget to create a complete SnowDesktop Lua widget from my requirements. Let the host own the outer material, support both foreground themes, render and inspect meaningful previews, fix visible defects, then validate and package it."
+  default_prompt: "Use $snowdesktop-lua-widget to create a complete SnowDesktop Lua widget from my requirements. First confirm this workspace is the development widget directory opened from SnowDesktop; if it is not, tell me how to open and authorize that directory. Let the host own the outer material, support both foreground themes, render and inspect meaningful previews, fix visible defects, then validate and package it. If an advertised API still fails, inspect the matching open-source implementation and tell me how to report a reproducible upstream issue."

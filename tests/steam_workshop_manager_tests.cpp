@@ -897,7 +897,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
             capabilities.Find("authoringSkill") &&
             capabilities.Find("authoringSkill")->IsObject() &&
             JsonUnsigned(*capabilities.Find("authoringSkill"), "revision") ==
-                7u &&
+                8u &&
             capabilities.Find("executableSchemaVersions") &&
             capabilities.Find("executableSchemaVersions")->IsArray() &&
             capabilities.Find("executableSchemaVersions")->array.size() == 1 &&

@@ -22,6 +22,26 @@ under the executable `widgets` directory. Installed and development packages
 live under `data\widgets\installed` and `data\widgets\dev`. Layouts retain the
 immutable package UUID, so never change an existing package ID.
 
+## Confirm the development workspace
+
+For ordinary user-authored widget work, confirm before writing that the target
+package is inside the development widget directory the user opened from
+SnowDesktop. A random current directory, downloaded package, installed package
+or application directory is not an authorized development workspace merely
+because it contains `widget.json`.
+
+If the current workspace is not the development widget directory, or that
+relationship cannot be established, do not create or modify the package there.
+Tell the user to open **SnowDesktop Settings → Widgets → Component Development
+Tools → Open Development Widget Directory** (`设置 → 组件 → 组件开发工具 →
+打开开发组件目录`), then add or open that directory in the coding client and
+authorize it for the workspace. Resume after the development directory is
+available. Never edit `data\widgets\installed` as a substitute.
+
+An explicit SnowDesktop source-repository maintenance task is the exception:
+built-in packages and this distributed Skill may be edited in an already
+authorized repository workspace.
+
 ## Start with the tool contract
 
 Resolve this Skill directory and run:
@@ -47,6 +67,7 @@ source of truth:
 | Detailed behavior for one selected feature | Search the matching heading in `references/api-v2.md` |
 | Visual ownership, themes and preview review | `references/visual-authoring.md` |
 | Steam Workshop planning and publishing | `references/workshop-publishing.md` |
+| Suspected host/API defect or contract mismatch | `references/api-troubleshooting.md`, then the matching implementation in the official source |
 
 ## Classify before creating
 
@@ -256,6 +277,24 @@ check is required.
 Do not claim pointer interaction, context menus, declarative events,
 multi-monitor DPI or permission UX is verified from lint, validation or build
 alone. Those require an observable runtime check or explicit user validation.
+
+## Diagnose suspected API problems
+
+The official SnowDesktop source at
+<https://github.com/FreeFallingSnow/SnowDesktop> is an implementation reference.
+Use it when the installed CLI contracts, bundled API documentation and observed
+host behavior appear inconsistent. Match the source version to the user's
+installed SnowDesktop version when possible; the default branch may describe a
+newer implementation.
+
+Read `references/api-troubleshooting.md` before inventing a workaround. If a
+minimal reproduction shows that the documented, advertised and authorized API
+still fails, tell the user that the evidence points to a SnowDesktop API issue
+and prompt them to report it at
+<https://github.com/FreeFallingSnow/SnowDesktop/issues>. Provide the version,
+capability output, minimal package or code, reproduction steps, expected and
+actual behavior, and relevant `snowwidget`/host errors. Do not silently replace
+the API with undocumented globals, filesystem access or a misleading mock.
 
 ## Publish only on request
 
