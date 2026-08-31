@@ -699,6 +699,7 @@ int main()
         *transientSnapshot);
     WidgetHostAppearancePatch transientAppearance;
     transientAppearance.backgroundColor = 0x123456;
+    transientAppearance.glassEnabled = true;
     const auto appearancePreview =
         transientService.PreviewHostAppearance(
             transientGuard, transientAppearance);
@@ -713,9 +714,20 @@ int main()
             transientSnapshot &&
             transientSnapshot->hostAppearance.backgroundColor ==
                 transientBackend.persistedAppearance.backgroundColor &&
+            transientBackend.lastAppearancePatch.glassEnabled == true &&
+            transientBackend.lastAppearancePatch.borderOpacity ==
+                transientBackend.persistedAppearance.borderOpacity &&
+            transientBackend.lastAppearancePatch.borderWidth ==
+                transientBackend.persistedAppearance.borderWidth &&
+            transientBackend.lastAppearancePatch.edgeHighlightEnabled ==
+                transientBackend.persistedAppearance.edgeHighlightEnabled &&
+            transientBackend.lastAppearancePatch.edgeHighlightWidth ==
+                transientBackend.persistedAppearance.edgeHighlightWidth &&
+            transientBackend.lastAppearancePatch.edgeHighlightStrength ==
+                transientBackend.persistedAppearance.edgeHighlightStrength &&
             transientBackend.persistCalls == 1 &&
             transientBackend.revertCalls == 1,
-        "appearance preview can be reverted without a persistent write");
+        "material appearance preview preserves independent edge state and can be reverted without a persistent write");
 
     transientGuard = WidgetSettingMutationGuard::FromSnapshot(
         *transientSnapshot);
@@ -1315,6 +1327,54 @@ int main()
             appearanceSnapshot->hostAppearance.backgroundOpacity == 0.4f &&
             appearanceBackend.lastAppearancePatch == livePatch,
         "live custom appearance updates round-trip through a typed snapshot");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    WidgetHostAppearancePatch materialOnlyPatch;
+    materialOnlyPatch.glassEnabled = true;
+    const auto materialOnlyResult =
+        appearanceService.UpdateHostAppearance(
+            appearanceGuard, materialOnlyPatch);
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(materialOnlyResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch.glassEnabled == true &&
+            appearanceBackend.lastAppearancePatch.borderOpacity == 0.5f &&
+            appearanceBackend.lastAppearancePatch.borderWidth == 1.0f &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightEnabled ==
+                false &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength &&
+            appearanceSnapshot &&
+            appearanceSnapshot->hostAppearance.glassEnabled &&
+            !appearanceSnapshot->hostAppearance.edgeHighlightEnabled,
+        "material-only appearance updates atomically persist the effective independent border and edge-highlight state");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    WidgetHostAppearancePatch explicitMaterialPatch;
+    explicitMaterialPatch.glassEnabled = false;
+    explicitMaterialPatch.borderOpacity = 0.2f;
+    explicitMaterialPatch.borderWidth = 2.5f;
+    explicitMaterialPatch.edgeHighlightEnabled = true;
+    explicitMaterialPatch.edgeHighlightWidth = 3.0f;
+    explicitMaterialPatch.edgeHighlightStrength = 0.4f;
+    const auto explicitMaterialResult =
+        appearanceService.UpdateHostAppearance(
+            appearanceGuard, explicitMaterialPatch);
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(explicitMaterialResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch ==
+                explicitMaterialPatch && appearanceSnapshot &&
+            !appearanceSnapshot->hostAppearance.glassEnabled &&
+            appearanceSnapshot->hostAppearance.borderOpacity == 0.2f &&
+            appearanceSnapshot->hostAppearance.borderWidth == 2.5f &&
+            appearanceSnapshot->hostAppearance.edgeHighlightEnabled &&
+            appearanceSnapshot->hostAppearance.edgeHighlightWidth == 3.0f &&
+            appearanceSnapshot->hostAppearance.edgeHighlightStrength ==
+                0.4f,
+        "explicit border and edge-highlight values take priority in a material update");
     appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
         *appearanceSnapshot);
     const auto appearancePreset = appearanceService.ApplyPreset(

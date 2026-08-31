@@ -581,6 +581,31 @@ struct SessionCopy
     bool previewActive = false;
 };
 
+WidgetHostAppearancePatch PreserveIndependentEdgeState(
+    const WidgetHostAppearancePatch& patch,
+    const WidgetHostAppearanceState& current)
+{
+    WidgetHostAppearancePatch resolved = patch;
+    if (!patch.glassEnabled && !patch.acrylicEnabled)
+        return resolved;
+
+    // Older component instances derive their edge treatment from glass while
+    // their new storage fields are still absent. A material-only edit must
+    // persist the effective edge state in the same transaction; otherwise
+    // reloading the component silently couples the two controls again.
+    if (!resolved.borderOpacity)
+        resolved.borderOpacity = current.borderOpacity;
+    if (!resolved.borderWidth)
+        resolved.borderWidth = current.borderWidth;
+    if (!resolved.edgeHighlightEnabled)
+        resolved.edgeHighlightEnabled = current.edgeHighlightEnabled;
+    if (!resolved.edgeHighlightWidth)
+        resolved.edgeHighlightWidth = current.edgeHighlightWidth;
+    if (!resolved.edgeHighlightStrength)
+        resolved.edgeHighlightStrength = current.edgeHighlightStrength;
+    return resolved;
+}
+
 WidgetSettingMutationResult GuardSession(
     const std::shared_ptr<WidgetSettingsService::State>& state,
     const WidgetSettingMutationGuard& guard, SessionCopy& copy)
@@ -1273,9 +1298,12 @@ WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
         return { WidgetSettingMutationStatus::Unavailable,
             session.snapshot.generation, session.snapshot.revision,
             "customStyleUnavailable", {} };
+    const WidgetHostAppearancePatch resolved =
+        PreserveIndependentEdgeState(
+            patch, session.snapshot.hostAppearance);
     return ReloadAfterMutation(*this, session,
         state_->backend.ApplyHostAppearanceTransaction(
-            session.descriptor, guard, patch, {}));
+            session.descriptor, guard, resolved, {}));
 }
 
 WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
@@ -1293,9 +1321,12 @@ WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
         return { WidgetSettingMutationStatus::Unavailable,
             session.snapshot.generation, session.snapshot.revision,
             "customStyleUnavailable", {} };
+    const WidgetHostAppearancePatch resolved =
+        PreserveIndependentEdgeState(
+            patch, session.snapshot.hostAppearance);
     return ReloadAfterPreview(*this, state_, session, guard,
         state_->backend.PreviewHostAppearanceTransaction(
-            session.descriptor, guard, patch, {}));
+            session.descriptor, guard, resolved, {}));
 }
 
 WidgetSettingMutationResult WidgetSettingsService::CommitPreview(
