@@ -27,6 +27,8 @@ scripts\release.bat package
 scripts\release.bat package -ReloadShell
 scripts\release.bat package-steam
 scripts\release.bat steam-preview
+scripts\release.bat steam-upload-public -Yes `
+  -ConfirmVersion 1.0.0.0 -ConfirmPublicBranch public
 scripts\release.bat sync-release
 scripts\release.bat prepare
 scripts\release.bat prepare -ReloadShell
@@ -55,6 +57,9 @@ scripts\release.bat github-release -Yes -ConfirmVersion 1.0.0.0
 
 scripts\release.bat steam-upload-dev -Yes `
   -ConfirmVersion 1.0.0.0 -ConfirmPrivateBranch internal-dev
+
+scripts\release.bat steam-upload-public -Yes `
+  -ConfirmVersion 1.0.0.0 -ConfirmPublicBranch public
 ```
 
 `squash` 只执行本地压缩合并和本地标签创建。`publish` 仅适用于已经测试过的
@@ -67,12 +72,12 @@ scripts\release.bat steam-upload-dev -Yes `
 已经签名时才会同时公开上传 MSIX。Partner Center 专用的 `.msixupload` 不会
 作为公开附件上传。
 
-## SteamPipe 私有开发分支
+## SteamPipe 分支发布
 
-Steam App/Depot 身份保存在 `packaging\steam-identity.json`，SteamPipe 唯一允许
-自动 `SetLive` 的分支保存在 `packaging\steam-pipe.json`。该分支必须先在
-Steamworks 后台创建并设置密码；配置和脚本拒绝 `default`、`public`、`release`、
-`live`，也不会生成能够更新这些分支的 VDF。
+Steam App/Depot 身份保存在 `packaging\steam-identity.json`。SteamPipe 私有开发分支
+和公开发布分支都显式保存在 `packaging\steam-pipe.json`。私有分支必须先在 Steamworks
+后台创建并设置密码，而且仍会拒绝 `default`、`public`、`release`、`live` 等公开名称；
+公开发布分支必须精确命名为 `public`，只能通过独立的 `steam-upload-public` 动作更新。
 
 本机配置只使用进程环境变量，不写入仓库：
 
@@ -82,17 +87,18 @@ $env:SNOWDESKTOP_STEAM_BUILD_ACCOUNT = "snowdesktop_build"
 & $env:SNOWDESKTOP_STEAMCMD_PATH +login $env:SNOWDESKTOP_STEAM_BUILD_ACCOUNT +quit
 ```
 
-最后一条命令用于首次人工登录和 Steam Guard 验证。后续 `steam-preview` 与
-`steam-upload-dev` 只使用 SteamCMD 自身缓存的凭据，并通过
+最后一条命令用于首次人工登录和 Steam Guard 验证。后续 `steam-preview`、
+`steam-upload-dev` 与 `steam-upload-public` 只使用 SteamCMD 自身缓存的凭据，并通过
 `@NoPromptForPassword` 禁止自动化提示密码。脚本没有密码、Steam Guard 代码、分支密码
 参数，也不会把这些材料写入日志或 VDF。建议构建账号只授予 `Edit App Metadata` 和
 `Publish App Changes To Steam` 所需权限，并确认其 Dev Comp 包含 Windows depot。
 
 `steam-preview` 会重新生成 Steam 包，写出带 `Preview "1"` 的 app build VDF 后交给
 SteamCMD 校验；调用前还会按包清单逐项复核文件大小与 SHA-256。它不会上传内容或修改
-分支。`steam-upload-dev` 同样重新打包，但还要求
-`-Yes`、当前四段版本号和配置中的私有分支名三项完全匹配，随后只向该分支上传并
-`SetLive`。所有 VDF、SteamPipe 缓存及日志都保存在当前版本的
+分支。`steam-upload-dev` 和 `steam-upload-public` 同样重新打包，但分别要求
+`-Yes`、当前四段版本号和对应配置分支名三项完全匹配，随后只向目标分支上传并
+`SetLive`。开发动作不能生成公开分支 VDF，公开动作也只接受精确的 `public`。
+所有 VDF、SteamPipe 缓存及日志都保存在当前版本的
 `artifacts\vA.B.C.0\steampipe\`，与 `steam\` 载荷目录分离，重新打包不会清掉上传缓存。
 
 ## Steam 运行目录与数据

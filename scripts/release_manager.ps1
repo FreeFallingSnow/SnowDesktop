@@ -8,6 +8,7 @@ param(
         "package-steam",
         "steam-preview",
         "steam-upload-dev",
+        "steam-upload-public",
         "sync-release",
         "prepare",
         "squash",
@@ -22,6 +23,7 @@ param(
     [string]$CertificateThumbprint = "",
     [string]$SteamCmdPath = "",
     [string]$ConfirmPrivateBranch = "",
+    [string]$ConfirmPublicBranch = "",
     [ValidateSet("CurrentUser", "LocalMachine")]
     [string]$CertificateStoreLocation = "CurrentUser",
     [switch]$Development,
@@ -991,10 +993,22 @@ function Get-PrivateSteamDevelopmentBranch {
     return $branch
 }
 
+function Get-PublicSteamReleaseBranch {
+    $configurationPath = Join-Path $repositoryRoot `
+        "packaging\steam-pipe.json"
+    $configuration = Get-Content -LiteralPath $configurationPath `
+        -Encoding UTF8 -Raw | ConvertFrom-Json
+    $branch = [string]$configuration.publicReleaseBranch
+    if ($branch -cne "public") {
+        throw "packaging\steam-pipe.json must define public as the release branch."
+    }
+    return $branch
+}
+
 function Invoke-SteamPipeAction {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet("Preview", "UploadDev")]
+        [ValidateSet("Preview", "UploadDev", "UploadPublic")]
         [string]$Mode
     )
 
@@ -1022,6 +1036,23 @@ function Invoke-SteamPipeAction {
         $arguments["Yes"] = $confirmed
         $arguments["ConfirmVersion"] = $confirmedVersion
         $arguments["ConfirmPrivateBranch"] = $confirmedBranch
+    }
+    elseif ($Mode -eq "UploadPublic") {
+        $version = Get-Version
+        $branch = Get-PublicSteamReleaseBranch
+        $confirmedVersion = $ConfirmVersion
+        $confirmedBranch = $ConfirmPublicBranch
+        $confirmed = $Yes
+        if ($isMenu) {
+            $confirmedVersion = Read-Host `
+                "这会立即更新所有 Steam 用户的公开构建。请输入版本 $version"
+            $confirmedBranch = Read-Host `
+                "请输入公开分支名 $branch"
+            $confirmed = $true
+        }
+        $arguments["Yes"] = $confirmed
+        $arguments["ConfirmVersion"] = $confirmedVersion
+        $arguments["ConfirmPublicBranch"] = $confirmedBranch
     }
 
     & $steamPipeScript @arguments
@@ -1075,6 +1106,9 @@ function Invoke-CommandAction {
         "steam-upload-dev" {
             Invoke-SteamPipeAction -Mode "UploadDev"
         }
+        "steam-upload-public" {
+            Invoke-SteamPipeAction -Mode "UploadPublic"
+        }
         "sync-release" {
             [void](Sync-ReleaseRepository)
         }
@@ -1109,6 +1143,7 @@ function Start-ReleaseMenu {
         Write-Host "[S] 构建并生成 Steam 专属包"
         Write-Host "[V] SteamPipe 安全预览（不上传）"
         Write-Host "[U] 上传并设为私有 Steam 开发分支"
+        Write-Host "[R] 上传并设为公开 Steam 分支"
         Write-Host "[2] 同步二进制 Release 仓库（不提交）"
         Write-Host "[3] 发布准备（构建打包 + 同步 Release 仓库）"
         Write-Host "[4] 压缩合并版本分支到本地 main，并创建标签"
@@ -1128,6 +1163,7 @@ function Start-ReleaseMenu {
                 "S" { Invoke-CommandAction -Name "package-steam" }
                 "V" { Invoke-CommandAction -Name "steam-preview" }
                 "U" { Invoke-CommandAction -Name "steam-upload-dev" }
+                "R" { Invoke-CommandAction -Name "steam-upload-public" }
                 "2" { Invoke-CommandAction -Name "sync-release" }
                 "3" { Invoke-CommandAction -Name "prepare" }
                 "4" { Invoke-CommandAction -Name "squash" }

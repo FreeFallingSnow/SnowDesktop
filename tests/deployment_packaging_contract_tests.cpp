@@ -356,13 +356,14 @@ void TestSteamPipeAutomation(const std::string& steamPipe,
     const std::string& scriptDocumentation,
     const std::string& packagingDocumentation)
 {
-    Check(steamPipe.find("ValidateSet(\"Preview\", \"UploadDev\")") !=
+    Check(steamPipe.find(
+              "ValidateSet(\"Preview\", \"UploadDev\", \"UploadPublic\")") !=
                 std::string::npos &&
             steamPipe.find("\"Preview\" \"1\"") != std::string::npos &&
             steamPipe.find("SetLive") != std::string::npos &&
-            steamPipe.find("(\"default\", \"public\", \"release\", \"live\")") !=
+            steamPipe.find("Assert-PublicReleaseBranch") !=
                 std::string::npos,
-        "SteamPipe exposes preview and a denylisted private-development upload mode only");
+        "SteamPipe exposes separate preview, private-development, and public upload modes");
     Check(steamPipe.find("SNOWDESKTOP_STEAMCMD_PATH") !=
                 std::string::npos &&
             steamPipe.find("SNOWDESKTOP_STEAM_BUILD_ACCOUNT") !=
@@ -383,13 +384,15 @@ void TestSteamPipeAutomation(const std::string& steamPipe,
                 std::string::npos &&
             steamPipe.find("$ConfirmPrivateBranch -cne $privateBranch") !=
                 std::string::npos &&
+            steamPipe.find("$ConfirmPublicBranch -cne $publicBranch") !=
+                std::string::npos &&
             steamPipe.find("Assert-SteamPayloadManifest") !=
                 std::string::npos &&
             steamPipe.find("Compare-Object -ReferenceObject $listed") !=
                 std::string::npos &&
             steamPipe.find("Steam payload metadata mismatch") !=
                 std::string::npos,
-        "Steam development uploads require explicit version and branch confirmation over a current payload manifest");
+        "Steam development and public uploads require explicit version and branch confirmation over a current payload manifest");
     Check(steamPipe.find("FileExclusion\" \"steam_appid.txt") !=
                 std::string::npos &&
             steamPipe.find("FileExclusion\" \"data\\*") !=
@@ -402,19 +405,28 @@ void TestSteamPipeAutomation(const std::string& steamPipe,
         "SteamPipe keeps generated state out of the depot and stores upload state beside version artifacts");
     Check(manager.find("\"steam-preview\"") != std::string::npos &&
             manager.find("\"steam-upload-dev\"") != std::string::npos &&
+            manager.find("\"steam-upload-public\"") !=
+                std::string::npos &&
             manager.find("Invoke-SteamPipeAction") != std::string::npos &&
-            manager.find("ConfirmPrivateBranch") != std::string::npos,
-        "the shared release manager exposes preview and explicitly confirmed private upload commands");
+            manager.find("ConfirmPrivateBranch") != std::string::npos &&
+            manager.find("ConfirmPublicBranch") != std::string::npos,
+        "the shared release manager exposes preview and separately confirmed private and public upload commands");
     Check(steamPipeConfiguration.find("\"privateDevelopmentBranch\"") !=
                 std::string::npos &&
             steamPipeConfiguration.find("internal-dev") !=
                 std::string::npos &&
+            steamPipeConfiguration.find("\"publicReleaseBranch\"") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("\"public\"") !=
+                std::string::npos &&
             steamPipeConfiguration.find("password") == std::string::npos &&
             steamPipeConfiguration.find("account") == std::string::npos &&
             steamPipeConfiguration.find("token") == std::string::npos,
-        "committed SteamPipe configuration contains a branch but no credentials");
+        "committed SteamPipe configuration contains explicit private and public branches but no credentials");
     Check(scriptDocumentation.find("steam-preview") != std::string::npos &&
             scriptDocumentation.find("steam-upload-dev") !=
+                std::string::npos &&
+            scriptDocumentation.find("steam-upload-public") !=
                 std::string::npos &&
             packagingDocumentation.find("@NoPromptForPassword") !=
                 std::string::npos &&

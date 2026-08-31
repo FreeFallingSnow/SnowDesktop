@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Preview", "UploadDev")]
+    [ValidateSet("Preview", "UploadDev", "UploadPublic")]
     [string]$Mode,
 
     [string]$SteamCmdPath = "",
@@ -9,7 +9,8 @@ param(
     [switch]$ReloadShell,
     [switch]$Yes,
     [string]$ConfirmVersion = "",
-    [string]$ConfirmPrivateBranch = ""
+    [string]$ConfirmPrivateBranch = "",
+    [string]$ConfirmPublicBranch = ""
 )
 
 Set-StrictMode -Version Latest
@@ -101,6 +102,14 @@ function Assert-PrivateDevelopmentBranch {
     if ($normalized -in @("default", "public", "release", "live") -or
         $normalized -notmatch "(dev|internal)") {
         throw "Steam uploads are restricted to an explicitly named private development branch."
+    }
+}
+
+function Assert-PublicReleaseBranch {
+    param([Parameter(Mandatory = $true)][string]$Branch)
+
+    if ($Branch -cne "public") {
+        throw "Steam public uploads require the exact public release branch."
     }
 }
 
@@ -204,16 +213,24 @@ if ($appId -eq 0 -or $depotId -eq 0) {
 $pipeConfiguration = Get-Content -LiteralPath `
     (Join-Path $repositoryRoot "packaging\steam-pipe.json") `
     -Encoding UTF8 -Raw | ConvertFrom-Json
-if ([uint32]$pipeConfiguration.schemaVersion -ne 1) {
+if ([uint32]$pipeConfiguration.schemaVersion -ne 2) {
     throw "packaging\steam-pipe.json uses an unsupported schema version."
 }
 $privateBranch = [string]$pipeConfiguration.privateDevelopmentBranch
 Assert-PrivateDevelopmentBranch -Branch $privateBranch
+$publicBranch = [string]$pipeConfiguration.publicReleaseBranch
+Assert-PublicReleaseBranch -Branch $publicBranch
 
 if ($Mode -eq "UploadDev") {
     if (-not $Yes -or $ConfirmVersion -ne $version -or
         $ConfirmPrivateBranch -cne $privateBranch) {
         throw "UploadDev requires -Yes -ConfirmVersion $version -ConfirmPrivateBranch $privateBranch."
+    }
+}
+if ($Mode -eq "UploadPublic") {
+    if (-not $Yes -or $ConfirmVersion -ne $version -or
+        $ConfirmPublicBranch -cne $publicBranch) {
+        throw "UploadPublic requires -Yes -ConfirmVersion $version -ConfirmPublicBranch $publicBranch."
     }
 }
 if ($SkipPackage -and $ReloadShell) {
@@ -277,14 +294,24 @@ $depotScript = @"
 "@
 Write-Utf8WithoutBom -Path $depotScriptPath -Content $depotScript
 
-$modeSlug = if ($Mode -eq "Preview") { "preview" } else { "upload-dev" }
+$modeSlug = switch ($Mode) {
+    "Preview" { "preview" }
+    "UploadDev" { "upload-dev" }
+    "UploadPublic" { "upload-public" }
+}
 $appScriptPath = Join-Path $steamPipeScripts `
     "app_build_${appId}_$modeSlug.vdf"
 $modeLine = if ($Mode -eq "Preview") {
     '    "Preview" "1"'
 }
 else {
-    '    "SetLive" ' + (ConvertTo-SteamVdfLiteral -Value $privateBranch)
+    $targetBranch = if ($Mode -eq "UploadDev") {
+        $privateBranch
+    }
+    else {
+        $publicBranch
+    }
+    '    "SetLive" ' + (ConvertTo-SteamVdfLiteral -Value $targetBranch)
 }
 $description = "SnowDesktop v$version $modeSlug"
 $appScript = @"
@@ -309,6 +336,10 @@ if ($Mode -eq "UploadDev" -and
     $appScript -match '(?i)"SetLive"\s+"(default|public|release|live)"')) {
     throw "Upload SteamPipe script does not target the configured private branch."
 }
+if ($Mode -eq "UploadPublic" -and
+    $appScript -notmatch [regex]::Escape('"SetLive" "' + $publicBranch + '"')) {
+    throw "Public SteamPipe script does not target the configured public branch."
+}
 Write-Utf8WithoutBom -Path $appScriptPath -Content $appScript
 
 $steamCmd = Resolve-SteamCmdExecutable -RequestedPath $SteamCmdPath
@@ -323,8 +354,10 @@ $request = [ordered]@{
     version = $version
     steamAppId = $appId
     windowsDepotId = $depotId
-    privateDevelopmentBranch = if ($Mode -eq "UploadDev") {
+    targetBranch = if ($Mode -eq "UploadDev") {
         $privateBranch
+    } elseif ($Mode -eq "UploadPublic") {
+        $publicBranch
     } else { $null }
     appBuildScript = $appScriptPath
     log = $logPath
@@ -338,7 +371,7 @@ $request | ConvertTo-Json -Depth 3 |
     "SnowDesktop SteamPipe $Mode",
     "Version: $version",
     "App/Depot: $appId/$depotId",
-    "Branch: $(if ($Mode -eq 'UploadDev') { $privateBranch } else { '(none; preview only)' })",
+    "Branch: $(if ($Mode -eq 'UploadDev') { $privateBranch } elseif ($Mode -eq 'UploadPublic') { $publicBranch } else { '(none; preview only)' })",
     "Build account: configured through environment (redacted)",
     "Password: never accepted by this script"
 ) | Set-Content -LiteralPath $logPath -Encoding UTF8
@@ -362,5 +395,10 @@ if ($Mode -eq "Preview") {
     Write-Host "No depot content was uploaded and no branch was changed."
 }
 else {
-    Write-Host "Uploaded only to private development branch '$privateBranch'."
+    if ($Mode -eq "UploadDev") {
+        Write-Host "Uploaded only to private development branch '$privateBranch'."
+    }
+    else {
+        Write-Host "Uploaded to public release branch '$publicBranch'."
+    }
 }
