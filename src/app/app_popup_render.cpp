@@ -83,6 +83,9 @@ void DesktopApp::DrawCollectionPopup(
 
     std::vector<std::wstring> popupKeys =
         GetPopupItemKeys(widget);
+    PersonalizationSettings popupBackgroundAppearance =
+        collectionPopupAppearance_;
+    popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
     DrawWidgetPanelBackground(
         ctx, popupRect_, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
@@ -103,7 +106,7 @@ void DesktopApp::DrawCollectionPopup(
         std::clamp(collectionPopupAppearance_.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
             popupMetrics.scale,
-        &collectionPopupAppearance_, false, 0, popupMetrics.scale);
+        &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
     const auto headerBounds =
         snowdesktop::collection_popup_layout::
@@ -383,6 +386,17 @@ void DesktopApp::DrawCollectionPopup(
         ctx, content, contentHeight, visibleHeight,
         popupScrollOffset_, popupHovered,
         collectionPopupLightTheme_);
+
+    (void)DrawWidgetPanelEdgeHighlight(
+        ctx, popupRect_, 18.0f * popupMetrics.scale,
+        D2D1::ColorF(
+            collectionPopupAppearance_.widgetBgR,
+            collectionPopupAppearance_.widgetBgG,
+            collectionPopupAppearance_.widgetBgB,
+            std::clamp(
+                collectionPopupAppearance_.widgetAlpha,
+                0.0f, 1.0f)),
+        &collectionPopupAppearance_, popupMetrics.scale);
 
     if (animationApplied)
         ctx->SetTransform(previousTransform);

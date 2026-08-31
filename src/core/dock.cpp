@@ -1732,15 +1732,6 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                     panelRadius, panelRadius), borderBrush.Get(), borderWidth);
         }
     }
-    if (!IsEdgeAttached() && p.widgetEdgeHighlightEnabled &&
-        p.widgetEdgeHighlightStrength > 0.0005f)
-    {
-        const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
-            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-        (void)app_->DrawEdgeHighlight(context, bounds, panelRadius,
-            fill, edgeWidth, p.widgetEdgeHighlightStrength);
-    }
-
 }
 
 void DockContainer::DrawContents(ID2D1DeviceContext* context)
@@ -2296,6 +2287,31 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (searchHovered && !IsMagnificationSuppressed())
     {
         hoveredTitle = _LW("app.dock.quick_search");
+    }
+
+    // Keep the floating-panel reflection above icons and Dock controls. The
+    // edge-attached Dock intentionally retains only its flat single boundary.
+    if (!IsEdgeAttached())
+    {
+        PersonalizationSettings p = PersonalizationSettings::DarkPreset();
+        if (app_->renderingFloatingDock_)
+            p = app_->floatingDockPersonalization_;
+        else
+            p = app_->CurrentPersonalization();
+        if (p.widgetEdgeHighlightEnabled &&
+            p.widgetEdgeHighlightStrength > 0.0005f)
+        {
+            const RECT panelBounds =
+                GetVisualPanelBounds(app_->lastMousePoint_);
+            const float edgeWidth = std::clamp(
+                p.widgetEdgeHighlightWidth,
+                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+            const D2D1_COLOR_F fill = D2D1::ColorF(
+                p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
+            (void)app_->DrawEdgeHighlight(
+                context, panelBounds, p.cornerRadius, fill, edgeWidth,
+                p.widgetEdgeHighlightStrength);
+        }
     }
 
     if (!hoveredTitle.empty() && app_->dwriteFactory_)

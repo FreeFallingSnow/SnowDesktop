@@ -4290,12 +4290,19 @@ int main(int argc, char** argv)
             "floating Dock and popup hosts must flush content composition "
             "after native-menu modal-loop messages");
         Check(popupRenderSource.find(
-                  "&collectionPopupAppearance_, false, 0, popupMetrics.scale") !=
+                  "popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;") !=
+                    std::string::npos &&
+                popupRenderSource.find(
+                  "DrawWidgetPanelEdgeHighlight(") !=
+                    std::string::npos &&
+                popupRenderSource.find(
+                  "&collectionPopupAppearance_, popupMetrics.scale") !=
                     std::string::npos &&
                 panelRenderPrimitivesSource.find(
                   "std::max(0.0f, effectScale)") !=
                     std::string::npos,
-            "collection popup edge highlights must scale with the popup while ordinary border scaling stays independent");
+            "collection popup edge highlights must render above content and "
+            "scale with the popup while ordinary border scaling stays independent");
 
         const std::string menuIconsSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
