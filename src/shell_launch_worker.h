@@ -64,8 +64,20 @@ public:
      */
     void Stop();
 
-    /** @brief Execute one launch synchronously on the calling worker STA. */
+    /** @brief Execute one launch synchronously on the calling STA. */
     static bool Execute(
+        HWND owner,
+        const std::wstring& path,
+        PCIDLIST_ABSOLUTE absolutePidl,
+        int showCommand = SW_SHOWNORMAL);
+
+    /**
+     * @brief Execute user-initiated Open on a persistent message-pumping STA.
+     *
+     * The caller retains foreground-input ownership while Shell may complete
+     * DDE or an execution delegate asynchronously.
+     */
+    static bool ExecuteInteractive(
         HWND owner,
         const std::wstring& path,
         PCIDLIST_ABSOLUTE absolutePidl,

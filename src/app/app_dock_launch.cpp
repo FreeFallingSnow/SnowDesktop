@@ -212,12 +212,20 @@ bool DesktopApp::LaunchDesktopItem(
         (extension &&
             (_wcsicmp(extension, L".lnk") == 0 ||
                 _wcsicmp(extension, L".url") == 0));
+    // Desktop activation is direct user input. Invoke the Shell item's Open
+    // command on the UI STA, matching the context-menu path and preserving
+    // the input thread's foreground/DDE handoff. A single background launch
+    // queue can otherwise leave later document opens behind a blocked legacy
+    // handler on Windows 10. Dock launches keep their existing isolation.
     const bool launchAccepted =
-        useShellItemActivation && item.absolutePidl.get()
-        ? shellLaunchWorker_.EnqueueShellItem(
+        !animateDockLaunch && item.absolutePidl.get()
+        ? snowdesktop::ShellLaunchWorker::ExecuteInteractive(
             hwnd_, item.parsingName, item.absolutePidl.get())
-        : shellLaunchWorker_.Enqueue(
-            hwnd_, item.parsingName);
+        : useShellItemActivation && item.absolutePidl.get()
+            ? shellLaunchWorker_.EnqueueShellItem(
+                hwnd_, item.parsingName, item.absolutePidl.get())
+            : shellLaunchWorker_.Enqueue(
+                hwnd_, item.parsingName);
     if (!launchAccepted)
         return false;
     RecordDockItemUsage(itemIndex);
