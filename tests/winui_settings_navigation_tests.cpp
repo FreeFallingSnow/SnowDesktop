@@ -538,6 +538,9 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             pages.find("refreshTimer.Interval(std::chrono::milliseconds(500))") !=
                 std::string::npos &&
+            pages.find("std::swap(order[index]") != std::string::npos &&
+            pages.find("items.RemoveAt(index)") == std::string::npos &&
+            pages.find("items.InsertAt(") == std::string::npos &&
             desktopIconsSection.find(
               "desktopPage_->DesktopIconsContent()") !=
                 std::string_view::npos &&
@@ -580,7 +583,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shell.find("result.route.page = result.focusId.starts_with") ==
                 std::string::npos,
-        "Appearance leaves, Desktop, Pages, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
+        "Appearance leaves, Desktop, Pages, Categories, Dock, and Taskbar compose only their owned presenter sections, page move buttons do not detach their active XAML row, and moved focus aliases remain stable");
 
     const auto generalItem = shellXaml.find("x:Name=\"GeneralItem\"");
     const auto homeItem = shellXaml.find("x:Name=\"HomeItem\"");

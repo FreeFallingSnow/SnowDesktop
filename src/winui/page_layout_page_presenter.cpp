@@ -568,24 +568,23 @@ struct PageLayoutPagePresenter::Impl
     {
         if (closed || !active || delta == 0)
             return;
-        const auto items = pageList.Items();
-        std::uint32_t index = 0;
-        for (; index < items.Size(); ++index)
-        {
-            if (PageIdFromItem(items.GetAt(index)) == pageId)
-                break;
-        }
-        if (index >= items.Size())
+        auto order = CurrentOrder();
+        const auto found = std::ranges::find(order, pageId);
+        if (found == order.end())
             return;
-        const int target = static_cast<int>(index) + delta;
-        if (target < 0 || target >= static_cast<int>(items.Size()))
+        const auto index = static_cast<std::size_t>(
+            std::distance(order.begin(), found));
+        const auto target = static_cast<std::ptrdiff_t>(index) + delta;
+        if (target < 0 || target >= static_cast<std::ptrdiff_t>(order.size()))
             return;
-        const auto item = items.GetAt(index);
-        items.RemoveAt(index);
-        items.InsertAt(static_cast<std::uint32_t>(target), item);
-        pageList.SelectedItem(item);
-        UpdateOrderState();
-        ApplyOrder();
+
+        // The button belongs to the row whose Click event is still being
+        // dispatched. Removing and reinserting that live XAML row here can
+        // detach the event source, and the synchronous backend refresh may
+        // then clear it a second time. Submit the requested identity order
+        // without mutating the active Items collection.
+        std::swap(order[index], order[static_cast<std::size_t>(target)]);
+        ApplyOrder(order, static_cast<std::size_t>(target));
     }
 
     void UpdateInteractionState()
@@ -700,17 +699,31 @@ struct PageLayoutPagePresenter::Impl
             });
     }
 
+    void ApplyOrder(
+        const std::vector<std::wstring>& order,
+        std::optional<std::size_t> preferredIndex = {})
+    {
+        if (closed || !active || !actions.applyOrder)
+            return;
+        std::vector<std::wstring> saved;
+        saved.reserve(snapshot.pages.size());
+        for (const auto& page : snapshot.pages)
+            saved.push_back(page.id);
+        if (order == saved)
+            return;
+        ApplyResult(actions.applyOrder(snapshot.revision, order),
+            L("settings.pages.order.applied"), preferredIndex);
+    }
+
     void ApplyOrder()
     {
-        if (closed || !active || !orderDirty || !actions.applyOrder)
+        if (!orderDirty)
             return;
         const int selectedIndex = pageList.SelectedIndex();
-        ApplyResult(actions.applyOrder(snapshot.revision, CurrentOrder()),
-            L("settings.pages.order.applied"),
-            selectedIndex < 0
-                ? std::optional<std::size_t>{}
-                : std::optional<std::size_t>{
-                    static_cast<std::size_t>(selectedIndex)});
+        ApplyOrder(CurrentOrder(), selectedIndex < 0
+            ? std::optional<std::size_t>{}
+            : std::optional<std::size_t>{
+                static_cast<std::size_t>(selectedIndex)});
     }
 
     void ConfirmGrid()
