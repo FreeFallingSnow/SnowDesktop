@@ -70,9 +70,20 @@ Choose one rendering path:
 
 ## Create a package
 
-1. Copy `assets/widget-template` as a complete package directory.
-2. Generate a new UUID for a new package, choose a lowercase hyphenated `slug`,
-   and replace all example identity and text. Preserve the UUID for edits.
+1. For a new widget, use the bundled deterministic initializer rather than
+   rewriting the starter by hand:
+
+   ```powershell
+   & scripts\init_widget.ps1 `
+     -Destination <directory> -Slug <lowercase-hyphenated-slug> `
+     -Name <name> -Description <description> -Author <author>
+   ```
+
+   It refuses an existing destination, generates a new UUID, replaces the
+   localization prefix and retains one honest `en-US` starter locale. Add only
+   translations you can supply reliably. Do not use it when editing an existing
+   package; preserve that package's UUID.
+2. Replace all starter content, preview copy and example identity that remain.
 3. Keep `schemaVersion` and `apiVersion` at `2`. Use SemVer for `version` and a
    positive `dataVersion`.
 4. Replace starter content with a coherent first product slice. Do not leave
@@ -102,7 +113,9 @@ The SnowDesktop host owns the outer widget surface. By default:
 - Do not draw a full-surface `draw.rect`, `draw.gradientRect`, image or view
   background to imitate the host component background. Draw only content and
   intentional internal surfaces. Full-canvas artwork is an exception for a
-  clearly canvas-led widget such as a clock face.
+  clearly canvas-led widget such as a clock face. The linter flags obvious
+  full-bounds fills; use `-- snowwidget: allow-full-surface-content` only when
+  the full canvas is the widget's actual content.
 - Treat material/background and foreground theme as independent inputs. Never
   infer foreground colors from background RGB, luminance, wallpaper, alpha or
   a material name.
@@ -197,9 +210,12 @@ Use the lowest-cost checks first:
    that rendering completed. It does not prove readable contrast, correct
    hierarchy, unclipped content or a useful design. Fix defects, render again
    and repeat until the images pass.
-6. Generate the final catalog image inside the package, declare its relative
-   path as manifest `preview`, and run `snowwidget validate <directory>`.
-7. Run `snowwidget pack <directory> <name.snowwidget>`, then validate the packed
+6. Generate the final catalog image inside the package, then declare its
+   relative path as manifest `preview`.
+7. Run `snowwidget quality <directory>`. It combines package validation and
+   source lint and fails on unresolved warnings, including a missing preview,
+   hard-coded UI text and suspicious full-surface background drawing.
+8. Run `snowwidget pack <directory> <name.snowwidget>`, then validate the packed
    archive as well.
 
 The first meaningful preview must already show the widget's purpose, intended

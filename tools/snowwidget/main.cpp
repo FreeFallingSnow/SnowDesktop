@@ -34,6 +34,7 @@ void PrintUsage()
         << "  snowwidget view-contract\n"
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget lint <package-directory>\n"
+        << "  snowwidget quality <package-directory>\n"
         << "  snowwidget test <package-directory>\n"
         << "  snowwidget permissions <package-directory>\n"
         << "  snowwidget preview <package-directory> <output.png>"
@@ -377,12 +378,14 @@ int wmain(int argc, wchar_t** argv)
             << JsonEscape(SNOWDESKTOP_VERSION)
             << ",\"format\":\"snowdesktop-widget\","
                "\"authoringSkill\":{\"id\":\"snowdesktop-lua-widget\","
-               "\"revision\":2},\"recommendedSchemaVersion\":2,"
+               "\"revision\":"
+            << SNOWDESKTOP_WIDGET_SKILL_REVISION
+            << "},\"recommendedSchemaVersion\":2,"
                "\"recommendedApiVersion\":2,"
                "\"executableSchemaVersions\":[2],"
                "\"executableApiVersions\":[2],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
-               "\"lint\",\"test\",\"preview\",\"permissions\","
+               "\"lint\",\"quality\",\"test\",\"preview\",\"permissions\","
                "\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
@@ -503,6 +506,29 @@ int wmain(int argc, wchar_t** argv)
             LintWidgetDirectory(source, manifest);
         std::cout << lint.ToJson() << '\n';
         return lint.Ok() ? 0 : 1;
+    }
+    if (command == L"quality")
+    {
+        if (argc != 3 || source.extension() == L".snowwidget")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"quality requires an unpacked component directory\"}\n";
+            return 2;
+        }
+        snowdesktop::widget::PackageManifest manifest;
+        report = manager.ValidateDirectory(source, &manifest);
+        if (!report.Ok())
+        {
+            std::cout << "{\"ok\":false,\"validation\":"
+                << report.ToJson() << ",\"lint\":null}\n";
+            return 1;
+        }
+        const auto lint = snowdesktop::widget_authoring::
+            LintWidgetDirectory(source, manifest);
+        const bool qualityOk = lint.Ok() && lint.WarningCount() == 0;
+        std::cout << "{\"ok\":" << (qualityOk ? "true" : "false")
+            << ",\"validation\":" << report.ToJson()
+            << ",\"lint\":" << lint.ToJson() << "}\n";
+        return qualityOk ? 0 : 1;
     }
     if (command == L"test")
     {

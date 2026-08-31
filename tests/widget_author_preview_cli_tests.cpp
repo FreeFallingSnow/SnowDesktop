@@ -656,7 +656,15 @@ int wmain(int argc, wchar_t** argv)
     Check(lightForegroundExit == 0 && darkForegroundExit == 0 &&
             lightForegroundJson.find("\"ok\":true") !=
                 std::string::npos &&
+            lightForegroundJson.find("\"contentTheme\":0") !=
+                std::string::npos &&
+            lightForegroundJson.find("\"foregroundTheme\":\"light\"") !=
+                std::string::npos &&
             darkForegroundJson.find("\"ok\":true") !=
+                std::string::npos &&
+            darkForegroundJson.find("\"contentTheme\":1") !=
+                std::string::npos &&
+            darkForegroundJson.find("\"foregroundTheme\":\"dark\"") !=
                 std::string::npos &&
             CheckOpaquePreview(lightForegroundOutput, 192, 240).pixels !=
                 CheckOpaquePreview(darkForegroundOutput, 192, 240).pixels,
@@ -900,6 +908,8 @@ int wmain(int argc, wchar_t** argv)
         "acrylic-dark", "acrylic-light" };
     constexpr std::array<std::string_view, 6> appearanceThemes{
         "dark", "light", "dark", "light", "dark", "light" };
+    constexpr std::array<int, 6> appearanceContentThemes{
+        0, 1, 0, 0, 0, 1 };
     std::vector<RgbaBitmap> materialPreviews;
     for (std::size_t index = 0; index < appearances.size(); ++index)
     {
@@ -914,10 +924,13 @@ int wmain(int argc, wchar_t** argv)
             std::string(appearanceNames[index]) + "\"";
         const std::string expectedTheme = "\"theme\":\"" +
             std::string(appearanceThemes[index]) + "\"";
+        const std::string expectedContentTheme = "\"contentTheme\":" +
+            std::to_string(appearanceContentThemes[index]);
         Check(materialExit == 0 &&
                 materialJson.find(expectedAppearance) != std::string::npos &&
-                materialJson.find(expectedTheme) != std::string::npos,
-            "each supported appearance reports its canonical JSON identity");
+                materialJson.find(expectedTheme) != std::string::npos &&
+                materialJson.find(expectedContentTheme) != std::string::npos,
+            "each supported appearance reports its stage and resolved foreground identities");
         materialPreviews.push_back(
             CheckOpaquePreview(materialOutput, 192, 240));
     }

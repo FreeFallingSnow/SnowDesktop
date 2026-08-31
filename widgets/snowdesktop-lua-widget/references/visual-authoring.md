@@ -20,7 +20,9 @@ Keep content rendering inside that host surface:
 - Avoid nested cards when spacing, a divider or typography hierarchy is enough.
 - A canvas-led visual may cover the surface when the full canvas is the actual
   content, for example an analog clock face or deliberate artwork. It must still
-  respect the host clip and resolved foreground theme.
+  respect the host clip and resolved foreground theme. Add the exact source
+  comment `-- snowwidget: allow-full-surface-content` only for this intentional
+  case so the quality gate records the exception explicitly.
 
 Set `followPersonalizationDefault = true` for ordinary components. Fallback
 style values remain useful when personalization is disabled. A deliberately
@@ -105,6 +107,11 @@ Use `--appearance` with `dark`, `light`, `glass-dark`, `glass-light`,
 cannot be combined with `--appearance`. Use `--background <image-file>` for the
 final catalog composition. The source background is not included in the package
 unless the manifest separately declares it as a resource.
+
+Preview JSON reports `theme` for the light or dark stage palette and reports the
+resolved `contentTheme`/`foregroundTheme` separately. Use the latter fields when
+checking text and icon colors; `glass-light` reports `contentTheme: 0` and a
+light foreground even though its stage palette is light.
 
 For an ordinary component that follows personalization, exercise each supported
 host appearance with `followPersonalization=1`; include both `glass-light` and

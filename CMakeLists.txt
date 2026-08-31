@@ -803,6 +803,15 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMENT "Copying language files to output (SnowDesktop)..."
 )
 
+set(SNOWDESKTOP_WIDGET_SKILL_MANIFEST
+    "${CMAKE_SOURCE_DIR}/widgets/snowdesktop-lua-widget/skill.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${SNOWDESKTOP_WIDGET_SKILL_MANIFEST}")
+file(READ "${SNOWDESKTOP_WIDGET_SKILL_MANIFEST}"
+    SNOWDESKTOP_WIDGET_SKILL_MANIFEST_JSON)
+string(JSON SNOWDESKTOP_WIDGET_SKILL_REVISION GET
+    "${SNOWDESKTOP_WIDGET_SKILL_MANIFEST_JSON}" revision)
+
 add_executable(snowwidget
     tools/snowwidget/main.cpp
     src/widget_author_lint.cpp
@@ -821,18 +830,18 @@ add_executable(snowwidget
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
 target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32)
+target_compile_definitions(snowwidget PRIVATE
+    SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
+    SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
 if (MSVC)
     set_property(TARGET snowwidget PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(snowwidget PRIVATE
         /W4 /permissive- /EHsc /utf-8)
     target_compile_definitions(snowwidget PRIVATE
-        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 else()
     target_compile_options(snowwidget PRIVATE -Wall -Wextra -pedantic)
-    target_compile_definitions(snowwidget PRIVATE
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
 endif()
 
 # The Steam bridge is a separate MIT-licensed executable. It deliberately does

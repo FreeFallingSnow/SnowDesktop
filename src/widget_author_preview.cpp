@@ -535,6 +535,8 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"locale\":" << JsonString(locale)
         << ",\"theme\":" << JsonString(theme)
         << ",\"appearance\":" << JsonString(appearance)
+        << ",\"contentTheme\":" << contentTheme
+        << ",\"foregroundTheme\":" << JsonString(foregroundTheme)
         << ",\"dataState\":" << JsonString(dataState)
         << ",\"background\":"
         << JsonString(WideToUtf8(backgroundImage.wstring())) << '}';
@@ -785,6 +787,8 @@ PreviewRenderResult RenderWidgetPreview(
         0, 0, result.componentWidth, result.componentHeight };
     const ResolvedPreviewStyle resolvedStyle =
         ResolvePreviewStyle(engine, *appearance);
+    result.contentTheme = resolvedStyle.theme.contentTheme;
+    result.foregroundTheme = result.contentTheme == 1 ? "dark" : "light";
     // Keep component theme APIs and declarative semantic tokens in sync with
     // the independently resolved custom material/foreground preview settings.
     engine.SetWidgetTheme(kPreviewWidgetId, resolvedStyle.theme);

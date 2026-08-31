@@ -46,6 +46,8 @@ struct PreviewRenderResult
     std::string locale;
     std::string theme;
     std::string appearance;
+    int contentTheme = -1;
+    std::string foregroundTheme;
     std::string dataState;
     std::filesystem::path backgroundImage;
 

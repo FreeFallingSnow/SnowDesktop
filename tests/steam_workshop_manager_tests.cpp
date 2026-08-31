@@ -847,7 +847,7 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         auto status = InspectAgentSkill(
             bundled, snowwidget, target, error);
         Check(status.state == SkillInstallState::NotInstalled &&
-            status.bundledRevision == 6,
+            status.bundledRevision == 7,
             "each supported agent reports a clean not-installed state");
         Check(InstallOrUpdateAgentSkill(status, error),
             "Agent Skill installs transactionally into every selected root");
@@ -894,6 +894,10 @@ void TestRealPackageTool(const std::filesystem::path& executable,
             JsonUnsigned(capabilities, "protocolVersion") == 2u &&
             JsonUnsigned(capabilities, "recommendedSchemaVersion") == 2u &&
             JsonUnsigned(capabilities, "recommendedApiVersion") == 2u &&
+            capabilities.Find("authoringSkill") &&
+            capabilities.Find("authoringSkill")->IsObject() &&
+            JsonUnsigned(*capabilities.Find("authoringSkill"), "revision") ==
+                7u &&
             capabilities.Find("executableSchemaVersions") &&
             capabilities.Find("executableSchemaVersions")->IsArray() &&
             capabilities.Find("executableSchemaVersions")->array.size() == 1 &&

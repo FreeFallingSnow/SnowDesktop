@@ -177,6 +177,78 @@ bool IsSymbol(const Token& token, std::string_view symbol) noexcept
     return token.kind == TokenKind::Symbol && token.text == symbol;
 }
 
+struct TokenRange
+{
+    std::size_t begin = 0;
+    std::size_t end = 0;
+};
+
+std::vector<TokenRange> CallArguments(
+    const std::vector<Token>& tokens, std::size_t openParenthesis)
+{
+    std::vector<TokenRange> arguments;
+    if (openParenthesis >= tokens.size() ||
+            !IsSymbol(tokens[openParenthesis], "("))
+        return arguments;
+    std::size_t begin = openParenthesis + 1;
+    std::size_t parentheses = 1;
+    std::size_t braces = 0;
+    std::size_t brackets = 0;
+    for (std::size_t cursor = begin; cursor < tokens.size(); ++cursor)
+    {
+        if (IsSymbol(tokens[cursor], "(")) ++parentheses;
+        else if (IsSymbol(tokens[cursor], ")"))
+        {
+            if (--parentheses == 0)
+            {
+                if (cursor > begin) arguments.push_back({ begin, cursor });
+                return arguments;
+            }
+        }
+        else if (IsSymbol(tokens[cursor], "{")) ++braces;
+        else if (IsSymbol(tokens[cursor], "}") && braces > 0) --braces;
+        else if (IsSymbol(tokens[cursor], "[")) ++brackets;
+        else if (IsSymbol(tokens[cursor], "]") && brackets > 0) --brackets;
+        else if (IsSymbol(tokens[cursor], ",") && parentheses == 1 &&
+                braces == 0 && brackets == 0)
+        {
+            arguments.push_back({ begin, cursor });
+            begin = cursor + 1;
+        }
+    }
+    return {};
+}
+
+bool IsSingleToken(const std::vector<Token>& tokens, TokenRange range,
+    TokenKind kind, std::string_view text) noexcept
+{
+    return range.end == range.begin + 1 &&
+        tokens[range.begin].kind == kind && tokens[range.begin].text == text;
+}
+
+bool IsSingleTokenKind(const std::vector<Token>& tokens, TokenRange range,
+    TokenKind kind) noexcept
+{
+    return range.end == range.begin + 1 &&
+        tokens[range.begin].kind == kind;
+}
+
+bool IsLayoutDimension(const std::vector<Token>& tokens, TokenRange range,
+    std::string_view first, std::string_view second) noexcept
+{
+    if (range.end != range.begin + 5) return false;
+    const auto matches = [&](std::string_view name) {
+        return tokens[range.begin].kind == TokenKind::Identifier &&
+            tokens[range.begin].text == "layout" &&
+            IsSymbol(tokens[range.begin + 1], ".") &&
+            tokens[range.begin + 2].kind == TokenKind::Identifier &&
+            tokens[range.begin + 2].text == name &&
+            IsSymbol(tokens[range.begin + 3], "(") &&
+            IsSymbol(tokens[range.begin + 4], ")");
+    };
+    return matches(first) || matches(second);
+}
+
 void AddIssue(LintReport& report, LintSeverity severity,
     std::string code, const std::filesystem::path& path,
     std::size_t line, std::string message)
@@ -407,6 +479,23 @@ void LintApiCalls(LintReport& report,
         CheckPermission(report, declared, path, tokens[index].line,
             qualified, contract->requiredPermission);
 
+        if (qualified == "l10n.tr" && index + 4 < tokens.size() &&
+                tokens[index + 4].kind == TokenKind::String)
+        {
+            const std::string& key = tokens[index + 4].text;
+            for (const auto& [locale, metadata] : manifest.locales)
+            {
+                const auto localized = metadata.strings.find(key);
+                if (localized != metadata.strings.end() &&
+                        !localized->second.empty())
+                    continue;
+                AddIssue(report, LintSeverity::Error,
+                    "l10n.missing-key", path, tokens[index + 4].line,
+                    "localization key " + key + " is missing or empty in " +
+                        locale);
+            }
+        }
+
         if ((qualified == "data.subscribe" ||
                 qualified == "task.start") && index + 4 < tokens.size() &&
                 tokens[index + 4].kind == TokenKind::String)
@@ -484,7 +573,7 @@ void LintViewConstructors(LintReport& report,
                 AddIssue(report, LintSeverity::Warning,
                     "l10n.hardcoded", path, tokens[cursor + 2].line,
                     property +
-                        " contains a literal UI string; prefer l10n.t()");
+                        " contains a literal UI string; prefer l10n.tr()");
             }
         }
         if (!hasKey)
@@ -511,6 +600,70 @@ void LintViewConstructors(LintReport& report,
                         " was already used on line " +
                         std::to_string(found->second));
             }
+        }
+    }
+}
+
+void LintImmediateDrawing(LintReport& report,
+    const std::filesystem::path& path, const std::vector<Token>& tokens,
+    bool allowFullSurfaceContent)
+{
+    for (std::size_t index = 0; index + 3 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind != TokenKind::Identifier ||
+                tokens[index].text != "draw" ||
+                !IsSymbol(tokens[index + 1], ".") ||
+                tokens[index + 2].kind != TokenKind::Identifier ||
+                !IsSymbol(tokens[index + 3], "("))
+            continue;
+        const std::string& function = tokens[index + 2].text;
+        const auto arguments = CallArguments(tokens, index + 3);
+        if (function == "text" && arguments.size() >= 3 &&
+                IsSingleTokenKind(tokens, arguments[2], TokenKind::String) &&
+                !tokens[arguments[2].begin].text.empty())
+        {
+            AddIssue(report, LintSeverity::Warning, "l10n.hardcoded", path,
+                tokens[arguments[2].begin].line,
+                "draw.text contains a literal UI string; prefer l10n.tr()");
+        }
+        if (!allowFullSurfaceContent &&
+                (function == "rect" || function == "gradientRect") &&
+                arguments.size() >= 4 &&
+                IsSingleToken(tokens, arguments[0], TokenKind::Symbol, "0") &&
+                IsSingleToken(tokens, arguments[1], TokenKind::Symbol, "0") &&
+                IsLayoutDimension(tokens, arguments[2],
+                    "contentWidth", "width") &&
+                IsLayoutDimension(tokens, arguments[3],
+                    "contentHeight", "height"))
+        {
+            AddIssue(report, LintSeverity::Warning,
+                "surface.full-background", path, tokens[index].line,
+                "full-bounds drawing can duplicate the host widget material; "
+                "draw content or internal surfaces instead, or add "
+                "-- snowwidget: allow-full-surface-content when the full "
+                "canvas is intentional content");
+        }
+    }
+}
+
+void LintLocaleCatalogs(LintReport& report,
+    const snowdesktop::widget::PackageManifest& manifest)
+{
+    std::unordered_set<std::string> keys;
+    for (const auto& localeEntry : manifest.locales)
+        for (const auto& stringEntry : localeEntry.second.strings)
+            keys.insert(stringEntry.first);
+    for (const auto& key : keys)
+    {
+        for (const auto& [locale, metadata] : manifest.locales)
+        {
+            const auto value = metadata.strings.find(key);
+            if (value != metadata.strings.end() && !value->second.empty())
+                continue;
+            AddIssue(report, LintSeverity::Error,
+                "l10n.locale-key-set", "widget.json", 1,
+                "localization key " + key + " is missing or empty in " +
+                    locale);
         }
     }
 }
@@ -577,6 +730,9 @@ LintReport LintWidgetSource(
     const auto tokens = Tokenize(source);
     LintApiCalls(report, manifest, relativePath, tokens);
     LintViewConstructors(report, relativePath, tokens);
+    LintImmediateDrawing(report, relativePath, tokens,
+        source.find("-- snowwidget: allow-full-surface-content") !=
+            std::string_view::npos);
     return report;
 }
 
@@ -585,6 +741,13 @@ LintReport LintWidgetDirectory(
     const snowdesktop::widget::PackageManifest& manifest)
 {
     LintReport report;
+    if (manifest.preview.empty())
+    {
+        AddIssue(report, LintSeverity::Warning, "package.preview.missing",
+            "widget.json", 1,
+            "final packages should declare a generated preview image");
+    }
+    LintLocaleCatalogs(report, manifest);
     std::error_code error;
     const auto absoluteRoot = std::filesystem::absolute(root, error);
     if (error)
