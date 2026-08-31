@@ -201,6 +201,15 @@
 
 ## 仓库内容边界
 
+- `developer_assets/workshop_widgets/` 保存由 SnowDesktop 维护、准备独立发布到 Steam Workshop 的
+  官方社区组件源码；它们不是内置组件，不得放入 `widgets/`，也不得随应用发行包复制。只有用户
+  明确要求将社区组件提升为内置组件时，才允许迁入 `widgets/` 并同步更新内置组件契约测试。
+- 官方社区组件的清单预览统一命名为 `workshop-preview.png`。生成封面时必须使用
+  `developer_assets/workshop_widgets/audio-spectrum/workshop-preview.png` 所采用的同款 Windows 11
+  蓝色花瓣背景原图 `C:\Windows\Web\Wallpaper\Windows\img0.jpg`；不得把已经叠有音频波形的成品
+  预览当作背景二次合成，也不得自行替换其他壁纸。使用组件真实跨度，并通过
+  `snowwidget preview ... --appearance glass-light --background C:\Windows\Web\Wallpaper\Windows\img0.jpg --canvas-size 512 --padding 48`
+  生成 512×512 封面，目检后再写入清单和打包。
 - `widgets/` 同时包含内置 Lua 组件与面向用户提供的
   `snowdesktop-lua-widget` Agent Skill；后者是产品的组件开发功能，必须继续随软件分发，
   不得当作临时 Agent 文件删除。

@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 2,
+  "id": "6c911713-6d42-4f93-9f72-b9899dd94c8c",
+  "slug": "wooden-fish",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "author": "SnowDesktop Community",
+  "license": "GPL-3.0-only",
+  "name": "Wooden Fish",
+  "nameKey": "lua_widget.wooden_fish.name",
+  "version": "1.0.0",
+  "description": "A calming wooden fish counter with tactile visual feedback.",
+  "descriptionKey": "lua_widget.wooden_fish.description",
+  "preview": "workshop-preview.png",
+  "locales": {
+    "zh-CN": {
+      "lua_widget.wooden_fish.name": "敲木鱼",
+      "lua_widget.wooden_fish.description": "轻敲木鱼、积累功德，在忙碌中留一刻清静。",
+      "lua_widget.wooden_fish.counter": "累计功德 {0}",
+      "lua_widget.wooden_fish.feedback": "功德 +1",
+      "lua_widget.wooden_fish.hint": "轻点木鱼，静心一下",
+      "lua_widget.wooden_fish.strike": "敲木鱼，当前累计功德 {0}",
+      "lua_widget.wooden_fish.tooltip": "敲一下，功德 +1",
+      "lua_widget.wooden_fish.reset": "清零功德"
+    },
+    "en-US": {
+      "lua_widget.wooden_fish.name": "Wooden Fish",
+      "lua_widget.wooden_fish.description": "Tap a wooden fish, collect merit, and find a quiet moment in a busy day.",
+      "lua_widget.wooden_fish.counter": "Merit {0}",
+      "lua_widget.wooden_fish.feedback": "Merit +1",
+      "lua_widget.wooden_fish.hint": "Tap for a mindful moment",
+      "lua_widget.wooden_fish.strike": "Strike the wooden fish. Current merit: {0}",
+      "lua_widget.wooden_fish.tooltip": "Strike once to gain one merit",
+      "lua_widget.wooden_fish.reset": "Reset Merit"
+    },
+    "zh-TW": {
+      "lua_widget.wooden_fish.name": "敲木魚",
+      "lua_widget.wooden_fish.description": "輕敲木魚、累積功德，在忙碌中留一刻清靜。",
+      "lua_widget.wooden_fish.counter": "累積功德 {0}",
+      "lua_widget.wooden_fish.feedback": "功德 +1",
+      "lua_widget.wooden_fish.hint": "輕點木魚，靜心一下",
+      "lua_widget.wooden_fish.strike": "敲木魚，目前累積功德 {0}",
+      "lua_widget.wooden_fish.tooltip": "敲一下，功德 +1",
+      "lua_widget.wooden_fish.reset": "清零功德"
+    }
+  },
+  "defaultSize": {
+    "columns": 2,
+    "rows": 2
+  },
+  "minSize": {
+    "columns": 2,
+    "rows": 2
+  },
+  "maxSize": {
+    "columns": 3,
+    "rows": 3
+  },
+  "previewData": {
+    "storage": {
+      "count": 108
+    }
+  },
+  "requiredFeatures": [
+    "draw.advanced",
+    "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.keyboard",
+    "interaction.pointerActions",
+    "interaction.region",
+    "interaction.tooltip",
+    "layout.relativeUnits",
+    "lifecycle.event",
+    "lifecycle.model",
+    "l10n.basic",
+    "l10n.format",
+    "resource.package",
+    "schedule.basic",
+    "schedule.visibility",
+    "storage.typed",
+    "storage.writeBudget"
+  ],
+  "optionalFeatures": [],
+  "resources": {
+    "wooden-fish": {
+      "type": "image",
+      "path": "assets/wooden-fish.png"
+    },
+    "mallet": {
+      "type": "image",
+      "path": "assets/mallet.png"
+    }
+  },
+  "slots": {},
+  "permissions": [],
+  "optionalPermissions": []
+}
