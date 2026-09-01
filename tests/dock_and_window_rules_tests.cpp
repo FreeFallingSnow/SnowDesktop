@@ -7446,6 +7446,17 @@ int main(int argc, char** argv)
         const std::size_t presentClearedHover =
             onMouseLeaveHandler.find(
                 "PresentPassiveHoverVisualChange();");
+        const std::size_t sampleRetainedDragDwell =
+            onMouseLeaveHandler.find(
+                "TryGetDesktopHoverPointFromCursor(retainedDragPoint)");
+        const std::size_t refreshRetainedDragDwell =
+            onMouseLeaveHandler.find(
+                "UpdateCollectionPopupDwell(retainedDragPoint);",
+                sampleRetainedDragDwell);
+        const std::size_t cancelDepartedDragDwell =
+            onMouseLeaveHandler.find(
+                "CancelCollectionPopupDwell();",
+                refreshRetainedDragDwell);
         Check(!onMouseLeaveHandler.empty() &&
                 holdNativeMenuHover != std::string::npos &&
                 clearPointer != std::string::npos &&
@@ -7455,6 +7466,15 @@ int main(int argc, char** argv)
                 clearPointer < shrinkFloatingRegion &&
                 shrinkFloatingRegion < presentClearedHover,
             "native menu capture must hold the paired hover frame before ordinary leave clears and presents it");
+        Check(sampleRetainedDragDwell != std::string::npos &&
+                refreshRetainedDragDwell != std::string::npos &&
+                cancelDepartedDragDwell != std::string::npos &&
+                onMouseLeaveHandler.find(
+                    "dragDropController_.IsTransportActive()") !=
+                    std::string::npos &&
+                sampleRetainedDragDwell < refreshRetainedDragDwell &&
+                refreshRetainedDragDwell < cancelDepartedDragDwell,
+            "mouse leave must retain collection dwell across SnowDesktop surface HWNDs and cancel it only after a real departure");
         Check(oleDropRoutingSource.find(
                   "bool DesktopApp::IsBaseDesktopHoverSurfaceWindow(") !=
                     std::string::npos &&

@@ -62,8 +62,26 @@ void DesktopApp::OnMouseLeave()
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
-    CancelCollectionPopupDwell();
-    CancelCollectionGroupTabDwell();
+    POINT retainedDragPoint{};
+    const bool preserveDragDwell =
+        (dragSession_.IsActive() ||
+         dragDropController_.IsTransportActive()) &&
+        TryGetDesktopHoverPointFromCursor(retainedDragPoint);
+    if (preserveDragDwell)
+    {
+        // WM_MOUSELEAVE belongs to one native HWND, while collection dwell
+        // belongs to the complete SnowDesktop interaction surface. A desktop
+        // icon returning from OLE and an external OLE source may have no local
+        // capture, so crossing a backdrop, Dock host, or popup HWND must not
+        // erase the candidate that a component-origin drag can retain.
+        UpdateCollectionPopupDwell(retainedDragPoint);
+        UpdateCollectionGroupTabDwell(retainedDragPoint);
+    }
+    else
+    {
+        CancelCollectionPopupDwell();
+        CancelCollectionGroupTabDwell();
+    }
     ResetDockHandoffDwell();
 
     // Capture-based dragging continues to receive coordinates outside the
