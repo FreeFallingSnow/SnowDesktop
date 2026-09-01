@@ -143,13 +143,6 @@ local function setup()
     return model
 end
 
-local function centeredTextIn(text, regionX, y, size, color, width, bold, alpha)
-    local metrics = draw.measureText(text, size, width, bold)
-    local x = regionX + (width - metrics.width) / 2
-    draw.text(x, y, text, size, color, width, bold, true,
-        nil, alpha or 1.0)
-end
-
 local function centeredText(text, y, size, color, width, bold, alpha,
         centerX)
     local metrics = draw.measureText(text, size, width, bold)
@@ -235,25 +228,19 @@ local function render(_context, model)
     local width = math.max(1, layout.contentWidth())
     local height = math.max(1, layout.contentHeight())
     local pressed = interaction.isPressed(STRIKE_KEY)
-    local hovered = interaction.isHovered(STRIKE_KEY)
-    local focused = interaction.isFocused(STRIKE_KEY)
     local padding = layout.cu(10)
-    local counterSize = math.max(layout.fontCu(11.5),
-        math.min(layout.fontCu(15), layout.vmin(5.8)))
-    local hintSize = math.max(layout.fontCu(12.5),
-        math.min(layout.fontCu(15.5), layout.vmin(5.4)))
+    local textSize = math.max(layout.fontCu(14),
+        math.min(layout.fontCu(17), layout.vmin(6.2)))
     local term, hint = resolvedCopy()
-    local counterGap = layout.cu(7)
-    local counterWidth = math.max(1,
-        (width - padding * 2 - counterGap) / 2)
+    local textWidth = width - padding * 2
     local todayText = l10n.tr("lua_widget.wooden_fish.today_counter",
         l10n.formatNumber(model.todayCount))
     local totalText = l10n.tr("lua_widget.wooden_fish.total_counter",
         l10n.formatNumber(model.count))
-    centeredTextIn(todayText, padding, padding, counterSize, colors.primary,
-        counterWidth, true)
-    centeredTextIn(totalText, padding + counterWidth + counterGap,
-        padding, counterSize, colors.primary, counterWidth, true)
+    centeredText(todayText, padding, textSize, colors.feedback,
+        textWidth, true)
+    centeredText(totalText, padding + textSize * 1.35,
+        textSize, colors.feedback, textWidth, true)
 
     local instrumentSize = math.max(layout.cu(104),
         math.min(width * 0.72, height * 0.53))
@@ -261,15 +248,12 @@ local function render(_context, model)
     local instrumentCx = width * 0.45
     drawInstrument(instrumentCx, instrumentCy, instrumentSize, pressed, model)
 
-    local feedbackSize = math.max(layout.fontCu(12),
-        math.min(layout.fontCu(15), layout.vmin(5.1)))
     drawFeedback(model, instrumentCy - instrumentSize * 0.62,
-        feedbackSize, colors, width - padding * 2, instrumentCx, term)
+        textSize, colors, textWidth, instrumentCx, term)
 
     centeredText(hint,
-        height - padding - hintSize * 1.35, hintSize,
-        (hovered or focused) and colors.focus or colors.secondary,
-        width - padding * 2, false, 0.96)
+        height - padding - textSize * 1.35, textSize,
+        colors.feedback, textWidth, true, 0.96)
 
     interaction.region({
         key = STRIKE_KEY,
