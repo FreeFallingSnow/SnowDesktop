@@ -266,6 +266,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         PresentOleDragInteractionFrame();
         return S_OK;
     }
+    UpdateCollectionPopupDwell(client);
 
     // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
@@ -373,6 +374,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         PresentOleDragInteractionFrame();
         return S_OK;
     }
+    UpdateCollectionPopupDwell(client);
 
     // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;

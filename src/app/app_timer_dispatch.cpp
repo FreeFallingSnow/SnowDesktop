@@ -506,7 +506,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
         if (TryOpenDwellCollectionPopup(GetTickCount()))
         {
-            OnMouseMoveAt(0, lastMousePoint_);
+            RefreshDwellDragTarget(lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }

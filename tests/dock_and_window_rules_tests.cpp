@@ -7123,6 +7123,10 @@ int main(int argc, char** argv)
             timerDispatchSource.find(
                 "TryOpenDwellCollectionPopup(",
                 popupTimerDispatch);
+        const std::size_t popupTimerRefresh =
+            timerDispatchSource.find(
+                "RefreshDwellDragTarget(lastMousePoint_);",
+                popupTimerOpen);
         const std::size_t groupTimerDispatch =
             timerDispatchSource.find(
                 "timerId == kCollectionGroupTabDwellTimerId");
@@ -7137,12 +7141,15 @@ int main(int argc, char** argv)
         Check(popupTimerDispatch != std::string::npos &&
                 popupTimerStaleGuard != std::string::npos &&
                 popupTimerOpen != std::string::npos &&
+                popupTimerRefresh != std::string::npos &&
                 popupTimerStaleGuard < popupTimerOpen &&
+                popupTimerOpen < popupTimerRefresh &&
+                popupTimerRefresh < groupTimerDispatch &&
                 groupTimerDispatch != std::string::npos &&
                 groupTimerStaleGuard != std::string::npos &&
                 groupTimerActivate != std::string::npos &&
                 groupTimerStaleGuard < groupTimerActivate,
-            "queued dwell timer messages must stop at the armed-state guard after cancellation");
+            "queued dwell timer messages must stop after cancellation and refresh the opened popup through the active drag transport");
         Check(dragLifecycleSource.find(
                   "CancelCollectionPopupDwell();") !=
                     std::string::npos &&
@@ -8094,6 +8101,38 @@ int main(int argc, char** argv)
                   "dragSession_.SetVisualVisible(true);") ==
                     std::string::npos,
             "self OLE callbacks must keep custom feedback hidden while requesting a native hand-back");
+
+        const std::size_t externalEnterBegin =
+            selfOleEnterHandler.find("BeginExternalDrag(");
+        const std::size_t externalEnterPopupDwell =
+            selfOleEnterHandler.find(
+                "UpdateCollectionPopupDwell(client);",
+                externalEnterBegin);
+        const std::size_t externalEnterHitTest =
+            selfOleEnterHandler.find(
+                "HitTestPopupForDrag(",
+                externalEnterPopupDwell);
+        const std::size_t externalOverBegin =
+            selfOleOverHandler.find("ContinueExternalDrag();");
+        const std::size_t externalOverPopupDwell =
+            selfOleOverHandler.find(
+                "UpdateCollectionPopupDwell(client);",
+                externalOverBegin);
+        const std::size_t externalOverHitTest =
+            selfOleOverHandler.find(
+                "HitTestPopupForDrag(",
+                externalOverPopupDwell);
+        Check(externalEnterBegin != std::string::npos &&
+                externalEnterPopupDwell != std::string::npos &&
+                externalEnterHitTest != std::string::npos &&
+                externalEnterBegin < externalEnterPopupDwell &&
+                externalEnterPopupDwell < externalEnterHitTest &&
+                externalOverBegin != std::string::npos &&
+                externalOverPopupDwell != std::string::npos &&
+                externalOverHitTest != std::string::npos &&
+                externalOverBegin < externalOverPopupDwell &&
+                externalOverPopupDwell < externalOverHitTest,
+            "external OLE enter and over must arm collection dwell before resolving popup targets");
 
         const std::size_t doDragDrop =
             pointerMoveSource.find(
