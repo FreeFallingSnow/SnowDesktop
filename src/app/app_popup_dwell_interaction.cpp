@@ -7,6 +7,15 @@ void DesktopApp::TraceCollectionPopupDwell(
     const wchar_t* stage, const wchar_t* hit,
     POINT point, size_t candidate)
 {
+    (void)stage;
+    (void)hit;
+    (void)point;
+    (void)candidate;
+
+    // The target drag paths have now been verified on the desktop. Keep the
+    // diagnostic body available for a future investigation, but do not pay
+    // its formatting or file-I/O cost during normal collection dwell.
+#if 0
     if (!dragSession_.IsActive() &&
         !dragDropController_.IsTransportActive() &&
         popupDwellController_.IsIdle())
@@ -54,6 +63,7 @@ void DesktopApp::TraceCollectionPopupDwell(
         signature, point.x, point.y,
         mouseDown_ ? 1 : 0, GetCapture());
     WriteDiagnosticLogEntry(message);
+#endif
 }
 
 bool DesktopApp::CanCurrentDragUseCollectionPopup() const
@@ -75,16 +85,20 @@ void DesktopApp::EnsureCollectionPopupDwellTimerArmed()
     if (collectionPopupDwellTimerArmed_ ||
         !hwnd_ || !IsWindow(hwnd_))
         return;
+#if 0
     collectionPopupDwellTimerObserved_ = false;
+#endif
     collectionPopupDwellTimerArmed_ =
         SetTimer(
             hwnd_, kCollectionPopupDwellTimerId,
             kCollectionPopupDwellIntervalMs, nullptr) != 0;
+#if 0
     TraceCollectionPopupDwell(
         collectionPopupDwellTimerArmed_
             ? L"timer-armed" : L"timer-arm-failed",
         L"candidate", lastMousePoint_,
         popupDwellController_.Candidate());
+#endif
 }
 
 void DesktopApp::CancelCollectionPopupDwell()
@@ -95,7 +109,9 @@ void DesktopApp::CancelCollectionPopupDwell()
     popupDwellController_.Reset();
     const bool wasArmed = collectionPopupDwellTimerArmed_;
     collectionPopupDwellTimerArmed_ = false;
+#if 0
     collectionPopupDwellTimerObserved_ = false;
+#endif
     if (wasArmed && hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
 }
