@@ -852,6 +852,18 @@ void TestDragInputSampling()
             !dragInputRules::IsNativeDragActive(true, true),
         "only drag sessions outside OLE transport may use native pointer routing");
     Check(
+        dragInputRules::IsLatencySensitivePointerGesture(
+            true, false, false, false) &&
+            dragInputRules::IsLatencySensitivePointerGesture(
+                false, true, false, false) &&
+            dragInputRules::IsLatencySensitivePointerGesture(
+                false, false, true, true) &&
+            !dragInputRules::IsLatencySensitivePointerGesture(
+                false, false, true, false) &&
+            !dragInputRules::IsLatencySensitivePointerGesture(
+                false, false, false, true),
+        "native drags, marquee selection, and valid widget move or resize targets must share latency-sensitive pointer routing");
+    Check(
         !dragInputRules::ShouldDeferModelReload(false, false) &&
             dragInputRules::ShouldDeferModelReload(true, false) &&
             dragInputRules::ShouldDeferModelReload(false, true) &&
@@ -861,7 +873,17 @@ void TestDragInputSampling()
         dragInputRules::ShouldSampleLivePointer(true, true) &&
             !dragInputRules::ShouldSampleLivePointer(false, true) &&
             !dragInputRules::ShouldSampleLivePointer(true, false),
-        "live drag and marquee sampling must stop after the physical primary button is released");
+        "live pointer sampling must stop after the active gesture button is released");
+    Check(
+        dragInputRules::IsPointerGestureButtonDown(
+            false, true, false) &&
+            !dragInputRules::IsPointerGestureButtonDown(
+                false, false, true) &&
+            dragInputRules::IsPointerGestureButtonDown(
+                true, false, true) &&
+            !dragInputRules::IsPointerGestureButtonDown(
+                true, true, false),
+        "primary gestures must follow the left button while middle-button widget moves preserve their own release barrier");
     Check(
         dragInputRules::IsMarqueePointerGesture(
             true, false, true, true, true,
@@ -889,15 +911,15 @@ void TestDragInputSampling()
             dragInputRules::ShouldSampleFloatingWindowPointer(false, false),
         "floating windows must keep ordinary live hover sampling but preserve a queued native-drag release point");
     Check(
-        dragInputRules::IsNativeDragMessageSurface(
+        dragInputRules::IsLatencySensitivePointerMessageSurface(
             true, false, false) &&
-        dragInputRules::IsNativeDragMessageSurface(
+        dragInputRules::IsLatencySensitivePointerMessageSurface(
             false, true, false) &&
-        dragInputRules::IsNativeDragMessageSurface(
+        dragInputRules::IsLatencySensitivePointerMessageSurface(
             false, false, true) &&
-        !dragInputRules::IsNativeDragMessageSurface(
+        !dragInputRules::IsLatencySensitivePointerMessageSurface(
             false, false, false),
-        "native drag message coalescing must cover the desktop, floating Dock, and floating popup windows");
+        "latency-sensitive pointer coalescing must cover the desktop, floating Dock, and floating popup windows");
     Check(
         dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
             true, true, true) &&

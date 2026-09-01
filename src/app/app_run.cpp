@@ -1397,12 +1397,20 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
                     dragDropController_.IsTransportActive());
-            const bool latencySensitivePointerActive =
-                nativeDragActive ||
+            const bool marqueePointerActive =
                 IsMarqueePointerGesturePendingOrActive();
-            const bool nativeDragMessageSurface =
+            const bool widgetActionActive =
+                widgetAction_ != WidgetAction::None;
+            const bool latencySensitivePointerActive =
                 snowdesktop::drag_input_rules::
-                    IsNativeDragMessageSurface(
+                    IsLatencySensitivePointerGesture(
+                        nativeDragActive,
+                        marqueePointerActive,
+                        widgetActionActive,
+                        mouseDownWidgetIndex_ < widgets_.size());
+            const bool pointerMessageSurface =
+                snowdesktop::drag_input_rules::
+                    IsLatencySensitivePointerMessageSurface(
                         msg.hwnd == hwnd_,
                         IsPersistentDockHostWindow(msg.hwnd),
                         floatingPopupHwnd_ != nullptr &&
@@ -1410,7 +1418,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             snowdesktop::drag_input_rules::
                 CoalesceQueuedMouseMoves(
                     latencySensitivePointerActive,
-                    nativeDragMessageSurface,
+                    pointerMessageSurface,
                     msg,
                     [](MSG& next) {
                         return PeekMessageW(

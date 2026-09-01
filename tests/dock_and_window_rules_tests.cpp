@@ -4319,6 +4319,9 @@ int main(int argc, char** argv)
         const std::string messageDispatchSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_message_dispatch.cpp");
+        const std::string appRunSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_run.cpp");
         const std::string dragHintWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_drag_hint_window.cpp");
@@ -4806,6 +4809,58 @@ int main(int argc, char** argv)
                 guardedLuaHover < guardedPopupDwell &&
                 guardedPopupDwell < widgetGestureThreshold,
             "active widget drags and marquees must bypass unrelated Dock, Lua hover and popup dwell work");
+        const std::size_t runLatencyGesture = appRunSource.find(
+            "IsLatencySensitivePointerGesture(");
+        const std::size_t runWidgetAction = appRunSource.rfind(
+            "widgetAction_ != WidgetAction::None", runLatencyGesture);
+        const std::size_t runWidgetTarget = appRunSource.find(
+            "mouseDownWidgetIndex_ < widgets_.size()", runLatencyGesture);
+        const std::size_t dispatchLatencyGesture =
+            messageDispatchSource.find(
+                "IsLatencySensitivePointerGesture(");
+        const std::size_t dispatchWidgetAction =
+            messageDispatchSource.rfind(
+                "widgetAction_ != WidgetAction::None",
+                dispatchLatencyGesture);
+        const std::size_t dispatchWidgetTarget =
+            messageDispatchSource.find(
+                "mouseDownWidgetIndex_ < widgets_.size()",
+                dispatchLatencyGesture);
+        const std::size_t dispatchMiddleButton =
+            messageDispatchSource.find(
+                "GetAsyncKeyState(VK_MBUTTON)",
+                dispatchLatencyGesture);
+        const std::size_t dispatchOwningButton =
+            messageDispatchSource.find(
+                "IsPointerGestureButtonDown(",
+                dispatchMiddleButton);
+        Check(runLatencyGesture != std::string::npos &&
+                runWidgetAction != std::string::npos &&
+                runWidgetTarget != std::string::npos &&
+                runWidgetAction < runLatencyGesture &&
+                runLatencyGesture < runWidgetTarget &&
+                dispatchLatencyGesture != std::string::npos &&
+                dispatchWidgetAction != std::string::npos &&
+                dispatchWidgetTarget != std::string::npos &&
+                dispatchWidgetAction < dispatchLatencyGesture &&
+                dispatchLatencyGesture < dispatchWidgetTarget &&
+                dispatchMiddleButton != std::string::npos &&
+                dispatchOwningButton != std::string::npos &&
+                dispatchMiddleButton < dispatchOwningButton,
+            "the message pump and dispatcher must route valid widget gestures through shared low-latency coalescing with the owning mouse button");
+        const std::size_t middleReleaseHandler =
+            pointerMoveSource.find(
+                "void DesktopApp::OnMiddleButtonUpAt(");
+        const std::size_t middleMoveClear = pointerMoveSource.find(
+            "middleButtonWidgetMove_ = false;", middleReleaseHandler);
+        const std::size_t middleReleaseDelegate = pointerMoveSource.find(
+            "OnLeftButtonUpAt(wp, point);", middleMoveClear);
+        Check(middleReleaseHandler != std::string::npos &&
+                middleMoveClear != std::string::npos &&
+                middleReleaseDelegate != std::string::npos &&
+                middleReleaseHandler < middleMoveClear &&
+                middleMoveClear < middleReleaseDelegate,
+            "middle-button widget release must clear its ownership flag before delegating to the primary widget completion path");
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");

@@ -1446,16 +1446,16 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
     {
         MSG current = queue.front();
         queue.pop_front();
-        const bool nativeSurface =
+        const bool pointerSurface =
             snowdesktop::drag_input_rules::
-                IsNativeDragMessageSurface(
+                IsLatencySensitivePointerMessageSurface(
                     current.hwnd == mainWindow,
                     current.hwnd == floatingDock,
                     current.hwnd == floatingPopup);
         coalesced += snowdesktop::drag_input_rules::
             CoalesceQueuedMouseMoves(
                 nativeDragActive,
-                nativeSurface,
+                pointerSurface,
                 current,
                 [&](MSG& next) {
                     if (queue.empty()) return false;

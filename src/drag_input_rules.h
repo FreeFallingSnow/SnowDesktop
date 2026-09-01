@@ -14,6 +14,16 @@ constexpr bool IsNativeDragActive(
     return dragSessionActive && !dragTransportActive;
 }
 
+constexpr bool IsLatencySensitivePointerGesture(
+    bool nativeDragActive,
+    bool marqueePointerActive,
+    bool widgetActionActive,
+    bool widgetTargetValid)
+{
+    return nativeDragActive || marqueePointerActive ||
+        (widgetActionActive && widgetTargetValid);
+}
+
 constexpr bool ShouldDeferModelReload(
     bool retainedDragContext,
     bool dragTransportActive)
@@ -28,12 +38,20 @@ constexpr bool ShouldDeferModelReload(
 
 constexpr bool ShouldSampleLivePointer(
     bool latencySensitivePointerActive,
-    bool primaryButtonDown)
+    bool gestureButtonDown)
 {
     // A queued move can be dispatched after the physical button was released
-    // but before WM_LBUTTONUP reaches the queue head. In that interval the
-    // release message remains authoritative; do not sample a later position.
-    return latencySensitivePointerActive && primaryButtonDown;
+    // but before its button-up reaches the queue head. In that interval the
+    // queued release remains authoritative; do not sample a later position.
+    return latencySensitivePointerActive && gestureButtonDown;
+}
+
+constexpr bool IsPointerGestureButtonDown(
+    bool middleButtonWidgetMove,
+    bool primaryButtonDown,
+    bool middleButtonDown)
+{
+    return middleButtonWidgetMove ? middleButtonDown : primaryButtonDown;
 }
 
 constexpr bool IsMarqueePointerGesture(
@@ -69,7 +87,7 @@ constexpr bool ShouldSampleFloatingWindowPointer(
     return !nativeDragActive || primaryButtonDown;
 }
 
-constexpr bool IsNativeDragMessageSurface(
+constexpr bool IsLatencySensitivePointerMessageSurface(
     bool mainDesktopWindow,
     bool floatingDockWindow,
     bool floatingPopupWindow)

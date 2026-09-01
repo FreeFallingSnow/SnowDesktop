@@ -289,16 +289,31 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 dragDropController_.IsTransportActive());
         const bool marqueePointerActive =
             IsMarqueePointerGesturePendingOrActive();
+        const bool widgetActionActive =
+            widgetAction_ != WidgetAction::None;
         const bool latencySensitivePointerActive =
-            nativeDragActive || marqueePointerActive;
-        const bool primaryButtonDown = latencySensitivePointerActive &&
+            snowdesktop::drag_input_rules::
+                IsLatencySensitivePointerGesture(
+                    nativeDragActive,
+                    marqueePointerActive,
+                    widgetActionActive,
+                    mouseDownWidgetIndex_ < widgets_.size());
+        const bool primaryButtonDown =
             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        const bool middleButtonDown =
+            (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
+        const bool gestureButtonDown =
+            snowdesktop::drag_input_rules::
+                IsPointerGestureButtonDown(
+                    middleButtonWidgetMove_,
+                    primaryButtonDown,
+                    middleButtonDown);
         const bool sampleLivePointer =
             snowdesktop::drag_input_rules::ShouldSampleLivePointer(
-                latencySensitivePointerActive, primaryButtonDown);
+                latencySensitivePointerActive, gestureButtonDown);
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
-            widgetAction_ != WidgetAction::None ||
+            widgetActionActive ||
             detailColumnResizeActive_ ||
             luaWidgetPanelMouseDown_;
         const bool samplePassiveHover =
@@ -310,9 +325,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (sampleLivePointer || samplePassiveHover)
         {
             // Costly frames and modal Shell loops can leave old WM_MOUSEMOVE
-            // messages queued for this HWND. Native item drags must follow the
-            // physical pointer; passive hover additionally verifies that the
-            // sample still belongs to the paired desktop surface.
+            // messages queued for this HWND. Native item drags, marquee
+            // selection, and widget move/resize must follow the physical
+            // pointer; passive hover additionally verifies that the sample
+            // still belongs to the paired desktop surface.
             POINT cursorScreen{};
             if (!GetCursorPos(&cursorScreen))
             {
