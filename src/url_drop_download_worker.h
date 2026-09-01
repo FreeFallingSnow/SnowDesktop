@@ -39,10 +39,12 @@ struct UrlDropDownloadResult
 };
 
 /**
- * Serial background downloader for URL-only desktop drops.
+ * Serial background resolver for URL-only desktop drops.
  *
  * Network and attachment-policy work stays off the desktop OLE thread. The
- * completion runs on the worker and must marshal any UI work itself.
+ * HTTP(S) resources may be downloaded; unsupported or rejected responses are
+ * reported as shortcuts. The completion runs on the worker and must marshal
+ * any UI work itself.
  */
 class UrlDropDownloadWorker
 {

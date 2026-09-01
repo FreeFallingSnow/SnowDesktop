@@ -7,7 +7,9 @@
 #include <shlwapi.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
@@ -272,6 +274,30 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     return false;
 }
 
+bool snowdesktop::http_security::IsAllowedHttpOrHttpsUrl(
+    const std::wstring& url)
+{
+    URL_COMPONENTS components{ sizeof(components) };
+    wchar_t host[256]{};
+    wchar_t user[2]{};
+    wchar_t password[2]{};
+    components.lpszHostName = host;
+    components.dwHostNameLength = static_cast<DWORD>(std::size(host));
+    components.lpszUserName = user;
+    components.dwUserNameLength = static_cast<DWORD>(std::size(user));
+    components.lpszPassword = password;
+    components.dwPasswordLength = static_cast<DWORD>(std::size(password));
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &components) ||
+        (components.nScheme != INTERNET_SCHEME_HTTP &&
+         components.nScheme != INTERNET_SCHEME_HTTPS) ||
+        components.dwHostNameLength == 0 ||
+        components.dwUserNameLength != 0 ||
+        components.dwPasswordLength != 0)
+        return false;
+    return !NormalizeHostname(std::wstring(
+        host, components.dwHostNameLength)).empty();
+}
+
 bool snowdesktop::http_security::HaveSameOrigin(
     const std::wstring& left, const std::wstring& right)
 {
@@ -332,7 +358,7 @@ bool snowdesktop::http_security::IsAllowedPublicHttpsUrl(
 }
 
 snowdesktop::http_stream::Result
-snowdesktop::http_stream::StreamPublicHttpsGet(
+snowdesktop::http_stream::StreamHttpGet(
     const Options& options, std::stop_token token,
     const HeadCallback& headCallback,
     const ChunkSink& chunkSink)
@@ -340,14 +366,21 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
     Result result;
     if (options.url.empty() || !headCallback || !chunkSink ||
         options.maximumResponseBytes == 0 ||
-        !http_security::IsAllowedPublicHttpsUrl(options.url))
+        !http_security::IsAllowedHttpOrHttpsUrl(options.url))
     {
-        result.error = "Invalid public HTTPS stream request";
+        result.error = "Invalid HTTP stream request";
         return result;
     }
 
     const int timeoutMs = std::clamp(options.timeoutMs, 1000, 60000);
+    const int totalTimeoutMs = std::clamp(
+        options.totalTimeoutMs, timeoutMs, 5 * 60 * 1000);
     const int maximumRedirects = std::clamp(options.maxRedirects, 0, 10);
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(totalTimeoutMs);
+    const auto deadlineExpired = [&]() {
+        return std::chrono::steady_clock::now() >= deadline;
+    };
     HINTERNET session = WinHttpOpen(L"SnowDesktop/1.0",
         WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
@@ -356,11 +389,21 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
         result.error = "WinHttpOpen failed";
         return result;
     }
-    WinHttpSetTimeouts(session, timeoutMs, timeoutMs,
-        timeoutMs, timeoutMs);
+    if (!WinHttpSetTimeouts(session, timeoutMs, timeoutMs,
+            timeoutMs, timeoutMs))
+    {
+        result.error = "Cannot apply HTTP request timeouts";
+        WinHttpCloseHandle(session);
+        return result;
+    }
     DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
-    WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY,
-        &redirectPolicy, sizeof(redirectPolicy));
+    if (!WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY,
+            &redirectPolicy, sizeof(redirectPolicy)))
+    {
+        result.error = "Cannot disable automatic HTTP redirects";
+        WinHttpCloseHandle(session);
+        return result;
+    }
 
     const auto queryHeader = [](HINTERNET request,
         DWORD query, const wchar_t* customName = nullptr) {
@@ -397,9 +440,14 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
         redirectCount <= maximumRedirects && !token.stop_requested();
         ++redirectCount)
     {
-        if (!http_security::IsAllowedPublicHttpsUrl(currentUrl))
+        if (deadlineExpired())
         {
-            result.error = "Redirect URL is not an allowed public HTTPS URL";
+            result.error = "HTTP request deadline exceeded";
+            break;
+        }
+        if (!http_security::IsAllowedHttpOrHttpsUrl(currentUrl))
+        {
+            result.error = "Redirect URL is not an allowed HTTP URL";
             break;
         }
 
@@ -414,21 +462,14 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
         components.lpszExtraInfo = extra;
         components.dwExtraInfoLength = static_cast<DWORD>(std::size(extra));
         if (!WinHttpCrackUrl(currentUrl.c_str(), 0, 0, &components) ||
-            components.nScheme != INTERNET_SCHEME_HTTPS)
+            (components.nScheme != INTERNET_SCHEME_HTTP &&
+             components.nScheme != INTERNET_SCHEME_HTTPS))
         {
-            result.error = "Invalid HTTPS URL";
+            result.error = "Invalid HTTP URL";
             break;
         }
 
         const std::wstring currentHost(host, components.dwHostNameLength);
-        std::wstring pinnedAddress;
-        if (!ResolvePinnedPublicAddress(currentHost, pinnedAddress))
-        {
-            result.error =
-                "Host resolves to a private, local, or unavailable address";
-            break;
-        }
-
         HINTERNET connection = WinHttpConnect(session,
             currentHost.c_str(), components.nPort, 0);
         if (!connection)
@@ -443,7 +484,9 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
         HINTERNET request = WinHttpOpenRequest(connection, L"GET",
             requestPath.c_str(), nullptr, WINHTTP_NO_REFERER,
             acceptedTypes,
-            WINHTTP_FLAG_SECURE | WINHTTP_FLAG_REFRESH);
+            (components.nScheme == INTERNET_SCHEME_HTTPS
+                ? WINHTTP_FLAG_SECURE : 0) |
+                WINHTTP_FLAG_REFRESH);
         if (!request)
         {
             WinHttpCloseHandle(connection);
@@ -451,15 +494,10 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
             break;
         }
 
-        if (!pinnedAddress.empty())
-        {
-            const DWORD pinnedAddressBytes = static_cast<DWORD>(
-                (pinnedAddress.size() + 1) * sizeof(wchar_t));
-            WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
-                pinnedAddress.data(), pinnedAddressBytes);
-        }
         DWORD disabledFeatures =
-            WINHTTP_DISABLE_AUTHENTICATION | WINHTTP_DISABLE_COOKIES;
+            WINHTTP_DISABLE_AUTHENTICATION |
+            WINHTTP_DISABLE_COOKIES |
+            WINHTTP_DISABLE_REDIRECTS;
         if (!WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE,
                 &disabledFeatures, sizeof(disabledFeatures)))
         {
@@ -479,16 +517,9 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
             WinHttpCloseHandle(connection);
             break;
         }
-
-        WINHTTP_CONNECTION_INFO connectionInfo{};
-        connectionInfo.cbSize = sizeof(connectionInfo);
-        DWORD connectionInfoSize = sizeof(connectionInfo);
-        if (!WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
-                &connectionInfo, &connectionInfoSize) ||
-            !IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
-                &connectionInfo.RemoteAddress)))
+        if (deadlineExpired())
         {
-            result.error = "HTTP connection reached a non-public address";
+            result.error = "HTTP request deadline exceeded";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -572,6 +603,11 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
         while (result.error.empty() && result.responseAccepted &&
             !token.stop_requested())
         {
+            if (deadlineExpired())
+            {
+                result.error = "HTTP request deadline exceeded";
+                break;
+            }
             DWORD available = 0;
             if (!WinHttpQueryDataAvailable(request, &available))
             {
@@ -587,19 +623,26 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
                 result.error = "Response too large";
                 break;
             }
-            std::vector<std::byte> chunk(available);
+            std::array<std::byte, 64 * 1024> chunk{};
+            const DWORD requested = std::min<DWORD>(
+                available, static_cast<DWORD>(chunk.size()));
             DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), available, &read))
+            if (!WinHttpReadData(request, chunk.data(), requested, &read))
             {
                 result.error = "Cannot read HTTP response";
                 break;
             }
             if (read == 0) break;
-            chunk.resize(read);
+            if (deadlineExpired())
+            {
+                result.error = "HTTP request deadline exceeded";
+                break;
+            }
             bool consumed = false;
             try
             {
-                consumed = chunkSink(chunk);
+                consumed = chunkSink(std::span<const std::byte>(
+                    chunk.data(), read));
             }
             catch (...)
             {
@@ -612,6 +655,13 @@ snowdesktop::http_stream::StreamPublicHttpsGet(
                 break;
             }
             result.bytesReceived += read;
+        }
+
+        if (result.error.empty() && result.responseAccepted &&
+            result.head.contentLength &&
+            result.bytesReceived != *result.head.contentLength)
+        {
+            result.error = "HTTP response ended before Content-Length";
         }
 
         if (token.stop_requested())

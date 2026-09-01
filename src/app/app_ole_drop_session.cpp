@@ -77,6 +77,61 @@ std::optional<std::vector<std::wstring>> FindNewDirectoryPaths(
         });
     return paths;
 }
+
+bool IsInternetShortcutPath(const std::wstring& path)
+{
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    return extension &&
+        (_wcsicmp(extension, L".lnk") == 0 ||
+         _wcsicmp(extension, L".url") == 0 ||
+         _wcsicmp(extension, L".website") == 0);
+}
+
+std::wstring ReadInternetShortcutTarget(const std::wstring& path)
+{
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (!extension) return {};
+    if (_wcsicmp(extension, L".url") == 0 ||
+        _wcsicmp(extension, L".website") == 0)
+    {
+        std::array<wchar_t, 8192> target{};
+        const DWORD length = GetPrivateProfileStringW(
+            L"InternetShortcut", L"URL", L"",
+            target.data(), static_cast<DWORD>(target.size()),
+            path.c_str());
+        return std::wstring(target.data(), length);
+    }
+    if (_wcsicmp(extension, L".lnk") != 0)
+        return {};
+
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink))) ||
+        !shellLink)
+        return {};
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) ||
+        FAILED(persistFile->Load(path.c_str(), STGM_READ)))
+        return {};
+    std::array<wchar_t, 8192> target{};
+    WIN32_FIND_DATAW findData{};
+    if (FAILED(shellLink->GetPath(target.data(),
+            static_cast<int>(target.size()), &findData,
+            SLGP_RAWPATH)))
+        return {};
+    return target.data();
+}
+
+bool OffersDibData(IDataObject* dataObject)
+{
+    if (!dataObject) return false;
+    FORMATETC format{};
+    format.cfFormat = CF_DIB;
+    format.dwAspect = DVASPECT_CONTENT;
+    format.lindex = -1;
+    format.tymed = TYMED_HGLOBAL;
+    return SUCCEEDED(dataObject->QueryGetData(&format));
+}
 }
 
 HRESULT DesktopApp::HandleOleDragEnter(
@@ -1082,8 +1137,9 @@ HRESULT DesktopApp::HandleOleDrop(
     }
 
     // Browsers can advertise a network resource as delayed CF_HDROP data.
-    // Start its async operation before the URL/DIB fallback so the browser
-    // and Shell preserve the original file, name, credentials, and MOTW.
+    // Preserve the existing DIB-first content rule, then let the async Shell
+    // operation keep any original file name, credentials, and MOTW it can
+    // materialize before falling back to the URL response.
     Container* delayedFileTarget =
         dragSession_.TargetContainer();
     const GridCell delayedFileTargetCell =
@@ -1095,11 +1151,27 @@ HRESULT DesktopApp::HandleOleDrop(
         !delayedFileTargetCell.pageId.empty() &&
         dragSession_.TargetRegion() != HitRegion::Handoff &&
         dragSession_.TargetRegion() != HitRegion::Blocked;
+    const std::wstring bareDesktopUrl =
+        dropPaths.empty() && dataObject && bareDesktopTarget
+            ? ExtractDropUrl(dataObject) : std::wstring{};
+    const bool offersDibData =
+        dropPaths.empty() && dataObject && bareDesktopTarget &&
+        OffersDibData(dataObject);
+    if (offersDibData)
+        dropPaths = TryExtractImageFromDataObject(dataObject);
+    const auto delayedFileDescriptors =
+        dropPaths.empty() && dataObject && bareDesktopTarget
+        ? snowdesktop::virtual_file_drop::ReadDescriptors(dataObject)
+        : std::vector<snowdesktop::virtual_file_drop::
+            VirtualFileDescriptor>{};
+    const bool offersAsyncFileDrop =
+        dropPaths.empty() && dataObject && bareDesktopTarget &&
+        snowdesktop::virtual_file_drop::
+            OffersAsyncFileDrop(dataObject);
     if (dropPaths.empty() && dataObject &&
         bareDesktopTarget &&
         ((*effect & DROPEFFECT_COPY) != 0) &&
-        snowdesktop::virtual_file_drop::
-            OffersAsyncFileDrop(dataObject))
+        offersAsyncFileDrop)
     {
         const std::wstring desktopDirectory =
             UserDesktopDirectory();
@@ -1109,9 +1181,7 @@ HRESULT DesktopApp::HandleOleDrop(
                 SnapshotDirectoryPaths(desktopDirectory);
             const auto existingDesktopKeys =
                 SnapshotDesktopKeys();
-            const auto descriptors = snowdesktop::
-                virtual_file_drop::ReadDescriptors(
-                    dataObject);
+            const auto descriptors = delayedFileDescriptors;
             const size_t expectedFileCount =
                 std::max<size_t>(1, descriptors.size());
             const DropPreviewList requestedPreview =
@@ -1123,16 +1193,84 @@ HRESULT DesktopApp::HandleOleDrop(
                 this, desktopDirectory,
                 previousDirectoryPaths,
                 existingDesktopKeys, descriptors,
-                requestedPreview, expectedFileCount](
-                    bool succeeded) {
-                if (succeeded && previousDirectoryPaths &&
-                    !requestedPreview.Empty())
+                requestedPreview, expectedFileCount,
+                bareDesktopUrl](
+                    bool /*succeeded*/) {
+                bool shouldTryUrlFallback = false;
+                std::vector<UrlDropReplacementShortcut>
+                    replacementShortcuts;
+                if (previousDirectoryPaths)
                 {
                     auto newPaths = FindNewDirectoryPaths(
                         desktopDirectory,
                         *previousDirectoryPaths);
+                    shouldTryUrlFallback =
+                        newPaths && newPaths->empty();
                     if (newPaths && !newPaths->empty())
                     {
+                        const bool onlyInternetShortcuts =
+                            std::all_of(
+                                newPaths->begin(), newPaths->end(),
+                                IsInternetShortcutPath);
+                        const bool shortcutsTargetDroppedUrl =
+                            onlyInternetShortcuts &&
+                            !bareDesktopUrl.empty() &&
+                            std::all_of(
+                                newPaths->begin(), newPaths->end(),
+                                [&bareDesktopUrl](const auto& path) {
+                                    return ReadInternetShortcutTarget(path) ==
+                                        bareDesktopUrl;
+                                });
+                        if (shortcutsTargetDroppedUrl)
+                        {
+                            shouldTryUrlFallback = true;
+                            replacementShortcuts.reserve(
+                                newPaths->size());
+                            for (const auto& path : *newPaths)
+                            {
+                                UrlDropReplacementShortcut replacement;
+                                replacement.path = path;
+                                HANDLE file = CreateFileW(
+                                    path.c_str(), FILE_READ_ATTRIBUTES,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                        FILE_SHARE_DELETE,
+                                    nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL |
+                                        FILE_FLAG_OPEN_REPARSE_POINT,
+                                    nullptr);
+                                BY_HANDLE_FILE_INFORMATION information{};
+                                if (file != INVALID_HANDLE_VALUE)
+                                {
+                                    if (GetFileInformationByHandle(
+                                            file, &information) &&
+                                        (information.dwFileAttributes &
+                                            (FILE_ATTRIBUTE_DIRECTORY |
+                                             FILE_ATTRIBUTE_REPARSE_POINT)) == 0)
+                                    {
+                                        replacement.volumeSerialNumber =
+                                            information.dwVolumeSerialNumber;
+                                        replacement.fileIndexHigh =
+                                            information.nFileIndexHigh;
+                                        replacement.fileIndexLow =
+                                            information.nFileIndexLow;
+                                        replacement.identityValid = true;
+                                    }
+                                    CloseHandle(file);
+                                }
+                                replacementShortcuts.push_back(
+                                    std::move(replacement));
+                            }
+                            if (std::any_of(
+                                    replacementShortcuts.begin(),
+                                    replacementShortcuts.end(),
+                                    [](const auto& replacement) {
+                                        return !replacement.identityValid;
+                                    }))
+                            {
+                                shouldTryUrlFallback = false;
+                                replacementShortcuts.clear();
+                            }
+                        }
                         std::vector<std::optional<std::wstring>>
                             pathsBySource(expectedFileCount);
                         std::vector<bool> pathUsed(
@@ -1201,7 +1339,8 @@ HRESULT DesktopApp::HandleOleDrop(
                             sourceList.entries.push_back(
                                 std::move(entry));
                         }
-                        if (!sourceList.entries.empty())
+                        if (!sourceList.entries.empty() &&
+                            !requestedPreview.Empty())
                         {
                             StorePendingLandingCache(
                                 sourceList,
@@ -1211,7 +1350,19 @@ HRESULT DesktopApp::HandleOleDrop(
                         }
                     }
                 }
-                ReloadItems(false);
+                bool urlFallbackQueued = false;
+                if (shouldTryUrlFallback &&
+                    expectedFileCount == 1 &&
+                    !bareDesktopUrl.empty() &&
+                    replacementShortcuts.size() <= 1)
+                {
+                    urlFallbackQueued = QueueUrlDropDownload(
+                        bareDesktopUrl,
+                        requestedPreview,
+                        std::move(replacementShortcuts));
+                }
+                if (!urlFallbackQueued)
+                    ReloadItems(false);
             };
 
             if (QueueAsyncShellDrop(
@@ -1230,25 +1381,33 @@ HRESULT DesktopApp::HandleOleDrop(
     // Some browsers expose a dragged network resource only as a URL. Resolve
     // its response off-thread so extensionless images and documents are saved
     // while actual HTML pages still materialize as URL shortcuts.
-    if (dropPaths.empty() && dataObject && bareDesktopTarget)
+    const DWORD urlDropEffect = (*effect & DROPEFFECT_COPY) != 0
+        ? DROPEFFECT_COPY
+        : ((*effect & DROPEFFECT_LINK) != 0
+            ? DROPEFFECT_LINK : DROPEFFECT_NONE);
+    if (dropPaths.empty() && dataObject && bareDesktopTarget &&
+        delayedFileDescriptors.size() <= 1 &&
+        urlDropEffect != DROPEFFECT_NONE)
     {
-        const std::wstring url = ExtractDropUrl(dataObject);
-        if (!url.empty())
+        if (!bareDesktopUrl.empty())
         {
             DropPreviewList requestedPreview =
                 BuildExternalDesktopPreviewList(
                     delayedFileTargetCell, 1);
             if (QueueUrlDropDownload(
-                    url, std::move(requestedPreview)))
+                    bareDesktopUrl,
+                    std::move(requestedPreview)))
             {
-                *effect = DROPEFFECT_COPY;
+                *effect = urlDropEffect;
                 EndDragSession();
                 return S_OK;
             }
         }
     }
 
-    if (dropPaths.empty() && dataObject)
+    if (dropPaths.empty() && dataObject &&
+        (!bareDesktopTarget || bareDesktopUrl.empty()) &&
+        (!bareDesktopTarget || delayedFileDescriptors.size() <= 1))
         dropPaths = TryGetNonFileDropPaths(dataObject);
 
     if (dataObject && !dropPaths.empty())

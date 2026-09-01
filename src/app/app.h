@@ -2311,9 +2311,19 @@ private:
     void OnShellFileOperationCompleted(LPARAM lParam);
     /** @brief 停止文件操作线程并清理未投递的 UI 完成通知。 */
     void StopShellFileOperationWorker();
+    struct UrlDropReplacementShortcut
+    {
+        std::wstring path;
+        DWORD volumeSerialNumber = 0;
+        DWORD fileIndexHigh = 0;
+        DWORD fileIndexLow = 0;
+        bool identityValid = false;
+    };
     /** @brief 排队识别并下载一个仅提供 URL 的桌面资源。 */
     bool QueueUrlDropDownload(
-        std::wstring url, DropPreviewList preview);
+        std::wstring url, DropPreviewList preview,
+        std::vector<UrlDropReplacementShortcut>
+            replacementShortcuts = {});
     /** @brief 在 UI 线程完成 URL 资源的桌面落位。 */
     void OnUrlDropDownloadCompleted(LPARAM lParam);
     /** @brief 停止 URL 下载线程并清理尚未处理的完成消息。 */
@@ -3375,6 +3385,7 @@ private:
     {
         snowdesktop::UrlDropDownloadResult result;
         DropPreviewList preview;
+        std::vector<UrlDropReplacementShortcut> replacementShortcuts;
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;

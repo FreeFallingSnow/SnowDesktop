@@ -28,6 +28,18 @@ void ExpectDownload(std::wstring_view url, std::wstring_view contentType,
         "download file name should match");
 }
 
+void ExpectShortcut(std::wstring_view url, std::wstring_view contentType,
+    std::wstring_view disposition = {})
+{
+    const auto decision = snowdesktop::url_drop_resource::Decide(
+        url, contentType, disposition);
+    Expect(decision.action ==
+        snowdesktop::url_drop_resource::Action::Shortcut,
+        "response should remain a shortcut");
+    Expect(decision.suggestedFileName.empty(),
+        "shortcut should not expose a staged file name");
+}
+
 } // namespace
 
 int main()
@@ -62,11 +74,52 @@ int main()
     ExpectDownload(L"https://example.com/object",
         L"application/octet-stream", L"object.bin");
 
+    ExpectShortcut(L"https://example.com/page.html",
+        L"application/octet-stream");
+    ExpectDownload(L"https://example.com/page.html",
+        L"application/octet-stream", L"page.html.bin",
+        L"attachment; filename=page.html");
+    ExpectShortcut(L"https://example.com/setup.exe",
+        L"application/octet-stream");
+    ExpectShortcut(L"https://example.com/object",
+        L"application/x-msdownload",
+        L"attachment; filename=payload.LNK");
+    ExpectDownload(L"https://example.com/object",
+        L"image/webp", L"photongp.exe.webp",
+        L"attachment; filename*=UTF-8''photo%E2%80%AEngp.exe");
+    ExpectShortcut(L"https://example.com/object",
+        L"application/x-unknown",
+        L"attachment; filename=payload.vBs");
+    ExpectShortcut(L"https://example.com/payload%2ELNK%20",
+        L"application/x-unknown");
+    ExpectShortcut(L"https://example.com/object",
+        L"application/x-unknown",
+        L"attachment; filename*=UTF-8''payload.%E2%80%AELNK.");
+    ExpectShortcut(L"https://example.com/payload.jpg.LNK",
+        L"application/octet-stream");
+    ExpectDownload(L"https://example.com/payload.LNK.jpg",
+        L"application/octet-stream", L"payload.LNK.jpg");
+    ExpectDownload(L"https://example.com/object",
+        L"image/jpeg", L"payload.LNK.jpg",
+        L"attachment; filename=payload.LNK");
+
     decision = snowdesktop::url_drop_resource::Decide(
         L"https://example.com/object", L"application/x-unknown");
     Expect(decision.action ==
         snowdesktop::url_drop_resource::Action::Shortcut,
         "unknown extensionless response should remain a shortcut");
+
+    ExpectDownload(L"https://example.com/download",
+        L"application/x-unknown", L"page.htm.bin",
+        L"attachment; filename=page.htm");
+    ExpectShortcut(L"https://example.com/page.mHTML",
+        L"application/x-unknown");
+    ExpectDownload(L"https://example.com/object",
+        L"application/x-unknown", L"page.HTML.bin",
+        L"attachment; filename=payload.LNK; "
+        L"filename*=UTF-8''page.HTML");
+    ExpectShortcut(L"https://example.com/object",
+        L"text/html", L"attachment; filename=safe.bin");
 
     ExpectDownload(L"https://cdn.example.com/fallback",
         L"image/webp", L"redirected.webp",

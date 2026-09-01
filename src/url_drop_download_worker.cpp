@@ -4,7 +4,8 @@
 #include "url_drop_resource.h"
 
 #include <windows.h>
-#include <shobjidl_core.h>
+#include <shlwapi.h>
+#include <shobjidl.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cctype>
 #include <cwctype>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -44,6 +46,95 @@ bool IsValidDestinationDirectory(const std::filesystem::path& directory)
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
+class ScopedFileHandle final
+{
+public:
+    ~ScopedFileHandle()
+    {
+        Reset();
+    }
+
+    ScopedFileHandle() = default;
+    ScopedFileHandle(const ScopedFileHandle&) = delete;
+    ScopedFileHandle& operator=(const ScopedFileHandle&) = delete;
+
+    void Reset(HANDLE value = INVALID_HANDLE_VALUE) noexcept
+    {
+        if (value_ != INVALID_HANDLE_VALUE)
+            CloseHandle(value_);
+        value_ = value;
+    }
+
+    HANDLE Get() const noexcept
+    {
+        return value_;
+    }
+
+    explicit operator bool() const noexcept
+    {
+        return value_ != INVALID_HANDLE_VALUE;
+    }
+
+private:
+    HANDLE value_ = INVALID_HANDLE_VALUE;
+};
+
+class StagedOutputGuard final
+{
+public:
+    explicit StagedOutputGuard(const std::filesystem::path& path)
+        : path_(path)
+    {
+    }
+
+    ~StagedOutputGuard()
+    {
+        if (!keep_ && !path_.empty())
+            DeleteFileW(path_.c_str());
+    }
+
+    StagedOutputGuard(const StagedOutputGuard&) = delete;
+    StagedOutputGuard& operator=(const StagedOutputGuard&) = delete;
+
+    void Keep() noexcept
+    {
+        keep_ = true;
+    }
+
+private:
+    const std::filesystem::path& path_;
+    bool keep_ = false;
+};
+
+bool IsOrdinaryNonEmptyFile(const std::filesystem::path& path)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return false;
+
+    HANDLE file = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+    BY_HANDLE_FILE_INFORMATION information{};
+    const bool valid = GetFileInformationByHandle(file, &information) &&
+        (information.dwFileAttributes &
+            (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0 &&
+        (information.nFileSizeHigh != 0 || information.nFileSizeLow != 0);
+    CloseHandle(file);
+    return valid;
+}
+
+bool HasDangerousShellAssociation(const std::wstring& fileName)
+{
+    const wchar_t* extension = PathFindExtensionW(fileName.c_str());
+    return extension && *extension && AssocIsDangerous(extension);
+}
+
 HANDLE CreateUniqueOutputFile(const std::filesystem::path& directory,
     const std::wstring& suggestedFileName,
     std::filesystem::path& outputPath)
@@ -58,13 +149,13 @@ HANDLE CreateUniqueOutputFile(const std::filesystem::path& directory,
         const std::wstring fileName = suffix == 0
             ? original.filename().wstring()
             : stem + L" (" + std::to_wstring(suffix) + L")" + extension;
-        const std::filesystem::path candidate = directory / fileName;
+        std::filesystem::path candidate = directory / fileName;
         HANDLE file = CreateFileW(candidate.c_str(), GENERIC_WRITE,
             FILE_SHARE_READ, nullptr, CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
         if (file != INVALID_HANDLE_VALUE)
         {
-            outputPath = candidate;
+            outputPath = std::move(candidate);
             return file;
         }
         if (GetLastError() != ERROR_FILE_EXISTS &&
@@ -91,7 +182,7 @@ bool LooksLikeHtml(std::span<const std::byte> prefix)
     }
     std::string sample;
     const size_t sampleSize = std::min<size_t>(
-        prefix.size() - index, 64);
+        prefix.size() - index, 512);
     sample.reserve(sampleSize);
     for (size_t offset = 0; offset < sampleSize; ++offset)
     {
@@ -99,10 +190,40 @@ bool LooksLikeHtml(std::span<const std::byte> prefix)
             prefix[index + offset]);
         sample.push_back(static_cast<char>(std::tolower(character)));
     }
-    return sample.starts_with("<!doctype html") ||
-        sample.starts_with("<html") ||
-        sample.starts_with("<head") ||
-        sample.starts_with("<body");
+    size_t cursor = 0;
+    const auto skipWhitespace = [&]() {
+        while (cursor < sample.size() &&
+            std::isspace(static_cast<unsigned char>(sample[cursor])))
+            ++cursor;
+    };
+    for (int prefixCount = 0; prefixCount < 4; ++prefixCount)
+    {
+        skipWhitespace();
+        if (sample.compare(cursor, 4, "<!--") == 0)
+        {
+            const size_t end = sample.find("-->", cursor + 4);
+            if (end == std::string::npos) return false;
+            cursor = end + 3;
+            continue;
+        }
+        if (sample.compare(cursor, 5, "<?xml") == 0)
+        {
+            const size_t end = sample.find("?>", cursor + 5);
+            if (end == std::string::npos) return false;
+            cursor = end + 2;
+            continue;
+        }
+        break;
+    }
+    skipWhitespace();
+    const std::string_view document(sample.data() + cursor,
+        sample.size() - cursor);
+    return document.starts_with("<!doctype html") ||
+        document.starts_with("<html") ||
+        document.starts_with("<head") ||
+        document.starts_with("<body") ||
+        document.starts_with("<meta") ||
+        document.starts_with("<title");
 }
 
 bool MarkDownloadedAttachment(const std::filesystem::path& path,
@@ -141,7 +262,7 @@ bool UrlDropDownloadWorker::Enqueue(
     UrlDropDownloadRequest request, Completion completion)
 {
     if (request.url.empty() || request.destinationDirectory.empty() ||
-        !completion || !http_security::IsAllowedPublicHttpsUrl(request.url))
+        !completion)
         return false;
 
     Task task{ std::move(request), std::move(completion) };
@@ -152,16 +273,23 @@ bool UrlDropDownloadWorker::Enqueue(
         try
         {
             tasks_.push_back(std::move(task));
-            if (!started_)
+        }
+        catch (...)
+        {
+            return false;
+        }
+        if (!started_)
+        {
+            try
             {
                 thread_ = std::thread(&UrlDropDownloadWorker::Run, this);
                 started_ = true;
             }
-        }
-        catch (...)
-        {
-            if (!tasks_.empty()) tasks_.pop_back();
-            return false;
+            catch (...)
+            {
+                tasks_.pop_back();
+                return false;
+            }
         }
     }
     cv_.notify_one();
@@ -198,7 +326,8 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
     }
 
     std::filesystem::path outputPath;
-    HANDLE outputFile = INVALID_HANDLE_VALUE;
+    StagedOutputGuard outputGuard(outputPath);
+    ScopedFileHandle outputFile;
     bool rejectedAsShortcut = false;
     bool outputCreationFailed = false;
     std::vector<std::byte> prefix;
@@ -207,9 +336,10 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
     http_stream::Options options;
     options.url = request.url;
     options.timeoutMs = request.timeoutMs;
+    options.totalTimeoutMs = 60000;
     options.maximumResponseBytes = request.maximumBytes;
     options.maxRedirects = 3;
-    const auto streamResult = http_stream::StreamPublicHttpsGet(
+    const auto streamResult = http_stream::StreamHttpGet(
         options, token,
         [&](const http_stream::ResponseHead& head) {
             result.finalUrl = head.finalUrl;
@@ -227,10 +357,16 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
                 rejectedAsShortcut = true;
                 return false;
             }
-            outputFile = CreateUniqueOutputFile(
+            if (HasDangerousShellAssociation(
+                    decision.suggestedFileName))
+            {
+                rejectedAsShortcut = true;
+                return false;
+            }
+            outputFile.Reset(CreateUniqueOutputFile(
                 request.destinationDirectory,
-                decision.suggestedFileName, outputPath);
-            if (outputFile == INVALID_HANDLE_VALUE)
+                decision.suggestedFileName, outputPath));
+            if (!outputFile)
             {
                 outputCreationFailed = true;
                 return false;
@@ -238,7 +374,7 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
             return true;
         },
         [&](std::span<const std::byte> chunk) {
-            if (outputFile == INVALID_HANDLE_VALUE)
+            if (!outputFile)
                 return false;
             if (prefix.size() < 512)
             {
@@ -249,16 +385,16 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
             }
             DWORD written = 0;
             return chunk.size() <= MAXDWORD &&
-                WriteFile(outputFile, chunk.data(),
+                WriteFile(outputFile.Get(), chunk.data(),
                     static_cast<DWORD>(chunk.size()), &written, nullptr) &&
                 written == chunk.size();
         });
 
-    if (outputFile != INVALID_HANDLE_VALUE)
+    bool flushed = true;
+    if (outputFile)
     {
-        FlushFileBuffers(outputFile);
-        CloseHandle(outputFile);
-        outputFile = INVALID_HANDLE_VALUE;
+        flushed = FlushFileBuffers(outputFile.Get()) != FALSE;
+        outputFile.Reset();
     }
 
     if (token.stop_requested() || streamResult.cancelled)
@@ -276,6 +412,12 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
     if (outputCreationFailed)
     {
         result.error = "Cannot create staged download";
+        return result;
+    }
+    if (!flushed)
+    {
+        result.error = "Cannot flush staged download";
+        result.outcome = UrlDropDownloadOutcome::Shortcut;
         return result;
     }
     if (!streamResult.error.empty() ||
@@ -303,9 +445,23 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
         result.outcome = UrlDropDownloadOutcome::Shortcut;
         return result;
     }
+    if (token.stop_requested())
+    {
+        DeleteFileW(outputPath.c_str());
+        result.error = "Cancelled";
+        return result;
+    }
+    if (!IsOrdinaryNonEmptyFile(outputPath))
+    {
+        DeleteFileW(outputPath.c_str());
+        result.error = "Attachment policy removed or changed the download";
+        result.outcome = UrlDropDownloadOutcome::Shortcut;
+        return result;
+    }
 
     result.outcome = UrlDropDownloadOutcome::Downloaded;
     result.localPath = outputPath.wstring();
+    outputGuard.Keep();
     return result;
 }
 
@@ -330,15 +486,32 @@ void UrlDropDownloadWorker::Run()
             executing_ = true;
         }
 
-        UrlDropDownloadResult result = Execute(
-            task.request, taskStopSource.get_token());
+        UrlDropDownloadResult result;
+        try
+        {
+            result = Execute(
+                task.request, taskStopSource.get_token());
+        }
+        catch (...)
+        {
+            result.originalUrl = task.request.url;
+            result.error = "Unexpected download worker failure";
+        }
         {
             std::lock_guard<std::mutex> lock(mutex_);
             executing_ = false;
             activeStopSource_ = std::stop_source{};
         }
         if (task.completion)
-            task.completion(std::move(result));
+        {
+            try
+            {
+                task.completion(std::move(result));
+            }
+            catch (...)
+            {
+            }
+        }
     }
     if (SUCCEEDED(comResult)) CoUninitialize();
 }

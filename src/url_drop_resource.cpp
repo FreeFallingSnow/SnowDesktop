@@ -296,9 +296,29 @@ bool IsWebPageType(std::wstring_view type)
 
 bool IsWebPageExtension(std::wstring_view extension)
 {
-    static constexpr std::array<std::wstring_view, 9> extensions{{
+    static constexpr std::array<std::wstring_view, 12> extensions{{
         L".html", L".htm", L".php", L".asp", L".aspx",
-        L".jsp", L".cfm", L".shtml", L".xhtml",
+        L".jsp", L".cfm", L".shtml", L".xhtml", L".xht",
+        L".mht", L".mhtml",
+    }};
+    return std::find(extensions.begin(), extensions.end(), extension) !=
+        extensions.end();
+}
+
+bool IsShellActiveExtension(std::wstring_view extension)
+{
+    static constexpr std::array<std::wstring_view, 54> extensions{{
+        L".application", L".appinstaller", L".appref-ms", L".appx",
+        L".appxbundle", L".bat", L".chm", L".cmd", L".com", L".cpl",
+        L".diagcab", L".dll", L".exe", L".gadget", L".hta", L".inf",
+        L".ins", L".isp", L".jar", L".js", L".jse", L".library-ms",
+        L".lnk", L".msh", L".msh1", L".msh1xml", L".msh2",
+        L".msh2xml", L".mshxml", L".msi", L".msix", L".msixbundle",
+        L".msp", L".mst", L".ocx", L".pif", L".ps1", L".ps1xml",
+        L".psc1", L".psc2", L".reg", L".scf", L".scr", L".sct",
+        L".search-ms", L".searchconnector-ms", L".settingcontent-ms",
+        L".url", L".vbe", L".vbs", L".website", L".wsc", L".wsf",
+        L".wsh",
     }};
     return std::find(extensions.begin(), extensions.end(), extension) !=
         extensions.end();
@@ -335,7 +355,8 @@ bool IsReservedWindowsBaseName(std::wstring_view fileName)
     const std::wstring base = Lower(std::wstring(
         fileName.substr(0, dot)));
     if (base == L"con" || base == L"prn" || base == L"aux" ||
-        base == L"nul")
+        base == L"nul" || base == L"clock$" || base == L"conin$" ||
+        base == L"conout$")
         return true;
     if (base.size() == 4 &&
         (base.substr(0, 3) == L"com" ||
@@ -350,6 +371,12 @@ std::wstring SafeFileName(std::wstring value)
     const size_t slash = value.find_last_of(L"/\\");
     if (slash != std::wstring::npos)
         value.erase(0, slash + 1);
+    std::erase_if(value, [](wchar_t character) {
+        return character == L'\u061c' ||
+            character == L'\u200e' || character == L'\u200f' ||
+            (character >= L'\u202a' && character <= L'\u202e') ||
+            (character >= L'\u2066' && character <= L'\u2069');
+    });
     for (auto& character : value)
     {
         if (character < L' ' || character == L'\\' || character == L'/' ||
@@ -399,8 +426,25 @@ Decision Decide(std::wstring_view effectiveUrl,
         ExtensionForContentType(result.normalizedContentType);
     std::wstring existingExtension = FileExtension(fileName);
     const bool knownResourceType = !expectedExtension.empty();
+    const bool genericBinaryType =
+        result.normalizedContentType == L"application/octet-stream";
+
+    // A generic or unknown response carrying a web-page suffix is not a
+    // trustworthy file download. Explicit attachments remain downloadable,
+    // but receive a neutral final extension so the page cannot execute as an
+    // active Shell document.
+    if ((genericBinaryType || !knownResourceType) &&
+        IsWebPageExtension(existingExtension))
+    {
+        if (!disposition.attachment)
+            return result;
+        fileName.append(L".bin");
+        existingExtension = L".bin";
+    }
+
     const bool reliableUrlExtension = !existingExtension.empty() &&
-        !IsWebPageExtension(existingExtension);
+        !IsWebPageExtension(existingExtension) &&
+        !IsShellActiveExtension(existingExtension);
     if (!knownResourceType && !disposition.attachment &&
         !reliableUrlExtension)
         return result;
@@ -418,8 +462,15 @@ Decision Decide(std::wstring_view effectiveUrl,
     else if (disposition.attachment && existingExtension.empty())
         fileName.append(L".bin");
 
+    // Never materialize a response whose final extension is executable or
+    // interpreted by the Windows Shell. Known benign MIME types above append
+    // their own safe final extension before this check.
+    fileName = SafeFileName(std::move(fileName));
+    if (IsShellActiveExtension(FileExtension(fileName)))
+        return result;
+
     result.action = Action::Download;
-    result.suggestedFileName = SafeFileName(std::move(fileName));
+    result.suggestedFileName = std::move(fileName);
     return result;
 }
 

@@ -21,6 +21,7 @@
 namespace snowdesktop::http_security
 {
 bool IsAllowedRemoteIpLiteral(std::wstring_view address);
+bool IsAllowedHttpOrHttpsUrl(const std::wstring& url);
 bool IsAllowedUrlForDomains(const std::wstring& url,
     const std::vector<std::string>& domains,
     bool allowAnyHttpOrHttpsUrl = false,
@@ -45,6 +46,7 @@ struct Options
 {
     std::wstring url;
     int timeoutMs = 10000;
+    int totalTimeoutMs = 60000;
     std::uint64_t maximumResponseBytes = 64ull * 1024ull * 1024ull;
     int maxRedirects = 3;
 };
@@ -62,14 +64,14 @@ using HeadCallback = std::function<bool(const ResponseHead&)>;
 using ChunkSink = std::function<bool(std::span<const std::byte>)>;
 
 /**
- * Streams one public HTTPS resource on the calling thread.
+ * Streams one HTTP or HTTPS resource on the calling thread.
  *
- * Redirects are handled explicitly and every hop is checked against the same
- * DNS and connected-address policy used by AsyncHttpService. Returning false
- * from headCallback intentionally declines the response without reading its
- * body. Returning false from chunkSink reports a sink failure.
+ * Redirects are handled explicitly. Credentials, automatic authentication,
+ * and cookies are disabled. Returning false from headCallback intentionally
+ * declines the response without reading its body. Returning false from
+ * chunkSink reports a sink failure.
  */
-Result StreamPublicHttpsGet(const Options& options,
+Result StreamHttpGet(const Options& options,
     std::stop_token token, const HeadCallback& headCallback,
     const ChunkSink& chunkSink);
 }
