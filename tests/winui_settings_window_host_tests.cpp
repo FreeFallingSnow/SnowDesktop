@@ -674,6 +674,22 @@ void TestHostContract(const std::filesystem::path& repository)
             commitFunction.find("ApplyWidgetSettingsSnapshot(") !=
                 std::string::npos,
         "widget routes load the instance and validate the exact presenter snapshot before activation");
+    const std::size_t widgetFlushFailure = commitFunction.find(
+        "if (!flushed.Succeeded())");
+    const std::size_t widgetLoadBegin = commitFunction.find(
+        "std::optional<widget_runtime::WidgetSettingsSnapshot>",
+        widgetFlushFailure);
+    const std::string_view widgetFlushFailureBlock =
+        widgetFlushFailure != std::string_view::npos &&
+                widgetLoadBegin != std::string_view::npos
+            ? commitFunction.substr(
+                  widgetFlushFailure,
+                  widgetLoadBegin - widgetFlushFailure)
+            : std::string_view{};
+    Check(!widgetFlushFailureBlock.empty() &&
+            widgetFlushFailureBlock.find("return false;") ==
+                std::string_view::npos,
+        "a failed component-settings flush reports the error without blocking back navigation");
     Check(source.find("controller->CloseSession()") != std::string::npos &&
             source.find("FlushPendingChanges()") != std::string::npos &&
             source.find("shell->FlushPendingWidgetSettings()") !=
@@ -683,6 +699,26 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ShowWindow(window, SW_HIDE)") !=
                 std::string::npos,
         "closing flushes the controller and widget sessions before hiding");
+    const std::size_t widgetClosePendingFlushBegin = source.find(
+        "const auto widgetResult =");
+    const std::size_t controllerFlushBegin = source.find(
+        "const SettingsActionResult result = controller->FlushAll()",
+        widgetClosePendingFlushBegin);
+    const std::string_view widgetCloseFlushBlock =
+        widgetClosePendingFlushBegin != std::string::npos &&
+                controllerFlushBegin != std::string::npos
+            ? std::string_view(source).substr(
+                  widgetClosePendingFlushBegin,
+                  controllerFlushBegin - widgetClosePendingFlushBegin)
+            : std::string_view{};
+    Check(!widgetCloseFlushBlock.empty() &&
+            widgetCloseFlushBlock.find("return false;") ==
+                std::string_view::npos,
+        "a failed component-settings flush does not block closing the settings window");
+    Check(shell.find(
+              "if (routeChanged || generationChanged)\n            ClearInfo();") !=
+                std::string::npos,
+        "route and session changes clear page-scoped settings errors");
     const std::size_t nonClientLeave =
         source.find("case WM_NCMOUSELEAVE:");
     const std::size_t dwmNonClientLeave = source.find(

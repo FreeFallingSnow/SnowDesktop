@@ -1172,6 +1172,8 @@ bool SettingsShell::ApplySnapshot(
         const bool routeChanged = previousRoute != navigation_.Route();
         const bool generationChanged =
             previousGeneration != navigation_.Generation();
+        if (routeChanged || generationChanged)
+            ClearInfo();
         if (routeChanged || generationChanged || !renderedPageRoute_)
             RenderRoute(false, true);
         RenderControllerStatus(snapshot);

@@ -2079,6 +2079,16 @@ struct WidgetSettingsPresenter::Impl
             !field.synchronizing;
     }
 
+    [[nodiscard]] bool CanFinalizeField(
+        const WidgetFieldControl& field) const noexcept
+    {
+        // A dependency mutation may hide a text editor before its LostFocus
+        // event is delivered. Finalizing an existing draft is still safe
+        // while the authoritative field remains enabled; visibility only
+        // governs new user input.
+        return CanMutate() && field.enabled && !field.synchronizing;
+    }
+
     [[nodiscard]] std::string MutationCallbackKey(
         std::string_view owner) const
     {
@@ -2277,11 +2287,19 @@ struct WidgetSettingsPresenter::Impl
     template <typename Mutation>
     wr::WidgetSettingMutationResult RunMutation(
         std::string key,
-        Mutation mutation)
+        Mutation mutation,
+        bool flushPendingEditors = true)
     {
         if (!CanMutate())
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "presenterInactive", {}};
+        if (flushPendingEditors)
+        {
+            // Commit text and password drafts before a toggle, selection, or
+            // reset can change showWhen/enabledWhen and hide their editors.
+            const auto editorCommit = FlushPendingEdits();
+            if (!editorCommit.Succeeded()) return editorCommit;
+        }
         const auto previewCommit = CommitAllTransient();
         if (!previewCommit.Succeeded()) return previewCommit;
         const wr::WidgetSettingMutationGuard guard = Guard();
@@ -2313,7 +2331,7 @@ struct WidgetSettingsPresenter::Impl
         if (field.idleCommitTimer) field.idleCommitTimer.Stop();
         if (!field.textDirty)
             return UnchangedResult();
-        if (!CanMutateField(field) || !field.text)
+        if (!CanFinalizeField(field) || !field.text)
         {
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "editorUnavailable", {}};
@@ -2325,7 +2343,7 @@ struct WidgetSettingsPresenter::Impl
             [this, key, value](const auto& guard) {
                 return service.SetOrdinary(
                     guard, key, wr::MakeWidgetSettingString(value));
-            });
+            }, false);
         if (!result.Succeeded())
         {
             if (const auto current = fieldsByKey.find(key);
@@ -2346,7 +2364,7 @@ struct WidgetSettingsPresenter::Impl
         if (field.idleCommitTimer) field.idleCommitTimer.Stop();
         if (!field.passwordDirty)
             return UnchangedResult();
-        if (!CanMutateField(field) || !field.password)
+        if (!CanFinalizeField(field) || !field.password)
         {
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "editorUnavailable", {}};
@@ -2357,7 +2375,7 @@ struct WidgetSettingsPresenter::Impl
         const auto result = RunMutation(key,
             [this, key, &plaintext](const auto& guard) {
                 return service.SetSecret(guard, key, plaintext);
-            });
+            }, false);
         if (const auto current = fieldsByKey.find(key);
             current != fieldsByKey.end() && current->second->password)
         {
@@ -3192,7 +3210,17 @@ void WidgetSettingsPresenter::Deactivate() noexcept
         impl_->CommitOpenColorEditors();
         const auto result = impl_->FlushPendingEdits();
         if (!result.Succeeded())
+        {
+            // Leaving component settings must never strand an invisible,
+            // still-active editor. Closing the failed session discards its
+            // unsaved draft and reverts any transient preview; re-entry loads
+            // a fresh authoritative snapshot.
+            const std::wstring widgetId = impl_->widgetId;
+            impl_->active = false;
+            impl_->hasSnapshot = false;
+            impl_->service.Close(widgetId);
             return;
+        }
         impl_->CancelSearches();
     }
     catch (...)

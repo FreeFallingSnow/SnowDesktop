@@ -2324,7 +2324,9 @@ struct SettingsWindowHost::Impl
                     message = L("settings.widget.saveFailed");
                 ShowActionError(SettingsActionResult::Failure(
                     std::move(message)));
-                return false;
+                // A component draft may be unsaved, but navigation must not
+                // trap the user on this page. Deactivation closes the failed
+                // component-settings session and discards that draft.
             }
         }
 
@@ -2581,7 +2583,10 @@ struct SettingsWindowHost::Impl
                         shell_impl::SettingsShellInfoSeverity::Error,
                         L("settings.status.error"), std::move(message));
                 }
-                return false;
+                // Component settings are isolated from the application
+                // settings controller. Report the failed component draft but
+                // continue flushing the remaining settings so Close can
+                // always leave the component editor.
             }
         }
 

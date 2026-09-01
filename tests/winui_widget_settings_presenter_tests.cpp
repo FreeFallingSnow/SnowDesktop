@@ -444,11 +444,18 @@ void TestPendingEditCommitSafety(const std::string& source)
               "current->second->passwordDirty = true",
               "SecureZeroMemory(restored.data()"}),
         "failed text and secret commits retain the pending editor value");
-    Check(source.find("const auto result = impl_->FlushPendingEdits()") !=
-                std::string::npos &&
-            source.find("if (!result.Succeeded())\n            return;") !=
-                std::string::npos,
-        "deactivation refuses to discard a failed final commit");
+    Check(ContainsAll(source, {
+              "bool flushPendingEditors = true",
+              "const auto editorCommit = FlushPendingEdits()",
+              "CanFinalizeField(field)",
+              "}, false);"}),
+        "dependency mutations flush pending editors first and existing drafts may finalize after visibility changes");
+    Check(ContainsAll(source, {
+              "const auto result = impl_->FlushPendingEdits()",
+              "impl_->active = false",
+              "impl_->hasSnapshot = false",
+              "impl_->service.Close(widgetId)"}),
+        "deactivation closes a failed component-settings session instead of retaining an invisible active draft");
 }
 
 void TestTransientPreviewAndDraftValidation(
