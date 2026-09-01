@@ -53,6 +53,21 @@ void TestImagePlacement()
         "none must retain native size and align within the destination");
 }
 
+void TestImageTransformValidation()
+{
+    std::string error;
+    Check(ValidateDrawImageTransform(-16.0f, 0.9f, 0.08f, error),
+        "bounded image rotation and normalized pivot must validate");
+    Check(!ValidateDrawImageTransform(
+            std::numeric_limits<float>::infinity(), 0.5f, 0.5f, error),
+        "image rotation must reject non-finite angles");
+    Check(!ValidateDrawImageTransform(361.0f, 0.5f, 0.5f, error),
+        "image rotation must reject more than one turn");
+    Check(!ValidateDrawImageTransform(0.0f, -0.01f, 0.5f, error) &&
+            !ValidateDrawImageTransform(0.0f, 0.5f, 1.01f, error),
+        "image rotation must reject pivots outside normalized bounds");
+}
+
 void TestPathValidation()
 {
     std::string error;
@@ -160,6 +175,7 @@ void TestMarqueeGeometry()
 int main()
 {
     TestImagePlacement();
+    TestImageTransformValidation();
     TestPathValidation();
     TestArcSegmentation();
     TestSparklineGeometry();

@@ -5,6 +5,8 @@ local STRIKE_KEY = "wooden-fish.strike"
 local FEEDBACK_FRAME = "wooden-fish.feedback-frame"
 local FEEDBACK_FALLBACK = "wooden-fish.feedback-fallback"
 local FEEDBACK_DURATION_MS = 900
+local MALLET_STRIKE_DURATION_MS = 240
+local MALLET_STRIKE_ANGLE = -16
 local MAX_COUNT = 999999999
 
 local palettes = {
@@ -46,6 +48,7 @@ local function setup()
     return {
         count = normalizedCount(storage.get("count")),
         feedbackActive = false,
+        feedbackAnimated = false,
         feedbackElapsedMs = 0,
     }
 end
@@ -57,7 +60,17 @@ local function centeredText(text, y, size, color, width, bold, alpha)
         nil, alpha or 1.0)
 end
 
-local function drawInstrument(cx, cy, size, pressed)
+local function malletRotation(model, pressed)
+    if pressed then return MALLET_STRIKE_ANGLE end
+    if not model.feedbackActive or not model.feedbackAnimated then return 0 end
+
+    local progress = math.max(0, math.min(1,
+        model.feedbackElapsedMs / MALLET_STRIKE_DURATION_MS))
+    local eased = progress * progress * (3 - 2 * progress)
+    return MALLET_STRIKE_ANGLE * (1 - eased)
+end
+
+local function drawInstrument(cx, cy, size, pressed, model)
     local bodyDrop = pressed and layout.cu(1.5) or 0
     local bodyY = cy - size / 2 + bodyDrop
 
@@ -67,16 +80,15 @@ local function drawInstrument(cx, cy, size, pressed)
     draw.imageFit(woodenFishImage, cx - size / 2, bodyY, size, size,
         "contain", "center", pressed and 0.97 or 1.0, "linear")
 
-    -- The mallet sprite is anchored by its lower-left head. Keep that head
-    -- over the upper-right shoulder beside the slit, which is the striking
-    -- surface, instead of laying the handle across the front opening.
+    -- Keep the upper-right handle tip fixed as the pivot. A negative angle
+    -- swings the lower-left head down onto the wooden fish, then the existing
+    -- animation frame stream eases it back to rest.
     local malletSize = size * 0.56
-    local malletDropX = pressed and -layout.cu(1.5) or 0
-    local malletDropY = pressed and layout.cu(4.5) or 0
-    local malletX = cx + size * 0.15 + malletDropX
-    local malletY = cy - size * 0.70 + malletDropY
+    local malletX = cx + size * 0.15
+    local malletY = cy - size * 0.70
     draw.imageFit(malletImage, malletX, malletY,
-        malletSize, malletSize, "contain", "center", 1.0, "linear")
+        malletSize, malletSize, "contain", "center", 1.0, "linear",
+        malletRotation(model, pressed), 0.90, 0.08)
 end
 
 local function drawFeedback(model, y, baseSize, colors, width)
@@ -95,9 +107,11 @@ end
 
 local function startFeedback(model)
     model.feedbackActive = true
+    model.feedbackAnimated = false
     model.feedbackElapsedMs = 0
     schedule.cancel(FEEDBACK_FALLBACK)
     local accepted = animation.requestFrame(FEEDBACK_FRAME)
+    model.feedbackAnimated = accepted
     if not accepted then
         schedule.after(FEEDBACK_FALLBACK, 700, {
             whenHidden = "pause",
@@ -125,7 +139,7 @@ local function render(_context, model)
     local instrumentSize = math.max(layout.cu(104),
         math.min(width * 0.72, height * 0.53))
     local instrumentCy = height * 0.56
-    drawInstrument(width / 2, instrumentCy, instrumentSize, pressed)
+    drawInstrument(width / 2, instrumentCy, instrumentSize, pressed, model)
 
     local feedbackSize = math.max(layout.fontCu(12),
         math.min(layout.fontCu(15), layout.vmin(5.1)))
@@ -181,6 +195,7 @@ local function event(_context, model, value)
     if value.kind == "action" and value.id == "wooden-fish.reset" then
         model.count = 0
         model.feedbackActive = false
+        model.feedbackAnimated = false
         model.feedbackElapsedMs = 0
         animation.cancelFrame(FEEDBACK_FRAME)
         schedule.cancel(FEEDBACK_FALLBACK)
@@ -197,6 +212,7 @@ local function event(_context, model, value)
             animation.requestFrame(FEEDBACK_FRAME)
         else
             model.feedbackActive = false
+            model.feedbackAnimated = false
             -- Reset the host's per-ID frame clock so the next strike starts
             -- from delta 0 instead of inheriting an old capped interval.
             animation.cancelFrame(FEEDBACK_FRAME)
@@ -208,6 +224,7 @@ local function event(_context, model, value)
     if value.kind == "schedule" then
         if value.id == FEEDBACK_FALLBACK then
             model.feedbackActive = false
+            model.feedbackAnimated = false
             widget.invalidate()
         elseif value.id == "wooden-fish.persist" then
             persistCount(model)

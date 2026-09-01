@@ -2080,7 +2080,10 @@ function draw.image(image, x, y, width, height, alpha) end
 ---@param alignment? SnowDrawImageAlignment Applies to both axes; defaults to center.
 ---@param alpha? number
 ---@param interpolation? SnowDrawImageInterpolation Defaults to linear.
-function draw.imageFit(image, x, y, width, height, fit, alignment, alpha, interpolation) end
+---@param rotationDegrees? number Clockwise rotation from -360 through 360 degrees; defaults to 0.
+---@param originX? number Normalized horizontal rotation origin from 0 through 1; defaults to 0.5.
+---@param originY? number Normalized vertical rotation origin from 0 through 1; defaults to 0.5.
+function draw.imageFit(image, x, y, width, height, fit, alignment, alpha, interpolation, rotationDegrees, originX, originY) end
 
 ---@param x number
 ---@param y number

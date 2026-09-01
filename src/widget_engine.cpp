@@ -11030,6 +11030,12 @@ static int lua_DrawImageFit(lua_State* state)
     const char* alignmentRaw = luaL_optstring(state, 7, "center");
     const float alpha = LuaDrawAlpha(state, 8, "draw.imageFit");
     const char* interpolationRaw = luaL_optstring(state, 9, "linear");
+    const float rotationDegrees = static_cast<float>(
+        luaL_optnumber(state, 10, 0.0));
+    const float originX = static_cast<float>(
+        luaL_optnumber(state, 11, 0.5));
+    const float originY = static_cast<float>(
+        luaL_optnumber(state, 12, 0.5));
     using Fit = snowdesktop::widget_runtime::DrawImageFit;
     using Alignment = snowdesktop::widget_runtime::DrawImageAlignment;
     Fit fit = Fit::Contain;
@@ -11050,6 +11056,11 @@ static int lua_DrawImageFit(lua_State* state)
     if (interpolation != "linear" && interpolation != "nearest")
         return luaL_error(state,
             "draw.imageFit: interpolation must be linear or nearest");
+    std::string transformError;
+    if (!snowdesktop::widget_runtime::ValidateDrawImageTransform(
+            rotationDegrees, originX, originY, transformError))
+        return luaL_error(state, "draw.imageFit: %s",
+            transformError.c_str());
     auto* d2d = GetD2D(state);
     if (!d2d || !d2d->engine) return 0;
     ID2D1Bitmap1* bitmap = ResolveDrawImageBitmap(
@@ -11073,10 +11084,26 @@ static int lua_DrawImageFit(lua_State* state)
         placement.source.x, placement.source.y,
         placement.source.x + placement.source.width,
         placement.source.y + placement.source.height);
+    D2D1_MATRIX_3X2_F previousTransform{};
+    const bool rotated = std::abs(rotationDegrees) > 0.0001f;
+    if (rotated)
+    {
+        d2d->ctx->GetTransform(&previousTransform);
+        const D2D1_POINT_2F origin = D2D1::Point2F(
+            destination.left +
+                (destination.right - destination.left) * originX,
+            destination.top +
+                (destination.bottom - destination.top) * originY);
+        d2d->ctx->SetTransform(
+            D2D1::Matrix3x2F::Rotation(rotationDegrees, origin) *
+            previousTransform);
+    }
     d2d->ctx->DrawBitmap(bitmap, destination, alpha,
         interpolation == "nearest"
             ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
             : D2D1_INTERPOLATION_MODE_LINEAR, source);
+    if (rotated)
+        d2d->ctx->SetTransform(previousTransform);
     return 0;
 }
 
