@@ -6,7 +6,7 @@ local FEEDBACK_FRAME = "wooden-fish.feedback-frame"
 local FEEDBACK_FALLBACK = "wooden-fish.feedback-fallback"
 local FEEDBACK_DURATION_MS = 900
 local MALLET_STRIKE_DURATION_MS = 240
-local MALLET_STRIKE_ANGLE = -16
+local MALLET_STRIKE_ANGLE = 12
 local MAX_COUNT = 999999999
 
 local palettes = {
@@ -80,15 +80,14 @@ local function drawInstrument(cx, cy, size, pressed, model)
     draw.imageFit(woodenFishImage, cx - size / 2, bodyY, size, size,
         "contain", "center", pressed and 0.97 or 1.0, "linear")
 
-    -- Keep the upper-right handle tip fixed as the pivot. A negative angle
-    -- swings the lower-left head down onto the wooden fish, then the existing
-    -- animation frame stream eases it back to rest.
+    -- Keep the mallet head fixed on the upper striking surface while the
+    -- handle swings down around it, then ease the handle back to rest.
     local malletSize = size * 0.56
     local malletX = cx + size * 0.15
     local malletY = cy - size * 0.70
     draw.imageFit(malletImage, malletX, malletY,
         malletSize, malletSize, "contain", "center", 1.0, "linear",
-        malletRotation(model, pressed), 0.90, 0.08)
+        malletRotation(model, pressed), 0.20, 0.84)
 end
 
 local function drawFeedback(model, y, baseSize, colors, width)
