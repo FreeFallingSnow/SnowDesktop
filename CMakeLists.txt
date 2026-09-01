@@ -253,6 +253,8 @@ set(SNOWDESKTOP_SOURCES
     src/core/container.cpp
     src/core/desktop.cpp
     src/data_paths.cpp
+    src/virtual_file_drop.cpp
+    src/virtual_file_drop.h
     src/steam_runtime_context.cpp
     src/steam_runtime_context.h
     src/calendar_service.cpp
@@ -1850,6 +1852,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid
         LABELS integration shell)
+
+    snowdesktop_add_test(
+        SnowDesktopVirtualFileDropTests
+        virtual_file_drop
+        SOURCES
+            tests/virtual_file_drop_tests.cpp
+            src/virtual_file_drop.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 user32
+        LABELS contract interaction shell)
 
     snowdesktop_add_test(
         SnowDesktopShellContextMenuInvokeTests

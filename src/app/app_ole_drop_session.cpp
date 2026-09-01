@@ -1,8 +1,83 @@
 #include "app.h"
 #include "../ole_drag_rules.h"
+#include "../virtual_file_drop.h"
 #include "../widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
+
+namespace
+{
+using DirectoryPathSet = std::unordered_set<std::wstring>;
+
+std::wstring UserDesktopDirectory()
+{
+    wchar_t desktopPath[MAX_PATH]{};
+    if (!SHGetSpecialFolderPathW(
+            nullptr, desktopPath,
+            CSIDL_DESKTOPDIRECTORY, FALSE))
+        return {};
+    return TrimTrailingPathSeparators(desktopPath);
+}
+
+std::optional<DirectoryPathSet> SnapshotDirectoryPaths(
+    const std::wstring& directory)
+{
+    DirectoryPathSet paths;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(
+        directory,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    if (error)
+        return std::nullopt;
+
+    const std::filesystem::directory_iterator end;
+    while (iterator != end)
+    {
+        paths.insert(ToUpperInvariant(
+            iterator->path().lexically_normal().wstring()));
+        iterator.increment(error);
+        if (error)
+            return std::nullopt;
+    }
+    return paths;
+}
+
+std::optional<std::vector<std::wstring>> FindNewDirectoryPaths(
+    const std::wstring& directory,
+    const DirectoryPathSet& previousPaths)
+{
+    std::vector<std::wstring> paths;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(
+        directory,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    if (error)
+        return std::nullopt;
+
+    const std::filesystem::directory_iterator end;
+    while (iterator != end)
+    {
+        const std::wstring path =
+            iterator->path().lexically_normal().wstring();
+        if (!previousPaths.contains(ToUpperInvariant(path)))
+            paths.push_back(path);
+        iterator.increment(error);
+        if (error)
+            return std::nullopt;
+    }
+
+    std::stable_sort(
+        paths.begin(), paths.end(),
+        [](const std::wstring& left,
+            const std::wstring& right) {
+            return _wcsicmp(
+                left.c_str(), right.c_str()) < 0;
+        });
+    return paths;
+}
+}
 
 HRESULT DesktopApp::HandleOleDragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
@@ -40,8 +115,17 @@ HRESULT DesktopApp::HandleOleDragEnter(
     {
         const std::vector<std::wstring> paths =
             GetDropPaths(dataObject);
+        const auto virtualFiles = snowdesktop::
+            virtual_file_drop::ReadDescriptors(dataObject);
+        const bool delayedFileDrop = paths.empty() &&
+            snowdesktop::virtual_file_drop::
+                OffersAsyncFileDrop(dataObject);
         externalSummary.fileCount =
-            static_cast<int>(paths.size());
+            static_cast<int>(!paths.empty()
+                ? paths.size()
+                : !virtualFiles.empty()
+                    ? virtualFiles.size()
+                    : delayedFileDrop ? 1 : 0);
         externalSummary.hasShortcut =
             std::any_of(
                 paths.begin(), paths.end(),
@@ -49,6 +133,14 @@ HRESULT DesktopApp::HandleOleDragEnter(
                     return _wcsicmp(
                         PathFindExtensionW(
                             path.c_str()),
+                        L".lnk") == 0;
+                }) ||
+            std::any_of(
+                virtualFiles.begin(), virtualFiles.end(),
+                [](const auto& file) {
+                    return _wcsicmp(
+                        PathFindExtensionW(
+                            file.suggestedFileName.c_str()),
                         L".lnk") == 0;
                 });
         externalSummary.foldersOnly =
@@ -984,6 +1076,152 @@ HRESULT DesktopApp::HandleOleDrop(
                         popupPlacement);
                 }
                 RefreshDockFolderPopup();
+                return S_OK;
+            }
+        }
+    }
+
+    // Browsers can advertise a network resource as delayed CF_HDROP data.
+    // Start its async operation before the URL/DIB fallback so the browser
+    // and Shell preserve the original file, name, credentials, and MOTW.
+    Container* delayedFileTarget =
+        dragSession_.TargetContainer();
+    const GridCell delayedFileTargetCell =
+        CellFromPoint(clientPoint);
+    const bool bareDesktopTarget =
+        (delayedFileTarget == GetDesktopGrid() ||
+         (!delayedFileTarget &&
+          dragSession_.TargetRegion() == HitRegion::None)) &&
+        !delayedFileTargetCell.pageId.empty() &&
+        dragSession_.TargetRegion() != HitRegion::Handoff &&
+        dragSession_.TargetRegion() != HitRegion::Blocked;
+    if (dropPaths.empty() && dataObject &&
+        bareDesktopTarget &&
+        ((*effect & DROPEFFECT_COPY) != 0) &&
+        snowdesktop::virtual_file_drop::
+            OffersAsyncFileDrop(dataObject))
+    {
+        const std::wstring desktopDirectory =
+            UserDesktopDirectory();
+        if (!desktopDirectory.empty())
+        {
+            const auto previousDirectoryPaths =
+                SnapshotDirectoryPaths(desktopDirectory);
+            const auto existingDesktopKeys =
+                SnapshotDesktopKeys();
+            const auto descriptors = snowdesktop::
+                virtual_file_drop::ReadDescriptors(
+                    dataObject);
+            const size_t expectedFileCount =
+                std::max<size_t>(1, descriptors.size());
+            const DropPreviewList requestedPreview =
+                BuildExternalDesktopPreviewList(
+                    delayedFileTargetCell,
+                    expectedFileCount);
+
+            auto completed = [
+                this, desktopDirectory,
+                previousDirectoryPaths,
+                existingDesktopKeys, descriptors,
+                requestedPreview, expectedFileCount](
+                    bool succeeded) {
+                if (succeeded && previousDirectoryPaths &&
+                    !requestedPreview.Empty())
+                {
+                    auto newPaths = FindNewDirectoryPaths(
+                        desktopDirectory,
+                        *previousDirectoryPaths);
+                    if (newPaths && !newPaths->empty())
+                    {
+                        std::vector<std::optional<std::wstring>>
+                            pathsBySource(expectedFileCount);
+                        std::vector<bool> pathUsed(
+                            newPaths->size(), false);
+                        if (descriptors.empty())
+                        {
+                            if (newPaths->size() == 1)
+                                pathsBySource[0] =
+                                    newPaths->front();
+                        }
+                        else
+                        {
+                            for (size_t sourceIndex = 0;
+                                sourceIndex < descriptors.size() &&
+                                sourceIndex < pathsBySource.size();
+                                ++sourceIndex)
+                            {
+                                size_t matchingPath =
+                                    newPaths->size();
+                                size_t matchCount = 0;
+                                for (size_t index = 0;
+                                    index < newPaths->size();
+                                    ++index)
+                                {
+                                    if (pathUsed[index] ||
+                                        !MatchPendingName(
+                                            FileNameFromPath(
+                                                (*newPaths)[index]),
+                                            descriptors[sourceIndex].
+                                                suggestedFileName))
+                                        continue;
+                                    matchingPath = index;
+                                    ++matchCount;
+                                }
+                                if (matchCount != 1)
+                                    continue;
+                                pathUsed[matchingPath] = true;
+                                pathsBySource[sourceIndex] =
+                                    (*newPaths)[matchingPath];
+                            }
+                        }
+
+                        DragSourceList sourceList;
+                        sourceList.hasExternalFiles = true;
+                        std::unordered_map<size_t,
+                            std::wstring>
+                                createdPathsBySource;
+                        for (size_t sourceIndex = 0;
+                            sourceIndex < pathsBySource.size();
+                            ++sourceIndex)
+                        {
+                            const auto& path =
+                                pathsBySource[sourceIndex];
+                            if (!path)
+                                continue;
+                            DragSourceEntry entry;
+                            entry.kind =
+                                DropSourceKind::ExternalFile;
+                            entry.sourceIndex = sourceIndex;
+                            entry.filePath = *path;
+                            entry.displayName =
+                                FileNameFromPath(*path);
+                            entry.originalSpan = {1, 1};
+                            createdPathsBySource.emplace(
+                                entry.sourceIndex, *path);
+                            sourceList.entries.push_back(
+                                std::move(entry));
+                        }
+                        if (!sourceList.entries.empty())
+                        {
+                            StorePendingLandingCache(
+                                sourceList,
+                                requestedPreview,
+                                existingDesktopKeys,
+                                &createdPathsBySource);
+                        }
+                    }
+                }
+                ReloadItems(false);
+            };
+
+            if (QueueAsyncShellDrop(
+                    dataObject, desktopDirectory,
+                    keyState, point,
+                    DROPEFFECT_COPY,
+                    std::move(completed)))
+            {
+                *effect = DROPEFFECT_COPY;
+                EndDragSession();
                 return S_OK;
             }
         }

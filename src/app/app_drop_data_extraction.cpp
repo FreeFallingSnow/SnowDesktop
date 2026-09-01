@@ -57,6 +57,97 @@ std::filesystem::path UniqueDropContentPath(std::wstring filename,
     }
     return {};
 }
+
+std::wstring ReadWideHGlobalFormat(
+    IDataObject* dataObject, CLIPFORMAT format)
+{
+    if (!dataObject || format == 0)
+        return {};
+
+    FORMATETC formatEtc{};
+    formatEtc.cfFormat = format;
+    formatEtc.dwAspect = DVASPECT_CONTENT;
+    formatEtc.lindex = -1;
+    formatEtc.tymed = TYMED_HGLOBAL;
+    STGMEDIUM medium{};
+    if (FAILED(dataObject->GetData(
+            &formatEtc, &medium)))
+        return {};
+
+    std::wstring result;
+    if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal)
+    {
+        const SIZE_T byteCount = GlobalSize(medium.hGlobal);
+        const auto* data = static_cast<const wchar_t*>(
+            GlobalLock(medium.hGlobal));
+        if (data && byteCount >= sizeof(wchar_t))
+        {
+            const size_t characterCount =
+                byteCount / sizeof(wchar_t);
+            const auto* terminator = std::find(
+                data, data + characterCount, L'\0');
+            if (terminator != data + characterCount)
+                result.assign(data, terminator);
+        }
+        if (data)
+            GlobalUnlock(medium.hGlobal);
+    }
+    ReleaseStgMedium(&medium);
+    return result;
+}
+
+std::wstring ReadAnsiHGlobalFormat(
+    IDataObject* dataObject, CLIPFORMAT format)
+{
+    if (!dataObject || format == 0)
+        return {};
+
+    FORMATETC formatEtc{};
+    formatEtc.cfFormat = format;
+    formatEtc.dwAspect = DVASPECT_CONTENT;
+    formatEtc.lindex = -1;
+    formatEtc.tymed = TYMED_HGLOBAL;
+    STGMEDIUM medium{};
+    if (FAILED(dataObject->GetData(
+            &formatEtc, &medium)))
+        return {};
+
+    std::wstring result;
+    if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal)
+    {
+        const SIZE_T byteCount = GlobalSize(medium.hGlobal);
+        const auto* data = static_cast<const char*>(
+            GlobalLock(medium.hGlobal));
+        if (data && byteCount > 0 &&
+            byteCount <= static_cast<SIZE_T>(
+                std::numeric_limits<int>::max()))
+        {
+            const auto* terminator = std::find(
+                data, data + byteCount, '\0');
+            if (terminator != data + byteCount)
+            {
+                const int sourceLength = static_cast<int>(
+                    terminator - data);
+                const int required = MultiByteToWideChar(
+                    CP_ACP, 0, data, sourceLength,
+                    nullptr, 0);
+                if (required > 0)
+                {
+                    result.resize(
+                        static_cast<size_t>(required));
+                    if (MultiByteToWideChar(
+                            CP_ACP, 0, data, sourceLength,
+                            result.data(), required) != required)
+                        result.clear();
+                }
+            }
+        }
+        if (data)
+            GlobalUnlock(medium.hGlobal);
+    }
+    ReleaseStgMedium(&medium);
+    return result;
+}
 }
 
 std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
@@ -203,37 +294,24 @@ std::vector<std::wstring> DesktopApp::TryExtractUrlFromDataObject(IDataObject* d
 
     std::wstring url;
 
-    CLIPFORMAT cfUrl = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocator"));
-    FORMATETC fmt{};
-    fmt.cfFormat = cfUrl;
-    fmt.dwAspect = DVASPECT_CONTENT;
-    fmt.lindex = -1;
-    fmt.tymed = TYMED_HGLOBAL;
-    STGMEDIUM med{};
-    if (SUCCEEDED(dataObject->GetData(&fmt, &med)) && med.hGlobal)
-    {
-        const wchar_t* data = static_cast<const wchar_t*>(GlobalLock(med.hGlobal));
-        if (data) url = data;
-        GlobalUnlock(med.hGlobal);
-        ReleaseStgMedium(&med);
-    }
+    const CLIPFORMAT wideUrlFormat =
+        static_cast<CLIPFORMAT>(
+            RegisterClipboardFormatW(CFSTR_INETURLW));
+    url = ReadWideHGlobalFormat(
+        dataObject, wideUrlFormat);
 
     if (url.empty())
     {
-        FORMATETC fmtText{};
-        fmtText.cfFormat = CF_UNICODETEXT;
-        fmtText.dwAspect = DVASPECT_CONTENT;
-        fmtText.lindex = -1;
-        fmtText.tymed = TYMED_HGLOBAL;
-        STGMEDIUM medText{};
-        if (SUCCEEDED(dataObject->GetData(&fmtText, &medText)) && medText.hGlobal)
-        {
-            const wchar_t* data = static_cast<const wchar_t*>(GlobalLock(medText.hGlobal));
-            if (data) url = data;
-            GlobalUnlock(medText.hGlobal);
-            ReleaseStgMedium(&medText);
-        }
+        const CLIPFORMAT ansiUrlFormat =
+            static_cast<CLIPFORMAT>(
+                RegisterClipboardFormatW(CFSTR_INETURLA));
+        url = ReadAnsiHGlobalFormat(
+            dataObject, ansiUrlFormat);
     }
+
+    if (url.empty())
+        url = ReadWideHGlobalFormat(
+            dataObject, CF_UNICODETEXT);
 
     if (url.empty()) return paths;
 
