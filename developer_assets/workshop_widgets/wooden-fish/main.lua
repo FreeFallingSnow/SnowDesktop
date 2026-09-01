@@ -6,7 +6,10 @@ local FEEDBACK_FRAME = "wooden-fish.feedback-frame"
 local FEEDBACK_FALLBACK = "wooden-fish.feedback-fallback"
 local FEEDBACK_DURATION_MS = 900
 local MALLET_STRIKE_DURATION_MS = 240
+local MALLET_REST_ANGLE = 90
 local MALLET_STRIKE_ANGLE = -22
+local MALLET_SOURCE_TIP_X = 0.92
+local MALLET_SOURCE_TIP_Y = 0.08
 local MAX_COUNT = 999999999
 
 local palettes = {
@@ -80,14 +83,28 @@ local function drawInstrument(cx, cy, size, pressed, model)
     draw.imageFit(woodenFishImage, cx - size / 2, bodyY, size, size,
         "contain", "center", pressed and 0.97 or 1.0, "linear")
 
-    -- Keep the mallet head lifted at rest, then rotate around the lower-right
-    -- image origin so the head arcs onto the highlighted striking surface.
+    -- Turn the source sprite into the requested head-upper-left pose. Compensate
+    -- the draw position as it swings so the rotated lower-right handle tip is
+    -- the fixed pivot throughout the strike.
     local malletSize = size * 0.56
     local malletX = cx + size * 0.12
-    local malletY = cy - size * 0.92
-    draw.imageFit(malletImage, malletX, malletY,
+    local malletY = cy - size * 0.60
+    local rotation = MALLET_REST_ANGLE + malletRotation(model, pressed)
+    local radians = math.rad(rotation)
+    local cosine = math.cos(radians)
+    local sine = math.sin(radians)
+    local sourceTipX = MALLET_SOURCE_TIP_X - 0.5
+    local sourceTipY = MALLET_SOURCE_TIP_Y - 0.5
+    local currentTipX = sourceTipX * cosine - sourceTipY * sine
+    local currentTipY = sourceTipX * sine + sourceTipY * cosine
+    local restTipX = 0.5 - MALLET_SOURCE_TIP_Y
+    local restTipY = MALLET_SOURCE_TIP_X - 0.5
+    local pivotCompensationX = (restTipX - currentTipX) * malletSize
+    local pivotCompensationY = (restTipY - currentTipY) * malletSize
+    draw.imageFit(malletImage,
+        malletX + pivotCompensationX, malletY + pivotCompensationY,
         malletSize, malletSize, "contain", "center", 1.0, "linear",
-        malletRotation(model, pressed), 0.90, 0.92)
+        rotation, 0.5, 0.5)
 end
 
 local function drawFeedback(model, y, baseSize, colors, width)
