@@ -303,6 +303,11 @@ constexpr UINT kQuickNavigationEverythingSearchDebounceMs = 120;
 // the external session alive briefly so hover dwell survives that handoff.
 constexpr UINT_PTR kExternalOleDragLeaveGraceTimerId = 24;
 constexpr UINT kExternalOleDragLeaveGraceMs = 80;
+// Native item drags normally advance from captured WM_MOUSEMOVE messages.
+// Recover collection dwell from the physical pointer when another desktop
+// surface transition starves that captured stream before it reaches an opener.
+constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
+constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

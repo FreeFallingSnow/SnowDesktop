@@ -508,6 +508,13 @@ void DesktopApp::OnMouseMoveAt(
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            if (hwnd_ && IsWindow(hwnd_))
+            {
+                SetTimer(
+                    hwnd_, kNativeDragHoverRecoveryTimerId,
+                    kNativeDragHoverRecoveryIntervalMs,
+                    nullptr);
+            }
             dragSession_.SetVisualItemBounds(
                 std::move(visualItemBounds));
             auto* listSource =

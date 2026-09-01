@@ -7150,6 +7150,49 @@ int main(int argc, char** argv)
                 groupTimerActivate != std::string::npos &&
                 groupTimerStaleGuard < groupTimerActivate,
             "queued dwell timer messages must stop after cancellation and refresh the opened popup through the active drag transport");
+        const std::size_t nativeDragBegin =
+            pointerMoveSource.find("dragSession_.Begin(");
+        const std::size_t nativeRecoveryArm =
+            pointerMoveSource.find(
+                "kNativeDragHoverRecoveryTimerId",
+                nativeDragBegin);
+        const std::size_t nativeRecoveryDispatch =
+            timerDispatchSource.find(
+                "timerId == kNativeDragHoverRecoveryTimerId");
+        const std::size_t nativeRecoveryTransportGuard =
+            timerDispatchSource.find(
+                "dragDropController_.IsTransportActive()",
+                nativeRecoveryDispatch);
+        const std::size_t nativeRecoverySample =
+            timerDispatchSource.find(
+                "TryGetNativeDragHoverPointFromCursor(",
+                nativeRecoveryTransportGuard);
+        const std::size_t nativeRecoveryPopupDwell =
+            timerDispatchSource.find(
+                "UpdateCollectionPopupDwell(recoveredPoint);",
+                nativeRecoverySample);
+        const std::size_t nativeRecoveryTabDwell =
+            timerDispatchSource.find(
+                "UpdateCollectionGroupTabDwell(recoveredPoint);",
+                nativeRecoveryPopupDwell);
+        const std::size_t nativeRecoveryStop =
+            dragLifecycleSource.find(
+                "KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId)");
+        Check(nativeDragBegin != std::string::npos &&
+                nativeRecoveryArm != std::string::npos &&
+                nativeRecoveryDispatch != std::string::npos &&
+                nativeRecoveryTransportGuard != std::string::npos &&
+                nativeRecoverySample != std::string::npos &&
+                nativeRecoveryPopupDwell != std::string::npos &&
+                nativeRecoveryTabDwell != std::string::npos &&
+                nativeRecoveryStop != std::string::npos &&
+                nativeDragBegin < nativeRecoveryArm &&
+                nativeRecoveryDispatch <
+                    nativeRecoveryTransportGuard &&
+                nativeRecoveryTransportGuard < nativeRecoverySample &&
+                nativeRecoverySample < nativeRecoveryPopupDwell &&
+                nativeRecoveryPopupDwell < nativeRecoveryTabDwell,
+            "native item drags must recover collection dwell from the physical pointer without entering an active OLE transport");
         Check(dragLifecycleSource.find(
                   "CancelCollectionPopupDwell();") !=
                     std::string::npos &&

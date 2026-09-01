@@ -340,6 +340,28 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
+    if (timerId == kNativeDragHoverRecoveryTimerId)
+    {
+        if (!dragSession_.IsActive())
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
+            return;
+        }
+        if (dragDropController_.IsTransportActive() ||
+            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0)
+            return;
+
+        POINT recoveredPoint{};
+        if (TryGetNativeDragHoverPointFromCursor(
+                recoveredPoint))
+        {
+            UpdateCollectionPopupDwell(recoveredPoint);
+            UpdateCollectionGroupTabDwell(recoveredPoint);
+        }
+        return;
+    }
+
     if (timerId == kDesktopPassthroughHoldTimerId)
     {
         if (!desktopPassthroughHoldActive_)

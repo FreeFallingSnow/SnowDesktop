@@ -117,6 +117,23 @@ bool DesktopApp::TryGetDesktopHoverPointFromCursor(
     return ScreenToClient(hwnd_, &point) != FALSE;
 }
 
+bool DesktopApp::TryGetNativeDragHoverPointFromCursor(
+    POINT& point) const
+{
+    POINT screenPoint{};
+    if (!hwnd_ || !IsWindow(hwnd_) ||
+        !GetCursorPos(&screenPoint))
+        return false;
+
+    const HWND hit =
+        ResolveWindowBelowDragPreviewAt(screenPoint);
+    if (!IsDesktopInteractionSurfaceWindow(hit))
+        return false;
+
+    point = screenPoint;
+    return ScreenToClient(hwnd_, &point) != FALSE;
+}
+
 bool DesktopApp::TryGetBaseDesktopHoverPointFromCursor(
     POINT& point) const
 {

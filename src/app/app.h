@@ -3699,6 +3699,8 @@ private:
     bool IsDesktopInteractionSurfaceWindow(HWND window) const;
     /** @brief 读取光标并在其位于桌面交互表面时转换为主窗口客户区坐标。 */
     bool TryGetDesktopHoverPointFromCursor(POINT& point) const;
+    /** @brief 跳过拖拽预览窗口，读取位于桌面交互表面的真实拖拽点。 */
+    bool TryGetNativeDragHoverPointFromCursor(POINT& point) const;
     /** @brief 读取光标并仅在基础桌面表面上转换为主窗口客户区坐标。 */
     bool TryGetBaseDesktopHoverPointFromCursor(POINT& point) const;
     /** @brief 读取光标并仅在其位于可恢复原生拖拽的窗口上时返回客户区坐标。 */
