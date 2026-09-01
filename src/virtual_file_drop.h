@@ -57,8 +57,9 @@ std::wstring SanitizeSuggestedFileName(
  * TYMED_ISTREAM and TYMED_HGLOBAL media are accepted; structured-storage
  * media are rejected because they cannot be copied safely as an ordinary
  * file without a separate compound-storage serialization contract. Streaming
- * is preferred; HGLOBAL is attempted only when advertisedFileSize is present
- * and within the requested bound.
+ * is preferred; HGLOBAL is attempted as a compatibility fallback and its
+ * actual GlobalSize is checked against the requested bound. An advertised
+ * size, when present, is also used for rejection before requesting content.
  *
  * The advertised name is reduced to one Windows-safe leaf name. Existing
  * files are never replaced, the byte limit is enforced while streaming, and

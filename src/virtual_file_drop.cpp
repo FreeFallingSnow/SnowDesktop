@@ -539,11 +539,10 @@ snowdesktop::virtual_file_drop::MaterializeFileContents(
     DWORD expectedMedium = TYMED_ISTREAM;
     if (FAILED(dataObject->GetData(&streamFormat, &medium)))
     {
-        // HGLOBAL retrieval can allocate the entire source before this code
-        // sees the handle. Require a bounded advertised size and use it only
-        // as a compatibility fallback after the streaming request fails.
-        if (!descriptor.advertisedFileSize)
-            return std::nullopt;
+        // Some Chromium-based desktop clients expose FileContents only as
+        // HGLOBAL and omit the optional FD_FILESIZE descriptor flag. Request
+        // that standard medium after streaming fails; WriteGlobal validates
+        // the actual GlobalSize against maximumBytes before copying it.
         FORMATETC globalFormat = streamFormat;
         globalFormat.tymed = TYMED_HGLOBAL;
         if (FAILED(dataObject->GetData(&globalFormat, &medium)))

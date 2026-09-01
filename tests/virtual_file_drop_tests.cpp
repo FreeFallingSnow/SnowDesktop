@@ -722,7 +722,7 @@ void TestAdvertisedOversizeIsRejectedBeforeReadingContents()
         "an advertised oversize is rejected before content retrieval or file creation");
 }
 
-void TestGlobalFallbackRequiresAnAdvertisedBound()
+void TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound()
 {
     TemporaryDirectory directory;
     Check(!directory.Path().empty(),
@@ -736,13 +736,23 @@ void TestGlobalFallbackRequiresAnAdvertisedBound()
     snowdesktop::virtual_file_drop::VirtualFileDescriptor descriptor{
         L"unknown-size.bin", 0, std::nullopt };
 
+    const auto materialized = snowdesktop::virtual_file_drop::
+        MaterializeFileContents(
+            &dataObject, descriptor, directory.Path(), 4096);
+    Check(materialized &&
+            materialized->sizeBytes == dataObject.contents.size() &&
+            ReadTestFile(materialized->path) == dataObject.contents,
+        "HGLOBAL FileContents without an advertised size use the actual bounded payload");
+    Check(dataObject.fileContentsRequests == 2 &&
+            dataObject.lastFileContentsTymed == TYMED_HGLOBAL &&
+            CountFiles(directory.Path()) == 1,
+        "a source without FD_FILESIZE falls back from IStream to HGLOBAL");
+
+    dataObject.contents = Bytes("oversized unknown-size bytes");
     Check(!snowdesktop::virtual_file_drop::MaterializeFileContents(
-            &dataObject, descriptor, directory.Path(), 4096),
-        "HGLOBAL fallback without an advertised byte bound is rejected");
-    Check(dataObject.fileContentsRequests == 1 &&
-            dataObject.lastFileContentsTymed == TYMED_ISTREAM &&
-            CountFiles(directory.Path()) == 0,
-        "an unbounded source is probed only for streaming content and leaves no file");
+            &dataObject, descriptor, directory.Path(), 1) &&
+            CountFiles(directory.Path()) == 1,
+        "the actual HGLOBAL size remains bounded when FD_FILESIZE is absent");
 }
 
 void TestAsyncFileDropProbeDoesNotMaterializeData()
@@ -813,7 +823,7 @@ int main()
     TestOversizedStreamRemovesPartialOutput();
     TestSanitizedNameExposesTheEffectiveSecuritySuffix();
     TestAdvertisedOversizeIsRejectedBeforeReadingContents();
-    TestGlobalFallbackRequiresAnAdvertisedBound();
+    TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound();
     TestAsyncFileDropProbeDoesNotMaterializeData();
     TestAsyncModeProbeDoesNotRequireFileDrop();
     TestAsyncFileDropRequiresBothSignals();

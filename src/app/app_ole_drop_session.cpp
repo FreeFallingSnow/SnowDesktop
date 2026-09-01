@@ -95,98 +95,6 @@ bool IsInternetShortcutDescriptor(
         SanitizeSuggestedFileName(descriptor.suggestedFileName));
 }
 
-std::wstring ClipboardFormatDisplayName(CLIPFORMAT format)
-{
-    std::array<wchar_t, 256> registeredName{};
-    const int registeredLength = GetClipboardFormatNameW(
-        format, registeredName.data(),
-        static_cast<int>(registeredName.size()));
-    if (registeredLength > 0)
-        return std::wstring(
-            registeredName.data(), registeredLength);
-
-    switch (format)
-    {
-    case CF_TEXT: return L"CF_TEXT";
-    case CF_BITMAP: return L"CF_BITMAP";
-    case CF_METAFILEPICT: return L"CF_METAFILEPICT";
-    case CF_SYLK: return L"CF_SYLK";
-    case CF_DIF: return L"CF_DIF";
-    case CF_TIFF: return L"CF_TIFF";
-    case CF_OEMTEXT: return L"CF_OEMTEXT";
-    case CF_DIB: return L"CF_DIB";
-    case CF_PALETTE: return L"CF_PALETTE";
-    case CF_PENDATA: return L"CF_PENDATA";
-    case CF_RIFF: return L"CF_RIFF";
-    case CF_WAVE: return L"CF_WAVE";
-    case CF_UNICODETEXT: return L"CF_UNICODETEXT";
-    case CF_ENHMETAFILE: return L"CF_ENHMETAFILE";
-    case CF_HDROP: return L"CF_HDROP";
-    case CF_LOCALE: return L"CF_LOCALE";
-    case CF_DIBV5: return L"CF_DIBV5";
-    default: return L"CF_" + std::to_wstring(format);
-    }
-}
-
-void LogOleDropDataObjectFormats(
-    IDataObject* dataObject, const wchar_t* stage)
-{
-    std::wstring message = L"OLE drop formats stage=";
-    message += stage ? stage : L"unknown";
-    if (!dataObject)
-    {
-        message += L" dataObject=null";
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Debug);
-        return;
-    }
-
-    ComPtr<IEnumFORMATETC> formats;
-    const HRESULT enumResult = dataObject->EnumFormatEtc(
-        DATADIR_GET, &formats);
-    if (FAILED(enumResult) || !formats)
-    {
-        std::array<wchar_t, 48> resultText{};
-        swprintf_s(resultText.data(), resultText.size(),
-            L" enumHr=0x%08lX", enumResult);
-        message += resultText.data();
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Debug);
-        return;
-    }
-
-    constexpr size_t maximumFormats = 64;
-    size_t formatCount = 0;
-    while (formatCount < maximumFormats)
-    {
-        FORMATETC format{};
-        ULONG fetched = 0;
-        const HRESULT nextResult = formats->Next(
-            1, &format, &fetched);
-        if (nextResult != S_OK || fetched != 1)
-            break;
-
-        const std::wstring name =
-            ClipboardFormatDisplayName(format.cfFormat);
-        std::array<wchar_t, 192> formatText{};
-        swprintf_s(formatText.data(), formatText.size(),
-            L" [%u:%ls tymed=0x%08lX aspect=%lu index=%ld]",
-            static_cast<unsigned int>(format.cfFormat),
-            name.c_str(), format.tymed,
-            format.dwAspect, format.lindex);
-        message += formatText.data();
-        if (format.ptd)
-            CoTaskMemFree(format.ptd);
-        ++formatCount;
-    }
-    if (formatCount == maximumFormats)
-        message += L" [format-list-capped]";
-    if (formatCount == 0)
-        message += L" [no-formats]";
-    WriteDiagnosticLogEntry(
-        message.c_str(), DiagnosticLogLevel::Debug);
-}
-
 std::wstring ReadInternetShortcutTarget(const std::wstring& path)
 {
     const wchar_t* extension = PathFindExtensionW(path.c_str());
@@ -287,7 +195,6 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
 
-    LogOleDropDataObjectFormats(dataObject, L"DragEnter");
     ExternalDragSummary externalSummary;
     if (dataObject)
     {
@@ -566,7 +473,6 @@ HRESULT DesktopApp::HandleOleDrop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
-    LogOleDropDataObjectFormats(dataObject, L"Drop");
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
@@ -1510,8 +1416,6 @@ HRESULT DesktopApp::HandleOleDrop(
                 std::make_shared<AsyncDropPreflightState>();
             std::function<bool(IDataObject*)> dataObjectPreflight =
                 [preflightState](IDataObject* workerDataObject) {
-                    LogOleDropDataObjectFormats(
-                        workerDataObject, L"AsyncWorker");
                     DropReferenceSnapshot workerSnapshot =
                         ReadDropReferenceSnapshot(workerDataObject);
                     const bool privateResource = std::any_of(
@@ -1572,25 +1476,6 @@ HRESULT DesktopApp::HandleOleDrop(
                     const bool handledByPreflight =
                         !offersStandardVirtualFile &&
                         (handled || privateResource || fileResource);
-                    {
-                        std::array<wchar_t, 320> message{};
-                        swprintf_s(message.data(), message.size(),
-                            L"OLE drop preflight private=%d file=%d "
-                            L"standardVirtual=%d descriptors=%llu "
-                            L"contentPaths=%llu handled=%d "
-                            L"handledByPreflight=%d",
-                            privateResource ? 1 : 0,
-                            fileResource ? 1 : 0,
-                            offersStandardVirtualFile ? 1 : 0,
-                            static_cast<unsigned long long>(
-                                workerDescriptors.size()),
-                            static_cast<unsigned long long>(
-                                contentPaths.size()),
-                            handled ? 1 : 0,
-                            handledByPreflight ? 1 : 0);
-                        WriteDiagnosticLogEntry(
-                            message.data(), DiagnosticLogLevel::Debug);
-                    }
                     preflightState->Store(
                         std::move(workerSnapshot),
                         std::move(workerDescriptors),

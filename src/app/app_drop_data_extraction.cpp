@@ -456,7 +456,10 @@ std::vector<std::wstring> DesktopApp::TryExtractUrlFromDataObject(
     const DropReferenceSnapshot& snapshot)
 {
     std::vector<std::wstring> paths;
-    const std::wstring url = ExtractDropUrl(snapshot);
+    std::wstring url = ExtractDropUrl(snapshot);
+    if (url.empty() && snowdesktop::drop_text_rules::
+            IsPrivateHierarchicalResource(snapshot.reference))
+        url = snapshot.reference.value;
     if (url.empty()) return paths;
 
     std::wstring resultPath = HandleUrlContent(url);
