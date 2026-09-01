@@ -2,6 +2,9 @@ local woodenFishImage = resource.image("wooden-fish")
 local malletImage = resource.image("mallet")
 
 local STRIKE_KEY = "wooden-fish.strike"
+local FEEDBACK_FRAME = "wooden-fish.feedback-frame"
+local FEEDBACK_FALLBACK = "wooden-fish.feedback-fallback"
+local FEEDBACK_DURATION_MS = 900
 local MAX_COUNT = 999999999
 
 local palettes = {
@@ -10,14 +13,12 @@ local palettes = {
         secondary = 0xFED7AA,
         focus = 0xFDE68A,
         feedback = 0xFCD34D,
-        glow = 0xF59E0B,
     },
     darkForeground = {
         primary = 0x3F210C,
         secondary = 0x78350F,
         focus = 0x92400E,
         feedback = 0xB45309,
-        glow = 0xD97706,
     },
 }
 
@@ -44,7 +45,8 @@ end
 local function setup()
     return {
         count = normalizedCount(storage.get("count")),
-        feedback = false,
+        feedbackActive = false,
+        feedbackElapsedMs = 0,
     }
 end
 
@@ -55,15 +57,9 @@ local function centeredText(text, y, size, color, width, bold, alpha)
         nil, alpha or 1.0)
 end
 
-local function drawInstrument(cx, cy, size, pressed, hovered, focused,
-    feedback, colors)
+local function drawInstrument(cx, cy, size, pressed)
     local bodyDrop = pressed and layout.cu(1.5) or 0
     local bodyY = cy - size / 2 + bodyDrop
-
-    if hovered or feedback then
-        draw.circle(cx, cy + bodyDrop, size * 0.48, colors.glow,
-            feedback and 0.15 or 0.08)
-    end
 
     draw.shadow(cx - size * 0.38, cy + size * 0.28 + bodyDrop,
         size * 0.76, size * 0.18, 0x241006, layout.cu(9),
@@ -81,13 +77,32 @@ local function drawInstrument(cx, cy, size, pressed, hovered, focused,
     local malletY = cy - size * 0.70 + malletDropY
     draw.imageFit(malletImage, malletX, malletY,
         malletSize, malletSize, "contain", "center", 1.0, "linear")
+end
 
-    if focused then
-        draw.arc(cx, cy + bodyDrop, size * 0.50, 0, 359.5,
-            math.max(1, layout.cu(2)), colors.focus, 0.92)
+local function drawFeedback(model, y, baseSize, colors, width)
+    if not model.feedbackActive then return end
+
+    local progress = math.max(0, math.min(1,
+        model.feedbackElapsedMs / FEEDBACK_DURATION_MS))
+    local popProgress = math.min(1, progress / 0.34)
+    local popScale = 1 + math.sin(popProgress * math.pi) * 0.20
+    local rise = layout.cu(20) * (1 - (1 - progress) * (1 - progress))
+    local alpha = math.max(0, 1 - progress * progress)
+    centeredText(l10n.tr("lua_widget.wooden_fish.feedback"),
+        y - rise, baseSize * popScale, colors.feedback,
+        width, true, alpha)
+end
+
+local function startFeedback(model)
+    model.feedbackActive = true
+    model.feedbackElapsedMs = 0
+    schedule.cancel(FEEDBACK_FALLBACK)
+    local accepted = animation.requestFrame(FEEDBACK_FRAME)
+    if not accepted then
+        schedule.after(FEEDBACK_FALLBACK, 700, {
+            whenHidden = "pause",
+        })
     end
-
-    return cy + size * 0.51 + bodyDrop
 end
 
 local function render(_context, model)
@@ -100,8 +115,8 @@ local function render(_context, model)
     local padding = layout.cu(10)
     local counterSize = math.max(layout.fontCu(15),
         math.min(layout.fontCu(24), layout.vmin(8.6)))
-    local hintSize = math.max(layout.fontCu(10.5),
-        math.min(layout.fontCu(13), layout.vmin(4.6)))
+    local hintSize = math.max(layout.fontCu(12.5),
+        math.min(layout.fontCu(15.5), layout.vmin(5.4)))
     local countText = l10n.tr("lua_widget.wooden_fish.counter",
         l10n.formatNumber(model.count))
     centeredText(countText, padding, counterSize, colors.primary,
@@ -110,21 +125,17 @@ local function render(_context, model)
     local instrumentSize = math.max(layout.cu(104),
         math.min(width * 0.72, height * 0.53))
     local instrumentCy = height * 0.56
-    local contentBottom = drawInstrument(width / 2, instrumentCy,
-        instrumentSize, pressed, hovered, focused, model.feedback, colors)
+    drawInstrument(width / 2, instrumentCy, instrumentSize, pressed)
 
-    if model.feedback then
-        local feedbackSize = math.max(layout.fontCu(10.5),
-            math.min(layout.fontCu(13.5), layout.vmin(4.8)))
-        centeredText(l10n.tr("lua_widget.wooden_fish.feedback"),
-            math.min(contentBottom, height - padding - feedbackSize * 1.35),
-            feedbackSize, colors.feedback, width - padding * 2,
-            true, 0.96)
-    else
-        centeredText(l10n.tr("lua_widget.wooden_fish.hint"),
-            height - padding - hintSize * 1.35, hintSize,
-            colors.secondary, width - padding * 2, false, 0.92)
-    end
+    local feedbackSize = math.max(layout.fontCu(12),
+        math.min(layout.fontCu(15), layout.vmin(5.1)))
+    drawFeedback(model, instrumentCy - instrumentSize * 0.62,
+        feedbackSize, colors, width - padding * 2)
+
+    centeredText(l10n.tr("lua_widget.wooden_fish.hint"),
+        height - padding - hintSize * 1.35, hintSize,
+        (hovered or focused) and colors.focus or colors.secondary,
+        width - padding * 2, false, 0.96)
 
     interaction.region({
         key = STRIKE_KEY,
@@ -140,6 +151,7 @@ local function render(_context, model)
         tooltip = l10n.tr("lua_widget.wooden_fish.tooltip"),
         events = {
             click = { id = "wooden-fish.strike" },
+            doubleClick = { id = "wooden-fish.strike" },
             contextMenu = {
                 id = "wooden-fish.menu",
                 scope = "component",
@@ -158,10 +170,7 @@ local function event(_context, model, value)
         if model.count < MAX_COUNT then
             model.count = model.count + 1
         end
-        model.feedback = true
-        schedule.after("wooden-fish.feedback", 650, {
-            whenHidden = "pause",
-        })
+        startFeedback(model)
         schedule.after("wooden-fish.persist", 350, {
             whenHidden = "continue",
         })
@@ -171,17 +180,35 @@ local function event(_context, model, value)
 
     if value.kind == "action" and value.id == "wooden-fish.reset" then
         model.count = 0
-        model.feedback = false
-        schedule.cancel("wooden-fish.feedback")
+        model.feedbackActive = false
+        model.feedbackElapsedMs = 0
+        animation.cancelFrame(FEEDBACK_FRAME)
+        schedule.cancel(FEEDBACK_FALLBACK)
         schedule.cancel("wooden-fish.persist")
         persistCount(model)
         widget.invalidate()
         return
     end
 
+    if value.kind == "frame" and value.id == FEEDBACK_FRAME then
+        model.feedbackElapsedMs = math.min(FEEDBACK_DURATION_MS,
+            model.feedbackElapsedMs + math.max(0, value.deltaMs or 0))
+        if model.feedbackElapsedMs < FEEDBACK_DURATION_MS then
+            animation.requestFrame(FEEDBACK_FRAME)
+        else
+            model.feedbackActive = false
+            -- Reset the host's per-ID frame clock so the next strike starts
+            -- from delta 0 instead of inheriting an old capped interval.
+            animation.cancelFrame(FEEDBACK_FRAME)
+        end
+        widget.invalidate()
+        return
+    end
+
     if value.kind == "schedule" then
-        if value.id == "wooden-fish.feedback" then
-            model.feedback = false
+        if value.id == FEEDBACK_FALLBACK then
+            model.feedbackActive = false
+            widget.invalidate()
         elseif value.id == "wooden-fish.persist" then
             persistCount(model)
         end
@@ -199,6 +226,7 @@ local function menu(_context, _model, request)
 end
 
 local function dispose(_context, model)
+    animation.cancelFrame(FEEDBACK_FRAME)
     persistCount(model)
 end
 
