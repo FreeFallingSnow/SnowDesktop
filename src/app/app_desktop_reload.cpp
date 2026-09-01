@@ -462,6 +462,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kUrlDropDownloadCompletedMessage:
+        OnUrlDropDownloadCompleted(lp);
+        return 0;
     case kWidgetAudioAnalysisWakeMessage:
         if (widgetEngine_)
             widgetEngine_->OnAudioAnalysisWake();

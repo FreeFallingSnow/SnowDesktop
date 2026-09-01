@@ -59,6 +59,7 @@
 #include "../desktop_drop_cache.h"
 #include "../dock_app_identity_rules.h"
 #include "../shell_launch_worker.h"
+#include "../url_drop_download_worker.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
@@ -2310,6 +2311,13 @@ private:
     void OnShellFileOperationCompleted(LPARAM lParam);
     /** @brief 停止文件操作线程并清理未投递的 UI 完成通知。 */
     void StopShellFileOperationWorker();
+    /** @brief 排队识别并下载一个仅提供 URL 的桌面资源。 */
+    bool QueueUrlDropDownload(
+        std::wstring url, DropPreviewList preview);
+    /** @brief 在 UI 线程完成 URL 资源的桌面落位。 */
+    void OnUrlDropDownloadCompleted(LPARAM lParam);
+    /** @brief 停止 URL 下载线程并清理尚未处理的完成消息。 */
+    void StopUrlDropDownloadWorker();
     /**
      * @brief 缓存待处理的放置信息（用于外壳刷新后恢复）。
      * @param sourceList 拖拽源列表
@@ -3363,8 +3371,14 @@ private:
         bool succeeded = false;
         FileOperationCompletion callback;
     };
+    struct UrlDropDownloadUiCompletion
+    {
+        snowdesktop::UrlDropDownloadResult result;
+        DropPreviewList preview;
+    };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
+    snowdesktop::UrlDropDownloadWorker urlDropDownloadWorker_;
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;
@@ -3751,7 +3765,9 @@ private:
     static std::vector<std::wstring> TryExtractUrlFromDataObject(IDataObject* dataObject);
     static std::vector<std::wstring> TryExtractImageFromDataObject(IDataObject* dataObject);
     static std::vector<std::wstring> TryExtractTextFromDataObject(IDataObject* dataObject);
+    static std::wstring ExtractDropUrl(IDataObject* dataObject);
     static bool IsFileDownloadUrl(const std::wstring& url, std::wstring& fileName);
+    static std::wstring CreateUrlShortcut(const std::wstring& url);
     static std::wstring HandleUrlContent(const std::wstring& url);
     /** @brief 从完整路径中提取文件名。 @param path 完整路径 @return 文件名 */
     static std::wstring FileNameFromPath(const std::wstring& path);

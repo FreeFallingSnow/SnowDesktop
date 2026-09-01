@@ -7,8 +7,12 @@
 #include <shlwapi.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
+#include <cwctype>
+#include <limits>
 #include <mutex>
 
 namespace
@@ -325,6 +329,308 @@ bool snowdesktop::http_security::IsAllowedPublicHttpsUrl(
     const std::string domain = WideToUtf8Http(normalized);
     return !domain.empty() &&
         IsAllowedUrlForDomains(url, { domain }, false);
+}
+
+snowdesktop::http_stream::Result
+snowdesktop::http_stream::StreamPublicHttpsGet(
+    const Options& options, std::stop_token token,
+    const HeadCallback& headCallback,
+    const ChunkSink& chunkSink)
+{
+    Result result;
+    if (options.url.empty() || !headCallback || !chunkSink ||
+        options.maximumResponseBytes == 0 ||
+        !http_security::IsAllowedPublicHttpsUrl(options.url))
+    {
+        result.error = "Invalid public HTTPS stream request";
+        return result;
+    }
+
+    const int timeoutMs = std::clamp(options.timeoutMs, 1000, 60000);
+    const int maximumRedirects = std::clamp(options.maxRedirects, 0, 10);
+    HINTERNET session = WinHttpOpen(L"SnowDesktop/1.0",
+        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session)
+    {
+        result.error = "WinHttpOpen failed";
+        return result;
+    }
+    WinHttpSetTimeouts(session, timeoutMs, timeoutMs,
+        timeoutMs, timeoutMs);
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY,
+        &redirectPolicy, sizeof(redirectPolicy));
+
+    const auto queryHeader = [](HINTERNET request,
+        DWORD query, const wchar_t* customName = nullptr) {
+        DWORD size = 0;
+        WinHttpQueryHeaders(request, query,
+            customName ? customName : WINHTTP_HEADER_NAME_BY_INDEX,
+            nullptr, &size, WINHTTP_NO_HEADER_INDEX);
+        if (size == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+            return std::wstring{};
+        std::wstring value(size / sizeof(wchar_t), L'\0');
+        if (!WinHttpQueryHeaders(request, query,
+                customName ? customName : WINHTTP_HEADER_NAME_BY_INDEX,
+                value.data(), &size, WINHTTP_NO_HEADER_INDEX))
+            return std::wstring{};
+        value.resize(wcslen(value.c_str()));
+        return value;
+    };
+    const auto parseLength = [](const std::wstring& value)
+        -> std::optional<std::uint64_t> {
+        if (value.empty()) return std::nullopt;
+        errno = 0;
+        wchar_t* end = nullptr;
+        const unsigned long long parsed = wcstoull(
+            value.c_str(), &end, 10);
+        while (end && *end && iswspace(*end)) ++end;
+        if (errno == ERANGE || end == value.c_str() ||
+            (end && *end != L'\0'))
+            return std::nullopt;
+        return static_cast<std::uint64_t>(parsed);
+    };
+
+    std::wstring currentUrl = options.url;
+    for (int redirectCount = 0;
+        redirectCount <= maximumRedirects && !token.stop_requested();
+        ++redirectCount)
+    {
+        if (!http_security::IsAllowedPublicHttpsUrl(currentUrl))
+        {
+            result.error = "Redirect URL is not an allowed public HTTPS URL";
+            break;
+        }
+
+        URL_COMPONENTS components{ sizeof(components) };
+        wchar_t host[256]{};
+        wchar_t path[2048]{};
+        wchar_t extra[4096]{};
+        components.lpszHostName = host;
+        components.dwHostNameLength = static_cast<DWORD>(std::size(host));
+        components.lpszUrlPath = path;
+        components.dwUrlPathLength = static_cast<DWORD>(std::size(path));
+        components.lpszExtraInfo = extra;
+        components.dwExtraInfoLength = static_cast<DWORD>(std::size(extra));
+        if (!WinHttpCrackUrl(currentUrl.c_str(), 0, 0, &components) ||
+            components.nScheme != INTERNET_SCHEME_HTTPS)
+        {
+            result.error = "Invalid HTTPS URL";
+            break;
+        }
+
+        const std::wstring currentHost(host, components.dwHostNameLength);
+        std::wstring pinnedAddress;
+        if (!ResolvePinnedPublicAddress(currentHost, pinnedAddress))
+        {
+            result.error =
+                "Host resolves to a private, local, or unavailable address";
+            break;
+        }
+
+        HINTERNET connection = WinHttpConnect(session,
+            currentHost.c_str(), components.nPort, 0);
+        if (!connection)
+        {
+            result.error = "WinHttpConnect failed";
+            break;
+        }
+        const std::wstring requestPath =
+            std::wstring(path, components.dwUrlPathLength) +
+            std::wstring(extra, components.dwExtraInfoLength);
+        const wchar_t* acceptedTypes[] = { L"*/*", nullptr };
+        HINTERNET request = WinHttpOpenRequest(connection, L"GET",
+            requestPath.c_str(), nullptr, WINHTTP_NO_REFERER,
+            acceptedTypes,
+            WINHTTP_FLAG_SECURE | WINHTTP_FLAG_REFRESH);
+        if (!request)
+        {
+            WinHttpCloseHandle(connection);
+            result.error = "WinHttpOpenRequest failed";
+            break;
+        }
+
+        if (!pinnedAddress.empty())
+        {
+            const DWORD pinnedAddressBytes = static_cast<DWORD>(
+                (pinnedAddress.size() + 1) * sizeof(wchar_t));
+            WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                pinnedAddress.data(), pinnedAddressBytes);
+        }
+        DWORD disabledFeatures =
+            WINHTTP_DISABLE_AUTHENTICATION | WINHTTP_DISABLE_COOKIES;
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE,
+                &disabledFeatures, sizeof(disabledFeatures)))
+        {
+            result.error = "Cannot apply HTTP request security policy";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+
+        constexpr wchar_t headers[] = L"Accept-Encoding: identity\r\n";
+        const BOOL sent = WinHttpSendRequest(request, headers,
+            static_cast<DWORD>(-1L), WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+        if (!sent || !WinHttpReceiveResponse(request, nullptr))
+        {
+            result.error = "HTTP request failed";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+
+        WINHTTP_CONNECTION_INFO connectionInfo{};
+        connectionInfo.cbSize = sizeof(connectionInfo);
+        DWORD connectionInfoSize = sizeof(connectionInfo);
+        if (!WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
+                &connectionInfo, &connectionInfoSize) ||
+            !IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
+                &connectionInfo.RemoteAddress)))
+        {
+            result.error = "HTTP connection reached a non-public address";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+
+        DWORD status = 0;
+        DWORD statusSize = sizeof(status);
+        if (!WinHttpQueryHeaders(request,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                WINHTTP_NO_HEADER_INDEX))
+        {
+            result.error = "Cannot read HTTP status";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+
+        if (status >= 300 && status < 400)
+        {
+            if (redirectCount == maximumRedirects)
+            {
+                result.error = "Too many redirects";
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
+            const std::wstring location = queryHeader(
+                request, WINHTTP_QUERY_LOCATION);
+            if (location.empty())
+            {
+                result.error = "Redirect is missing Location";
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
+            wchar_t combined[8192]{};
+            DWORD combinedLength = static_cast<DWORD>(std::size(combined));
+            if (FAILED(UrlCombineW(currentUrl.c_str(), location.c_str(),
+                    combined, &combinedLength, URL_ESCAPE_UNSAFE)))
+            {
+                result.error = "Invalid redirect URL";
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
+            currentUrl.assign(combined, combinedLength);
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            continue;
+        }
+
+        result.head.status = static_cast<int>(status);
+        result.head.finalUrl = currentUrl;
+        result.head.contentType = queryHeader(
+            request, WINHTTP_QUERY_CONTENT_TYPE);
+        result.head.contentDisposition = queryHeader(
+            request, WINHTTP_QUERY_CUSTOM, L"Content-Disposition");
+        result.head.contentEncoding = queryHeader(
+            request, WINHTTP_QUERY_CONTENT_ENCODING);
+        result.head.contentLength = parseLength(queryHeader(
+            request, WINHTTP_QUERY_CONTENT_LENGTH));
+
+        if (status < 200 || status >= 300)
+            result.error = "HTTP response is not successful";
+        else if (result.head.contentLength &&
+            *result.head.contentLength > options.maximumResponseBytes)
+            result.error = "Response too large";
+        else
+        {
+            try
+            {
+                result.responseAccepted = headCallback(result.head);
+            }
+            catch (...)
+            {
+                result.error = "Response callback failed";
+            }
+        }
+
+        while (result.error.empty() && result.responseAccepted &&
+            !token.stop_requested())
+        {
+            DWORD available = 0;
+            if (!WinHttpQueryDataAvailable(request, &available))
+            {
+                result.error = "Cannot read HTTP response";
+                break;
+            }
+            if (available == 0) break;
+            const std::uint64_t remaining =
+                options.maximumResponseBytes - result.bytesReceived;
+            if (remaining == 0 ||
+                static_cast<std::uint64_t>(available) > remaining)
+            {
+                result.error = "Response too large";
+                break;
+            }
+            std::vector<std::byte> chunk(available);
+            DWORD read = 0;
+            if (!WinHttpReadData(request, chunk.data(), available, &read))
+            {
+                result.error = "Cannot read HTTP response";
+                break;
+            }
+            if (read == 0) break;
+            chunk.resize(read);
+            bool consumed = false;
+            try
+            {
+                consumed = chunkSink(chunk);
+            }
+            catch (...)
+            {
+                result.error = "Response sink failed";
+                break;
+            }
+            if (!consumed)
+            {
+                result.error = "Response sink failed";
+                break;
+            }
+            result.bytesReceived += read;
+        }
+
+        if (token.stop_requested())
+        {
+            result.cancelled = true;
+            result.error = "Cancelled";
+        }
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        break;
+    }
+
+    if (token.stop_requested() && !result.cancelled)
+    {
+        result.cancelled = true;
+        result.error = "Cancelled";
+    }
+    WinHttpCloseHandle(session);
+    return result;
 }
 
 int AsyncHttpService::Submit(HttpRequestOptions options)

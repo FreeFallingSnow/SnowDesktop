@@ -2,11 +2,16 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,6 +27,51 @@ bool IsAllowedUrlForDomains(const std::wstring& url,
     bool allowAnyPublicHttpsUrl = false);
 bool IsAllowedPublicHttpsUrl(const std::wstring& url);
 bool HaveSameOrigin(const std::wstring& left, const std::wstring& right);
+}
+
+namespace snowdesktop::http_stream
+{
+struct ResponseHead
+{
+    int status = 0;
+    std::wstring finalUrl;
+    std::wstring contentType;
+    std::wstring contentDisposition;
+    std::wstring contentEncoding;
+    std::optional<std::uint64_t> contentLength;
+};
+
+struct Options
+{
+    std::wstring url;
+    int timeoutMs = 10000;
+    std::uint64_t maximumResponseBytes = 64ull * 1024ull * 1024ull;
+    int maxRedirects = 3;
+};
+
+struct Result
+{
+    ResponseHead head;
+    std::uint64_t bytesReceived = 0;
+    std::string error;
+    bool cancelled = false;
+    bool responseAccepted = false;
+};
+
+using HeadCallback = std::function<bool(const ResponseHead&)>;
+using ChunkSink = std::function<bool(std::span<const std::byte>)>;
+
+/**
+ * Streams one public HTTPS resource on the calling thread.
+ *
+ * Redirects are handled explicitly and every hop is checked against the same
+ * DNS and connected-address policy used by AsyncHttpService. Returning false
+ * from headCallback intentionally declines the response without reading its
+ * body. Returning false from chunkSink reports a sink failure.
+ */
+Result StreamPublicHttpsGet(const Options& options,
+    std::stop_token token, const HeadCallback& headCallback,
+    const ChunkSink& chunkSink);
 }
 
 struct HttpRequestOptions

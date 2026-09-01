@@ -231,6 +231,7 @@ constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
 constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
+constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 constexpr UINT kShellChangeDebounceMs = 500;
 

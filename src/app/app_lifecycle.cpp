@@ -26,6 +26,7 @@ DesktopApp::~DesktopApp()
     pageNotifyFadeOutToken_ = 0;
     shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
+    StopUrlDropDownloadWorker();
     StopSteamWorkshopWatcher();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
@@ -894,6 +895,7 @@ void DesktopApp::RequestExit()
     exitRequested_ = true;
     shellLaunchWorker_.Stop();
     StopShellFileOperationWorker();
+    StopUrlDropDownloadWorker();
     quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();

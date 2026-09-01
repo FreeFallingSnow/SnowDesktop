@@ -160,6 +160,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_drag_preview_window.cpp
     src/app/app_drag_target_update.cpp
     src/app/app_drop_data_extraction.cpp
+    src/app/app_url_drop_download.cpp
     src/app/app_drop_execution.cpp
     src/app/app_drop_preview.cpp
     src/app/app_drop_render.cpp
@@ -255,6 +256,10 @@ set(SNOWDESKTOP_SOURCES
     src/data_paths.cpp
     src/virtual_file_drop.cpp
     src/virtual_file_drop.h
+    src/url_drop_download_worker.cpp
+    src/url_drop_download_worker.h
+    src/url_drop_resource.cpp
+    src/url_drop_resource.h
     src/steam_runtime_context.cpp
     src/steam_runtime_context.h
     src/calendar_service.cpp
@@ -1862,6 +1867,15 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 user32
         LABELS contract interaction shell)
+
+    snowdesktop_add_test(
+        SnowDesktopUrlDropResourceTests
+        url_drop_resource
+        SOURCES
+            tests/url_drop_resource_tests.cpp
+            src/url_drop_resource.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract interaction security)
 
     snowdesktop_add_test(
         SnowDesktopShellContextMenuInvokeTests

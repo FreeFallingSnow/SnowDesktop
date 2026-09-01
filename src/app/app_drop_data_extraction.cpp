@@ -174,6 +174,36 @@ std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
     return paths;
 }
 
+std::wstring DesktopApp::ExtractDropUrl(IDataObject* dataObject)
+{
+    if (!dataObject) return {};
+
+    std::wstring url;
+    const CLIPFORMAT wideUrlFormat = static_cast<CLIPFORMAT>(
+        RegisterClipboardFormatW(CFSTR_INETURLW));
+    url = ReadWideHGlobalFormat(dataObject, wideUrlFormat);
+    if (url.empty())
+    {
+        const CLIPFORMAT ansiUrlFormat = static_cast<CLIPFORMAT>(
+            RegisterClipboardFormatW(CFSTR_INETURLA));
+        url = ReadAnsiHGlobalFormat(dataObject, ansiUrlFormat);
+    }
+    if (url.empty())
+        url = ReadWideHGlobalFormat(dataObject, CF_UNICODETEXT);
+
+    size_t first = 0;
+    while (first < url.size() && iswspace(url[first])) ++first;
+    size_t last = url.size();
+    while (last > first && iswspace(url[last - 1])) --last;
+    url = url.substr(first, last - first);
+
+    const bool supported =
+        _wcsnicmp(url.c_str(), L"http://", 7) == 0 ||
+        _wcsnicmp(url.c_str(), L"https://", 8) == 0 ||
+        _wcsnicmp(url.c_str(), L"ftp://", 6) == 0;
+    return supported ? url : std::wstring{};
+}
+
 /**
  * @brief 判断 URL 是否指向可下载的文件
  * @param url URL 字符串
@@ -244,7 +274,12 @@ std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
     }
 
     if (!result.empty()) return result;
+    return CreateUrlShortcut(url);
+}
 
+std::wstring DesktopApp::CreateUrlShortcut(const std::wstring& url)
+{
+    std::wstring result;
     std::wstring hostName;
     const wchar_t* afterScheme = wcschr(url.c_str(), L':');
     if (afterScheme && afterScheme[1] == L'/' && afterScheme[2] == L'/')
@@ -290,35 +325,8 @@ std::wstring DesktopApp::HandleUrlContent(const std::wstring& url)
 std::vector<std::wstring> DesktopApp::TryExtractUrlFromDataObject(IDataObject* dataObject)
 {
     std::vector<std::wstring> paths;
-    if (!dataObject) return paths;
-
-    std::wstring url;
-
-    const CLIPFORMAT wideUrlFormat =
-        static_cast<CLIPFORMAT>(
-            RegisterClipboardFormatW(CFSTR_INETURLW));
-    url = ReadWideHGlobalFormat(
-        dataObject, wideUrlFormat);
-
-    if (url.empty())
-    {
-        const CLIPFORMAT ansiUrlFormat =
-            static_cast<CLIPFORMAT>(
-                RegisterClipboardFormatW(CFSTR_INETURLA));
-        url = ReadAnsiHGlobalFormat(
-            dataObject, ansiUrlFormat);
-    }
-
-    if (url.empty())
-        url = ReadWideHGlobalFormat(
-            dataObject, CF_UNICODETEXT);
-
+    const std::wstring url = ExtractDropUrl(dataObject);
     if (url.empty()) return paths;
-
-    bool isUrl = (_wcsnicmp(url.c_str(), L"http://", 7) == 0 ||
-                  _wcsnicmp(url.c_str(), L"https://", 8) == 0 ||
-                  _wcsnicmp(url.c_str(), L"ftp://", 6) == 0);
-    if (!isUrl) return paths;
 
     std::wstring resultPath = HandleUrlContent(url);
     if (!resultPath.empty())

@@ -1227,6 +1227,27 @@ HRESULT DesktopApp::HandleOleDrop(
         }
     }
 
+    // Some browsers expose a dragged network resource only as a URL. Resolve
+    // its response off-thread so extensionless images and documents are saved
+    // while actual HTML pages still materialize as URL shortcuts.
+    if (dropPaths.empty() && dataObject && bareDesktopTarget)
+    {
+        const std::wstring url = ExtractDropUrl(dataObject);
+        if (!url.empty())
+        {
+            DropPreviewList requestedPreview =
+                BuildExternalDesktopPreviewList(
+                    delayedFileTargetCell, 1);
+            if (QueueUrlDropDownload(
+                    url, std::move(requestedPreview)))
+            {
+                *effect = DROPEFFECT_COPY;
+                EndDragSession();
+                return S_OK;
+            }
+        }
+    }
+
     if (dropPaths.empty() && dataObject)
         dropPaths = TryGetNonFileDropPaths(dataObject);
 
