@@ -149,7 +149,7 @@ bool DesktopApp::TryGetNativeDragResumePointFromCursor(
             (hit == candidate || root == candidate ||
                 IsChild(candidate, hit));
     };
-    if (!belongsTo(hwnd_) &&
+    if (!IsBaseDesktopHoverSurfaceWindow(hit) &&
         !IsPersistentDockHostWindow(hit) &&
         !IsPersistentDockHostWindow(root) &&
         !belongsTo(floatingPopupHwnd_))

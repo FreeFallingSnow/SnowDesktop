@@ -7494,6 +7494,30 @@ int main(int argc, char** argv)
                   "if (refreshActiveHover)\n                UpdateFloatingDockWindowBounds(false);") !=
                     std::string::npos,
             "periodic hover recovery must refresh active coordinates and the floating title region only from uncaptured base desktop surfaces");
+        const std::size_t nativeResumeSurfaceBegin =
+            oleDropRoutingSource.find(
+                "bool DesktopApp::TryGetNativeDragResumePointFromCursor(");
+        const std::size_t nativeResumeSurfaceEnd =
+            oleDropRoutingSource.find(
+                "bool DesktopApp::IsExternalDropWindowAt(",
+                nativeResumeSurfaceBegin);
+        const std::string nativeResumeSurfaceHandler =
+            nativeResumeSurfaceBegin == std::string::npos ||
+                nativeResumeSurfaceEnd == std::string::npos
+            ? std::string{}
+            : oleDropRoutingSource.substr(
+                nativeResumeSurfaceBegin,
+                nativeResumeSurfaceEnd - nativeResumeSurfaceBegin);
+        Check(nativeResumeSurfaceHandler.find(
+                  "IsBaseDesktopHoverSurfaceWindow(hit)") !=
+                    std::string::npos &&
+                nativeResumeSurfaceHandler.find(
+                  "IsPersistentDockHostWindow(hit)") !=
+                    std::string::npos &&
+                nativeResumeSurfaceHandler.find(
+                  "belongsTo(floatingPopupHwnd_)") !=
+                    std::string::npos,
+            "self OLE hand-back must resume native dragging from base desktop, Dock, and popup surfaces");
         Check(dockContainerSource.find(
                   "bool DockContainer::IsMagnificationSuppressed() const") !=
                     std::string::npos &&
