@@ -299,8 +299,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     widgetActionActive,
                     mouseDownWidgetIndex_ < widgets_.size());
         const bool primaryButtonDown =
+            latencySensitivePointerActive &&
+            !middleButtonWidgetMove_ &&
             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         const bool middleButtonDown =
+            latencySensitivePointerActive &&
+            middleButtonWidgetMove_ &&
             (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
         const bool gestureButtonDown =
             snowdesktop::drag_input_rules::
@@ -332,9 +336,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             POINT cursorScreen{};
             if (!GetCursorPos(&cursorScreen))
             {
-                // A captured drag or marquee must keep making progress even
-                // if the live sample fails transiently. Passive hover has no
-                // equivalent gesture state, so retain its drop-on-failure rule.
+                // A captured drag, marquee, or widget gesture must keep making
+                // progress even if the live sample fails transiently. Passive
+                // hover has no equivalent gesture state, so retain its
+                // drop-on-failure rule.
                 if (samplePassiveHover)
                     return 0;
             }

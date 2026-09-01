@@ -4830,6 +4830,26 @@ int main(int argc, char** argv)
             messageDispatchSource.find(
                 "GetAsyncKeyState(VK_MBUTTON)",
                 dispatchLatencyGesture);
+        const std::size_t dispatchPrimaryButton =
+            messageDispatchSource.find(
+                "GetAsyncKeyState(VK_LBUTTON)",
+                dispatchLatencyGesture);
+        const std::size_t dispatchPrimaryLatencyGate =
+            messageDispatchSource.rfind(
+                "latencySensitivePointerActive &&",
+                dispatchPrimaryButton);
+        const std::size_t dispatchPrimaryOwnershipGate =
+            messageDispatchSource.rfind(
+                "!middleButtonWidgetMove_ &&",
+                dispatchPrimaryButton);
+        const std::size_t dispatchMiddleLatencyGate =
+            messageDispatchSource.rfind(
+                "latencySensitivePointerActive &&",
+                dispatchMiddleButton);
+        const std::size_t dispatchMiddleOwnershipGate =
+            messageDispatchSource.rfind(
+                "middleButtonWidgetMove_ &&",
+                dispatchMiddleButton);
         const std::size_t dispatchOwningButton =
             messageDispatchSource.find(
                 "IsPointerGestureButtonDown(",
@@ -4844,10 +4864,19 @@ int main(int argc, char** argv)
                 dispatchWidgetTarget != std::string::npos &&
                 dispatchWidgetAction < dispatchLatencyGesture &&
                 dispatchLatencyGesture < dispatchWidgetTarget &&
+                dispatchPrimaryButton != std::string::npos &&
+                dispatchPrimaryLatencyGate != std::string::npos &&
+                dispatchPrimaryOwnershipGate != std::string::npos &&
+                dispatchPrimaryLatencyGate < dispatchPrimaryOwnershipGate &&
+                dispatchPrimaryOwnershipGate < dispatchPrimaryButton &&
                 dispatchMiddleButton != std::string::npos &&
+                dispatchMiddleLatencyGate != std::string::npos &&
+                dispatchMiddleOwnershipGate != std::string::npos &&
+                dispatchMiddleLatencyGate < dispatchMiddleOwnershipGate &&
+                dispatchMiddleOwnershipGate < dispatchMiddleButton &&
                 dispatchOwningButton != std::string::npos &&
                 dispatchMiddleButton < dispatchOwningButton,
-            "the message pump and dispatcher must route valid widget gestures through shared low-latency coalescing with the owning mouse button");
+            "the message pump and dispatcher must route valid widget gestures through shared low-latency coalescing and query only the owning mouse button");
         const std::size_t middleReleaseHandler =
             pointerMoveSource.find(
                 "void DesktopApp::OnMiddleButtonUpAt(");
