@@ -204,6 +204,27 @@
 - `developer_assets/workshop_widgets/` 保存由 SnowDesktop 维护、准备独立发布到 Steam Workshop 的
   官方社区组件源码；它们不是内置组件，不得放入 `widgets/`，也不得随应用发行包复制。只有用户
   明确要求将社区组件提升为内置组件时，才允许迁入 `widgets/` 并同步更新内置组件契约测试。
+- 官方社区组件源码不会因为位于 `developer_assets/workshop_widgets/` 就自动出现在宿主的“开发中”
+  列表。需要桌面实机验证时，先保证 `.build/<Configuration>/SnowDesktop.exe` 已由当前源码完成标准
+  构建，再运行
+  `scripts/widget-dev.bat developer_assets/workshop_widgets/<slug> -Configuration <Configuration> -Once`，
+  将组件镜像到该构建的 `data/widgets/dev/<slug>/`。新候选、来源从错误的内置组件切换为开发组件，
+  或宿主尚未重新发现该目录时，应追加 `-RestartHost`。同步成功只表示组件进入“开发中”候选；开发
+  包默认不激活，仍须在设置的组件开发入口明确启用“开发版本”，才能将它作为当前来源添加到桌面
+  或验证现有实例。未完成这一步时不得声称已进入运行时验证。
+- CMake 的组件构建步骤使用覆盖式 `copy_directory`，不会删除输出目录中已经失去源码对应项的旧
+  子目录，因此重新编译本身不能清掉误放过的内置组件。若 `widgets/<slug>/` 已不存在，但
+  `.build/<Configuration>/widgets/<slug>/` 仍存在，应先核对二者的绝对路径和清单 UUID，只移走或删除
+  这个精确的生成子目录，再运行标准构建并重启宿主刷新来源；若错误源码仍位于 `widgets/<slug>/`，
+  则先用新的版本分支 Commit 删除源码，不得只清构建产物掩盖问题。不得为此清理整个 `.build`，不得
+  删除或手工编辑 `.build/<Configuration>/data/widgets/packages.json`，也不得删除 `installed/`、
+  `dev-disabled/`、组件存储或布局数据；这些是用户状态，不是内置组件来源。需要保留排查证据时，
+  优先将精确的旧目录移到 `.codex-probes/`，确认新来源正常后再由用户决定是否清除。
+- 用户明确要求“编译”、任务越出纯 Lua 包边界，或需要验证上述内置/开发来源切换时，不得以“纯组件
+  更新无需宿主编译”为由跳过构建。按构建预检规则运行 `scripts/build.bat`；存在 SnowDesktop 进程或
+  Explorer 已加载 Release Hook 时，先说明副作用并直接使用 `scripts/build.bat --reload-shell`。构建
+  通过后再运行 `scripts/widget-dev.bat`，最后分别核对 `widgets/<slug>` 不存在、
+  `data/widgets/dev/<slug>` 存在以及“开发中”入口可见，三者不能互相替代。
 - 官方社区组件的清单预览统一命名为 `workshop-preview.png`。生成封面时必须使用
   `developer_assets/workshop_widgets/community-preview-background.png` 作为背景；该文件是 Steam 商店美术
   源文件 `SnowDesktop_SteamAssets/source/key_art_portrait.png` 的仓库内标准副本。不得改用商店页
