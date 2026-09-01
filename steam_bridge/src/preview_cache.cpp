@@ -286,12 +286,18 @@ struct PreviewCache::Entry
     std::jthread worker;
 };
 
-PreviewCache::PreviewCache(std::filesystem::path root)
-    : root_(std::move(root))
+PreviewCache::PreviewCache(std::filesystem::path root,
+    ChangeCallback changed)
+    : root_(std::move(root)), changed_(std::move(changed))
 {
 }
 
 PreviewCache::~PreviewCache() = default;
+
+void PreviewCache::NotifyChanged() const
+{
+    if (changed_) changed_();
+}
 
 void PreviewCache::Request(std::uint64_t itemId, std::string url)
 {
@@ -314,6 +320,7 @@ void PreviewCache::Request(std::uint64_t itemId, std::string url)
         {
             raw->error = "preview cache directory is unavailable";
             raw->state.store(Entry::State::Failed);
+            NotifyChanged();
             return;
         }
         if (!std::filesystem::is_regular_file(raw->path, ec) || ec)
@@ -322,11 +329,13 @@ void PreviewCache::Request(std::uint64_t itemId, std::string url)
             if (!DownloadHttps(raw->url, raw->path, raw->error))
             {
                 raw->state.store(Entry::State::Failed);
+                NotifyChanged();
                 return;
             }
             TrimCache(root_, raw->path);
         }
         raw->state.store(Entry::State::Ready);
+        NotifyChanged();
     });
 }
 
@@ -336,22 +345,25 @@ void PreviewCache::RequestLocal(std::uint64_t key,
     if (key == 0 || path.empty()) return;
     const std::string identity = "local:" + std::to_string(
         std::hash<std::wstring>{}(path.wstring()));
-    std::lock_guard lock(mutex_);
-    if (const auto found = entries_.find(key); found != entries_.end() &&
-        found->second->url == identity)
-        return;
-    auto entry = std::make_unique<Entry>();
-    entry->url = identity;
-    entry->path = path;
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec) || ec ||
-        IsReparsePoint(path))
     {
-        entry->error = "local primary preview is missing or unsafe";
-        entry->state.store(Entry::State::Failed);
+        std::lock_guard lock(mutex_);
+        if (const auto found = entries_.find(key); found != entries_.end() &&
+            found->second->url == identity)
+            return;
+        auto entry = std::make_unique<Entry>();
+        entry->url = identity;
+        entry->path = path;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec) || ec ||
+            IsReparsePoint(path))
+        {
+            entry->error = "local primary preview is missing or unsafe";
+            entry->state.store(Entry::State::Failed);
+        }
+        else entry->state.store(Entry::State::Ready);
+        entries_[key] = std::move(entry);
     }
-    else entry->state.store(Entry::State::Ready);
-    entries_[key] = std::move(entry);
+    NotifyChanged();
 }
 
 void PreviewCache::Pump(ID3D11Device* device)

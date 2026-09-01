@@ -1978,6 +1978,7 @@ if (BUILD_TESTING)
         steam_workshop_manager
         SOURCES
             tests/steam_workshop_manager_tests.cpp
+            steam_bridge/src/preview_cache.cpp
             src/steam_workshop_cache.cpp
             src/steam_workshop_sync.cpp
         INCLUDE_DIRECTORIES steam_bridge/src src
@@ -1985,6 +1986,11 @@ if (BUILD_TESTING)
             SnowDesktopWorkshopManagerSupport
             SnowDesktopSteamAppIdentity
             advapi32
+            d3d11
+            dxgi
+            user32
+            windowscodecs
+            winhttp
         COMMAND_ARGUMENTS
             "$<TARGET_FILE:snowwidget>"
             "${CMAKE_CURRENT_SOURCE_DIR}"

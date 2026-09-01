@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -28,7 +29,10 @@ struct PreviewTexture
 class PreviewCache
 {
 public:
-    explicit PreviewCache(std::filesystem::path root);
+    using ChangeCallback = std::function<void()>;
+
+    explicit PreviewCache(std::filesystem::path root,
+        ChangeCallback changed = {});
     ~PreviewCache();
     PreviewCache(const PreviewCache&) = delete;
     PreviewCache& operator=(const PreviewCache&) = delete;
@@ -41,8 +45,11 @@ public:
 
 private:
     struct Entry;
+    void NotifyChanged() const;
+
     std::filesystem::path root_;
     mutable std::mutex mutex_;
+    ChangeCallback changed_;
     std::map<std::uint64_t, std::unique_ptr<Entry>> entries_;
 };
 }

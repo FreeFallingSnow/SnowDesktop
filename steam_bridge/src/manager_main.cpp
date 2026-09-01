@@ -17,6 +17,7 @@
 
 #include "bridge_json.h"
 #include "component_workshop_publish.h"
+#include "manager_frame_scheduler.h"
 #include "manager_localization.h"
 #include "package_tool.h"
 #include "preview_cache.h"
@@ -30,7 +31,6 @@
 #include <array>
 #include <atomic>
 #include <cctype>
-#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -56,6 +56,31 @@ ComPtr<ID3D11DeviceContext> gContext;
 ComPtr<IDXGISwapChain> gSwapChain;
 ComPtr<ID3D11RenderTargetView> gRenderTarget;
 float gDpiScale = 1.0f;
+ManagerFrameScheduler gFrameScheduler;
+std::atomic<HWND> gManagerWindow = nullptr;
+std::atomic<DWORD> gManagerThreadId = 0;
+
+constexpr UINT kRequestFrameMessage = WM_APP + 0x534;
+
+void WakeManagerForPendingFrame() noexcept
+{
+    const HWND window = gManagerWindow.load(std::memory_order_acquire);
+    if (!window || !gFrameScheduler.IsFrameRequested() ||
+        !gFrameScheduler.TryQueueWake())
+        return;
+    if (!PostMessageW(window, kRequestFrameMessage, 0, 0))
+        gFrameScheduler.AcknowledgeWake();
+}
+
+void RequestManagerFrame() noexcept
+{
+    const HWND window = gManagerWindow.load(std::memory_order_acquire);
+    if (!window) return;
+    gFrameScheduler.RequestFrame();
+    if (GetCurrentThreadId() !=
+        gManagerThreadId.load(std::memory_order_acquire))
+        WakeManagerForPendingFrame();
+}
 
 constexpr float kSidebarWidthDip = 224.0f;
 constexpr float kSettingControlWidthDip = 320.0f;
@@ -361,7 +386,8 @@ public:
           currentLanguage_(std::move(arguments.language)),
           store_(managerRoot_),
           packageTool_({}, managerRoot_ / L"staging" / L"packages"),
-          previewCache_(managerRoot_ / L"preview-cache"),
+          previewCache_(managerRoot_ / L"preview-cache",
+              [] { RequestManagerFrame(); }),
           steam_(managerRoot_ / L"staging" / L"uploads")
     {
         std::string error;
@@ -457,7 +483,6 @@ public:
 
     void Render(HWND window)
     {
-        RefreshLanguageFromMainSettings(window);
         previewCache_.Pump(gDevice.Get());
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
@@ -492,6 +517,11 @@ public:
         }
         ImGui::EndChild();
         ImGui::End();
+    }
+
+    void PollMainSettings(HWND window)
+    {
+        RefreshLanguageFromMainSettings(window);
     }
 
 private:
@@ -534,6 +564,7 @@ private:
     {
         messageSuccess_ = success;
         message_ = std::move(value);
+        RequestManagerFrame();
     }
 
     void InvalidatePreparedPublishUnlocked()
@@ -546,12 +577,14 @@ private:
     void StartWork(Work&& work)
     {
         if (busy_.exchange(true)) return;
+        RequestManagerFrame();
         if (worker_.joinable()) worker_.join();
         worker_ = std::jthread([this, task = std::forward<Work>(work)]
             (std::stop_token) mutable
         {
             task();
             busy_.store(false);
+            RequestManagerFrame();
         });
     }
 
@@ -697,10 +730,6 @@ private:
     void RefreshLanguageFromMainSettings(HWND window)
     {
         if (settingsFile_.empty()) return;
-        const auto now = std::chrono::steady_clock::now();
-        if (now < nextLanguageCheck_) return;
-        nextLanguageCheck_ = now + std::chrono::seconds(1);
-
         std::error_code error;
         const auto writeTime = std::filesystem::last_write_time(
             settingsFile_, error);
@@ -715,6 +744,7 @@ private:
         localization_.SelectLanguage(currentLanguage_);
         const std::wstring title = Utf8ToWide(WindowTitle());
         SetWindowTextW(window, title.c_str());
+        RequestManagerFrame();
     }
 
     void RenderProjectDetailsUnlocked(HWND window, WorkshopProject& project)
@@ -1379,9 +1409,11 @@ private:
                         static_cast<double>(progress.submissionTotal);
                     progressFraction_.store(static_cast<float>(
                         std::clamp(fraction, 0.0, 1.0)));
+                    RequestManagerFrame();
                 }, result, coreError);
             submitStarted_.store(false);
             progressFraction_.store(0.0f);
+            RequestManagerFrame();
             std::string error;
             {
                 std::lock_guard lock(mutex_);
@@ -1605,7 +1637,6 @@ private:
     std::string currentLanguage_;
     int activePage_ = 0;
     std::optional<std::filesystem::file_time_type> settingsWriteTime_;
-    std::chrono::steady_clock::time_point nextLanguageCheck_{};
     ProjectStore store_;
     PackageTool packageTool_;
     PreviewCache previewCache_;
@@ -1642,7 +1673,35 @@ private:
 
 WorkshopManagerApp* gApp = nullptr;
 bool gRenderingFrame = false;
-constexpr UINT_PTR kLiveResizeTimer = 0x5344;
+bool gSwapChainOccluded = false;
+UINT gInteractiveFrameInterval = 0;
+
+void SetInteractiveFrameTimer(HWND window, UINT interval)
+{
+    if (gInteractiveFrameInterval == interval) return;
+    if (gInteractiveFrameInterval != 0)
+        KillTimer(window, kManagerInteractiveFrameTimer);
+    gInteractiveFrameInterval = 0;
+    if (interval != 0 &&
+        SetTimer(window, kManagerInteractiveFrameTimer, interval, nullptr) != 0)
+        gInteractiveFrameInterval = interval;
+}
+
+void UpdateInteractiveFrameTimer(HWND window)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    bool mouseDown = false;
+    for (const bool down : io.MouseDown) mouseDown = mouseDown || down;
+    const ManagerInteractiveFrameState state{
+        GetForegroundWindow() == window,
+        IsWindowVisible(window) != FALSE,
+        IsIconic(window) != FALSE,
+        mouseDown,
+        io.WantTextInput,
+    };
+    SetInteractiveFrameTimer(window,
+        ManagerInteractiveFrameInterval(state));
+}
 
 void RenderManagerFrame(HWND window)
 {
@@ -1650,6 +1709,9 @@ void RenderManagerFrame(HWND window)
         !gDevice.Get() || !gContext.Get() || !gSwapChain.Get() ||
         !gRenderTarget.Get())
         return;
+    const bool canRender = IsWindowVisible(window) && !IsIconic(window) &&
+        !gSwapChainOccluded;
+    if (!gFrameScheduler.BeginFrame(canRender)) return;
 
     gRenderingFrame = true;
     ImGui_ImplDX11_NewFrame();
@@ -1661,8 +1723,21 @@ void RenderManagerFrame(HWND window)
     gContext->OMSetRenderTargets(1, gRenderTarget.GetAddressOf(), nullptr);
     gContext->ClearRenderTargetView(gRenderTarget.Get(), clear);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    gSwapChain->Present(1, 0);
+    const HRESULT presented = gSwapChain->Present(1, 0);
     gRenderingFrame = false;
+
+    if (presented == DXGI_STATUS_OCCLUDED)
+    {
+        gSwapChainOccluded = true;
+        gFrameScheduler.RequestFrame();
+        SetInteractiveFrameTimer(window, 0);
+        if (SetTimer(window, kManagerOcclusionProbeTimer,
+                250, nullptr) == 0)
+            gSwapChainOccluded = false;
+        return;
+    }
+    UpdateInteractiveFrameTimer(window);
+    WakeManagerForPendingFrame();
 }
 
 bool CreateDevice(HWND window)
@@ -1703,13 +1778,57 @@ void RecreateRenderTarget()
             &gRenderTarget);
 }
 
+bool IsManagerInteractionMessage(UINT message)
+{
+    switch (message)
+    {
+    case WM_MOUSEMOVE:
+    case WM_MOUSELEAVE:
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+    case WM_MBUTTONDBLCLK:
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+    case WM_XBUTTONDBLCLK:
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+    case WM_CHAR:
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+    case WM_SYSCHAR:
+    case WM_INPUTLANGCHANGE:
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_CAPTURECHANGED:
+    case WM_DROPFILES:
+    case WM_SIZE:
+    case WM_DPICHANGED:
+    case WM_PAINT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message,
     WPARAM wParam, LPARAM lParam)
 {
+    if (IsManagerInteractionMessage(message)) RequestManagerFrame();
     if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam))
         return TRUE;
     switch (message)
     {
+    case kRequestFrameMessage:
+        gFrameScheduler.AcknowledgeWake();
+        return 0;
     case WM_DROPFILES:
         if (gApp)
         {
@@ -1728,21 +1847,59 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message,
             gSwapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam),
                 DXGI_FORMAT_UNKNOWN, 0);
             RecreateRenderTarget();
+            gSwapChainOccluded = false;
+            KillTimer(window, kManagerOcclusionProbeTimer);
             RenderManagerFrame(window);
+        }
+        else if (wParam == SIZE_MINIMIZED)
+        {
+            SetInteractiveFrameTimer(window, 0);
+            KillTimer(window, kManagerOcclusionProbeTimer);
         }
         return 0;
     case WM_ENTERSIZEMOVE:
-        SetTimer(window, kLiveResizeTimer, 16, nullptr);
+        SetTimer(window, kManagerLiveResizeTimer, 16, nullptr);
         return 0;
     case WM_EXITSIZEMOVE:
-        KillTimer(window, kLiveResizeTimer);
+        KillTimer(window, kManagerLiveResizeTimer);
+        RequestManagerFrame();
         RenderManagerFrame(window);
         return 0;
     case WM_TIMER:
-        if (wParam == kLiveResizeTimer)
+        switch (ClassifyManagerTimer(
+            static_cast<std::uintptr_t>(wParam)))
         {
+        case ManagerTimerAction::RenderFrame:
+            RequestManagerFrame();
             RenderManagerFrame(window);
             return 0;
+        case ManagerTimerAction::PollLanguage:
+            if (gApp && !gRenderingFrame)
+                gApp->PollMainSettings(window);
+            return 0;
+        case ManagerTimerAction::RequestFrame:
+            if (gRenderingFrame || GetForegroundWindow() != window)
+            {
+                SetInteractiveFrameTimer(window, 0);
+                return 0;
+            }
+            RequestManagerFrame();
+            return 0;
+        case ManagerTimerAction::ProbeOcclusion:
+            if (gSwapChainOccluded && gSwapChain && !IsIconic(window))
+            {
+                const HRESULT result = gSwapChain->Present(
+                    0, DXGI_PRESENT_TEST);
+                if (result != DXGI_STATUS_OCCLUDED && SUCCEEDED(result))
+                {
+                    gSwapChainOccluded = false;
+                    KillTimer(window, kManagerOcclusionProbeTimer);
+                    RequestManagerFrame();
+                }
+            }
+            return 0;
+        case ManagerTimerAction::None:
+            break;
         }
         break;
     case WM_DPICHANGED:
@@ -1751,6 +1908,15 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message,
                 rect->right - rect->left, rect->bottom - rect->top,
                 SWP_NOZORDER | SWP_NOACTIVATE);
         return 0;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT paint{};
+        BeginPaint(window, &paint);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
     case WM_CLOSE:
         if (gApp && !gApp->CanClose())
         {
@@ -1760,6 +1926,12 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message,
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        SetInteractiveFrameTimer(window, 0);
+        KillTimer(window, kManagerLiveResizeTimer);
+        KillTimer(window, kManagerLanguagePollTimer);
+        KillTimer(window, kManagerOcclusionProbeTimer);
+        gManagerWindow.store(nullptr, std::memory_order_release);
+        gManagerThreadId.store(0, std::memory_order_release);
         PostQuitMessage(0);
         return 0;
     }
@@ -1953,25 +2125,34 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     }
     ImGui_ImplWin32_Init(window);
     ImGui_ImplDX11_Init(gDevice.Get(), gContext.Get());
+    gManagerThreadId.store(GetCurrentThreadId(), std::memory_order_release);
+    gManagerWindow.store(window, std::memory_order_release);
     WorkshopManagerApp app(ReadArguments(), ExecutableDirectory() / L"lang");
     const std::wstring localizedWindowTitle = Utf8ToWide(app.WindowTitle());
     SetWindowTextW(window, localizedWindowTitle.c_str());
     gApp = &app;
     ShowWindow(window, showCommand);
     UpdateWindow(window);
-    bool running = true;
-    while (running)
+    SetTimer(window, kManagerLanguagePollTimer, 1000, nullptr);
+    gFrameScheduler.RequestFrame();
+    WakeManagerForPendingFrame();
+    bool messageLoopFailed = false;
+    MSG message{};
+    for (;;)
     {
-        MSG message{};
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        const BOOL result = GetMessageW(&message, nullptr, 0, 0);
+        if (result == 0) break;
+        if (result == -1)
         {
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
-            if (message.message == WM_QUIT) running = false;
+            messageLoopFailed = true;
+            break;
         }
-        if (!running) break;
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
         RenderManagerFrame(window);
     }
+    gManagerWindow.store(nullptr, std::memory_order_release);
+    gManagerThreadId.store(0, std::memory_order_release);
     gApp = nullptr;
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -1980,10 +2161,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     gSwapChain.Reset();
     gContext.Reset();
     gDevice.Reset();
-    DestroyWindow(window);
+    if (IsWindow(window)) DestroyWindow(window);
     UnregisterClassW(className, instance);
     if (smallIcon) DestroyIcon(smallIcon);
     CloseHandle(singleInstance);
     CoUninitialize();
-    return 0;
+    return messageLoopFailed ? 1 : 0;
 }

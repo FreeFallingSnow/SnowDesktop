@@ -1,8 +1,10 @@
 #include "authoring_toolchain.h"
 #include "bridge_json.h"
 #include "component_workshop_publish.h"
+#include "manager_frame_scheduler.h"
 #include "manager_localization.h"
 #include "package_tool.h"
+#include "preview_cache.h"
 #include "publish_lifecycle.h"
 #include "steam_app_identity.h"
 #include "steam_child_environment.h"
@@ -15,6 +17,9 @@
 #include <shellapi.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +92,94 @@ struct ScopedEnvironmentVariable
             original ? original->c_str() : nullptr);
     }
 };
+
+void TestManagerFrameScheduler()
+{
+    Check(ManagerInteractiveFrameInterval(
+            { true, true, false, false, false }) == 0,
+        "an idle foreground Manager has no recurring frame timer");
+    Check(ManagerInteractiveFrameInterval(
+            { true, true, false, true, false }) == 16,
+        "a held Manager pointer uses short interactive frames");
+    Check(ManagerInteractiveFrameInterval(
+            { true, true, false, false, true }) == 250,
+        "Manager text input keeps only a low-frequency cursor frame");
+    Check(ManagerInteractiveFrameInterval(
+            { false, true, false, true, true }) == 0 &&
+            ManagerInteractiveFrameInterval(
+                { true, false, false, true, true }) == 0 &&
+            ManagerInteractiveFrameInterval(
+                { true, true, true, true, true }) == 0,
+        "background, hidden, and minimized Managers stop interactive timers");
+    Check(ClassifyManagerTimer(kManagerLanguagePollTimer) ==
+            ManagerTimerAction::PollLanguage &&
+            ClassifyManagerTimer(kManagerLanguagePollTimer) !=
+                ManagerTimerAction::RequestFrame &&
+            ClassifyManagerTimer(kManagerInteractiveFrameTimer) ==
+                ManagerTimerAction::RequestFrame,
+        "language polling does not request frames while the interactive timer does");
+
+    ManagerFrameScheduler scheduler;
+    Check(!scheduler.IsFrameRequested(),
+        "the Workshop Manager frame scheduler starts idle");
+    Check(scheduler.RequestFrame() && !scheduler.RequestFrame(),
+        "duplicate Workshop Manager invalidations collapse into one frame");
+    Check(!scheduler.BeginFrame(false) && scheduler.IsFrameRequested(),
+        "a minimized or occluded Manager retains its pending frame");
+    Check(scheduler.BeginFrame(true) && !scheduler.IsFrameRequested(),
+        "a renderable Manager consumes exactly one pending frame");
+    Check(!scheduler.BeginFrame(true),
+        "an idle Manager does not render an unsolicited frame");
+
+    Check(scheduler.RequestFrame() && scheduler.BeginFrame(true) &&
+            scheduler.RequestFrame() && scheduler.IsFrameRequested(),
+        "an invalidation raised during rendering is retained for a later frame");
+    Check(scheduler.TryQueueWake() && !scheduler.TryQueueWake() &&
+            scheduler.IsWakeQueued(),
+        "pending Manager work queues at most one cross-thread wake message");
+    scheduler.AcknowledgeWake();
+    Check(!scheduler.IsWakeQueued() && scheduler.TryQueueWake(),
+        "consuming a Manager wake allows a retained frame to be woken again");
+}
+
+void TestPreviewCacheNotifications()
+{
+    TemporaryDirectory temporary;
+    const auto preview = temporary.path / L"preview.png";
+    std::ofstream(preview, std::ios::binary) << "preview";
+    std::atomic<int> localNotifications = 0;
+    PreviewCache localCache(temporary.path / L"local-cache",
+        [&] { localNotifications.fetch_add(1); });
+    localCache.RequestLocal(17, preview);
+    localCache.RequestLocal(17, preview);
+    Check(localNotifications.load() == 1,
+        "a new local preview wakes the Manager exactly once");
+    localCache.RequestLocal(17, temporary.path / L"missing.png");
+    Check(localNotifications.load() == 2,
+        "a changed local preview identity wakes the Manager even on failure");
+
+    std::mutex waitMutex;
+    std::condition_variable changed;
+    std::atomic<int> remoteNotifications = 0;
+    PreviewCache remoteCache(temporary.path / L"remote-cache", [&]
+    {
+        remoteNotifications.fetch_add(1);
+        changed.notify_all();
+    });
+    remoteCache.Request(29, "http://example.invalid/preview.png");
+    {
+        std::unique_lock lock(waitMutex);
+        changed.wait_for(lock, std::chrono::seconds(2), [&]
+        {
+            return remoteNotifications.load() != 0;
+        });
+    }
+    Check(remoteNotifications.load() == 1,
+        "a terminal remote preview failure wakes the Manager");
+    remoteCache.Request(29, "http://example.invalid/preview.png");
+    Check(remoteNotifications.load() == 1,
+        "an unchanged remote preview request does not create another wakeup");
+}
 
 void TestJson()
 {
@@ -972,6 +1065,11 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
             source.find("result.developmentRoot = result.dataDirectory") !=
                 std::string::npos,
         "Workshop Manager keeps ImGui settings and default data out of immutable Steam payloads");
+    Check(source.find("GetMessageW(") != std::string::npos &&
+            source.find("PeekMessageW(") == std::string::npos &&
+            source.find("RequestManagerFrame()") != std::string::npos &&
+            source.find("DXGI_PRESENT_TEST") != std::string::npos,
+        "Workshop Manager blocks while idle and explicitly wakes for state changes and occlusion recovery");
 }
 }
 
@@ -980,6 +1078,8 @@ int wmain(int argc, wchar_t** argv)
     TestJson();
     TestSteamIdentity();
     TestSteamChildEnvironment();
+    TestManagerFrameScheduler();
+    TestPreviewCacheNotifications();
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
     TestSteamWorkshopLocalCache();
