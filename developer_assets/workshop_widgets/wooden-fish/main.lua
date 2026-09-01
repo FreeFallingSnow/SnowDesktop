@@ -10,7 +10,45 @@ local MALLET_REST_ANGLE = 90
 local MALLET_STRIKE_ANGLE = -22
 local MALLET_SOURCE_TIP_X = 0.92
 local MALLET_SOURCE_TIP_Y = 0.08
+local DAY_CHECK = "wooden-fish.day-check"
 local MAX_COUNT = 999999999
+
+local settings = {
+    fields = {
+        {
+            key = "customTextEnabled",
+            label = l10n.tr("lua_widget.wooden_fish.custom_text"),
+            type = "bool",
+            default = false,
+        },
+        {
+            key = "customTerm",
+            label = l10n.tr("lua_widget.wooden_fish.custom_term"),
+            type = "text",
+            default = l10n.tr("lua_widget.wooden_fish.term"),
+            maxLength = 12,
+            validationMessage = l10n.tr(
+                "lua_widget.wooden_fish.custom_term_invalid"),
+            showWhen = {
+                key = "customTextEnabled",
+                operator = "truthy",
+            },
+        },
+        {
+            key = "customHint",
+            label = l10n.tr("lua_widget.wooden_fish.custom_hint"),
+            type = "text",
+            default = l10n.tr("lua_widget.wooden_fish.hint"),
+            maxLength = 40,
+            validationMessage = l10n.tr(
+                "lua_widget.wooden_fish.custom_hint_invalid"),
+            showWhen = {
+                key = "customTextEnabled",
+                operator = "truthy",
+            },
+        },
+    },
+}
 
 local palettes = {
     lightForeground = {
@@ -40,25 +78,82 @@ local function normalizedCount(value)
         math.floor(tonumber(value) or 0)))
 end
 
-local function persistCount(model)
+local function todayKey()
+    local now = time.parts(time.now())
+    return string.format("%04d-%02d-%02d", now.year, now.month, now.day)
+end
+
+local function settingEnabled(key)
+    local value = storage.get(key)
+    return value == true or value == 1 or value == "1" or value == "true"
+end
+
+local function nonEmptySetting(key, fallback)
+    local value = storage.get(key)
+    if type(value) == "string" and value:match("%S") then return value end
+    return fallback
+end
+
+local function resolvedCopy()
+    local term = l10n.tr("lua_widget.wooden_fish.term")
+    local hint = l10n.tr("lua_widget.wooden_fish.hint")
+    if settingEnabled("customTextEnabled") then
+        term = nonEmptySetting("customTerm", term)
+        hint = nonEmptySetting("customHint", hint)
+    end
+    return term, hint
+end
+
+local function persistCounts(model)
     local persisted = normalizedCount(storage.get("count"))
     if persisted ~= model.count then
         storage.set("count", model.count)
     end
+    local persistedToday = normalizedCount(storage.get("todayCount"))
+    if persistedToday ~= model.todayCount then
+        storage.set("todayCount", model.todayCount)
+    end
+    if storage.get("todayDate") ~= model.todayDate then
+        storage.set("todayDate", model.todayDate)
+    end
+end
+
+local function rollToday(model)
+    local current = todayKey()
+    if model.todayDate == current then return false end
+    model.todayDate = current
+    model.todayCount = 0
+    return true
 end
 
 local function setup()
-    return {
+    local currentDate = todayKey()
+    local storedDate = storage.get("todayDate")
+    local model = {
         count = normalizedCount(storage.get("count")),
+        todayDate = currentDate,
+        todayCount = storedDate == currentDate and
+            normalizedCount(storage.get("todayCount")) or 0,
         feedbackActive = false,
         feedbackAnimated = false,
         feedbackElapsedMs = 0,
     }
+    if storedDate ~= currentDate then persistCounts(model) end
+    schedule.every(DAY_CHECK, 60000, { whenHidden = "continue" })
+    return model
 end
 
-local function centeredText(text, y, size, color, width, bold, alpha)
+local function centeredTextIn(text, regionX, y, size, color, width, bold, alpha)
     local metrics = draw.measureText(text, size, width, bold)
-    local x = (layout.contentWidth() - metrics.width) / 2
+    local x = regionX + (width - metrics.width) / 2
+    draw.text(x, y, text, size, color, width, bold, true,
+        nil, alpha or 1.0)
+end
+
+local function centeredText(text, y, size, color, width, bold, alpha,
+        centerX)
+    local metrics = draw.measureText(text, size, width, bold)
+    local x = (centerX or layout.contentWidth() / 2) - metrics.width / 2
     draw.text(x, y, text, size, color, width, bold, true,
         nil, alpha or 1.0)
 end
@@ -107,7 +202,7 @@ local function drawInstrument(cx, cy, size, pressed, model)
         rotation, 0.5, 0.5)
 end
 
-local function drawFeedback(model, y, baseSize, colors, width)
+local function drawFeedback(model, y, baseSize, colors, width, centerX, term)
     if not model.feedbackActive then return end
 
     local progress = math.max(0, math.min(1,
@@ -116,9 +211,9 @@ local function drawFeedback(model, y, baseSize, colors, width)
     local popScale = 1 + math.sin(popProgress * math.pi) * 0.20
     local rise = layout.cu(20) * (1 - (1 - progress) * (1 - progress))
     local alpha = math.max(0, 1 - progress * progress)
-    centeredText(l10n.tr("lua_widget.wooden_fish.feedback"),
+    centeredText(l10n.tr("lua_widget.wooden_fish.feedback", term),
         y - rise, baseSize * popScale, colors.feedback,
-        width, true, alpha)
+        width, true, alpha, centerX)
 end
 
 local function startFeedback(model)
@@ -143,26 +238,35 @@ local function render(_context, model)
     local hovered = interaction.isHovered(STRIKE_KEY)
     local focused = interaction.isFocused(STRIKE_KEY)
     local padding = layout.cu(10)
-    local counterSize = math.max(layout.fontCu(15),
-        math.min(layout.fontCu(24), layout.vmin(8.6)))
+    local counterSize = math.max(layout.fontCu(11.5),
+        math.min(layout.fontCu(15), layout.vmin(5.8)))
     local hintSize = math.max(layout.fontCu(12.5),
         math.min(layout.fontCu(15.5), layout.vmin(5.4)))
-    local countText = l10n.tr("lua_widget.wooden_fish.counter",
+    local term, hint = resolvedCopy()
+    local counterGap = layout.cu(7)
+    local counterWidth = math.max(1,
+        (width - padding * 2 - counterGap) / 2)
+    local todayText = l10n.tr("lua_widget.wooden_fish.today_counter",
+        l10n.formatNumber(model.todayCount))
+    local totalText = l10n.tr("lua_widget.wooden_fish.total_counter",
         l10n.formatNumber(model.count))
-    centeredText(countText, padding, counterSize, colors.primary,
-        width - padding * 2, true)
+    centeredTextIn(todayText, padding, padding, counterSize, colors.primary,
+        counterWidth, true)
+    centeredTextIn(totalText, padding + counterWidth + counterGap,
+        padding, counterSize, colors.primary, counterWidth, true)
 
     local instrumentSize = math.max(layout.cu(104),
         math.min(width * 0.72, height * 0.53))
     local instrumentCy = height * 0.56
-    drawInstrument(width / 2, instrumentCy, instrumentSize, pressed, model)
+    local instrumentCx = width * 0.45
+    drawInstrument(instrumentCx, instrumentCy, instrumentSize, pressed, model)
 
     local feedbackSize = math.max(layout.fontCu(12),
         math.min(layout.fontCu(15), layout.vmin(5.1)))
     drawFeedback(model, instrumentCy - instrumentSize * 0.62,
-        feedbackSize, colors, width - padding * 2)
+        feedbackSize, colors, width - padding * 2, instrumentCx, term)
 
-    centeredText(l10n.tr("lua_widget.wooden_fish.hint"),
+    centeredText(hint,
         height - padding - hintSize * 1.35, hintSize,
         (hovered or focused) and colors.focus or colors.secondary,
         width - padding * 2, false, 0.96)
@@ -171,14 +275,14 @@ local function render(_context, model)
         key = STRIKE_KEY,
         shape = {
             type = "circle",
-            x = width / 2,
+            x = instrumentCx,
             y = instrumentCy,
             radius = math.max(layout.cu(44), instrumentSize * 0.49),
         },
         cursor = "hand",
         focusable = true,
         tabIndex = 0,
-        tooltip = l10n.tr("lua_widget.wooden_fish.tooltip"),
+        tooltip = l10n.tr("lua_widget.wooden_fish.tooltip", term),
         events = {
             click = { id = "wooden-fish.strike" },
             doubleClick = { id = "wooden-fish.strike" },
@@ -190,15 +294,17 @@ local function render(_context, model)
         accessibility = {
             role = "button",
             label = l10n.tr("lua_widget.wooden_fish.strike",
-                l10n.formatNumber(model.count)),
+                term, l10n.formatNumber(model.count)),
         },
     })
 end
 
 local function event(_context, model, value)
     if value.kind == "action" and value.id == "wooden-fish.strike" then
+        rollToday(model)
         if model.count < MAX_COUNT then
             model.count = model.count + 1
+            model.todayCount = math.min(MAX_COUNT, model.todayCount + 1)
         end
         startFeedback(model)
         schedule.after("wooden-fish.persist", 350, {
@@ -210,13 +316,15 @@ local function event(_context, model, value)
 
     if value.kind == "action" and value.id == "wooden-fish.reset" then
         model.count = 0
+        model.todayDate = todayKey()
+        model.todayCount = 0
         model.feedbackActive = false
         model.feedbackAnimated = false
         model.feedbackElapsedMs = 0
         animation.cancelFrame(FEEDBACK_FRAME)
         schedule.cancel(FEEDBACK_FALLBACK)
         schedule.cancel("wooden-fish.persist")
-        persistCount(model)
+        persistCounts(model)
         widget.invalidate()
         return
     end
@@ -243,7 +351,10 @@ local function event(_context, model, value)
             model.feedbackAnimated = false
             widget.invalidate()
         elseif value.id == "wooden-fish.persist" then
-            persistCount(model)
+            persistCounts(model)
+        elseif value.id == DAY_CHECK and rollToday(model) then
+            persistCounts(model)
+            widget.invalidate()
         end
     end
 end
@@ -260,7 +371,8 @@ end
 
 local function dispose(_context, model)
     animation.cancelFrame(FEEDBACK_FRAME)
-    persistCount(model)
+    schedule.cancel(DAY_CHECK)
+    persistCounts(model)
 end
 
 return widget.define({
@@ -272,6 +384,7 @@ return widget.define({
     alpha = 0.44,
     borderAlpha = 0.22,
     gradientEndA = 0.28,
+    settings = settings,
     setup = setup,
     render = render,
     event = event,
