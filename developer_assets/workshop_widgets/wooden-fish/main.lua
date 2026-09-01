@@ -151,6 +151,26 @@ local function centeredText(text, y, size, color, width, bold, alpha,
         nil, alpha or 1.0)
 end
 
+local function compactTextPair(left, right, y, size, color, width)
+    local gap = layout.cu(6)
+    local leftMetrics = draw.measureText(left, size, width, true)
+    local rightMetrics = draw.measureText(right, size, width, true)
+    local pairWidth = leftMetrics.width + gap + rightMetrics.width
+
+    if pairWidth > width then
+        size = math.max(layout.fontCu(12), size * width / pairWidth)
+        leftMetrics = draw.measureText(left, size, width, true)
+        rightMetrics = draw.measureText(right, size, width, true)
+        pairWidth = leftMetrics.width + gap + rightMetrics.width
+    end
+
+    local x = (layout.contentWidth() - pairWidth) / 2
+    draw.text(x, y, left, size, color, leftMetrics.width,
+        true, true)
+    draw.text(x + leftMetrics.width + gap, y,
+        right, size, color, rightMetrics.width, true, true)
+end
+
 local function malletRotation(model, pressed)
     if pressed then return MALLET_STRIKE_ANGLE end
     if not model.feedbackActive or not model.feedbackAnimated then return 0 end
@@ -229,18 +249,16 @@ local function render(_context, model)
     local height = math.max(1, layout.contentHeight())
     local pressed = interaction.isPressed(STRIKE_KEY)
     local padding = layout.cu(10)
-    local textSize = math.max(layout.fontCu(14),
-        math.min(layout.fontCu(17), layout.vmin(6.2)))
+    local textSize = math.max(layout.fontCu(16),
+        math.min(layout.fontCu(19), layout.vmin(7.0)))
     local term, hint = resolvedCopy()
     local textWidth = width - padding * 2
     local todayText = l10n.tr("lua_widget.wooden_fish.today_counter",
         l10n.formatNumber(model.todayCount))
     local totalText = l10n.tr("lua_widget.wooden_fish.total_counter",
         l10n.formatNumber(model.count))
-    centeredText(todayText, padding, textSize, colors.feedback,
-        textWidth, true)
-    centeredText(totalText, padding + textSize * 1.35,
-        textSize, colors.feedback, textWidth, true)
+    compactTextPair(todayText, totalText, padding, textSize,
+        colors.feedback, textWidth)
 
     local instrumentSize = math.max(layout.cu(104),
         math.min(width * 0.72, height * 0.53))
