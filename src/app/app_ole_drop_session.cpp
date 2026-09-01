@@ -1453,8 +1453,9 @@ HRESULT DesktopApp::HandleOleDrop(
                     }
                     // When no real virtual file is offered, prefer image
                     // bytes that the source already placed on the data
-                    // object.  This keeps browser images working even when
-                    // their HTTP URL needs cookies or anti-hotlink headers.
+                    // object.  This runs on the Shell STA worker after
+                    // StartOperation, so producer-backed streams can be read
+                    // here without blocking the immediate UI-thread probe.
                     // A valid file: reference was resolved first so the
                     // original local file is never re-encoded as PNG.
                     if (contentPaths.empty() &&
@@ -1462,7 +1463,7 @@ HRESULT DesktopApp::HandleOleDrop(
                          !offersStandardVirtualFile))
                     {
                         contentPaths = TryExtractImageFromDataObject(
-                            workerDataObject, false);
+                            workerDataObject, true);
                         deleteContentPaths = !contentPaths.empty();
                     }
                     if (contentPaths.empty())
