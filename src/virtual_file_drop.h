@@ -73,6 +73,11 @@ std::optional<MaterializedVirtualFile> MaterializeFileContents(
     std::uint64_t maximumBytes =
         kDefaultMaximumMaterializedFileBytes);
 
+// Probe IDataObjectAsyncCapability without requesting any advertised data.
+// This is intentionally independent from CF_HDROP so FileContents-only
+// asynchronous sources are not synchronously rendered on the OLE/UI thread.
+bool UsesAsyncMode(IDataObject* dataObject);
+
 /**
  * Check whether a data object offers delayed CF_HDROP materialization through
  * IDataObjectAsyncCapability. This probe never reads data or starts an async

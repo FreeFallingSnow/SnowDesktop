@@ -65,6 +65,10 @@ struct ShellDropRequest
     POINTL screenPoint{};
     DWORD allowedEffects = DROPEFFECT_COPY | DROPEFFECT_MOVE |
         DROPEFFECT_LINK;
+    // Optional bounded materialization performed on this worker after the
+    // caller's StartOperation and before Shell/EndOperation. Returning true
+    // means the preflight fully handled the data object and Shell is skipped.
+    std::function<bool(IDataObject*)> dataObjectPreflight;
 };
 
 /**

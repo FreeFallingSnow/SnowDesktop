@@ -22,6 +22,24 @@ int main()
     using snowdesktop::http_security::IsAllowedUrlForDomains;
     using snowdesktop::http_security::HaveSameOrigin;
 
+    snowdesktop::http_stream::Result candidateFailure;
+    candidateFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::Candidate;
+    snowdesktop::http_stream::Result transportFailure;
+    transportFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::Transport;
+    snowdesktop::http_stream::Result sinkFailure;
+    sinkFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::Sink;
+    snowdesktop::http_stream::Result localFailure;
+    localFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::LocalSetup;
+    Expect(candidateFailure.CanRetryAlternateCandidate() &&
+            transportFailure.CanRetryAlternateCandidate() &&
+            !sinkFailure.CanRetryAlternateCandidate() &&
+            !localFailure.CanRetryAlternateCandidate(),
+        "only candidate-specific or transport HTTP failures are retryable");
+
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");
     Expect(IsAllowedRemoteIpLiteral(L"2606:4700:4700::1111"),

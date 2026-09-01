@@ -369,6 +369,7 @@ snowdesktop::http_stream::StreamHttpGet(
         !http_security::IsAllowedHttpOrHttpsUrl(options.url))
     {
         result.error = "Invalid HTTP stream request";
+        result.failureKind = FailureKind::Candidate;
         return result;
     }
 
@@ -387,12 +388,14 @@ snowdesktop::http_stream::StreamHttpGet(
     if (!session)
     {
         result.error = "WinHttpOpen failed";
+        result.failureKind = FailureKind::LocalSetup;
         return result;
     }
     if (!WinHttpSetTimeouts(session, timeoutMs, timeoutMs,
             timeoutMs, timeoutMs))
     {
         result.error = "Cannot apply HTTP request timeouts";
+        result.failureKind = FailureKind::LocalSetup;
         WinHttpCloseHandle(session);
         return result;
     }
@@ -401,6 +404,7 @@ snowdesktop::http_stream::StreamHttpGet(
             &redirectPolicy, sizeof(redirectPolicy)))
     {
         result.error = "Cannot disable automatic HTTP redirects";
+        result.failureKind = FailureKind::LocalSetup;
         WinHttpCloseHandle(session);
         return result;
     }
@@ -443,11 +447,13 @@ snowdesktop::http_stream::StreamHttpGet(
         if (deadlineExpired())
         {
             result.error = "HTTP request deadline exceeded";
+            result.failureKind = FailureKind::Transport;
             break;
         }
         if (!http_security::IsAllowedHttpOrHttpsUrl(currentUrl))
         {
             result.error = "Redirect URL is not an allowed HTTP URL";
+            result.failureKind = FailureKind::Candidate;
             break;
         }
 
@@ -466,6 +472,7 @@ snowdesktop::http_stream::StreamHttpGet(
              components.nScheme != INTERNET_SCHEME_HTTPS))
         {
             result.error = "Invalid HTTP URL";
+            result.failureKind = FailureKind::Candidate;
             break;
         }
 
@@ -475,6 +482,7 @@ snowdesktop::http_stream::StreamHttpGet(
         if (!connection)
         {
             result.error = "WinHttpConnect failed";
+            result.failureKind = FailureKind::Transport;
             break;
         }
         const std::wstring requestPath =
@@ -491,6 +499,7 @@ snowdesktop::http_stream::StreamHttpGet(
         {
             WinHttpCloseHandle(connection);
             result.error = "WinHttpOpenRequest failed";
+            result.failureKind = FailureKind::LocalSetup;
             break;
         }
 
@@ -502,6 +511,7 @@ snowdesktop::http_stream::StreamHttpGet(
                 &disabledFeatures, sizeof(disabledFeatures)))
         {
             result.error = "Cannot apply HTTP request security policy";
+            result.failureKind = FailureKind::LocalSetup;
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -513,6 +523,7 @@ snowdesktop::http_stream::StreamHttpGet(
         if (!sent || !WinHttpReceiveResponse(request, nullptr))
         {
             result.error = "HTTP request failed";
+            result.failureKind = FailureKind::Transport;
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -520,6 +531,7 @@ snowdesktop::http_stream::StreamHttpGet(
         if (deadlineExpired())
         {
             result.error = "HTTP request deadline exceeded";
+            result.failureKind = FailureKind::Transport;
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -533,6 +545,7 @@ snowdesktop::http_stream::StreamHttpGet(
                 WINHTTP_NO_HEADER_INDEX))
         {
             result.error = "Cannot read HTTP status";
+            result.failureKind = FailureKind::Transport;
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -543,6 +556,7 @@ snowdesktop::http_stream::StreamHttpGet(
             if (redirectCount == maximumRedirects)
             {
                 result.error = "Too many redirects";
+                result.failureKind = FailureKind::Candidate;
                 WinHttpCloseHandle(request);
                 WinHttpCloseHandle(connection);
                 break;
@@ -552,6 +566,7 @@ snowdesktop::http_stream::StreamHttpGet(
             if (location.empty())
             {
                 result.error = "Redirect is missing Location";
+                result.failureKind = FailureKind::Candidate;
                 WinHttpCloseHandle(request);
                 WinHttpCloseHandle(connection);
                 break;
@@ -562,6 +577,7 @@ snowdesktop::http_stream::StreamHttpGet(
                     combined, &combinedLength, URL_ESCAPE_UNSAFE)))
             {
                 result.error = "Invalid redirect URL";
+                result.failureKind = FailureKind::Candidate;
                 WinHttpCloseHandle(request);
                 WinHttpCloseHandle(connection);
                 break;
@@ -584,10 +600,16 @@ snowdesktop::http_stream::StreamHttpGet(
             request, WINHTTP_QUERY_CONTENT_LENGTH));
 
         if (status < 200 || status >= 300)
+        {
             result.error = "HTTP response is not successful";
+            result.failureKind = FailureKind::Candidate;
+        }
         else if (result.head.contentLength &&
             *result.head.contentLength > options.maximumResponseBytes)
+        {
             result.error = "Response too large";
+            result.failureKind = FailureKind::Candidate;
+        }
         else
         {
             try
@@ -597,6 +619,7 @@ snowdesktop::http_stream::StreamHttpGet(
             catch (...)
             {
                 result.error = "Response callback failed";
+                result.failureKind = FailureKind::Callback;
             }
         }
 
@@ -606,12 +629,14 @@ snowdesktop::http_stream::StreamHttpGet(
             if (deadlineExpired())
             {
                 result.error = "HTTP request deadline exceeded";
+                result.failureKind = FailureKind::Transport;
                 break;
             }
             DWORD available = 0;
             if (!WinHttpQueryDataAvailable(request, &available))
             {
                 result.error = "Cannot read HTTP response";
+                result.failureKind = FailureKind::Transport;
                 break;
             }
             if (available == 0) break;
@@ -621,6 +646,7 @@ snowdesktop::http_stream::StreamHttpGet(
                 static_cast<std::uint64_t>(available) > remaining)
             {
                 result.error = "Response too large";
+                result.failureKind = FailureKind::Candidate;
                 break;
             }
             std::array<std::byte, 64 * 1024> chunk{};
@@ -630,12 +656,14 @@ snowdesktop::http_stream::StreamHttpGet(
             if (!WinHttpReadData(request, chunk.data(), requested, &read))
             {
                 result.error = "Cannot read HTTP response";
+                result.failureKind = FailureKind::Transport;
                 break;
             }
             if (read == 0) break;
             if (deadlineExpired())
             {
                 result.error = "HTTP request deadline exceeded";
+                result.failureKind = FailureKind::Transport;
                 break;
             }
             bool consumed = false;
@@ -647,11 +675,13 @@ snowdesktop::http_stream::StreamHttpGet(
             catch (...)
             {
                 result.error = "Response sink failed";
+                result.failureKind = FailureKind::Sink;
                 break;
             }
             if (!consumed)
             {
                 result.error = "Response sink failed";
+                result.failureKind = FailureKind::Sink;
                 break;
             }
             result.bytesReceived += read;
@@ -662,12 +692,14 @@ snowdesktop::http_stream::StreamHttpGet(
             result.bytesReceived != *result.head.contentLength)
         {
             result.error = "HTTP response ended before Content-Length";
+            result.failureKind = FailureKind::Transport;
         }
 
         if (token.stop_requested())
         {
             result.cancelled = true;
             result.error = "Cancelled";
+            result.failureKind = FailureKind::Cancelled;
         }
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connection);
@@ -678,6 +710,7 @@ snowdesktop::http_stream::StreamHttpGet(
     {
         result.cancelled = true;
         result.error = "Cancelled";
+        result.failureKind = FailureKind::Cancelled;
     }
     WinHttpCloseHandle(session);
     return result;

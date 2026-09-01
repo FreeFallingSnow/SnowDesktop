@@ -51,6 +51,17 @@ struct Options
     int maxRedirects = 3;
 };
 
+enum class FailureKind : std::uint8_t
+{
+    None,
+    Candidate,
+    LocalSetup,
+    Transport,
+    Callback,
+    Sink,
+    Cancelled,
+};
+
 struct Result
 {
     ResponseHead head;
@@ -58,6 +69,13 @@ struct Result
     std::string error;
     bool cancelled = false;
     bool responseAccepted = false;
+    FailureKind failureKind = FailureKind::None;
+
+    bool CanRetryAlternateCandidate() const noexcept
+    {
+        return failureKind == FailureKind::Candidate ||
+            failureKind == FailureKind::Transport;
+    }
 };
 
 using HeadCallback = std::function<bool(const ResponseHead&)>;

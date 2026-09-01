@@ -720,6 +720,21 @@ bool ShellFileOperationWorker::Execute(
     if (!dataObject)
         return finish(E_FAIL, DROPEFFECT_NONE);
 
+    if ((allowedEffects & DROPEFFECT_COPY) != 0 &&
+        request.dataObjectPreflight)
+    {
+        try
+        {
+            if (request.dataObjectPreflight(dataObject.Get()))
+                return finish(S_OK, DROPEFFECT_COPY);
+        }
+        catch (...)
+        {
+            // A failed optional preflight must not suppress the normal Shell
+            // handoff. Its implementation owns cleanup of partial output.
+        }
+    }
+
     ComPtr<IDataObject> dropDataObject = dataObject;
     SynchronousDataObjectView* synchronousView = nullptr;
     if (asyncCapability)

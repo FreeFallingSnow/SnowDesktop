@@ -417,7 +417,7 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
     if (!flushed)
     {
         result.error = "Cannot flush staged download";
-        result.outcome = UrlDropDownloadOutcome::Shortcut;
+        result.outcome = UrlDropDownloadOutcome::Failed;
         return result;
     }
     if (!streamResult.error.empty() ||
@@ -427,7 +427,12 @@ UrlDropDownloadResult UrlDropDownloadWorker::Execute(
         if (!outputPath.empty()) DeleteFileW(outputPath.c_str());
         result.error = streamResult.error.empty()
             ? "Empty resource response" : streamResult.error;
-        result.outcome = UrlDropDownloadOutcome::Shortcut;
+        result.outcome = UrlDropDownloadOutcome::Failed;
+        result.retryableCandidateFailure =
+            streamResult.CanRetryAlternateCandidate() ||
+            (streamResult.error.empty() &&
+             streamResult.responseAccepted &&
+             streamResult.bytesReceived == 0);
         return result;
     }
     if (LooksLikeHtml(prefix))

@@ -1,5 +1,6 @@
 #include "app.h"
 
+#include <iterator>
 #include <new>
 #include <utility>
 
@@ -84,13 +85,15 @@ private:
 }
 
 bool DesktopApp::QueueUrlDropDownload(
-    std::wstring url, DropPreviewList preview,
-    std::vector<UrlDropReplacementShortcut> replacementShortcuts)
+    std::vector<std::wstring> urls, DropPreviewList preview,
+    std::vector<UrlDropReplacementShortcut> replacementShortcuts,
+    std::wstring shortcutFallbackUrl)
 {
     HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
     if (!completionWindow || !IsWindow(completionWindow) ||
-        url.empty() || preview.targetKind != DropTargetKind::Desktop ||
+        urls.empty() || urls.front().empty() ||
+        preview.targetKind != DropTargetKind::Desktop ||
         replacementShortcuts.size() > 1)
         return false;
 
@@ -109,9 +112,14 @@ bool DesktopApp::QueueUrlDropDownload(
     completion->preview = std::move(preview);
     completion->replacementShortcuts =
         std::move(replacementShortcuts);
+    completion->remainingUrls.assign(
+        std::make_move_iterator(urls.begin() + 1),
+        std::make_move_iterator(urls.end()));
+    completion->shortcutFallbackUrl = shortcutFallbackUrl.empty()
+        ? urls.front() : std::move(shortcutFallbackUrl);
 
     snowdesktop::UrlDropDownloadRequest request;
-    request.url = std::move(url);
+    request.url = std::move(urls.front());
     request.destinationDirectory = destinationDirectory;
     request.maximumBytes = 64ull * 1024ull * 1024ull;
     request.timeoutMs = 10000;
@@ -133,6 +141,76 @@ bool DesktopApp::QueueUrlDropDownload(
     return queued;
 }
 
+bool DesktopApp::RemoveMatchingUrlDropShortcuts(
+    const std::vector<UrlDropReplacementShortcut>& shortcuts,
+    const std::wstring& expectedTarget)
+{
+    if (shortcuts.empty() || expectedTarget.empty())
+        return false;
+
+    for (const auto& shortcut : shortcuts)
+    {
+        if (!shortcut.identityValid ||
+            !IsReplaceableInternetShortcutPath(shortcut.path) ||
+            ReadInternetShortcutTarget(shortcut.path) != expectedTarget)
+            return false;
+
+        HANDLE file = CreateFileW(
+            shortcut.path.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+            return false;
+        BY_HANDLE_FILE_INFORMATION information{};
+        const bool sameIdentity =
+            GetFileInformationByHandle(file, &information) &&
+            (information.dwFileAttributes &
+                (FILE_ATTRIBUTE_DIRECTORY |
+                 FILE_ATTRIBUTE_REPARSE_POINT)) == 0 &&
+            information.dwVolumeSerialNumber ==
+                shortcut.volumeSerialNumber &&
+            information.nFileIndexHigh == shortcut.fileIndexHigh &&
+            information.nFileIndexLow == shortcut.fileIndexLow;
+        CloseHandle(file);
+        if (!sameIdentity)
+            return false;
+    }
+
+    for (const auto& shortcut : shortcuts)
+    {
+        // The target was read before opening a DELETE handle because
+        // IPersistFile/GetPrivateProfileString may otherwise lose sharing.
+        HANDLE file = CreateFileW(
+            shortcut.path.c_str(), DELETE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+            return false;
+        BY_HANDLE_FILE_INFORMATION information{};
+        const bool sameIdentity =
+            GetFileInformationByHandle(file, &information) &&
+            (information.dwFileAttributes &
+                (FILE_ATTRIBUTE_DIRECTORY |
+                 FILE_ATTRIBUTE_REPARSE_POINT)) == 0 &&
+            information.dwVolumeSerialNumber ==
+                shortcut.volumeSerialNumber &&
+            information.nFileIndexHigh == shortcut.fileIndexHigh &&
+            information.nFileIndexLow == shortcut.fileIndexLow;
+        FILE_DISPOSITION_INFO disposition{ TRUE };
+        const bool removed = sameIdentity &&
+            SetFileInformationByHandle(
+                file, FileDispositionInfo,
+                &disposition, sizeof(disposition));
+        CloseHandle(file);
+        if (!removed)
+            return false;
+    }
+    return true;
+}
+
 void DesktopApp::OnUrlDropDownloadCompleted(LPARAM lParam)
 {
     std::unique_ptr<UrlDropDownloadUiCompletion> completion(
@@ -142,6 +220,18 @@ void DesktopApp::OnUrlDropDownloadCompleted(LPARAM lParam)
     {
         DiscardDownloadedUrlDropFile(completion->result);
         return;
+    }
+
+    if (completion->result.CanRetryAlternateUrl() &&
+        !completion->remainingUrls.empty() &&
+        completion->replacementShortcuts.empty())
+    {
+        auto retryUrls = completion->remainingUrls;
+        auto retryPreview = completion->preview;
+        if (QueueUrlDropDownload(
+                std::move(retryUrls), std::move(retryPreview), {},
+                completion->shortcutFallbackUrl))
+            return;
     }
 
     std::wstring stagedPath;
@@ -155,7 +245,9 @@ void DesktopApp::OnUrlDropDownloadCompleted(LPARAM lParam)
     }
     else
         stagedPath = CreateUrlShortcut(
-            completion->result.originalUrl);
+            completion->shortcutFallbackUrl.empty()
+                ? completion->result.originalUrl
+                : completion->shortcutFallbackUrl);
     if (stagedPath.empty()) return;
 
     const bool downloadedResource = completion->result.outcome ==
@@ -275,56 +367,8 @@ void DesktopApp::OnUrlDropDownloadCompleted(LPARAM lParam)
             if (!downloadedResource || replacementShortcuts.empty())
                 return;
 
-            bool removedEveryShortcut = true;
-            for (const auto& replacement : replacementShortcuts)
-            {
-                // Read the target before opening a DELETE handle. Opening the
-                // target through IPersistFile/GetPrivateProfileString while a
-                // non-sharing DELETE handle is live can fail on Windows.
-                if (!replacement.identityValid ||
-                    !IsReplaceableInternetShortcutPath(replacement.path) ||
-                    ReadInternetShortcutTarget(replacement.path) != originalUrl)
-                {
-                    removedEveryShortcut = false;
-                    break;
-                }
-                HANDLE shortcut = CreateFileW(
-                    replacement.path.c_str(),
-                    DELETE | FILE_READ_ATTRIBUTES,
-                    FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                    FILE_ATTRIBUTE_NORMAL |
-                        FILE_FLAG_OPEN_REPARSE_POINT,
-                    nullptr);
-                if (shortcut == INVALID_HANDLE_VALUE)
-                {
-                    removedEveryShortcut = false;
-                    break;
-                }
-                BY_HANDLE_FILE_INFORMATION information{};
-                const bool sameIdentity =
-                    GetFileInformationByHandle(shortcut, &information) &&
-                    (information.dwFileAttributes &
-                        (FILE_ATTRIBUTE_DIRECTORY |
-                         FILE_ATTRIBUTE_REPARSE_POINT)) == 0 &&
-                    information.dwVolumeSerialNumber ==
-                        replacement.volumeSerialNumber &&
-                    information.nFileIndexHigh ==
-                        replacement.fileIndexHigh &&
-                    information.nFileIndexLow ==
-                        replacement.fileIndexLow;
-                FILE_DISPOSITION_INFO disposition{ TRUE };
-                const bool removed = sameIdentity &&
-                    SetFileInformationByHandle(
-                        shortcut, FileDispositionInfo,
-                        &disposition, sizeof(disposition));
-                CloseHandle(shortcut);
-                if (!removed)
-                {
-                    removedEveryShortcut = false;
-                    break;
-                }
-            }
-            if (!removedEveryShortcut)
+            if (!RemoveMatchingUrlDropShortcuts(
+                    replacementShortcuts, originalUrl))
                 return;
 
             // The first copy reload may have placed the resource beside the

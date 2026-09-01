@@ -159,6 +159,12 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_drag_lifecycle.cpp
     src/app/app_drag_preview_window.cpp
     src/app/app_drag_target_update.cpp
+    src/drop_data_url.cpp
+    src/drop_data_url.h
+    src/drop_image_data.cpp
+    src/drop_image_data.h
+    src/drop_text_rules.cpp
+    src/drop_text_rules.h
     src/app/app_drop_data_extraction.cpp
     src/app/app_url_drop_download.cpp
     src/app/app_drop_execution.cpp
@@ -1875,6 +1881,34 @@ if (BUILD_TESTING)
             tests/url_drop_resource_tests.cpp
             src/url_drop_resource.cpp
         INCLUDE_DIRECTORIES src
+        LABELS contract interaction security)
+
+    snowdesktop_add_test(
+        SnowDesktopDropDataUrlTests
+        drop_data_url
+        SOURCES
+            tests/drop_data_url_tests.cpp
+            src/drop_data_url.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract interaction security)
+
+    snowdesktop_add_test(
+        SnowDesktopDropTextRulesTests
+        drop_text_rules
+        SOURCES
+            tests/drop_text_rules_tests.cpp
+            src/drop_text_rules.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract interaction security)
+
+    snowdesktop_add_test(
+        SnowDesktopDropImageDataTests
+        drop_image_data
+        SOURCES
+            tests/drop_image_data_tests.cpp
+            src/drop_image_data.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES gdi32 ole32 user32 windowscodecs
         LABELS contract interaction security)
 
     snowdesktop_add_test(

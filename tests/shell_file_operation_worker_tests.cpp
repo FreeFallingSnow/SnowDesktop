@@ -1,6 +1,7 @@
 #include "shell_file_operation_worker.h"
 #include "item_location.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -59,6 +60,8 @@ int wmain()
         root / L"rejected-handoff";
     const std::filesystem::path noneEffectDirectory =
         root / L"none-effect";
+    const std::filesystem::path preflightDirectory =
+        root / L"preflight";
     const std::filesystem::path shortcutDirectory =
         root / L"shortcuts";
     const std::filesystem::path folderShortcutTarget =
@@ -73,6 +76,7 @@ int wmain()
     std::filesystem::create_directories(multiHandoffDirectory);
     std::filesystem::create_directories(rejectedHandoffDirectory);
     std::filesystem::create_directories(noneEffectDirectory);
+    std::filesystem::create_directories(preflightDirectory);
     std::filesystem::create_directories(shortcutDirectory);
     std::filesystem::create_directories(folderShortcutTarget);
     std::filesystem::create_directories(secondFolderShortcutTarget);
@@ -142,6 +146,17 @@ int wmain()
     noneEffectRequest.targetParsingName = noneEffectDirectory.wstring();
     noneEffectRequest.keyState = MK_LBUTTON;
     noneEffectRequest.allowedEffects = DROPEFFECT_NONE;
+    std::atomic<int> preflightCalls{0};
+    snowdesktop::ShellDropRequest preflightRequest;
+    preflightRequest.sources = { handoffSource.wstring() };
+    preflightRequest.targetParsingName = preflightDirectory.wstring();
+    preflightRequest.keyState = MK_LBUTTON | MK_CONTROL;
+    preflightRequest.allowedEffects = DROPEFFECT_COPY;
+    preflightRequest.dataObjectPreflight =
+        [&preflightCalls](IDataObject* dataObject) {
+            ++preflightCalls;
+            return dataObject != nullptr;
+        };
     snowdesktop::ShellFileOperationRequest shortcutRequest;
     const std::filesystem::path shortcutPath =
         shortcutDirectory / L"handoff.lnk";
@@ -195,6 +210,7 @@ int wmain()
     std::promise<bool> multiHandoffPromise;
     std::promise<bool> partialSourcePromise;
     std::promise<bool> noneEffectPromise;
+    std::promise<bool> preflightPromise;
     std::promise<bool> shortcutPromise;
     std::promise<bool> partialShortcutPromise;
     std::promise<bool> createFolderShortcutPromise;
@@ -207,6 +223,7 @@ int wmain()
     auto multiHandoffFuture = multiHandoffPromise.get_future();
     auto partialSourceFuture = partialSourcePromise.get_future();
     auto noneEffectFuture = noneEffectPromise.get_future();
+    auto preflightFuture = preflightPromise.get_future();
     auto shortcutFuture = shortcutPromise.get_future();
     auto partialShortcutFuture =
         partialShortcutPromise.get_future();
@@ -256,6 +273,12 @@ int wmain()
                 noneEffectPromise.set_value(succeeded);
             }),
         "none-effect IDropTarget request is accepted for rejection");
+    Expect(worker.Enqueue(
+            std::move(preflightRequest),
+            [&preflightPromise](bool succeeded) {
+                preflightPromise.set_value(succeeded);
+            }),
+        "data-object preflight request is accepted");
     Expect(worker.Enqueue(
             std::move(shortcutRequest),
             [&shortcutPromise](bool succeeded) {
@@ -314,6 +337,10 @@ int wmain()
     Expect(noneEffectFuture.wait_for(std::chrono::seconds(15)) ==
             std::future_status::ready && !noneEffectFuture.get(),
         "DROPEFFECT_NONE remains rejected");
+    Expect(preflightFuture.wait_for(std::chrono::seconds(15)) ==
+            std::future_status::ready && preflightFuture.get() &&
+            preflightCalls.load() == 1,
+        "a successful data-object preflight bypasses Shell on the worker");
     Expect(shortcutFuture.wait_for(std::chrono::seconds(15)) ==
             std::future_status::ready && shortcutFuture.get(),
         "Shell shortcut creation completes successfully");
@@ -367,6 +394,9 @@ int wmain()
     Expect(!std::filesystem::exists(
             noneEffectDirectory / rejectedHandoffSource.filename()),
         "a none-effect handoff performs no operation");
+    Expect(!std::filesystem::exists(
+            preflightDirectory / handoffSource.filename()),
+        "a handled preflight does not also execute the Shell drop");
     Expect(std::filesystem::exists(shortcutPath),
         "Shell shortcut creation writes the link file");
     Expect(std::filesystem::exists(partialShortcutPath),

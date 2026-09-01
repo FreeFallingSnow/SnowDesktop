@@ -1,4 +1,5 @@
 #include "../src/url_drop_resource.h"
+#include "../src/url_drop_download_worker.h"
 
 #include <iostream>
 #include <string>
@@ -44,6 +45,22 @@ void ExpectShortcut(std::wstring_view url, std::wstring_view contentType,
 
 int main()
 {
+    snowdesktop::UrlDropDownloadResult retryableFailure;
+    retryableFailure.outcome =
+        snowdesktop::UrlDropDownloadOutcome::Failed;
+    retryableFailure.retryableCandidateFailure = true;
+    snowdesktop::UrlDropDownloadResult localFailure;
+    localFailure.outcome =
+        snowdesktop::UrlDropDownloadOutcome::Failed;
+    snowdesktop::UrlDropDownloadResult normalShortcut;
+    normalShortcut.outcome =
+        snowdesktop::UrlDropDownloadOutcome::Shortcut;
+    normalShortcut.retryableCandidateFailure = true;
+    Expect(retryableFailure.CanRetryAlternateUrl() &&
+            !localFailure.CanRetryAlternateUrl() &&
+            !normalShortcut.CanRetryAlternateUrl(),
+        "only candidate-specific transport failures try another URL field");
+
     constexpr std::wstring_view douyinUrl =
         L"https://p3-pc-sign.douyinpic.com/obj/tos-cn-i-tsj2vxp0zn/"
         L"9a45bb9c0b8a4963b858846b079cfe2f?lk3s=343af0a2&x-signature=a%2Fb";

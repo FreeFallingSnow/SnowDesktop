@@ -60,6 +60,8 @@
 #include "../dock_app_identity_rules.h"
 #include "../shell_launch_worker.h"
 #include "../url_drop_download_worker.h"
+#include "../drop_text_rules.h"
+#include "../virtual_file_drop.h"
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
@@ -2300,7 +2302,8 @@ private:
         DWORD keyState,
         POINTL screenPoint,
         DWORD allowedEffects,
-        FileOperationCompletion completion);
+        FileOperationCompletion completion,
+        std::function<bool(IDataObject*)> dataObjectPreflight = {});
     /** @brief 为路径型外部放置建立一次 OLE 异步完成通知。 */
     bool PrepareOleAsyncFileOperation(
         IDataObject* dataObject,
@@ -2321,9 +2324,14 @@ private:
     };
     /** @brief 排队识别并下载一个仅提供 URL 的桌面资源。 */
     bool QueueUrlDropDownload(
-        std::wstring url, DropPreviewList preview,
+        std::vector<std::wstring> urls, DropPreviewList preview,
         std::vector<UrlDropReplacementShortcut>
-            replacementShortcuts = {});
+            replacementShortcuts = {},
+        std::wstring shortcutFallbackUrl = {});
+    /** @brief 按目标与文件身份核验并删除本次 Shell 新建的快捷方式。 */
+    static bool RemoveMatchingUrlDropShortcuts(
+        const std::vector<UrlDropReplacementShortcut>& shortcuts,
+        const std::wstring& expectedTarget);
     /** @brief 在 UI 线程完成 URL 资源的桌面落位。 */
     void OnUrlDropDownloadCompleted(LPARAM lParam);
     /** @brief 停止 URL 下载线程并清理尚未处理的完成消息。 */
@@ -3386,6 +3394,8 @@ private:
         snowdesktop::UrlDropDownloadResult result;
         DropPreviewList preview;
         std::vector<UrlDropReplacementShortcut> replacementShortcuts;
+        std::vector<std::wstring> remainingUrls;
+        std::wstring shortcutFallbackUrl;
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
@@ -3772,12 +3782,36 @@ private:
     void DestroyDragHintWindow();
     /** @brief 从拖拽数据对象中提取文件路径列表。 @param dataObject 数据对象 @return 路径列表 */
     static std::vector<std::wstring> GetDropPaths(IDataObject* dataObject);
-    static std::vector<std::wstring> TryGetNonFileDropPaths(IDataObject* dataObject);
-    static std::vector<std::wstring> TryExtractUrlFromDataObject(IDataObject* dataObject);
-    static std::vector<std::wstring> TryExtractImageFromDataObject(IDataObject* dataObject);
-    static std::vector<std::wstring> TryExtractTextFromDataObject(IDataObject* dataObject);
-    static std::wstring ExtractDropUrl(IDataObject* dataObject);
-    static bool IsFileDownloadUrl(const std::wstring& url, std::wstring& fileName);
+    struct DropReferenceSnapshot
+    {
+        snowdesktop::drop_text_rules::ResourceCandidates candidates;
+        snowdesktop::drop_text_rules::Classification reference;
+        std::wstring unicodeText;
+    };
+    static DropReferenceSnapshot ReadDropReferenceSnapshot(
+        IDataObject* dataObject);
+    static std::vector<std::wstring> TryGetNonFileDropPaths(
+        IDataObject* dataObject,
+        const DropReferenceSnapshot& snapshot);
+    static std::vector<std::wstring> TryExtractLocalFileUrlFromDataObject(
+        const DropReferenceSnapshot& snapshot);
+    static std::vector<std::wstring> TryExtractDataUrlFromDataObject(
+        const DropReferenceSnapshot& snapshot);
+    static std::vector<std::wstring> TryExtractUrlFromDataObject(
+        const DropReferenceSnapshot& snapshot);
+    static std::vector<std::wstring> TryExtractImageFromDataObject(
+        IDataObject* dataObject, bool allowStreamInput = true);
+    static std::vector<std::wstring> TryMaterializeVirtualFilesFromDataObject(
+        IDataObject* dataObject,
+        const std::vector<snowdesktop::virtual_file_drop::
+            VirtualFileDescriptor>& descriptors,
+        bool* allEntriesMaterialized);
+    static std::vector<std::wstring> TryExtractTextFromDataObject(
+        const DropReferenceSnapshot& snapshot);
+    static std::wstring ExtractDropUrl(
+        const DropReferenceSnapshot& snapshot);
+    static std::vector<std::wstring> ExtractDropUrls(
+        const DropReferenceSnapshot& snapshot);
     static std::wstring CreateUrlShortcut(const std::wstring& url);
     static std::wstring HandleUrlContent(const std::wstring& url);
     /** @brief 从完整路径中提取文件名。 @param path 完整路径 @return 文件名 */

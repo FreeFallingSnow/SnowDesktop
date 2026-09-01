@@ -580,18 +580,10 @@ snowdesktop::virtual_file_drop::MaterializeFileContents(
     return MaterializedVirtualFile{ outputPath, writtenBytes };
 }
 
-bool snowdesktop::virtual_file_drop::OffersAsyncFileDrop(
+bool snowdesktop::virtual_file_drop::UsesAsyncMode(
     IDataObject* dataObject)
 {
     if (!dataObject)
-        return false;
-
-    FORMATETC fileDrop{};
-    fileDrop.cfFormat = CF_HDROP;
-    fileDrop.dwAspect = DVASPECT_CONTENT;
-    fileDrop.lindex = -1;
-    fileDrop.tymed = TYMED_HGLOBAL;
-    if (dataObject->QueryGetData(&fileDrop) != S_OK)
         return false;
 
     IDataObjectAsyncCapability* capability = nullptr;
@@ -605,4 +597,19 @@ bool snowdesktop::virtual_file_drop::OffersAsyncFileDrop(
     const HRESULT result = capability->GetAsyncMode(&asyncMode);
     capability->Release();
     return result == S_OK && asyncMode == TRUE;
+}
+
+bool snowdesktop::virtual_file_drop::OffersAsyncFileDrop(
+    IDataObject* dataObject)
+{
+    if (!dataObject)
+        return false;
+
+    FORMATETC fileDrop{};
+    fileDrop.cfFormat = CF_HDROP;
+    fileDrop.dwAspect = DVASPECT_CONTENT;
+    fileDrop.lindex = -1;
+    fileDrop.tymed = TYMED_HGLOBAL;
+    return dataObject->QueryGetData(&fileDrop) == S_OK &&
+        UsesAsyncMode(dataObject);
 }

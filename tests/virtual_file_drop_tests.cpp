@@ -762,6 +762,21 @@ void TestAsyncFileDropProbeDoesNotMaterializeData()
         "the delayed-file probe queries capability without reading or starting materialization");
 }
 
+void TestAsyncModeProbeDoesNotRequireFileDrop()
+{
+    MockDataObject dataObject;
+    dataObject.exposeAsyncCapability = true;
+    dataObject.asyncMode = true;
+
+    Check(snowdesktop::virtual_file_drop::UsesAsyncMode(&dataObject),
+        "an async FileContents-only source is recognized without CF_HDROP");
+    Check(dataObject.getAsyncModeCalls == 1 &&
+            dataObject.queryGetDataCalls == 0 &&
+            dataObject.getDataCalls == 0 &&
+            dataObject.startOperationCalls == 0,
+        "the generic async probe does not request or start source data");
+}
+
 void TestAsyncFileDropRequiresBothSignals()
 {
     MockDataObject noFileDrop;
@@ -800,6 +815,7 @@ int main()
     TestAdvertisedOversizeIsRejectedBeforeReadingContents();
     TestGlobalFallbackRequiresAnAdvertisedBound();
     TestAsyncFileDropProbeDoesNotMaterializeData();
+    TestAsyncModeProbeDoesNotRequireFileDrop();
     TestAsyncFileDropRequiresBothSignals();
 
     if (failures != 0)

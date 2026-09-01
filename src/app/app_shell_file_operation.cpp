@@ -191,7 +191,8 @@ bool DesktopApp::QueueAsyncShellDrop(
     DWORD keyState,
     POINTL screenPoint,
     DWORD allowedEffects,
-    FileOperationCompletion completion)
+    FileOperationCompletion completion,
+    std::function<bool(IDataObject*)> dataObjectPreflight)
 {
     HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
@@ -259,6 +260,7 @@ bool DesktopApp::QueueAsyncShellDrop(
     request.keyState = keyState;
     request.screenPoint = screenPoint;
     request.allowedEffects = effects;
+    request.dataObjectPreflight = std::move(dataObjectPreflight);
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
         [completionWindow, result](bool succeeded) {

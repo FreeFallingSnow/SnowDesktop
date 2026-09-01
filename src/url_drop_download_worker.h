@@ -24,7 +24,12 @@ struct UrlDropDownloadRequest
 enum class UrlDropDownloadOutcome
 {
     Downloaded,
+    // The response was reachable but policy or content semantics require a
+    // normal Internet Shortcut. Alternate clipboard URLs must not replace it.
     Shortcut,
+    // No usable response or local output was produced. The result carries a
+    // separate candidate-retry flag because cancellation and disk errors must
+    // not be retried against a different URL.
     Failed,
 };
 
@@ -36,6 +41,13 @@ struct UrlDropDownloadResult
     std::wstring localPath;
     std::wstring contentType;
     std::string error;
+    bool retryableCandidateFailure = false;
+
+    bool CanRetryAlternateUrl() const noexcept
+    {
+        return outcome == UrlDropDownloadOutcome::Failed &&
+            retryableCandidateFailure;
+    }
 };
 
 /**
