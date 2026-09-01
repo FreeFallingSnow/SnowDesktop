@@ -199,6 +199,32 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 ? nullptr : focusedSearchWidget();
         if (hostInputFocused || searchable)
         {
+            const bool insertCompositionCharacter =
+                (lp & CS_INSERTCHAR) != 0 &&
+                (lp & (GCS_RESULTSTR | GCS_COMPSTR)) == 0 &&
+                wp != 0;
+            if (insertCompositionCharacter)
+            {
+                const std::wstring composition(
+                    1, static_cast<wchar_t>(wp));
+                const size_t cursor =
+                    (lp & CS_NOMOVECARET) != 0
+                        ? 0 : composition.size();
+                if (hostInputFocused)
+                {
+                    widgetEngine_->SetHostInputComposition(
+                        composition, cursor);
+                }
+                else
+                {
+                    searchable->SetSearchComposition(
+                        composition, cursor);
+                }
+                UpdateHostInputImePosition();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+
             HIMC context = ImmGetContext(hwnd);
             if (context)
             {
@@ -361,6 +387,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         UpdateHostInputImePosition();
         return 0;
     }
+    case WM_IME_CHAR:
     case WM_CHAR:
     {
         wchar_t ch = static_cast<wchar_t>(wp);
