@@ -8082,6 +8082,19 @@ int main(int argc, char** argv)
             ? std::string{}
             : oleDropSessionSource.substr(
                 selfOleOver, selfOleLeave - selfOleOver);
+        const std::size_t selfOleEnterBranchEnd =
+            selfOleEnterHandler.find("ExternalDragSummary externalSummary;");
+        const std::string selfOleEnterBranch =
+            selfOleEnterBranchEnd == std::string::npos
+                ? std::string{}
+                : selfOleEnterHandler.substr(0, selfOleEnterBranchEnd);
+        const std::size_t selfOleOverBranchEnd =
+            selfOleOverHandler.find(
+                "dragDropController_.ContinueExternalDrag();");
+        const std::string selfOleOverBranch =
+            selfOleOverBranchEnd == std::string::npos
+                ? std::string{}
+                : selfOleOverHandler.substr(0, selfOleOverBranchEnd);
         Check(selfOleEnterHandler.find(
                   "MarkSelfDragReturned();") !=
                     std::string::npos &&
@@ -8099,8 +8112,51 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 selfOleOverHandler.find(
                   "dragSession_.SetVisualVisible(true);") ==
+                    std::string::npos &&
+                selfOleEnterBranch.find(
+                  "UpdateCollectionPopupDwell(client);") !=
+                    std::string::npos &&
+                selfOleEnterBranch.find(
+                  "CancelCollectionPopupDwell();") ==
+                    std::string::npos &&
+                selfOleOverBranch.find(
+                  "UpdateCollectionPopupDwell(client);") !=
                     std::string::npos,
             "self OLE callbacks must keep custom feedback hidden while requesting a native hand-back");
+
+        const std::size_t selfOleDrop =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleDrop(",
+                selfOleLeave);
+        const std::string selfOleLeaveHandler =
+            selfOleLeave == std::string::npos ||
+                selfOleDrop == std::string::npos
+                ? std::string{}
+                : oleDropSessionSource.substr(
+                    selfOleLeave,
+                    selfOleDrop - selfOleLeave);
+        Check(selfOleLeaveHandler.find(
+                  "SelfDragNativeResumeRequested() &&") !=
+                    std::string::npos &&
+                selfOleLeaveHandler.find(
+                  "TryGetDesktopHoverPointFromCursor(hoverPoint)") !=
+                    std::string::npos &&
+                selfOleLeaveHandler.find(
+                  "kExternalOleDragLeaveGraceTimerId") !=
+                    std::string::npos &&
+                selfOleLeaveHandler.find(
+                  "FinalizePendingExternalOleDragLeave();") !=
+                    std::string::npos &&
+                timerDispatchSource.find(
+                  "timerId == kExternalOleDragLeaveGraceTimerId") !=
+                    std::string::npos &&
+                timerDispatchSource.find(
+                  "FinalizePendingExternalOleDragLeave();") !=
+                    std::string::npos &&
+                lifecycleSource.find(
+                  "CancelPendingExternalOleDragLeave();") !=
+                    std::string::npos,
+            "OLE surface handoffs must preserve dwell briefly and still finalize abandoned external drags");
 
         const std::size_t externalEnterBegin =
             selfOleEnterHandler.find("BeginExternalDrag(");

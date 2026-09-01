@@ -164,10 +164,33 @@ private:
 
 }
 
+void DesktopApp::CancelPendingExternalOleDragLeave()
+{
+    externalOleDragLeavePending_ = false;
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kExternalOleDragLeaveGraceTimerId);
+}
+
+void DesktopApp::FinalizePendingExternalOleDragLeave()
+{
+    if (!externalOleDragLeavePending_)
+        return;
+
+    CancelPendingExternalOleDragLeave();
+    if (!dragDropController_.IsExternalDragActive())
+        return;
+
+    dragDropController_.EndExternalDrag();
+    EndDragSession();
+    HideDragHintWindow();
+    PresentOleDragInteractionFrame();
+}
+
 HRESULT DesktopApp::HandleOleDragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelPendingExternalOleDragLeave();
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -187,7 +210,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
                 nullptr, nullptr, HitRegion::None);
         }
         ResetDockHandoffDwell();
-        CancelCollectionPopupDwell();
+        UpdateCollectionPopupDwell(client);
         CancelCollectionGroupTabDwell();
         HideDragHintWindow();
         *effect = DROPEFFECT_NONE;
@@ -337,6 +360,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelPendingExternalOleDragLeave();
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -353,6 +377,7 @@ HRESULT DesktopApp::HandleOleDragOver(
             dragSession_.UpdateTarget(
                 nullptr, nullptr, HitRegion::None);
         }
+        UpdateCollectionPopupDwell(client);
         HideDragHintWindow();
         *effect = DROPEFFECT_NONE;
         return S_OK;
@@ -445,10 +470,15 @@ HRESULT DesktopApp::HandleOleDragLeave()
     navAutoFlipTick_ = 0;
     if (dragDropController_.IsSelfDragActive())
     {
+        POINT hoverPoint{};
+        const bool returningToDesktopSurface =
+            dragDropController_.SelfDragNativeResumeRequested() &&
+            TryGetDesktopHoverPointFromCursor(hoverPoint);
         if (!dragDropController_.SelfDragNativeResumeRequested())
             dragDropController_.ClearSelfDragReturned();
         ResetDockHandoffDwell();
-        CancelCollectionPopupDwell();
+        if (!returningToDesktopSurface)
+            CancelCollectionPopupDwell();
         CancelCollectionGroupTabDwell();
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         dragSession_.SetVisualVisible(false);
@@ -456,10 +486,22 @@ HRESULT DesktopApp::HandleOleDragLeave()
         PresentOleDragInteractionFrame();
         return S_OK;
     }
-    dragDropController_.EndExternalDrag();
-    EndDragSession();
-    HideDragHintWindow();
-    PresentOleDragInteractionFrame();
+
+    POINT hoverPoint{};
+    if (dragDropController_.IsExternalDragActive() &&
+        TryGetDesktopHoverPointFromCursor(hoverPoint) &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        externalOleDragLeavePending_ =
+            SetTimer(
+                hwnd_, kExternalOleDragLeaveGraceTimerId,
+                kExternalOleDragLeaveGraceMs, nullptr) != 0;
+        if (externalOleDragLeavePending_)
+            return S_OK;
+    }
+
+    externalOleDragLeavePending_ = true;
+    FinalizePendingExternalOleDragLeave();
     return S_OK;
 }
 
@@ -475,6 +517,7 @@ HRESULT DesktopApp::HandleOleDrop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelPendingExternalOleDragLeave();
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;

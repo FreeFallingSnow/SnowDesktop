@@ -3661,9 +3661,12 @@ private:
     /** @{ */
     ComPtr<OleDragDropAdapter> oleDragDropAdapter_;
     bool dropTargetRegistered_ = false;
+    bool externalOleDragLeavePending_ = false;
     /** @} */
 
     OleDragDropAdapter* EnsureOleDragDropAdapter();
+    void CancelPendingExternalOleDragLeave();
+    void FinalizePendingExternalOleDragLeave();
     HRESULT HandleOleDragEnter(IDataObject* dataObject,
         DWORD keyState, POINTL point, DWORD* effect) override;
     HRESULT HandleOleDragOver(

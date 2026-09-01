@@ -303,6 +303,12 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kExternalOleDragLeaveGraceTimerId)
+    {
+        FinalizePendingExternalOleDragLeave();
+        return;
+    }
+
     if (timerId == kSettingsWindowRetryTimerId)
     {
         if (controlHwnd_ && IsWindow(controlHwnd_))

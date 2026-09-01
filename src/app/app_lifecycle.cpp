@@ -170,6 +170,7 @@ void DesktopApp::ResetDesktopWindowResources()
     if (dockWindowTransition_)
         dockWindowTransition_->Cancel();
     CancelAllDockWindowActivationObservations();
+    CancelPendingExternalOleDragLeave();
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     nativeGlassPanelReadyLogged_ = false;
