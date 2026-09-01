@@ -395,7 +395,8 @@ void TestFormatPriorityAndMalformedFallback(
         object.AddBytes(CF_DIB, ValidDib());
         object.AddBytes(pngFormat, { 0x89, 0x50, 0x4e, 0x47 });
         object.AddBitmap(ValidBitmap());
-        const auto result = SaveAsPng(&object, root / L"fallback-dib.png");
+        const auto result = SaveAsPng(
+            &object, root / L"fallback-dib-after-png.png");
         Check(result && result.source == SourceFormat::Dib,
             "CF_DIB must follow malformed higher-fidelity formats");
     }
