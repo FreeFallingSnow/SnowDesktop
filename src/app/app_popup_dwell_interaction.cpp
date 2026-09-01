@@ -3,6 +3,59 @@
 
 // Collection/file-group dwell activation and popup tab switching.
 
+void DesktopApp::TraceCollectionPopupDwell(
+    const wchar_t* stage, const wchar_t* hit,
+    POINT point, size_t candidate)
+{
+    if (!dragSession_.IsActive() &&
+        !dragDropController_.IsTransportActive() &&
+        popupDwellController_.IsIdle())
+        return;
+
+    const DragSourceList& sourceList =
+        dragSession_.SourceList();
+    const wchar_t* transport =
+        dragDropController_.IsSelfDragActive()
+        ? L"self-ole"
+        : dragDropController_.IsExternalDragActive()
+            ? L"external-ole" : L"native";
+    wchar_t signature[768]{};
+    swprintf_s(
+        signature,
+        L"stage=%ls transport=%ls active=%d entries=%llu desktop=%d folder=%d external=%d widget=%d collectionGroup=%d fileGroup=%d suppressed=%d hit=%ls candidate=%llu armed=%d observed=%d popup=%llu",
+        stage, transport,
+        dragSession_.IsActive() ? 1 : 0,
+        static_cast<unsigned long long>(
+            sourceList.entries.size()),
+        sourceList.hasDesktopIcons ? 1 : 0,
+        sourceList.hasFolderEntries ? 1 : 0,
+        sourceList.hasExternalFiles ? 1 : 0,
+        sourceList.hasWidgets ? 1 : 0,
+        sourceList.hasCollectionGroupEntries ? 1 : 0,
+        sourceList.hasFileGroupEntries ? 1 : 0,
+        SuppressDesktopWidgetDragTargets() ? 1 : 0,
+        hit,
+        static_cast<unsigned long long>(candidate),
+        collectionPopupDwellTimerArmed_ ? 1 : 0,
+        collectionPopupDwellTimerObserved_ ? 1 : 0,
+        static_cast<unsigned long long>(popupWidgetIndex_));
+
+    const DWORD now = GetTickCount();
+    if (collectionPopupDwellTraceSignature_ == signature &&
+        now - collectionPopupDwellTraceTick_ < 1000)
+        return;
+    collectionPopupDwellTraceSignature_ = signature;
+    collectionPopupDwellTraceTick_ = now;
+
+    wchar_t message[896]{};
+    swprintf_s(
+        message,
+        L"Collection dwell trace: %ls point=(%ld,%ld) mouseDown=%d capture=%p",
+        signature, point.x, point.y,
+        mouseDown_ ? 1 : 0, GetCapture());
+    WriteDiagnosticLogEntry(message);
+}
+
 bool DesktopApp::CanCurrentDragUseCollectionPopup() const
 {
     const DragSourceList& sourceList =
@@ -22,10 +75,16 @@ void DesktopApp::EnsureCollectionPopupDwellTimerArmed()
     if (collectionPopupDwellTimerArmed_ ||
         !hwnd_ || !IsWindow(hwnd_))
         return;
+    collectionPopupDwellTimerObserved_ = false;
     collectionPopupDwellTimerArmed_ =
         SetTimer(
             hwnd_, kCollectionPopupDwellTimerId,
             kCollectionPopupDwellIntervalMs, nullptr) != 0;
+    TraceCollectionPopupDwell(
+        collectionPopupDwellTimerArmed_
+            ? L"timer-armed" : L"timer-arm-failed",
+        L"candidate", lastMousePoint_,
+        popupDwellController_.Candidate());
 }
 
 void DesktopApp::CancelCollectionPopupDwell()
@@ -36,6 +95,7 @@ void DesktopApp::CancelCollectionPopupDwell()
     popupDwellController_.Reset();
     const bool wasArmed = collectionPopupDwellTimerArmed_;
     collectionPopupDwellTimerArmed_ = false;
+    collectionPopupDwellTimerObserved_ = false;
     if (wasArmed && hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kCollectionPopupDwellTimerId);
 }
@@ -76,9 +136,19 @@ void DesktopApp::CancelCollectionGroupTabDwell()
 void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
     lastMousePoint_ = point;
-    if (!CanCurrentDragUseCollectionPopup() ||
-        SuppressDesktopWidgetDragTargets())
+    if (!CanCurrentDragUseCollectionPopup())
     {
+        TraceCollectionPopupDwell(
+            L"blocked-eligibility", L"unchecked",
+            point);
+        CancelCollectionPopupDwell();
+        return;
+    }
+    if (SuppressDesktopWidgetDragTargets())
+    {
+        TraceCollectionPopupDwell(
+            L"blocked-suppressed", L"unchecked",
+            point);
         CancelCollectionPopupDwell();
         return;
     }
@@ -88,20 +158,31 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     if (popupDwellController_.CancelIfOccluded(
             IsPointInsideOpenPopup(point)))
     {
+        TraceCollectionPopupDwell(
+            L"blocked-popup", L"foreground-popup",
+            point);
         CancelCollectionPopupDwell();
         return;
     }
 
     size_t hoveredCollection = static_cast<size_t>(-1);
+    const wchar_t* hoverHit = L"none";
     DockContainer* hoveredDock =
         GetDockContainerAtPoint(point);
     if (hoveredDock)
     {
+        hoverHit = L"dock-gap";
         if (DockEntryItem* entry =
                 hoveredDock->EntryAtPoint(point);
-            entry && entry->GetEntryType() == DockEntryType::Collection)
+            entry)
         {
-            hoveredCollection = FindWidgetIndexById(entry->GetReference());
+            hoverHit = L"dock-other-entry";
+            if (entry->GetEntryType() == DockEntryType::Collection)
+            {
+                hoverHit = L"dock-collection";
+                hoveredCollection =
+                    FindWidgetIndexById(entry->GetReference());
+            }
         }
     }
 
@@ -114,9 +195,16 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
         auto* collection = dynamic_cast<Collection*>(c.get());
         if (!collection) continue;
 
+        const RECT collectionBounds = collection->GetBounds();
+        if (!IsRectEmptyRect(collectionBounds) &&
+            PtInRect(&collectionBounds, point))
+            hoverHit = L"desktop-collection-frame";
+
         RECT buttonRect = collection->GetAllButtonRect();
         if (IsRectEmptyRect(buttonRect) || !PtInRect(&buttonRect, point))
             continue;
+
+        hoverHit = L"desktop-collection-opener";
 
         DesktopWidget* data = collection->GetWidgetData();
         for (size_t wi = 0; wi < widgets_.size(); ++wi)
@@ -137,6 +225,10 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
     if (hoveredCollection == static_cast<size_t>(-1) ||
         samePopupSource)
     {
+        TraceCollectionPopupDwell(
+            samePopupSource
+                ? L"blocked-same-popup" : L"sample",
+            hoverHit, point, hoveredCollection);
         CancelCollectionPopupDwell();
         return;
     }
@@ -146,6 +238,10 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
         popupDwellController_.Track(
             hoveredCollection, now);
     EnsureCollectionPopupDwellTimerArmed();
+    TraceCollectionPopupDwell(
+        candidateChanged
+            ? L"candidate-track" : L"candidate-hold",
+        hoverHit, point, hoveredCollection);
     if (candidateChanged)
         return;
 
@@ -162,6 +258,10 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
     if (!CanCurrentDragUseCollectionPopup() ||
         SuppressDesktopWidgetDragTargets())
     {
+        TraceCollectionPopupDwell(
+            L"timer-blocked-eligibility", L"candidate",
+            lastMousePoint_,
+            popupDwellController_.Candidate());
         CancelCollectionPopupDwell();
         return false;
     }
@@ -170,6 +270,10 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
     if (popupDwellController_.CancelIfOccluded(
             IsPointInsideOpenPopup(lastMousePoint_)))
     {
+        TraceCollectionPopupDwell(
+            L"timer-blocked-popup", L"candidate",
+            lastMousePoint_,
+            popupDwellController_.Candidate());
         CancelCollectionPopupDwell();
         return false;
     }
@@ -177,12 +281,18 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         popupDwellController_.Candidate();
     if (candidate >= widgets_.size())
     {
+        TraceCollectionPopupDwell(
+            L"timer-invalid-candidate", L"candidate",
+            lastMousePoint_, candidate);
         CancelCollectionPopupDwell();
         return false;
     }
     if (desktopIconsHidden_ &&
         !widgets_[candidate].keepWhenDesktopHidden)
     {
+        TraceCollectionPopupDwell(
+            L"timer-hidden-candidate", L"candidate",
+            lastMousePoint_, candidate);
         CancelCollectionPopupDwell();
         return false;
     }
@@ -196,6 +306,11 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         widgets_[candidate].type !=
             DesktopWidgetType::Collection)
     {
+        TraceCollectionPopupDwell(
+            samePopupSource
+                ? L"timer-same-popup"
+                : L"timer-wrong-widget-type",
+            L"candidate", lastMousePoint_, candidate);
         CancelCollectionPopupDwell();
         return false;
     }
@@ -204,6 +319,9 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         return false;
 
     size_t widgetIndex = candidate;
+    TraceCollectionPopupDwell(
+        L"open-ready", L"candidate",
+        lastMousePoint_, widgetIndex);
     CancelCollectionPopupDwell();
     OpenCollectionPopupAt(widgetIndex, lastMousePoint_);
     UpdateWindow(hwnd_);

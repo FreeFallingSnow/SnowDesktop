@@ -510,6 +510,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (!collectionPopupDwellTimerArmed_)
             return;
 
+        if (!collectionPopupDwellTimerObserved_)
+        {
+            collectionPopupDwellTimerObserved_ = true;
+            TraceCollectionPopupDwell(
+                L"timer-delivered", L"candidate",
+                lastMousePoint_,
+                popupDwellController_.Candidate());
+        }
+
         if (TryOpenDwellCollectionPopup(GetTickCount()))
         {
             RefreshDwellDragTarget(lastMousePoint_);

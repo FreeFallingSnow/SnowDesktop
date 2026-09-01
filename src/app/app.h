@@ -1677,6 +1677,10 @@ private:
     bool CanCurrentDragUseCollectionPopup() const;
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */
     void UpdateCollectionPopupDwell(POINT point);
+    /** @brief 记录集合停留链路的低噪声状态切换，供实机拖放排查。 */
+    void TraceCollectionPopupDwell(const wchar_t* stage,
+        const wchar_t* hit, POINT point,
+        size_t candidate = static_cast<size_t>(-1));
     void EnsureCollectionPopupDwellTimerArmed();
     void CancelCollectionPopupDwell();
     /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
@@ -3878,6 +3882,9 @@ private:
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     PopupDwellController popupDwellController_;
     bool collectionPopupDwellTimerArmed_ = false;
+    bool collectionPopupDwellTimerObserved_ = false;
+    std::wstring collectionPopupDwellTraceSignature_;
+    DWORD collectionPopupDwellTraceTick_ = 0;
     size_t collectionGroupTabDwellWidgetIndex_ =
         static_cast<size_t>(-1);
     std::wstring collectionGroupTabDwellId_;
