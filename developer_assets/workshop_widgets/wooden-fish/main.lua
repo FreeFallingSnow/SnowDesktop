@@ -80,14 +80,14 @@ local function drawInstrument(cx, cy, size, pressed, model)
     draw.imageFit(woodenFishImage, cx - size / 2, bodyY, size, size,
         "contain", "center", pressed and 0.97 or 1.0, "linear")
 
-    -- Lift the mallet head above the striking surface at rest, then pivot the
-    -- mallet around the far end of its handle so the head follows a strike arc.
+    -- Keep the mallet head lifted at rest, then rotate around the lower-right
+    -- image origin so the head arcs onto the highlighted striking surface.
     local malletSize = size * 0.56
-    local malletX = cx + size * 0.02
+    local malletX = cx + size * 0.12
     local malletY = cy - size * 0.92
     draw.imageFit(malletImage, malletX, malletY,
         malletSize, malletSize, "contain", "center", 1.0, "linear",
-        malletRotation(model, pressed), 0.90, 0.08)
+        malletRotation(model, pressed), 0.90, 0.92)
 end
 
 local function drawFeedback(model, y, baseSize, colors, width)
