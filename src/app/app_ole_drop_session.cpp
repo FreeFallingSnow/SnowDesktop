@@ -965,9 +965,14 @@ HRESULT DesktopApp::HandleOleDrop(
                     ReloadItems(false);
                     CheckRecycleBinStatus();
                 });
-            *effect = queued
-                ? DROPEFFECT_MOVE
-                : DROPEFFECT_NONE;
+            if (queued)
+            {
+                // The target owns this optimized move and will recycle the
+                // source paths. Tell Explorer not to delete them a second time.
+                ReportPerformedDropEffect(
+                    dataObject, DROPEFFECT_NONE);
+            }
+            *effect = DROPEFFECT_NONE;
             EndDragSession();
             return S_OK;
         }

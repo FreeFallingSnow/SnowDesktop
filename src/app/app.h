@@ -2314,6 +2314,9 @@ private:
         DWORD completionEffect,
         FileOperationCompletion completion,
         FileOperationCompletion& asyncCompletion);
+    /** @brief 向 Shell 数据源报告目标已完成的拖放效果。 */
+    static void ReportPerformedDropEffect(
+        IDataObject* dataObject, DWORD effect);
     /** @brief 在 UI 线程处理 Shell 文件操作完成通知。 */
     void OnShellFileOperationCompleted(LPARAM lParam);
     /** @brief 停止文件操作线程并清理未投递的 UI 完成通知。 */

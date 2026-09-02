@@ -10,7 +10,7 @@
 namespace
 {
 
-void ReportPerformedDropEffect(IDataObject* dataObject, DWORD effect)
+void SetPerformedDropEffectData(IDataObject* dataObject, DWORD effect)
 {
     if (!dataObject)
         return;
@@ -72,7 +72,7 @@ public:
             {
                 ComPtr<IDataObject> dataObject;
                 if (SUCCEEDED(asyncCapability.As(&dataObject)))
-                    ReportPerformedDropEffect(
+                    SetPerformedDropEffectData(
                         dataObject.Get(), DROPEFFECT_NONE);
             }
             asyncCapability->EndOperation(
@@ -88,6 +88,12 @@ private:
     DWORD effect_ = DROPEFFECT_NONE;
 };
 
+}
+
+void DesktopApp::ReportPerformedDropEffect(
+    IDataObject* dataObject, DWORD effect)
+{
+    SetPerformedDropEffectData(dataObject, effect);
 }
 
 bool DesktopApp::QueueShellFileOperation(
