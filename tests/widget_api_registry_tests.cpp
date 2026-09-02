@@ -866,6 +866,17 @@ void TestSystemCapabilityContract()
                 contract.valueType && contract.valueType[0] != '\0',
             "data topics must link their LuaLS option and value types");
     }
+    const auto topicInterval = [&](std::string_view name) {
+        const auto match = std::find_if(topics.begin(), topics.end(),
+            [&](const auto& contract) { return contract.name == name; });
+        return match == topics.end() ? 0 : match->minimumIntervalMs;
+    };
+    Check(topicInterval("media.sessions") == 500 &&
+            topicInterval("media.current") == 100 &&
+            topicInterval("media.timeline") == 100 &&
+            topicInterval("media.artwork") == 100,
+        "media detail topics must support responsive 100 ms updates without "
+        "raising the full session-list polling rate");
     for (const auto& contract : tasks)
     {
         checkCommon(contract.name, contract.feature,

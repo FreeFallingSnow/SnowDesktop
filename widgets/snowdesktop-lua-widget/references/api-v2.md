@@ -1622,7 +1622,8 @@ end
 表达请求采样周期；快照在连续错过下一次完整采样机会后才标记 `stale=true`，
 不会因为线程调度比请求周期晚几毫秒而短暂过期。CPU 最快 500 ms，内存和进程摘要最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
-1000 ms，媒体三个 topic 最快 500 ms，桌面和日历事件 topic 最快 100 ms，
+1000 ms；`media.sessions` 最快 500 ms，`media.current`、`media.timeline` 和
+`media.artwork` 最快 100 ms；桌面和日历事件 topic 最快 100 ms，
 音频分析最快 16 ms。`whenHidden` 可为
 `pause`、`throttle`（默认）或 `continue`；
 当前系统 provider 不承诺后台 continue，因此会收敛为隐藏 throttle。
