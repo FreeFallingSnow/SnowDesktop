@@ -4275,6 +4275,23 @@ int main(int argc, char** argv)
                 createInput.find("WS_CHILD | WS_VISIBLE") ==
                     std::string::npos,
             "desktop keyboard input uses an app-owned popup instead of an Explorer-owned cross-process child");
+        const std::size_t watchHostBegin = lifecycleSource.find(
+            "void DesktopApp::WatchDesktopHost()");
+        const std::size_t invalidateSlotsBegin = lifecycleSource.find(
+            "void DesktopApp::InvalidateAllWidgetSlots()",
+            watchHostBegin);
+        const std::string watchHost =
+            watchHostBegin == std::string::npos ||
+                invalidateSlotsBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                watchHostBegin,
+                invalidateSlotsBegin - watchHostBegin);
+        Check(watchHost.find("inputMissing") != std::string::npos &&
+                watchHost.find("GetParent(inputHwnd_)") ==
+                    std::string::npos &&
+                watchHost.find("inputDetached") == std::string::npos,
+            "desktop host polling treats the app-owned top-level input proxy as healthy instead of recovering every interval");
         Check(desktopFocus.find("FocusKeyboardWindow(") !=
                     std::string::npos &&
                 desktopFocus.find("GetForegroundWindow()") !=

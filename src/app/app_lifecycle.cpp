@@ -961,11 +961,9 @@ void DesktopApp::WatchDesktopHost()
     const bool parentDetached = currentHost && IsWindow(currentHost) &&
         parent != currentHost;
     const bool inputMissing = !inputHwnd_ || !IsWindow(inputHwnd_);
-    const bool inputDetached = currentHost && IsWindow(currentHost) &&
-        inputHwnd_ && IsWindow(inputHwnd_) && GetParent(inputHwnd_) != currentHost;
 
     if (parentMissing || knownHostMissing || knownListViewMissing ||
-        hostChanged || parentDetached || inputMissing || inputDetached)
+        hostChanged || parentDetached || inputMissing)
     {
         RecoverDesktopHostAfterExplorerRestart();
         return;
