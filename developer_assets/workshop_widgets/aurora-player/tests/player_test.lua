@@ -69,6 +69,53 @@ return {
             assert(player.position(timeline, true, math.huge) == 42000)
         end,
 
+    ["optimistic seeks advance while playback continues"] = function()
+        local timeline = {
+            positionMs = 10000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 120000,
+            durationMs = 120000,
+        }
+        assert(player.optimisticSeekPosition(timeline, 60000, true,
+            100000, 101500) == 61500)
+        assert(player.optimisticSeekPosition(timeline, 60000, false,
+            100000, 101500) == 60000)
+        assert(player.optimisticSeekPosition(timeline, 119000, true,
+            100000, 105000) == 120000)
+    end,
+
+    ["optimistic seek waits for a matching timeline update"] = function()
+        local stale = {
+            positionMs = 10000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 120000,
+            durationMs = 120000,
+            updatedAtMs = 100000,
+        }
+        assert(not player.seekTimelineCaughtUp(stale, 100000, 10000,
+            61500, true, 101500))
+
+        local unrelated = {
+            positionMs = 12000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 120000,
+            durationMs = 120000,
+            updatedAtMs = 101000,
+        }
+        assert(not player.seekTimelineCaughtUp(unrelated, 100000, 10000,
+            61500, true, 101500))
+
+        local caughtUp = {
+            positionMs = 60000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 120000,
+            durationMs = 120000,
+            updatedAtMs = 100500,
+        }
+        assert(player.seekTimelineCaughtUp(caughtUp, 100000, 10000,
+            61500, true, 101500))
+    end,
+
     ["missing system timeline is not presented as zero duration media"] = function()
         local missing = {
             positionMs = 0,

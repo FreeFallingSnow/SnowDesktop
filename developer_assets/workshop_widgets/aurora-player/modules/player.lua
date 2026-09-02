@@ -99,6 +99,36 @@ function M.progress(timeline, positionMs)
     return (position - minimum) / (maximum - minimum)
 end
 
+function M.optimisticSeekPosition(timeline, targetMs, playing,
+    committedAtMs, nowMs)
+    local minimum, maximum = timelineBounds(timeline)
+    if maximum <= minimum then return minimum end
+    local position = M.clamp(targetMs, minimum, maximum, minimum)
+    local committedAt = math.max(0, finite(committedAtMs, 0))
+    local now = finite(nowMs, committedAt)
+    if playing == true and committedAt > 0 and now > committedAt then
+        position = M.clamp(position + now - committedAt,
+            minimum, maximum, minimum)
+    end
+    return position
+end
+
+function M.seekTimelineCaughtUp(timeline, baselineUpdatedAtMs,
+    baselinePositionMs, optimisticPositionMs, playing, nowMs)
+    if type(timeline) ~= "table" then return false end
+    local updatedAt = math.max(0, finite(timeline.updatedAtMs, 0))
+    local baselineUpdatedAt = math.max(0,
+        finite(baselineUpdatedAtMs, 0))
+    local rawPosition = finite(timeline.positionMs, 0)
+    local baselinePosition = finite(baselinePositionMs, rawPosition)
+    local timelineChanged = updatedAt > baselineUpdatedAt or
+        math.abs(rawPosition - baselinePosition) > 250
+    if not timelineChanged then return false end
+    local reportedPosition = M.position(timeline, playing, nowMs)
+    return math.abs(reportedPosition - finite(optimisticPositionMs,
+        reportedPosition)) <= 2000
+end
+
 function M.seekPosition(timeline, fraction)
     local minimum, maximum = timelineBounds(timeline)
     local normalized = M.clamp(fraction, 0, 1, 0)

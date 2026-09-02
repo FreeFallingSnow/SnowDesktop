@@ -119,12 +119,27 @@ local function setup(context)
         pendingPlayback = nil,
         seekPreview = nil,
         seekSessionId = nil,
+        seekTaskId = nil,
+        seekTargetMs = nil,
+        seekBaselineUpdatedAtMs = nil,
+        seekBaselinePositionMs = nil,
+        seekCommittedAtMs = nil,
         reducedMotion = context.accessibility.reducedMotion == true,
         visible = true,
         recordRotation = 0,
         recordFramePending = false,
         progressTicking = false,
     }
+end
+
+local function clearSeekPreview(model)
+    model.seekPreview = nil
+    model.seekSessionId = nil
+    model.seekTaskId = nil
+    model.seekTargetMs = nil
+    model.seekBaselineUpdatedAtMs = nil
+    model.seekBaselinePositionMs = nil
+    model.seekCommittedAtMs = nil
 end
 
 local function updateProgressTicker(model, active)
@@ -214,7 +229,7 @@ local function startTask(model, name, arguments, pendingPlayback)
     end
     model.tasks[tostring(taskId)] = name
     if pendingPlayback then model.pendingPlayback = pendingPlayback end
-    return true
+    return taskId
 end
 
 local function startSessionTask(model, name, capability, extra)
@@ -399,20 +414,33 @@ local function viewTree(context, model)
     local coverSize = math.max(layout.cu(112), math.min(
         layout.cu(148), layout.height() - layout.cu(36)))
     if not session or model.seekSessionId ~= session.id then
-        model.seekPreview = nil
-        model.seekSessionId = nil
+        clearSeekPreview(model)
     end
     local hasTimeline = player.hasTimeline(timeline)
     if not hasTimeline then
-        model.seekPreview = nil
-        model.seekSessionId = nil
+        clearSeekPreview(model)
     end
     updateProgressTicker(model, hasTimeline and playing and model.visible and
         not model.preview and not model.recordFramePending)
-    local position = model.seekPreview and
-        player.seekPosition(timeline, model.seekPreview) or
-        player.position(timeline, playing, hasTimeline and time.now() or nil)
-    local progress = model.seekPreview or player.progress(timeline, position)
+    local now = hasTimeline and time.now() or nil
+    local position = player.position(timeline, playing, now)
+    if model.seekPreview ~= nil then
+        if model.seekCommittedAtMs ~= nil then
+            local optimisticPosition = player.optimisticSeekPosition(timeline,
+                model.seekTargetMs, playing, model.seekCommittedAtMs, now)
+            if player.seekTimelineCaughtUp(timeline,
+                    model.seekBaselineUpdatedAtMs,
+                    model.seekBaselinePositionMs, optimisticPosition,
+                    playing, now) then
+                clearSeekPreview(model)
+            else
+                position = optimisticPosition
+            end
+        else
+            position = player.seekPosition(timeline, model.seekPreview)
+        end
+    end
+    local progress = player.progress(timeline, position)
     local duration = player.duration(timeline)
     local seekEnabled = session ~= nil and hasTimeline and canAct and
         controls.canSeek == true
@@ -596,21 +624,25 @@ local function commitSeek(model, session, timeline, fraction)
     if not player.canControl(session,
         widget.hasPermission("media.action"), "canSeek") or
         not player.hasTimeline(timeline) then
-        model.seekPreview = nil
-        model.seekSessionId = nil
+        clearSeekPreview(model)
         widget.invalidate()
         return
     end
     local normalized = player.clamp(fraction, 0, 1, 0)
     model.seekPreview = normalized
     model.seekSessionId = session.id
-    local started = startTask(model, "media.seek", {
+    model.seekTargetMs = player.seekPosition(timeline, normalized)
+    model.seekBaselineUpdatedAtMs = tonumber(timeline.updatedAtMs) or 0
+    model.seekBaselinePositionMs = tonumber(timeline.positionMs) or 0
+    model.seekCommittedAtMs = time.now()
+    local taskId = startTask(model, "media.seek", {
         sessionId = session.id,
-        positionMs = player.seekPosition(timeline, normalized),
+        positionMs = model.seekTargetMs,
     })
-    if not started then
-        model.seekPreview = nil
-        model.seekSessionId = nil
+    if not taskId then
+        clearSeekPreview(model)
+    else
+        model.seekTaskId = tostring(taskId)
     end
     widget.invalidate()
 end
@@ -653,8 +685,11 @@ local function event(_context, model, value)
             model.tasks, value.taskId, value.ok)
         if name then model.pendingPlayback = nil end
         if name == "media.seek" then
-            model.seekPreview = nil
-            model.seekSessionId = nil
+            local currentSeek = model.seekTaskId == tostring(value.taskId)
+            if currentSeek then
+                model.seekTaskId = nil
+                if failed then clearSeekPreview(model) end
+            end
             widget.invalidate()
         end
         if failed then
@@ -690,6 +725,11 @@ local function event(_context, model, value)
         local fraction = player.clamp(value.controlValue, 0, 1, 0)
         model.seekPreview = fraction
         model.seekSessionId = session.id
+        model.seekTaskId = nil
+        model.seekTargetMs = nil
+        model.seekBaselineUpdatedAtMs = nil
+        model.seekBaselinePositionMs = nil
+        model.seekCommittedAtMs = nil
         widget.invalidate()
         if value.source ~= "pointer" then
             commitSeek(model, session, timeline, fraction)
