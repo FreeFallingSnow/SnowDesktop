@@ -1,0 +1,683 @@
+local player = module.require("modules/player.lua")
+
+local mediaCurrent
+local mediaArtwork
+local mediaTimeline
+local audioAnalysis
+
+local glyphs = {
+    previous = utf8.char(0xF048),
+    play = utf8.char(0xF04B),
+    pause = utf8.char(0xF04C),
+    next = utf8.char(0xF051),
+    music = utf8.char(0xF001),
+}
+
+local function settingEnabled(key)
+    local value = storage.get(key)
+    return value == true or value == 1 or value == "1" or value == "true"
+end
+
+local settings = {
+    fields = {
+        {
+            key = "show_visualizer",
+            label = l10n.tr("workshop.aurora_player.visualizer"),
+            description = l10n.tr(
+                "workshop.aurora_player.visualizer_description"),
+            type = "bool",
+            default = false,
+        },
+    },
+}
+
+local function previewSession()
+    return {
+        id = "aurora-preview",
+        sourceName = "Aurora Player",
+        title = "Aurora Nights",
+        artist = "Mira Vale",
+        album = "Glass Horizons",
+        playbackStatus = "playing",
+        controls = {
+            canPlay = true,
+            canPause = true,
+            canPlayPause = true,
+            canStop = true,
+            canNext = true,
+            canPrevious = true,
+            canSeek = true,
+            canChangePlaybackRate = true,
+            canToggleShuffle = true,
+            canChangeRepeatMode = true,
+        },
+        timeline = {
+            sessionId = "aurora-preview",
+            positionMs = 154000,
+            durationMs = 238000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 238000,
+            updatedAtMs = 0,
+        },
+    }
+end
+
+local function currentSession(model)
+    if model and model.preview then return previewSession() end
+    return player.session(mediaCurrent and mediaCurrent:value() or nil)
+end
+
+local function currentArtwork(model, session)
+    if not session or (model and model.preview) then return nil end
+    return player.artwork(mediaArtwork and mediaArtwork:value() or nil,
+        session.id)
+end
+
+local function currentTimeline(model, session)
+    if not session then return nil end
+    if model and model.preview then return session.timeline end
+    return player.timeline(mediaTimeline and mediaTimeline:value() or nil,
+        session)
+end
+
+local function setup(context)
+    mediaCurrent = data.subscribe("media.current", {
+        maxAgeMs = 500,
+        whenHidden = "throttle",
+    })
+    mediaArtwork = data.subscribe("media.artwork", {
+        maxAgeMs = 500,
+        whenHidden = "throttle",
+    })
+    mediaTimeline = data.subscribe("media.timeline", {
+        maxAgeMs = 250,
+        whenHidden = "throttle",
+    })
+
+    local analyze = player.shouldAnalyze(
+        settingEnabled("show_visualizer"),
+        widget.hasFeature("data.audio.output.analysis") and
+            widget.hasFeature("view.dataSeries"),
+        widget.hasPermission("audio.output.analyze"),
+        context.accessibility.reducedMotion)
+    if analyze then
+        audioAnalysis = data.subscribe("audio.output.analysis", {
+            features = { "spectrum" },
+            spectrumBins = 48,
+            updateHz = 30,
+            whenHidden = "pause",
+        })
+    end
+
+    return {
+        preview = context.preview == true,
+        visualizer = analyze or context.preview == true,
+        tasks = {},
+        pendingPlayback = nil,
+    }
+end
+
+local function palette(context)
+    if context.accessibility.highContrast then
+        local light = context.theme.mode == "light"
+        return {
+            primary = light and 0x000000 or 0xFFFFFF,
+            secondary = light and 0x202020 or 0xE5E7EB,
+            subtle = light and 0x404040 or 0xCBD5E1,
+            button = light and 0x000000 or 0xFFFFFF,
+            buttonText = light and 0xFFFFFF or 0x070A16,
+            secondaryButton = light and 0xFFFFFF or 0x111827,
+            secondaryButtonText = light and 0x000000 or 0xFFFFFF,
+            disabled = light and 0x777777 or 0x6B7280,
+            cover = light and 0xE5E5E5 or 0x202020,
+        }
+    end
+    local theme = widget.theme()
+    if theme and theme.contentTheme == 1 then
+        return {
+            primary = 0x111827,
+            secondary = 0x334155,
+            subtle = 0x475569,
+            button = 0x111827,
+            buttonText = 0xFFFFFF,
+            secondaryButton = 0xFFFFFF,
+            secondaryButtonText = 0x111827,
+            disabled = 0x94A3B8,
+            cover = 0x4338CA,
+        }
+    end
+    return {
+        primary = 0xFFFFFF,
+        secondary = 0xE2E8F0,
+        subtle = 0xB8C3D8,
+        button = 0xFFFFFF,
+        buttonText = 0x11142A,
+        secondaryButton = 0x111827,
+        secondaryButtonText = 0xFFFFFF,
+        disabled = 0x718096,
+        cover = 0x3730A3,
+    }
+end
+
+local function backgroundLayer(context, model)
+    local width = layout.width()
+    local height = layout.height()
+    if context.accessibility.highContrast then
+        draw.rect(0, 0, width, height, context.theme.background, 0, 1)
+        return
+    end
+
+    local session = currentSession(model)
+    local artwork = currentArtwork(model, session)
+    if artwork then
+        draw.imageFit(artwork, 0, 0, width, height,
+            "cover", "center", 0.92, "linear")
+        draw.gradientRect(0, 0, width, height,
+            0x070A17, 0x11152A, "horizontal", 0, 0.72)
+        draw.gradientRect(0, height * 0.38, width, height * 0.62,
+            0x11152A, 0x050713, "vertical", 0, 0.46)
+        return
+    end
+
+    draw.gradientRect(0, 0, width, height,
+        0x172554, 0x581C87, "diagonalDown", 0, 1)
+    draw.circle(width * 0.12, height * 0.16,
+        math.max(width, height) * 0.34, 0x06B6D4, 0.28)
+    draw.circle(width * 0.76, height * 0.14,
+        math.max(width, height) * 0.31, 0x8B5CF6, 0.34)
+    draw.circle(width * 0.86, height * 0.90,
+        math.max(width, height) * 0.38, 0xDB2777, 0.28)
+    draw.gradientRect(0, 0, width, height,
+        0x081020, 0x160A25, "vertical", 0, 0.30)
+end
+
+local function startTask(model, name, arguments, pendingPlayback)
+    if model.preview or not widget.hasPermission("media.action") then return end
+    local taskId, err = task.start(name, arguments)
+    if not taskId then
+        widget.log("warn", name .. " rejected: " .. tostring(err))
+        return
+    end
+    model.tasks[tostring(taskId)] = name
+    if pendingPlayback then model.pendingPlayback = pendingPlayback end
+end
+
+local function startSessionTask(model, name, capability, extra)
+    local session = currentSession(model)
+    if not player.canControl(session,
+        widget.hasPermission("media.action"), capability) then
+        return
+    end
+    local arguments = extra or {}
+    arguments.sessionId = session.id
+    startTask(model, name, arguments)
+end
+
+local function controlButton(key, glyph, label, enabled, colors, primary)
+    local size = layout.cu(primary and 42 or 36)
+    return view.iconButton({
+        key = key,
+        glyph = glyph,
+        iconFont = "fa",
+        width = size,
+        height = size,
+        fontSize = layout.fontCu(primary and 16 or 13),
+        enabled = enabled,
+        action = { id = key },
+        accessibility = { role = "button", label = label },
+        style = {
+            background = primary and colors.button or colors.secondaryButton,
+            foreground = primary and colors.buttonText or
+                colors.secondaryButtonText,
+            cornerRadius = size * 0.5,
+            opacity = primary and 0.96 or 0.78,
+        },
+        hoverStyle = { opacity = primary and 0.86 or 0.92 },
+        pressedStyle = { opacity = primary and 0.72 or 0.64 },
+        disabledStyle = {
+            background = colors.secondaryButton,
+            foreground = colors.disabled,
+            opacity = 0.46,
+        },
+    })
+end
+
+local function coverNode(artwork, size, colors)
+    if artwork then
+        return view.image({
+            key = "aurora.cover",
+            source = artwork,
+            alt = "",
+            fit = "cover",
+            width = size,
+            height = size,
+            style = {
+                cornerRadius = layout.cu(18),
+                borderColor = colors.primary,
+                borderWidth = layout.cu(1),
+            },
+        })
+    end
+    return view.column({
+        key = "aurora.cover.placeholder",
+        width = size,
+        height = size,
+        alignItems = "center",
+        justifyContent = "center",
+        style = {
+            background = colors.cover,
+            borderColor = colors.primary,
+            borderWidth = layout.cu(1),
+            cornerRadius = layout.cu(18),
+            opacity = 0.92,
+        },
+        children = {
+            view.icon({
+                key = "aurora.cover.icon",
+                glyph = glyphs.music,
+                iconFont = "fa",
+                width = "fill",
+                height = "fill",
+                fontSize = layout.fontCu(32),
+                textAlign = "center",
+                verticalAlign = "center",
+                style = { foreground = 0xFFFFFF, opacity = 0.86 },
+                accessibility = { hidden = true },
+            }),
+        },
+    })
+end
+
+local function visualizerNode(model, colors)
+    if not model.visualizer or not widget.hasFeature("view.dataSeries") then
+        return nil
+    end
+    local snapshot = audioAnalysis and audioAnalysis:value() or nil
+    return view.spectrum({
+        key = "aurora.visualizer",
+        values = player.spectrum(snapshot, 36, model.preview),
+        width = "fill",
+        height = "fill",
+        padding = { left = layout.cu(10), right = layout.cu(10),
+            top = layout.cu(36), bottom = layout.cu(8) },
+        min = 0,
+        max = 1,
+        fillOpacity = 0.11,
+        style = { foreground = colors.primary, opacity = 0.56 },
+        accessibility = {
+            label = l10n.tr("workshop.aurora_player.visualizer"),
+            hidden = true,
+        },
+    })
+end
+
+local function viewTree(context, model)
+    local colors = palette(context)
+    local session = currentSession(model)
+    local artwork = currentArtwork(model, session)
+    local timeline = currentTimeline(model, session)
+    local canAct = model.preview or widget.hasPermission("media.action")
+    local controls = session and session.controls or {}
+    local playing = session and session.playbackStatus == "playing"
+    if model.pendingPlayback == "playing" then playing = true end
+    if model.pendingPlayback == "paused" then playing = false end
+
+    local title = session and session.title ~= "" and session.title or
+        l10n.tr("workshop.aurora_player.empty")
+    local artist = session and session.artist ~= "" and session.artist or
+        (session and session.sourceName or
+            l10n.tr("workshop.aurora_player.empty_hint"))
+    local album = session and session.album or ""
+    local coverSize = math.max(layout.cu(112), math.min(
+        layout.cu(148), layout.height() - layout.cu(36)))
+    local progress = player.progress(timeline)
+    local position = timeline and timeline.positionMs or 0
+    local duration = timeline and timeline.durationMs or 0
+    local seekEnabled = session ~= nil and canAct and controls.canSeek == true
+
+    local controlRow = view.row({
+        key = "aurora.controls",
+        width = "fill",
+        height = layout.cu(46),
+        gap = layout.cu(12),
+        alignItems = "center",
+        justifyContent = "center",
+        children = {
+            controlButton("media.previous", glyphs.previous,
+                l10n.tr("workshop.aurora_player.previous"),
+                session ~= nil and canAct and controls.canPrevious == true,
+                colors, false),
+            controlButton("media.toggle", playing and glyphs.pause or
+                glyphs.play, l10n.tr(playing and
+                    "workshop.aurora_player.pause" or
+                    "workshop.aurora_player.play"),
+                session ~= nil and canAct and controls.canPlayPause == true,
+                colors, true),
+            controlButton("media.next", glyphs.next,
+                l10n.tr("workshop.aurora_player.next"),
+                session ~= nil and canAct and controls.canNext == true,
+                colors, false),
+        },
+    })
+
+    local progressRow = view.row({
+        key = "aurora.progress.row",
+        width = "fill",
+        height = layout.cu(28),
+        gap = layout.cu(8),
+        alignItems = "center",
+        children = {
+            view.text({
+                key = "aurora.progress.current",
+                text = player.formatTime(position),
+                width = layout.cu(42),
+                height = "fill",
+                fontSize = layout.fontCu(10),
+                textAlign = "end",
+                style = { foreground = colors.subtle },
+            }),
+            view.slider({
+                key = "aurora.progress",
+                value = progress,
+                min = 0,
+                max = 1,
+                step = 0.001,
+                width = "fill",
+                height = layout.cu(24),
+                enabled = seekEnabled,
+                action = { id = "media.seek" },
+                accessibility = {
+                    label = l10n.tr(
+                        "workshop.aurora_player.progress"),
+                    value = player.formatTime(position) .. " / " ..
+                        player.formatTime(duration),
+                },
+                style = { foreground = colors.primary },
+                disabledStyle = { opacity = 0.40 },
+            }),
+            view.text({
+                key = "aurora.progress.duration",
+                text = player.formatTime(duration),
+                width = layout.cu(42),
+                height = "fill",
+                fontSize = layout.fontCu(10),
+                style = { foreground = colors.subtle },
+            }),
+        },
+    })
+
+    local details = view.column({
+        key = "aurora.details",
+        width = "fill",
+        height = coverSize,
+        gap = layout.cu(2),
+        justifyContent = "center",
+        children = {
+            view.text({
+                key = "aurora.title",
+                text = title,
+                width = "fill",
+                height = layout.cu(31),
+                fontSize = layout.fontCu(19),
+                fontWeight = 700,
+                textWrap = "noWrap",
+                overflowText = "ellipsis",
+                style = { foreground = colors.primary },
+                accessibility = { headingLevel = 2 },
+            }),
+            view.text({
+                key = "aurora.artist",
+                text = artist,
+                width = "fill",
+                height = layout.cu(22),
+                fontSize = layout.fontCu(12),
+                textWrap = "noWrap",
+                overflowText = "ellipsis",
+                style = { foreground = colors.secondary },
+            }),
+            view.text({
+                key = "aurora.album",
+                text = album,
+                width = "fill",
+                height = layout.cu(20),
+                fontSize = layout.fontCu(10),
+                textWrap = "noWrap",
+                overflowText = "ellipsis",
+                style = { foreground = colors.subtle },
+            }),
+            controlRow,
+            progressRow,
+        },
+    })
+
+    local content = view.row({
+        key = "aurora.content",
+        width = "fill",
+        height = "fill",
+        padding = layout.cu(18),
+        gap = layout.cu(20),
+        alignItems = "center",
+        children = {
+            coverNode(artwork, coverSize, colors),
+            details,
+        },
+    })
+
+    local children = {}
+    local visualizer = visualizerNode(model, colors)
+    if visualizer then children[#children + 1] = visualizer end
+    children[#children + 1] = content
+    return view.stack({
+        key = "aurora.surface",
+        width = "fill",
+        height = "fill",
+        events = {
+            contextMenu = { id = "media.menu", scope = "component" },
+        },
+        accessibility = {
+            role = "group",
+            label = l10n.tr("workshop.aurora_player.name"),
+        },
+        children = children,
+    })
+end
+
+local function seekRelative(model, delta)
+    local session = currentSession(model)
+    if not player.canControl(session,
+        widget.hasPermission("media.action"), "canSeek") then return end
+    local timeline = currentTimeline(model, session)
+    if not timeline then return end
+    local minimum = tonumber(timeline.minimumSeekMs) or 0
+    local maximum = tonumber(timeline.maximumSeekMs) or
+        tonumber(timeline.durationMs) or minimum
+    local position = player.clamp(
+        (tonumber(timeline.positionMs) or minimum) + delta,
+        minimum, maximum, minimum)
+    startTask(model, "media.seek", {
+        sessionId = session.id,
+        positionMs = math.floor(position + 0.5),
+    })
+end
+
+local function event(_context, model, value)
+    if value.kind == "task.complete" then
+        local name, failed = player.finishTask(
+            model.tasks, value.taskId, value.ok)
+        if name then model.pendingPlayback = nil end
+        if failed then
+            widget.log("warn", name .. " failed: " ..
+                tostring(value.error))
+        end
+        return
+    end
+    if value.kind ~= "action" then return end
+
+    local session = currentSession(model)
+    if value.id == "media.previous" then
+        startSessionTask(model, "media.previous", "canPrevious")
+    elseif value.id == "media.next" then
+        startSessionTask(model, "media.next", "canNext")
+    elseif value.id == "media.toggle" then
+        if not player.canControl(session,
+            widget.hasPermission("media.action"), "canPlayPause") then return end
+        local playing = session.playbackStatus == "playing"
+        startTask(model, "media.toggle", { sessionId = session.id },
+            playing and "paused" or "playing")
+    elseif value.id == "media.stop" then
+        startSessionTask(model, "media.stop", "canStop")
+    elseif value.id == "media.back10" then
+        seekRelative(model, -10000)
+    elseif value.id == "media.forward10" then
+        seekRelative(model, 10000)
+    elseif value.id == "media.seek" then
+        if not player.canControl(session,
+            widget.hasPermission("media.action"), "canSeek") then return end
+        local timeline = currentTimeline(model, session)
+        local fraction = tonumber(value.controlValue) or
+            (value.value and tonumber(value.value.controlValue)) or 0
+        startTask(model, "media.seek", {
+            sessionId = session.id,
+            positionMs = player.seekPosition(timeline, fraction),
+        })
+    elseif value.id:sub(1, 11) == "media.rate." then
+        if not player.canControl(session,
+            widget.hasPermission("media.action"),
+            "canChangePlaybackRate") then return end
+        local rate = tonumber(value.id:sub(12):gsub("_", "."))
+        if rate then startTask(model, "media.setRate", {
+            sessionId = session.id, rate = rate,
+        }) end
+    elseif value.id == "media.shuffle.on" or
+        value.id == "media.shuffle.off" then
+        if not player.canControl(session,
+            widget.hasPermission("media.action"),
+            "canToggleShuffle") then return end
+        startTask(model, "media.setShuffle", {
+            sessionId = session.id,
+            shuffle = value.id == "media.shuffle.on",
+        })
+    elseif value.id:sub(1, 13) == "media.repeat." then
+        if not player.canControl(session,
+            widget.hasPermission("media.action"),
+            "canChangeRepeatMode") then return end
+        startTask(model, "media.setRepeat", {
+            sessionId = session.id,
+            mode = value.id:sub(14),
+        })
+    end
+end
+
+local function menu(_context, model, request)
+    if request.id ~= "media.menu" then return nil end
+    local session = currentSession(model)
+    local permission = widget.hasPermission("media.action")
+    local function allowed(capability)
+        return player.canControl(session, permission, capability)
+    end
+    local rateItems = {}
+    for _, rate in ipairs({ "0_5", "0_75", "1", "1_25", "1_5", "2" }) do
+        rateItems[#rateItems + 1] = {
+            id = "media.rate." .. rate,
+            label = rate:gsub("_", ".") .. "×",
+            enabled = allowed("canChangePlaybackRate"),
+        }
+    end
+    return ui.menu({
+        {
+            id = "media.stop",
+            label = l10n.tr("workshop.aurora_player.stop"),
+            enabled = allowed("canStop"),
+        },
+        { type = "separator" },
+        {
+            id = "media.back10",
+            label = l10n.tr("workshop.aurora_player.back10"),
+            enabled = allowed("canSeek"),
+        },
+        {
+            id = "media.forward10",
+            label = l10n.tr("workshop.aurora_player.forward10"),
+            enabled = allowed("canSeek"),
+        },
+        { type = "separator" },
+        {
+            label = l10n.tr("workshop.aurora_player.speed"),
+            children = rateItems,
+        },
+        {
+            label = l10n.tr("workshop.aurora_player.shuffle"),
+            children = {
+                {
+                    id = "media.shuffle.on",
+                    label = l10n.tr(
+                        "workshop.aurora_player.shuffle_on"),
+                    enabled = allowed("canToggleShuffle"),
+                },
+                {
+                    id = "media.shuffle.off",
+                    label = l10n.tr(
+                        "workshop.aurora_player.shuffle_off"),
+                    enabled = allowed("canToggleShuffle"),
+                },
+            },
+        },
+        {
+            label = l10n.tr("workshop.aurora_player.repeat"),
+            children = {
+                {
+                    id = "media.repeat.none",
+                    label = l10n.tr(
+                        "workshop.aurora_player.repeat_none"),
+                    enabled = allowed("canChangeRepeatMode"),
+                },
+                {
+                    id = "media.repeat.track",
+                    label = l10n.tr(
+                        "workshop.aurora_player.repeat_track"),
+                    enabled = allowed("canChangeRepeatMode"),
+                },
+                {
+                    id = "media.repeat.list",
+                    label = l10n.tr(
+                        "workshop.aurora_player.repeat_list"),
+                    enabled = allowed("canChangeRepeatMode"),
+                },
+            },
+        },
+    })
+end
+
+local function dispose()
+    if mediaCurrent then mediaCurrent:unsubscribe() end
+    if mediaArtwork then mediaArtwork:unsubscribe() end
+    if mediaTimeline then mediaTimeline:unsubscribe() end
+    if audioAnalysis then audioAnalysis:unsubscribe() end
+    mediaCurrent = nil
+    mediaArtwork = nil
+    mediaTimeline = nil
+    audioAnalysis = nil
+end
+
+return widget.define({
+    name = l10n.tr("workshop.aurora_player.name"),
+    useCustomStyle = true,
+    followPersonalizationDefault = true,
+    showTitle = false,
+    bg = 0x090B18,
+    border = 0xFFFFFF,
+    alpha = 0.18,
+    borderAlpha = 0.18,
+    gradientEndA = 0.10,
+    glassEnabled = true,
+    settings = settings,
+    setup = setup,
+    backgroundLayer = {
+        render = backgroundLayer,
+        opacity = 1,
+    },
+    view = viewTree,
+    event = event,
+    menu = menu,
+    dispose = dispose,
+})
