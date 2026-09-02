@@ -5,6 +5,8 @@ local mediaArtwork
 local mediaTimeline
 local audioAnalysis
 local RECORD_FRAME = "aurora.record.spin"
+local PROGRESS_TICK = "aurora.timeline.tick"
+local PROGRESS_TICK_MS = 100
 
 local glyphs = {
     previous = utf8.char(0xF048),
@@ -121,7 +123,18 @@ local function setup(context)
         visible = true,
         recordRotation = 0,
         recordFramePending = false,
+        progressTicking = false,
     }
+end
+
+local function updateProgressTicker(model, active)
+    if active and not model.progressTicking then
+        model.progressTicking = schedule.every(PROGRESS_TICK,
+            PROGRESS_TICK_MS, { whenHidden = "pause" }) == true
+    elseif not active and model.progressTicking then
+        schedule.cancel(PROGRESS_TICK)
+        model.progressTicking = false
+    end
 end
 
 local function palette(context)
@@ -394,10 +407,12 @@ local function viewTree(context, model)
         model.seekPreview = nil
         model.seekSessionId = nil
     end
-    local progress = model.seekPreview or player.progress(timeline)
+    updateProgressTicker(model, hasTimeline and playing and model.visible and
+        not model.preview and not model.recordFramePending)
     local position = model.seekPreview and
         player.seekPosition(timeline, model.seekPreview) or
-        (timeline and timeline.positionMs or 0)
+        player.position(timeline, playing, hasTimeline and time.now() or nil)
+    local progress = model.seekPreview or player.progress(timeline, position)
     local duration = player.duration(timeline)
     local seekEnabled = session ~= nil and hasTimeline and canAct and
         controls.canSeek == true
@@ -629,6 +644,10 @@ local function event(_context, model, value)
         widget.invalidate()
         return
     end
+    if value.kind == "schedule" and value.id == PROGRESS_TICK then
+        if model.visible then widget.invalidate() end
+        return
+    end
     if value.kind == "task.complete" then
         local name, failed = player.finishTask(
             model.tasks, value.taskId, value.ok)
@@ -793,6 +812,7 @@ end
 
 local function dispose()
     animation.cancelFrame(RECORD_FRAME)
+    schedule.cancel(PROGRESS_TICK)
     if mediaCurrent then mediaCurrent:unsubscribe() end
     if mediaArtwork then mediaArtwork:unsubscribe() end
     if mediaTimeline then mediaTimeline:unsubscribe() end

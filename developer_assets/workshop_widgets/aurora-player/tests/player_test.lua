@@ -40,6 +40,35 @@ return {
         assert(player.seekPosition(timeline, 2) == 10000)
     end,
 
+    ["playing timelines advance from the Windows update timestamp"] = function()
+        local timeline = {
+            positionMs = 10000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 120000,
+            durationMs = 120000,
+            updatedAtMs = 100000,
+        }
+        assert(player.position(timeline, true, 102500) == 12500)
+        assert(player.progress(timeline,
+            player.position(timeline, true, 102500)) == 12500 / 120000)
+        assert(player.position(timeline, false, 102500) == 10000)
+        assert(player.position(timeline, true, 99000) == 10000)
+        assert(player.position(timeline, true, 500000) == 120000)
+    end,
+
+    ["timelines without a usable update timestamp stay at the snapshot"] =
+        function()
+            local timeline = {
+                positionMs = 42000,
+                minimumSeekMs = 0,
+                maximumSeekMs = 120000,
+                durationMs = 120000,
+                updatedAtMs = 0,
+            }
+            assert(player.position(timeline, true, 500000) == 42000)
+            assert(player.position(timeline, true, math.huge) == 42000)
+        end,
+
     ["missing system timeline is not presented as zero duration media"] = function()
         local missing = {
             positionMs = 0,

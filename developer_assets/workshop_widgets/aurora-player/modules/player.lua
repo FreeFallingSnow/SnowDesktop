@@ -78,10 +78,24 @@ function M.duration(timeline)
     return math.max(0, maximum - minimum)
 end
 
-function M.progress(timeline)
+function M.position(timeline, playing, nowMs)
+    local minimum, maximum = timelineBounds(timeline)
+    if maximum <= minimum then return minimum end
+    local position = M.clamp(timeline.positionMs, minimum, maximum, minimum)
+    local updatedAt = math.max(0, finite(timeline.updatedAtMs, 0))
+    local now = finite(nowMs, updatedAt)
+    if playing == true and updatedAt > 0 and now > updatedAt then
+        position = M.clamp(position + now - updatedAt,
+            minimum, maximum, minimum)
+    end
+    return position
+end
+
+function M.progress(timeline, positionMs)
     local minimum, maximum = timelineBounds(timeline)
     if maximum <= minimum then return 0 end
-    local position = M.clamp(timeline.positionMs, minimum, maximum, minimum)
+    local position = M.clamp(positionMs == nil and timeline.positionMs or
+        positionMs, minimum, maximum, minimum)
     return (position - minimum) / (maximum - minimum)
 end
 
