@@ -114,7 +114,7 @@ void TestPublishedV2Catalog(const fs::path& repository)
     const auto features = QuotedStrings(Section(registry,
         "kHostFeatures = {",
         "using FunctionParameter = SystemFunctionParameterContract;"));
-    Check(features.size() == 201,
+    Check(features.size() == 202,
         "host feature catalog size must match the reviewed v2 contract");
     for (const auto& feature : features)
     {

@@ -748,6 +748,7 @@ struct D2DState
     float layoutContentHeight = 0.0f;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
+    bool backgroundLayerActive = false;
     std::vector<D2D1_RECT_F> immediateClipRects;
     ComPtr<ID2D1Device> bitmapDevice;
     ComPtr<ID2D1DeviceContext> immediateCommandContext;
@@ -2085,6 +2086,7 @@ public:
         layoutMetrics_ = snowdesktop::widget_runtime::
             CaptureLayoutMetrics(*state_);
         widgetClipDepth_ = state_->widgetClipDepth;
+        backgroundLayerActive_ = state_->backgroundLayerActive;
         SetWidgetExecutionContext(state_, widgetId);
     }
 
@@ -2102,6 +2104,7 @@ public:
         state_->layoutContentWidth = layoutContentWidth_;
         state_->layoutContentHeight = layoutContentHeight_;
         state_->widgetClipDepth = widgetClipDepth_;
+        state_->backgroundLayerActive = backgroundLayerActive_;
         snowdesktop::widget_runtime::RestoreLayoutMetrics(
             *state_, layoutMetrics_, [this]() {
                 if (state_->engine)
@@ -2130,6 +2133,7 @@ private:
     float layoutContentHeight_ = 0.0f;
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics_;
     int widgetClipDepth_ = 0;
+    bool backgroundLayerActive_ = false;
 };
 
 class WidgetSurfaceScope
@@ -3404,6 +3408,9 @@ static std::string ReadRequiredStringField(lua_State* state, int table,
 static int lua_InteractionRegion(lua_State* state)
 {
     using namespace snowdesktop::widget_runtime;
+    if (auto* d2d = GetD2D(state); d2d && d2d->backgroundLayerActive)
+        return luaL_error(state,
+            "interaction.region: backgroundLayer is decorative and cannot register interactions");
     luaL_checktype(state, 1, LUA_TTABLE);
     const int descriptor = lua_absindex(state, 1);
     InteractionRegion region;
@@ -10465,6 +10472,9 @@ static DrawMarqueeError TryDrawMarqueeText(
 
 static int lua_DrawMarqueeText(lua_State* state)
 {
+    if (auto* d2d = GetD2D(state); d2d && d2d->backgroundLayerActive)
+        return luaL_error(state,
+            "draw.marqueeText: backgroundLayer does not support native marquee state");
     bool scrolling = false;
     const DrawMarqueeError error = TryDrawMarqueeText(state, scrolling);
     if (error != DrawMarqueeError::None)
@@ -18899,6 +18909,249 @@ static bool AdvanceNativeMarqueeSurface(
     return true;
 }
 
+static void ConfigureDesktopContentLayout(D2DState* state,
+    lua_State* lua, int descriptorIndex)
+{
+    if (!state || !lua) return;
+    lua_getfield(lua, descriptorIndex, "showTitle");
+    const bool showTitle = !lua_isnil(lua, -1) &&
+        lua_toboolean(lua, -1) != 0;
+    lua_pop(lua, 1);
+    lua_getfield(lua, descriptorIndex, "bottomBarHover");
+    const bool bottomBarHover = lua_isnil(lua, -1) ||
+        lua_toboolean(lua, -1) != 0;
+    lua_pop(lua, 1);
+    const int scaledBarHeight = static_cast<int>(std::round(
+        static_cast<float>(state->barHeight) *
+        CalculateWidgetCellScale(
+            std::max(4, state->gridCellW),
+            std::max(4, state->gridCellH))));
+    const int reservedBarHeight =
+        snowdesktop::widget_chrome_rules::ReservedBottomBarHeight(
+            showTitle, bottomBarHover, scaledBarHeight);
+    state->layoutContentWidth = std::max(1.0f,
+        state->widgetRect.right - state->widgetRect.left);
+    state->layoutContentHeight = std::max(1.0f,
+        state->widgetRect.bottom - state->widgetRect.top -
+            static_cast<float>(reservedBarHeight));
+}
+
+bool WidgetEngine::RenderWidgetBackgroundLayer(
+    const std::wstring& widgetId, ID2D1DeviceContext* context,
+    RECT bounds, int columns, int rows, float inheritedBlurRadius,
+    float cornerRadius)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !context || IsRectEmpty(&bounds)) return false;
+    LuaWidget& widget = widgets_[index];
+    if (!widget.valid || !widget.state) return false;
+
+    PreviewExecutionScope previewScope(
+        widget.preview ? &widget.previewStorage : nullptr);
+    WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
+    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
+    snowdesktop::lua_runtime::StackGuard stackGuard(widget.state);
+    lua_State* state = widget.state;
+    d2dState_->ctx = context;
+    d2dState_->gridColumns = std::max(1, columns);
+    d2dState_->gridRows = std::max(1, rows);
+    SetWidgetRectContext(d2dState_, bounds);
+
+    auto recordError = [&](std::string message) {
+        if (message.size() > 4096) message.resize(4096);
+        if (widget.backgroundLayerError == message) return;
+        widget.backgroundLayerError = message;
+        RuntimeAddLog(widgetId, "error", message);
+    };
+
+    lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
+    if (!lua_istable(state, -1)) return false;
+    const int descriptor = lua_absindex(state, -1);
+    ConfigureDesktopContentLayout(d2dState_, state, descriptor);
+    lua_getfield(state, descriptor, "backgroundLayer");
+    if (lua_isnil(state, -1))
+    {
+        widget.backgroundLayerError.clear();
+        return false;
+    }
+    if (!lua_istable(state, -1))
+    {
+        recordError("backgroundLayer must remain a table while rendering");
+        return false;
+    }
+    const int background = lua_absindex(state, -1);
+
+    float opacity = 1.0f;
+    lua_getfield(state, background, "opacity");
+    if (!lua_isnil(state, -1))
+    {
+        const double value = lua_tonumber(state, -1);
+        if (!lua_isnumber(state, -1) || !std::isfinite(value) ||
+            value < 0.0 || value > 1.0)
+        {
+            recordError(
+                "backgroundLayer.opacity must be finite and between 0 and 1");
+            return false;
+        }
+        opacity = static_cast<float>(value);
+    }
+    lua_pop(state, 1);
+
+    float blurRadius = std::clamp(
+        inheritedBlurRadius, 0.0f, 48.0f);
+    lua_getfield(state, background, "blurRadius");
+    if (!lua_isnil(state, -1))
+    {
+        const double value = lua_tonumber(state, -1);
+        if (!lua_isnumber(state, -1) || !std::isfinite(value) ||
+            value < 0.0 || value > 48.0)
+        {
+            recordError(
+                "backgroundLayer.blurRadius must be finite and between 0 and 48");
+            return false;
+        }
+        blurRadius = static_cast<float>(value);
+    }
+    lua_pop(state, 1);
+
+    lua_getfield(state, background, "render");
+    if (!lua_isfunction(state, -1))
+    {
+        recordError("backgroundLayer.render must remain a function");
+        return false;
+    }
+    const auto pushContext = +[](lua_State* lifecycleState) {
+        (void)lua_WidgetContext(lifecycleState);
+    };
+    if (!widget.lifecycle.PushRenderArguments(state, pushContext))
+    {
+        recordError("backgroundLayer lifecycle is not initialized");
+        return false;
+    }
+
+    EnsureBitmapCachesForCurrentDevice(d2dState_);
+    if (!d2dState_->bitmapDevice)
+    {
+        recordError("backgroundLayer cannot access the Direct2D device");
+        return false;
+    }
+    if (!d2dState_->immediateCommandContext && FAILED(
+            d2dState_->bitmapDevice->CreateDeviceContext(
+                D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                &d2dState_->immediateCommandContext)))
+    {
+        recordError("backgroundLayer cannot create a recording context");
+        return false;
+    }
+    ID2D1DeviceContext* recording =
+        d2dState_->immediateCommandContext.Get();
+    ComPtr<ID2D1CommandList> commands;
+    if (!recording || FAILED(recording->CreateCommandList(&commands)) ||
+        !commands)
+    {
+        recordError("backgroundLayer cannot create a command list");
+        return false;
+    }
+
+    float dpiX = 96.0f;
+    float dpiY = 96.0f;
+    context->GetDpi(&dpiX, &dpiY);
+    recording->SetDpi(dpiX, dpiY);
+    recording->SetUnitMode(context->GetUnitMode());
+    recording->SetAntialiasMode(context->GetAntialiasMode());
+    recording->SetTextAntialiasMode(context->GetTextAntialiasMode());
+    recording->SetPrimitiveBlend(context->GetPrimitiveBlend());
+    recording->SetTransform(D2D1::Matrix3x2F::Identity());
+    recording->SetTarget(commands.Get());
+    recording->BeginDraw();
+    d2dState_->ctx = recording;
+    d2dState_->widgetClipDepth = 0;
+    d2dState_->immediateClipRects.clear();
+    d2dState_->backgroundLayerActive = true;
+
+    const int callResult = snowdesktop::lua_runtime::ProtectedCall(
+        state, 2, 0);
+    std::string callbackError;
+    if (callResult != LUA_OK)
+    {
+        const char* value = lua_tostring(state, -1);
+        callbackError = value ? value : "backgroundLayer render failed";
+        lua_pop(state, 1);
+    }
+    while (d2dState_->widgetClipDepth > 0)
+    {
+        recording->PopAxisAlignedClip();
+        --d2dState_->widgetClipDepth;
+    }
+    const HRESULT drawResult = recording->EndDraw();
+    recording->SetTarget(nullptr);
+    d2dState_->ctx = context;
+    d2dState_->backgroundLayerActive = false;
+    d2dState_->immediateClipRects.clear();
+    const HRESULT closeResult = commands->Close();
+    if (!callbackError.empty())
+    {
+        recordError("backgroundLayer.render: " + callbackError);
+        return false;
+    }
+    if (FAILED(drawResult) || FAILED(closeResult))
+    {
+        recordError("backgroundLayer command recording failed");
+        return false;
+    }
+
+    ComPtr<ID2D1Image> output;
+    if (FAILED(commands.As(&output)) || !output)
+    {
+        recordError("backgroundLayer cannot expose its command image");
+        return false;
+    }
+    ComPtr<ID2D1Effect> blur;
+    if (blurRadius > 0.0f)
+    {
+        if (FAILED(context->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) ||
+            !blur)
+        {
+            recordError("backgroundLayer cannot create the blur effect");
+            return false;
+        }
+        blur->SetInput(0, commands.Get());
+        blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+            blurRadius);
+        blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
+            D2D1_GAUSSIANBLUR_OPTIMIZATION_BALANCED);
+        blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE,
+            D2D1_BORDER_MODE_HARD);
+        blur->GetOutput(&output);
+        if (!output)
+        {
+            recordError("backgroundLayer blur did not expose an image");
+            return false;
+        }
+    }
+
+    ComPtr<ID2D1Factory> factory;
+    context->GetFactory(&factory);
+    ComPtr<ID2D1RoundedRectangleGeometry> clip;
+    const D2D1_RECT_F frame = D2D1::RectF(
+        static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+        static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
+    if (!factory || FAILED(factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(frame, std::max(0.0f, cornerRadius),
+                std::max(0.0f, cornerRadius)), &clip)) || !clip)
+    {
+        recordError("backgroundLayer cannot create the rounded clip");
+        return false;
+    }
+    context->PushLayer(D2D1::LayerParameters(frame, clip.Get(),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+        D2D1::Matrix3x2F::Identity(), opacity), nullptr);
+    context->DrawImage(output.Get());
+    context->PopLayer();
+    widget.backgroundLayerError.clear();
+    return true;
+}
+
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
@@ -19034,27 +19287,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
 
     const int descriptorIndex = lua_absindex(state, -1);
-    lua_getfield(state, descriptorIndex, "showTitle");
-    const bool showTitle = !lua_isnil(state, -1) &&
-        lua_toboolean(state, -1) != 0;
-    lua_pop(state, 1);
-    lua_getfield(state, descriptorIndex, "bottomBarHover");
-    const bool bottomBarHover = lua_isnil(state, -1) ||
-        lua_toboolean(state, -1) != 0;
-    lua_pop(state, 1);
-    const int scaledBarHeight = static_cast<int>(std::round(
-        static_cast<float>(d2dState_->barHeight) *
-        CalculateWidgetCellScale(
-            std::max(4, d2dState_->gridCellW),
-            std::max(4, d2dState_->gridCellH))));
-    const int reservedBarHeight =
-        snowdesktop::widget_chrome_rules::ReservedBottomBarHeight(
-            showTitle, bottomBarHover, scaledBarHeight);
-    d2dState_->layoutContentWidth = std::max(1.0f,
-        d2dState_->widgetRect.right - d2dState_->widgetRect.left);
-    d2dState_->layoutContentHeight = std::max(1.0f,
-        d2dState_->widgetRect.bottom - d2dState_->widgetRect.top -
-            static_cast<float>(reservedBarHeight));
+    ConfigureDesktopContentLayout(d2dState_, state, descriptorIndex);
 
     lua_getfield(state, descriptorIndex, "view");
     if (lua_isfunction(state, -1))

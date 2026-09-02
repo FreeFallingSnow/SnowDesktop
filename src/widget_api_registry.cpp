@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 201> kHostFeatures = {
+constexpr std::array<std::string_view, 202> kHostFeatures = {
     "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
@@ -146,6 +146,7 @@ constexpr std::array<std::string_view, 201> kHostFeatures = {
     "time.basic",
     "time.calendar",
     "time.previewClock",
+    "widget.backgroundLayer",
     "widget.context",
     "widget.dialog",
     "widget.panel",
@@ -964,6 +965,41 @@ int LuaDefineWidget(lua_State* state)
         return luaL_error(state,
             "widget.define: unsupported host feature 'view.tree'");
     }
+
+    lua_getfield(state, descriptor, "backgroundLayer");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_istable(state, -1))
+            return luaL_error(state,
+                "widget.define: 'backgroundLayer' must be a table when present");
+        const int background = lua_absindex(state, -1);
+        lua_getfield(state, background, "render");
+        if (!lua_isfunction(state, -1))
+            return luaL_error(state,
+                "widget.define: 'backgroundLayer.render' must be a function");
+        lua_pop(state, 1);
+
+        for (const char* field : { "opacity", "blurRadius" })
+        {
+            lua_getfield(state, background, field);
+            if (!lua_isnil(state, -1))
+            {
+                if (!lua_isnumber(state, -1))
+                    return luaL_error(state,
+                        "widget.define: 'backgroundLayer.%s' must be a number when present",
+                        field);
+                const double value = lua_tonumber(state, -1);
+                const double maximum = std::strcmp(field, "opacity") == 0
+                    ? 1.0 : 48.0;
+                if (!std::isfinite(value) || value < 0.0 || value > maximum)
+                    return luaL_error(state,
+                        "widget.define: 'backgroundLayer.%s' must be finite and between 0 and %d",
+                        field, static_cast<int>(maximum));
+            }
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
     lua_pushlightuserdata(state, &kDefinedWidgetMarker);
     lua_pushboolean(state, 1);
     lua_rawset(state, descriptor);

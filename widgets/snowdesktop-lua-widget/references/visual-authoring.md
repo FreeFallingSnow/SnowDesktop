@@ -11,10 +11,21 @@ fallback material through `bg`, `border`, `alpha`, `borderAlpha`,
 `gradientEndA` and `glassEnabled`; the host applies the final rounded shape,
 material and outer border.
 
+When the concept needs decorative imagery or composition below that material,
+declare the required `widget.backgroundLayer` feature and add
+`backgroundLayer={render=...,opacity=...,blurRadius=...}`. The callback uses
+the immediate drawing API over the full desktop surface. It is clipped to the
+host shape and cannot own interactions or accessibility semantics. Omitted
+`blurRadius` inherits the active glass blur and resolves to zero without glass;
+an explicit value from 0 to 48 overrides either case. With glass disabled and
+material alpha set to zero, this layer can form a sharp custom surface while
+the host still owns the border and selected state.
+
 Keep content rendering inside that host surface:
 
-- Do not draw another rectangle or image over the full content bounds merely to
-  recreate the outer background.
+- Do not draw another rectangle or image over the full foreground content
+  bounds merely to recreate the outer background; use `backgroundLayer` when
+  a real below-material composition is intended.
 - Use internal surfaces only to group content, separate hierarchy or implement
   a control whose body is part of the widget's information design.
 - Avoid nested cards when spacing, a divider or typography hierarchy is enough.

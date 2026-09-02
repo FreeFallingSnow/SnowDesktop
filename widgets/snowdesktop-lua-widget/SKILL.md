@@ -124,19 +124,24 @@ Choose one rendering path:
 
 ## Surface ownership and theme contract
 
-The SnowDesktop host owns the outer widget surface. By default:
+The SnowDesktop host owns the outer shape, material, border and selected state.
+By default:
 
 - Let the host draw the component material, rounded shape, outer border,
   gradient, glass or acrylic through `widget.define` style fields.
 - Set `useCustomStyle = true` when supplying fallback style values and set
   `followPersonalizationDefault = true` unless the user's concept explicitly
   requires an independent material.
+- Use `backgroundLayer={render=...}` with required feature
+  `widget.backgroundLayer` when a component deliberately needs images, color
+  blocks, gradients or paths below the host material. The callback is
+  decorative, desktop-only and cannot register interactions or native
+  marquees. Full-surface drawing is expected inside this callback.
 - Do not draw a full-surface `draw.rect`, `draw.gradientRect`, image or view
-  background to imitate the host component background. Draw only content and
-  intentional internal surfaces. Full-canvas artwork is an exception for a
-  clearly canvas-led widget such as a clock face. The linter flags obvious
-  full-bounds fills; use `-- snowwidget: allow-full-surface-content` only when
-  the full canvas is the widget's actual content.
+  background in the foreground callback to imitate the host material. Draw
+  only content and intentional internal surfaces. Full-canvas foreground
+  artwork remains an exception for a canvas-led widget such as a clock face;
+  document it with `-- snowwidget: allow-full-surface-content`.
 - Treat material/background and foreground theme as independent inputs. Never
   infer foreground colors from background RGB, luminance, wallpaper, alpha or
   a material name.

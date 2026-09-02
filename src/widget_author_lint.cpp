@@ -604,9 +604,68 @@ void LintViewConstructors(LintReport& report,
     }
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> BackgroundLayerRanges(
+    const std::vector<Token>& tokens)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    for (std::size_t index = 0; index + 2 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind != TokenKind::Identifier ||
+                tokens[index].text != "backgroundLayer" ||
+                !IsSymbol(tokens[index + 1], "=") ||
+                !IsSymbol(tokens[index + 2], "{"))
+            continue;
+        std::size_t depth = 1;
+        for (std::size_t cursor = index + 3;
+                cursor < tokens.size(); ++cursor)
+        {
+            if (IsSymbol(tokens[cursor], "{")) ++depth;
+            else if (IsSymbol(tokens[cursor], "}"))
+            {
+                if (--depth == 0)
+                {
+                    ranges.emplace_back(index, cursor);
+                    index = cursor;
+                    break;
+                }
+            }
+        }
+    }
+    return ranges;
+}
+
+bool IsInsideRanges(std::size_t index,
+    const std::vector<std::pair<std::size_t, std::size_t>>& ranges)
+{
+    return std::any_of(ranges.begin(), ranges.end(),
+        [index](const auto& range) {
+            return index >= range.first && index <= range.second;
+        });
+}
+
+void LintBackgroundLayerFeature(LintReport& report,
+    const snowdesktop::widget::PackageManifest& manifest,
+    const std::filesystem::path& path, const std::vector<Token>& tokens,
+    const std::vector<std::pair<std::size_t, std::size_t>>& ranges)
+{
+    if (ranges.empty()) return;
+    const auto declares = [&](const auto& features) {
+        return std::find(features.begin(), features.end(),
+            "widget.backgroundLayer") != features.end();
+    };
+    if (declares(manifest.requiredFeatures) ||
+        declares(manifest.optionalFeatures))
+        return;
+    AddIssue(report, LintSeverity::Error,
+        "feature.undeclared", path, tokens[ranges.front().first].line,
+        "backgroundLayer requires manifest feature widget.backgroundLayer");
+}
+
 void LintImmediateDrawing(LintReport& report,
     const std::filesystem::path& path, const std::vector<Token>& tokens,
-    bool allowFullSurfaceContent)
+    bool allowFullSurfaceContent,
+    const std::vector<std::pair<std::size_t, std::size_t>>&
+        backgroundLayerRanges)
 {
     for (std::size_t index = 0; index + 3 < tokens.size(); ++index)
     {
@@ -627,6 +686,7 @@ void LintImmediateDrawing(LintReport& report,
                 "draw.text contains a literal UI string; prefer l10n.tr()");
         }
         if (!allowFullSurfaceContent &&
+                !IsInsideRanges(index, backgroundLayerRanges) &&
                 (function == "rect" || function == "gradientRect") &&
                 arguments.size() >= 4 &&
                 IsSingleToken(tokens, arguments[0], TokenKind::Symbol, "0") &&
@@ -728,11 +788,15 @@ LintReport LintWidgetSource(
     report.fileCount = 1;
     if (!LintLuaSyntax(report, relativePath, source)) return report;
     const auto tokens = Tokenize(source);
+    const auto backgroundLayerRanges = BackgroundLayerRanges(tokens);
     LintApiCalls(report, manifest, relativePath, tokens);
+    LintBackgroundLayerFeature(report, manifest, relativePath, tokens,
+        backgroundLayerRanges);
     LintViewConstructors(report, relativePath, tokens);
     LintImmediateDrawing(report, relativePath, tokens,
         source.find("-- snowwidget: allow-full-surface-content") !=
-            std::string_view::npos);
+            std::string_view::npos,
+        backgroundLayerRanges);
     return report;
 }
 

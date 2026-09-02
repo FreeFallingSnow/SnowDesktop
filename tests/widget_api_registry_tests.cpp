@@ -348,6 +348,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("draw.marqueeText") &&
             snowdesktop::widget_api::SupportsFeature(
+                "widget.backgroundLayer") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "interaction.pointerActions") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.pointerCapture") &&
@@ -730,6 +732,41 @@ void TestV2Contract()
     Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
             snowdesktop::widget_api::IsDefinedWidget(state, -1),
         "widget.define must accept core declarative view callbacks");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "view");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushnumber(state, 0.75);
+    lua_setfield(state, -2, "opacity");
+    lua_pushnumber(state, 24.0);
+    lua_setfield(state, -2, "blurRadius");
+    lua_setfield(state, -2, "backgroundLayer");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must accept a background layer beside the foreground view");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushnumber(state, 49.0);
+    lua_setfield(state, -2, "blurRadius");
+    lua_setfield(state, -2, "backgroundLayer");
+    Check(lua_pcall(state, 1, 1, 0) != LUA_OK &&
+            std::string(lua_tostring(state, -1)).find("blurRadius") !=
+                std::string::npos,
+        "widget.define must reject an out-of-range background blur radius");
     lua_pop(state, 2);
 
     constexpr FunctionDescriptor systemFunctions[] = {

@@ -88,7 +88,8 @@ topic/task 目录生成机器可读报告。每个必选/可选声明包含风�
 ## 入口契约
 
 `main.lua` 必须返回 `widget.define({...})` 的结果，并且必须且只能提供
-`render` 或 `view`。宿主会把当前上下文和实例 model 传给所选回调：
+`render` 或 `view`。可选的 `backgroundLayer.render` 与前景回调并存，宿主会把当前上下文和
+实例 model 传给这些回调：
 
 ```lua
 local function setup(context)
@@ -99,6 +100,11 @@ end
 local function render(context, model)
     draw.text(layout.cu(12), layout.cu(12),
         "Hello from " .. model.createdOn)
+end
+
+local function renderBackground(context, model)
+    draw.gradientRect(0, 0, layout.width(), layout.height(),
+        0x172554, 0x581C87, "diagonalDown")
 end
 
 local function dispose(context, model, reason)
@@ -114,6 +120,11 @@ end
 return widget.define({
     name = l10n.tr("lua_widget.example.name"),
     setup = setup,
+    backgroundLayer = {
+        render = renderBackground,
+        opacity = 0.85,
+        -- Omit blurRadius to inherit glass, or zero without glass.
+    },
     render = render,
     event = event,
     dispose = dispose,
@@ -170,7 +181,14 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。`render` 与 `view` 必须二选一，可选
-  `setup`、`panel`、`dialog`、`popover`、`event`、`menu` 和 `dispose`。`panel` 只在
+  `backgroundLayer`、`setup`、`panel`、`dialog`、`popover`、`event`、`menu` 和 `dispose`。
+  `backgroundLayer={render,opacity?,blurRadius?}` 要求 feature `widget.backgroundLayer`，只为
+  desktop surface 绘制非交互装饰层。它复用现有 `draw.*` 图元和图片句柄，但不能注册
+  `interaction.region` 或原生 marquee。宿主将其离屏录制并按圆角裁切，合成顺序为原生
+  backdrop、组件背景层、宿主材质/噪点/边框、前景 `view`/`render`。`opacity` 默认为 1，
+  范围为 0–1；`blurRadius` 显式范围为 0–48，省略时在玻璃开启时继承宿主半径，关闭玻璃时
+  为 0。关闭玻璃并将材质 `alpha` 设为 0，可让该层直接构成组件表面。
+  `panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`
   则保留即时绘制。面板中的声明式输入与 `control.textInput/textArea` 均复用宿主

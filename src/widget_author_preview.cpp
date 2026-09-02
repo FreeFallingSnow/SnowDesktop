@@ -804,6 +804,12 @@ PreviewRenderResult RenderWidgetPreview(
                     resolvedStyle.theme.cornerRadius * dpiScale) }, {},
             background.pixels.empty() ? nullptr : &background);
     }
+    (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
+        context.Get(), componentBounds, request.columns, request.rows,
+        resolvedStyle.material.glassEnabled
+            ? resolvedStyle.material.glassBlurRadius : 0.0f,
+        std::max(0.0f,
+            resolvedStyle.theme.cornerRadius * dpiScale));
     DrawHostBackground(
         context.Get(), resolvedStyle, componentBounds, dpiScale);
     engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,

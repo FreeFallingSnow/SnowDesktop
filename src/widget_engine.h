@@ -705,6 +705,7 @@ struct LuaWidget
     bool panelActive = false;
     bool panelInitialKeyboardFocusPending = false;
     bool panelFrameOpen = false;
+    std::string backgroundLayerError;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
@@ -951,6 +952,10 @@ public:
      */
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
+    /** Render the optional decorative layer below the host material. */
+    bool RenderWidgetBackgroundLayer(const std::wstring& widgetId,
+        ID2D1DeviceContext* context, RECT bounds, int columns, int rows,
+        float inheritedBlurRadius, float cornerRadius);
     /** Synchronize semantic visibility of one widget's desktop surface. */
     void SetWidgetDesktopVisible(
         const std::wstring& widgetId, bool visible,

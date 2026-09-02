@@ -84,6 +84,25 @@ bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scr
     return rendered;
 }
 
+bool LuaScript::SafeRenderBackgroundLayer(const std::wstring& id,
+    WidgetEngine* engine, ID2D1DeviceContext* context, RECT frame,
+    int columns, int rows, float inheritedBlurRadius, float cornerRadius)
+{
+    if (!engine) return false;
+    bool rendered = false;
+    __try
+    {
+        rendered = engine->RenderWidgetBackgroundLayer(id, context, frame,
+            columns, rows, inheritedBlurRadius, cornerRadius);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        OutputDebugStringA(
+            "SnowDesktop: LuaScript::Draw backgroundLayer crash\n");
+    }
+    return rendered;
+}
+
 bool LuaScript::SafeReadFlags(WidgetEngine* engine,
     const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover)
 {
@@ -263,21 +282,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
-    const float configuredStroke = std::clamp(
-        effectSettings.widgetBorderWidth,
-        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    PersonalizationSettings backgroundEffects = effectSettings;
-    backgroundEffects.widgetEdgeHighlightEnabled = false;
-    app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
-        fillColor, borderColor, selected,
-        selected ? std::max(1.6f, configuredStroke) : configuredStroke,
-        &backgroundEffects,
-        !preview && registerBackdrop);
-
-    context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
     {
-        const POINT center = { (frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2 };
+        const POINT center = {
+            (frame.left + frame.right) / 2,
+            (frame.top + frame.bottom) / 2 };
         const GridPage* realPage = nullptr;
         if (preview)
         {
@@ -294,11 +303,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             }
             else
             {
-                cellWidth =
-                    std::max(1, static_cast<int>(frame.right - frame.left) /
+                cellWidth = std::max(1,
+                    static_cast<int>(frame.right - frame.left) /
                         std::max(1, data_->gridSpan.columns));
-                cellHeight =
-                    std::max(1, static_cast<int>(frame.bottom - frame.top) /
+                cellHeight = std::max(1,
+                    static_cast<int>(frame.bottom - frame.top) /
                         std::max(1, data_->gridSpan.rows));
                 gapY = Cu(8.0f);
             }
@@ -309,12 +318,17 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
         else
         {
-            for (const auto& p : app_->gridPages_)
+            for (const auto& page : app_->gridPages_)
             {
-                if (PtInRect(&p.bounds, center)) { realPage = &p; break; }
+                if (PtInRect(&page.bounds, center))
+                {
+                    realPage = &page;
+                    break;
+                }
             }
             if (!realPage)
-                realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
+                realPage = FindGridPage(
+                    app_->gridPages_, data_->gridCell.pageId);
             if (realPage)
             {
                 engine->SetWidgetLayoutMetrics(data_->id,
@@ -325,18 +339,26 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;
-                    RECT correctBounds = GetGridRect(app_->gridPages_, data_->gridCell, data_->gridSpan);
-                    int hgx = std::max(Cu(2.0f), realPage->gapX / 2);
-                    int hgy = std::max(Cu(2.0f), realPage->gapY / 2);
+                    RECT correctBounds = GetGridRect(
+                        app_->gridPages_, data_->gridCell,
+                        data_->gridSpan);
+                    const int hgx = std::max(
+                        Cu(2.0f), realPage->gapX / 2);
+                    const int hgy = std::max(
+                        Cu(2.0f), realPage->gapY / 2);
                     frame = correctBounds;
-                    frame.left   -= hgx; frame.top    -= hgy;
-                    frame.right  += hgx; frame.bottom += hgy;
+                    frame.left -= hgx;
+                    frame.top -= hgy;
+                    frame.right += hgx;
+                    frame.bottom += hgy;
                     const int inset = Cu(4.0f);
-                    if (frame.right - frame.left > inset * 4 && frame.bottom - frame.top > inset * 4)
+                    if (frame.right - frame.left > inset * 4 &&
+                        frame.bottom - frame.top > inset * 4)
                         InflateRect(&frame, -inset, -inset);
                 }
             }
         }
+
         LuaWidgetSurfaceContext surfaceContext;
         if (preview)
         {
@@ -357,6 +379,30 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             surfaceContext.primaryMonitor = realPage->isPrimary;
         }
         engine->SetWidgetSurfaceContext(data_->id, surfaceContext);
+    }
+
+    const float configuredStroke = std::clamp(
+        effectSettings.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    if (engine && widgetOk)
+    {
+        const float inheritedBlurRadius = effectSettings.glassEnabled
+            ? effectSettings.glassBlurRadius : 0.0f;
+        (void)SafeRenderBackgroundLayer(data_->id, engine, context, frame,
+            data_->gridSpan.columns, data_->gridSpan.rows,
+            inheritedBlurRadius, static_cast<float>(Cu(cornerRadiusCu)));
+    }
+    PersonalizationSettings backgroundEffects = effectSettings;
+    backgroundEffects.widgetEdgeHighlightEnabled = false;
+    app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
+        fillColor, borderColor, selected,
+        selected ? std::max(1.6f, configuredStroke) : configuredStroke,
+        &backgroundEffects,
+        !preview && registerBackdrop);
+
+    context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (engine && widgetOk)
+    {
         widgetOk = SafeRenderWidget(
             data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);

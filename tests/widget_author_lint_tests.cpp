@@ -168,6 +168,40 @@ draw.gradientRect(0, 0, layout.width(), layout.height(), 0, 0)
         "localized canvas content can explicitly document an intentional full-surface exception");
 }
 
+void TestBackgroundLayerContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.requiredFeatures = { "widget.backgroundLayer" };
+    const auto report = LintWidgetSource(manifest, "main.lua", R"lua(
+return widget.define({
+    backgroundLayer = {
+        render = function()
+            draw.gradientRect(0, 0, layout.width(), layout.height(),
+                0x101030, 0x304080)
+        end,
+    },
+    render = function()
+        draw.text(12, 12, l10n.tr("title"), 14, 0xFFFFFF)
+    end,
+})
+)lua");
+    Check(report.Ok() &&
+            !HasIssue(report, "surface.full-background") &&
+            !HasIssue(report, "feature.undeclared"),
+        "declared background layers may intentionally draw the full surface");
+
+    manifest.requiredFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua", R"lua(
+return widget.define({
+    backgroundLayer = { render = function() end },
+    render = function() end,
+})
+)lua");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "background layers must declare their host capability");
+}
+
 void TestLocaleAndPreviewQuality()
 {
     TemporaryDirectory temporary;
@@ -202,6 +236,7 @@ int main()
     TestViewKeysAndLiteralText();
     TestSyntaxFailure();
     TestImmediateDrawingQualityWarnings();
+    TestBackgroundLayerContract();
     TestLocaleAndPreviewQuality();
     std::cout << "widget author lint tests passed\n";
     return 0;

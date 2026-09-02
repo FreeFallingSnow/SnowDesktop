@@ -552,6 +552,65 @@ return widget.define({
 )lua");
     return source;
 }
+
+std::filesystem::path CreateBackgroundLayerFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"background-layer-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview background layer fixture directory is created");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "8d6fd46f-321f-4e59-8fc2-b50778dd9fb2",
+  "slug": "preview-background-layer-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "name": "Preview background layer fixture",
+  "description": "Validates below-material component drawing.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "requiredFeatures": [
+    "draw.immediate",
+    "interaction.region",
+    "widget.backgroundLayer"
+  ]
+})json");
+    Write(source / L"main.lua", R"lua(
+local backgroundLayer = {
+    render = function()
+        assert(pcall(interaction.region, {}) == false,
+            "background layer must reject interaction registration")
+        local width = layout.width()
+        draw.rect(0, 0, width * 0.5, layout.height(),
+            0xFF0000, 0, 1)
+        draw.rect(width * 0.5, 0, width * 0.5, layout.height(),
+            0x0000FF, 0, 1)
+    end,
+}
+if storage.get("explicitZeroBlur") == "1" then
+    backgroundLayer.blurRadius = 0
+end
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x000000,
+    alpha = 0.5,
+    borderAlpha = 0,
+    glassEnabled = false,
+    backgroundLayer = backgroundLayer,
+    render = function()
+        draw.rect(72, 38, 48, 40, 0x00FF00, 0, 1)
+    end,
+})
+)lua");
+    return source;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -620,6 +679,55 @@ int wmain(int argc, wchar_t** argv)
             PixelAt(square, 511, 511) ==
                 std::array<std::uint8_t, 4>{ 18, 126, 214, 255 },
         "square composition preserves the background outside component padding");
+
+    const auto backgroundLayerSource =
+        CreateBackgroundLayerFixture(temporary.path);
+    const auto backgroundLayerOutput =
+        temporary.path / L"background-layer.png";
+    const auto [backgroundLayerExit, backgroundLayerJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        backgroundLayerOutput.wstring(), L"--host", host.wstring() });
+    Check(backgroundLayerExit == 0 &&
+            backgroundLayerJson.find("\"ok\":true") != std::string::npos,
+        "preview renders a declared component background layer");
+    const RgbaBitmap backgroundLayer = ReadPng(backgroundLayerOutput);
+    Check(backgroundLayer.width == 192 && backgroundLayer.height == 116,
+        "background layer preview preserves the expected dimensions");
+    for (std::size_t offset = 3;
+            offset < backgroundLayer.pixels.size(); offset += 4)
+        Check(backgroundLayer.pixels[offset] == 0xff,
+            "background layer preview remains opaque over the stage");
+    const auto materialPixel = PixelAt(backgroundLayer, 24, 58);
+    const auto foregroundPixel = PixelAt(backgroundLayer, 96, 58);
+    Check(materialPixel[0] >= 100 && materialPixel[0] <= 150 &&
+            materialPixel[1] < 32 && materialPixel[2] < 32 &&
+            foregroundPixel[0] < 32 && foregroundPixel[1] > 220 &&
+            foregroundPixel[2] < 32,
+        "background is tinted by host material while foreground remains above it");
+
+    const auto inheritedBlurOutput =
+        temporary.path / L"background-layer-inherited-blur.png";
+    const auto explicitZeroBlurOutput =
+        temporary.path / L"background-layer-zero-blur.png";
+    const auto [inheritedBlurExit, inheritedBlurJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        inheritedBlurOutput.wstring(), L"--storage", L"glassEnabled=1",
+        L"--host", host.wstring() });
+    const auto [explicitZeroBlurExit, explicitZeroBlurJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        explicitZeroBlurOutput.wstring(), L"--storage", L"glassEnabled=1",
+        L"--storage", L"explicitZeroBlur=1",
+        L"--host", host.wstring() });
+    const RgbaBitmap inheritedBlur = ReadPng(inheritedBlurOutput);
+    const RgbaBitmap explicitZeroBlur = ReadPng(explicitZeroBlurOutput);
+    constexpr RECT backgroundBoundary{ 80, 8, 112, 34 };
+    Check(inheritedBlurExit == 0 && explicitZeroBlurExit == 0 &&
+            inheritedBlurJson.find("\"ok\":true") != std::string::npos &&
+            explicitZeroBlurJson.find("\"ok\":true") !=
+                std::string::npos &&
+            CountDifferingPixels(inheritedBlur, explicitZeroBlur,
+                backgroundBoundary) > 256,
+        "omitted background blur inherits glass while explicit zero remains sharp");
 
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";
