@@ -20835,7 +20835,7 @@ void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
 
 std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     const std::wstring& widgetId, int x, int y,
-    std::string_view surface)
+    std::string_view surface, bool componentScopeOnly)
 {
     std::vector<LuaWidgetMenuItem> result;
     int idx = FindWidget(widgetId);
@@ -20846,13 +20846,16 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     const std::string normalizedSurface =
         NormalizeWidgetSurface(surface);
 
-    auto& interactionRegions =
+        auto& interactionRegions =
             InteractionRegionsForSurface(w, surface);
         std::string targetKey;
-        const auto* requestActionPointer =
-            interactionRegions.ActionAt(
-                static_cast<float>(x), static_cast<float>(y),
-                "contextMenu", &targetKey);
+        const auto* requestActionPointer = componentScopeOnly
+            ? interactionRegions.ComponentActionAt(
+                  static_cast<float>(x), static_cast<float>(y),
+                  "contextMenu", &targetKey)
+            : interactionRegions.ActionAt(
+                  static_cast<float>(x), static_cast<float>(y),
+                  "contextMenu", &targetKey);
         if (!requestActionPointer || targetKey.empty()) return result;
         const auto requestAction = *requestActionPointer;
         const std::uint64_t generation =

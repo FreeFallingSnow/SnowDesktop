@@ -1023,7 +1023,8 @@ public:
      */
     std::vector<LuaWidgetMenuItem> GetContextMenu(
         const std::wstring& widgetId, int x = -1, int y = -1,
-        std::string_view surface = "desktop");
+        std::string_view surface = "desktop",
+        bool componentScopeOnly = false);
 
     void InvokeMenu(const std::wstring& widgetId,
         const LuaWidgetMenuItem& menuItem);

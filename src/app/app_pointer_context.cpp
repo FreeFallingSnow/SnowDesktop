@@ -152,7 +152,7 @@ bool DesktopApp::ShowHostInputContextMenu(
         if (widgetIndex < widgets_.size())
         {
             ShowWidgetContextMenu(screenPoint, widgetIndex,
-                std::nullopt, std::nullopt, surface, true);
+                std::nullopt, localPoint, surface, true);
         }
         else
         {

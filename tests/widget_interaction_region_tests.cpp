@@ -151,6 +151,40 @@ void TestPointerPairingAndActions()
         "removed hovered region must retain its leave action for dispatch");
 }
 
+void TestComponentActionLookupBelowElement()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto component = Rect("component", 0, 0, 100, 100);
+    InteractionAction componentMenu{ "component.menu", {} };
+    componentMenu.contextMenuScope =
+        InteractionAction::ContextMenuScope::Component;
+    component.events.emplace("contextMenu", std::move(componentMenu));
+    auto article = Rect("article", 10, 10, 80, 30);
+    article.events.emplace("contextMenu",
+        InteractionAction{ "article.menu", {} });
+
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(component), error) &&
+            regions.Submit(std::move(article), error),
+        "overlapping component and element menus must stage");
+    regions.CommitFrame();
+
+    std::string targetKey;
+    const auto* elementAction = regions.ActionAt(
+        20, 20, "contextMenu", &targetKey);
+    Check(elementAction && elementAction->id == "article.menu" &&
+            targetKey == "article",
+        "normal hit testing must retain the topmost element menu");
+    const auto* componentAction = regions.ComponentActionAt(
+        20, 20, "contextMenu", &targetKey);
+    Check(componentAction && componentAction->id == "component.menu" &&
+            targetKey == "component",
+        "component lookup must continue below an element menu at the same point");
+    Check(!regions.ComponentActionAt(120, 120, "contextMenu"),
+        "component lookup must not select a region outside the original point");
+}
+
 void TestOptInPointerCapture()
 {
     WidgetInteractionRegions regions;
@@ -572,6 +606,7 @@ int main()
     TestFocusCueModality();
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
+    TestComponentActionLookupBelowElement();
     TestOptInPointerCapture();
     TestShapesAndValidation();
     TestClippedHitTesting();

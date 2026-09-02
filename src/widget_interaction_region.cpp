@@ -61,6 +61,33 @@ bool InverseTransformPoint(const InteractionAffineTransform& transform,
     return std::isfinite(localX) && std::isfinite(localY);
 }
 
+bool ContainsPoint(const InteractionRegion& region,
+    float x, float y) noexcept
+{
+    const bool insideBounds = region.hitFragments.empty()
+        ? region.shape.Contains(x, y)
+        : std::any_of(region.hitFragments.begin(),
+              region.hitFragments.end(), [x, y](const auto& fragment) {
+                  return fragment.Contains(x, y);
+              });
+    if ((region.clip && !region.clip->Contains(x, y)) || !insideBounds)
+        return false;
+    if (!region.hitTransform || !region.localHitShape) return true;
+
+    float localX = 0.0f;
+    float localY = 0.0f;
+    if (!InverseTransformPoint(
+            *region.hitTransform, x, y, localX, localY))
+        return false;
+    return region.localHitFragments.empty()
+        ? region.localHitShape->Contains(localX, localY)
+        : std::any_of(region.localHitFragments.begin(),
+              region.localHitFragments.end(),
+              [localX, localY](const auto& fragment) {
+                  return fragment.Contains(localX, localY);
+              });
+}
+
 bool IsSupportedCursor(std::string_view cursor) noexcept
 {
     return cursor.empty() || cursor == "default" || cursor == "hand" ||
@@ -739,6 +766,24 @@ const InteractionAction* WidgetInteractionRegions::ActionAt(
     return action == region->events.end() ? nullptr : &action->second;
 }
 
+const InteractionAction* WidgetInteractionRegions::ComponentActionAt(
+    float x, float y, std::string_view eventName,
+    std::string* targetKey) const noexcept
+{
+    for (auto region = active_.rbegin(); region != active_.rend(); ++region)
+    {
+        if (!region->enabled || !ContainsPoint(*region, x, y)) continue;
+        const auto action = region->events.find(eventName);
+        if (action == region->events.end() ||
+            action->second.contextMenuScope !=
+                InteractionAction::ContextMenuScope::Component)
+            continue;
+        if (targetKey) *targetKey = region->key;
+        return &action->second;
+    }
+    return nullptr;
+}
+
 std::vector<std::string>
 WidgetInteractionRegions::KeyboardFocusableKeys() const
 {
@@ -873,32 +918,7 @@ const InteractionRegion* WidgetInteractionRegions::HitTest(
 {
     for (auto region = active_.rbegin(); region != active_.rend(); ++region)
     {
-        const bool insideBounds = region->hitFragments.empty()
-            ? region->shape.Contains(x, y)
-            : std::any_of(region->hitFragments.begin(),
-                region->hitFragments.end(), [x, y](const auto& fragment) {
-                    return fragment.Contains(x, y);
-                });
-        if (!region->enabled ||
-            (region->clip && !region->clip->Contains(x, y)) ||
-            !insideBounds)
-            continue;
-        if (region->hitTransform && region->localHitShape)
-        {
-            float localX = 0.0f;
-            float localY = 0.0f;
-            if (!InverseTransformPoint(
-                    *region->hitTransform, x, y, localX, localY))
-                continue;
-            const bool insideLocal = region->localHitFragments.empty()
-                ? region->localHitShape->Contains(localX, localY)
-                : std::any_of(region->localHitFragments.begin(),
-                    region->localHitFragments.end(),
-                    [localX, localY](const auto& fragment) {
-                        return fragment.Contains(localX, localY);
-                    });
-            if (!insideLocal) continue;
-        }
+        if (!region->enabled || !ContainsPoint(*region, x, y)) continue;
         return &*region;
     }
     return nullptr;
