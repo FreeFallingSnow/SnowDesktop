@@ -910,6 +910,17 @@ bool WidgetInteractionRegions::Empty() const noexcept
     return active_.empty();
 }
 
+bool IsWidgetMenuSelectionCurrent(
+    const WidgetInteractionRegions& regions,
+    std::string_view targetKey,
+    std::uint64_t capturedRuntimeToken,
+    std::uint64_t currentRuntimeToken) noexcept
+{
+    return capturedRuntimeToken != 0 &&
+        capturedRuntimeToken == currentRuntimeToken &&
+        !targetKey.empty() && regions.Find(targetKey) != nullptr;
+}
+
 void WidgetInteractionRegions::Reset() noexcept
 {
     active_.clear();

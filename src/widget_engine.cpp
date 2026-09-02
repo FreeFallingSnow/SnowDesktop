@@ -21119,8 +21119,6 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                 componentScopeOnly, &targetKey);
         if (!requestActionPointer || targetKey.empty()) return result;
         const auto requestAction = *requestActionPointer;
-        const std::uint64_t generation =
-            interactionRegions.Generation();
         WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
         WidgetSurfaceScope surfaceScope(d2dState_,
             normalizedSurface.c_str());
@@ -21302,7 +21300,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                     item.targetKey = targetKey;
                     item.surface = normalizedSurface;
                     item.contextValue = requestAction.value;
-                    item.interactionGeneration = generation;
+                    item.runtimeToken = w.runtimeToken;
                 }
                 output.push_back(std::move(item));
                 lua_pop(state, 1);
@@ -21328,9 +21326,9 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId,
     auto& interactionRegions = InteractionRegionsForSurface(
         widget, menuItem.surface);
     if (menuItem.actionId.empty() ||
-        interactionRegions.Generation() !=
-            menuItem.interactionGeneration ||
-        !interactionRegions.Find(menuItem.targetKey))
+        !snowdesktop::widget_runtime::IsWidgetMenuSelectionCurrent(
+            interactionRegions, menuItem.targetKey,
+            menuItem.runtimeToken, widget.runtimeToken))
         return;
     snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
         trustedGestureState_, true);

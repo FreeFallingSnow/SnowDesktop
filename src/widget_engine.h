@@ -233,7 +233,7 @@ struct LuaWidgetMenuItem
     std::string targetKey;
     std::string surface = "desktop";
     snowdesktop::widget_runtime::InteractionValue contextValue;
-    std::uint64_t interactionGeneration = 0;
+    std::uint64_t runtimeToken = 0;
     std::vector<LuaWidgetMenuItem> children; ///< 子菜单；仅叶子项投递动作
 };
 

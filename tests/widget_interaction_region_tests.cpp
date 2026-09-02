@@ -12,6 +12,7 @@ using snowdesktop::widget_runtime::InteractionAction;
 using snowdesktop::widget_runtime::InteractionControlKind;
 using snowdesktop::widget_runtime::InteractionRegion;
 using snowdesktop::widget_runtime::InteractionShapeType;
+using snowdesktop::widget_runtime::IsWidgetMenuSelectionCurrent;
 using snowdesktop::widget_runtime::ShouldShowInteractionFocusCue;
 using snowdesktop::widget_runtime::WidgetInteractionRegions;
 
@@ -203,6 +204,37 @@ void TestComponentMenuRegistrationIsSurfaceScoped()
     Check(!empty.ContextMenuActionAt(10, 10, false, &targetKey) &&
             targetKey.empty(),
         "a surface without a component menu must not synthesize one");
+}
+
+void TestOpenMenuSurvivesRerenderWithinSameRuntime()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto provider = Rect("player", 0, 0, 80, 40);
+    provider.events.emplace("contextMenu",
+        InteractionAction{ "player.menu", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(provider), error),
+        "menu provider must stage");
+    regions.CommitFrame();
+    const std::uint64_t openedGeneration = regions.Generation();
+
+    auto rerendered = Rect("player", 0, 0, 96, 40);
+    rerendered.events.emplace("contextMenu",
+        InteractionAction{ "player.menu", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(rerendered), error),
+        "rerendered menu provider must stage");
+    regions.CommitFrame();
+    Check(regions.Generation() != openedGeneration &&
+            IsWidgetMenuSelectionCurrent(
+                regions, "player", 42, 42),
+        "an open menu must remain actionable across ordinary rerenders");
+    Check(!IsWidgetMenuSelectionCurrent(
+              regions, "player", 42, 43) &&
+            !IsWidgetMenuSelectionCurrent(
+              regions, "missing", 42, 42),
+        "runtime replacement or target removal must invalidate an open menu");
 }
 
 void TestOptInPointerCapture()
@@ -627,6 +659,7 @@ int main()
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
     TestComponentMenuRegistrationIsSurfaceScoped();
+    TestOpenMenuSurvivesRerenderWithinSameRuntime();
     TestOptInPointerCapture();
     TestShapesAndValidation();
     TestClippedHitTesting();

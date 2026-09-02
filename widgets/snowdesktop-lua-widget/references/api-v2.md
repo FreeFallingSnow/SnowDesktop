@@ -156,6 +156,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
+宿主在菜单打开时冻结该次 `ui.menu(...)` 描述；同一组件运行时内的普通重绘不会使已打开菜单的
+选择失效。组件重载、销毁或目标稳定 key 消失后，宿主会丢弃旧菜单选择。有效的菜单选择以
+`source == "contextMenu"` 和 `trustedGesture == true` 投递，因此可以在对应 action 处理中启动
+要求可信手势的 task。
 不要定义已移除的全局回调；入口必须返回 v2 描述符。
 
 ## 已实现能力

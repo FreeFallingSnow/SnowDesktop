@@ -294,4 +294,10 @@ private:
     std::chrono::steady_clock::time_point pointerPressStarted_{};
     std::uint64_t generation_ = 0;
 };
+
+bool IsWidgetMenuSelectionCurrent(
+    const WidgetInteractionRegions& regions,
+    std::string_view targetKey,
+    std::uint64_t capturedRuntimeToken,
+    std::uint64_t currentRuntimeToken) noexcept;
 }
