@@ -416,7 +416,7 @@ local function coverNode(artwork, size, colors, rotation)
     })
 end
 
-local function visualizerNode(model, colors)
+local function visualizerNode(model, colors, plan)
     if not model.visualizer or not widget.hasFeature("view.dataSeries") then
         return nil
     end
@@ -427,7 +427,8 @@ local function visualizerNode(model, colors)
         width = "fill",
         height = "fill",
         padding = { left = layout.cu(10), right = layout.cu(10),
-            top = layout.cu(36), bottom = 0 },
+            top = plan.vertical and layout.height() * 0.54 or
+                layout.cu(36), bottom = 0 },
         min = 0,
         max = 1,
         fillOpacity = 0.26,
@@ -474,7 +475,8 @@ local function viewTree(context, model)
     local width = layout.width()
     local height = layout.height()
     local plan = responsive.plan(width, height)
-    local padding = layout.cu(plan.compact and 12 or 18)
+    local padding = layout.cu(plan.vertical and 10 or
+        (plan.compact and 12 or 18))
     local contentGap = layout.cu(plan.compact and 10 or
         (plan.vertical and 14 or 20))
     local availableWidth = math.max(1, width - padding * 2)
@@ -483,7 +485,7 @@ local function viewTree(context, model)
     if plan.vertical then
         local coverMaximum = layout.cu(plan.compact and 92 or 180)
         local coverMinimum = layout.cu(plan.compact and 72 or 104)
-        local heightShare = availableHeight * (plan.compact and 0.36 or 0.42)
+        local heightShare = availableHeight * (plan.compact and 0.40 or 0.44)
         coverSize = math.max(coverMinimum, math.min(
             coverMaximum, availableWidth, heightShare))
     else
@@ -688,7 +690,7 @@ local function viewTree(context, model)
         view.row(contentDefinition)
 
     local children = {}
-    local visualizer = visualizerNode(model, colors)
+    local visualizer = visualizerNode(model, colors, plan)
     if visualizer then children[#children + 1] = visualizer end
     children[#children + 1] = content
     return view.stack({

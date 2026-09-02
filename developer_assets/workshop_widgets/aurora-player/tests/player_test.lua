@@ -210,6 +210,9 @@ return {
         assert(#values == 8)
         assert(values[1] == 0 and values[3] > 0.8)
         assert(values[5] == 1 and values[7] == 0)
+        local previewValues = player.spectrum(nil, 36, true)
+        assert(#previewValues == 36)
+        assert(math.max(table.unpack(previewValues)) <= 0.46)
     end,
 
     ["artwork background requires its setting artwork and standard contrast"] =

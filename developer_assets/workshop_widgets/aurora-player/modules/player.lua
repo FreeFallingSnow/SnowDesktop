@@ -213,8 +213,8 @@ function M.spectrum(snapshot, count, preview)
         math.floor(finite(count, 36) + 0.5)))
     local source
     if preview then
-        source = { 0.12, 0.31, 0.62, 0.28, 0.74, 0.43, 0.88, 0.51,
-            0.68, 0.36, 0.79, 0.47, 0.58, 0.25, 0.44, 0.18 }
+        source = { 0.06, 0.16, 0.32, 0.14, 0.38, 0.22, 0.46, 0.27,
+            0.35, 0.18, 0.41, 0.24, 0.30, 0.13, 0.23, 0.09 }
     elseif type(snapshot) == "table" and snapshot.available == true and
         type(snapshot.value) == "table" and
         type(snapshot.value.spectrum) == "table" then
