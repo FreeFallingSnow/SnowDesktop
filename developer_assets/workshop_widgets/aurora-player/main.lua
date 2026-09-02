@@ -1,8 +1,10 @@
 local player = module.require("modules/player.lua")
+local responsive = module.require("modules/responsive.lua")
 
 local mediaCurrent
 local mediaArtwork
 local audioAnalysis
+local descriptor
 local RECORD_FRAME = "aurora.record.spin"
 local PROGRESS_TICK = "aurora.timeline.tick"
 local PROGRESS_TICK_MS = 100
@@ -31,6 +33,17 @@ local settings = {
                 "workshop.aurora_player.cover_background_description"),
             type = "bool",
             default = true,
+        },
+        {
+            key = "background_blur",
+            label = l10n.tr("workshop.aurora_player.background_blur"),
+            description = l10n.tr(
+                "workshop.aurora_player.background_blur_description"),
+            type = "range",
+            min = 0,
+            max = 24,
+            step = 1,
+            default = 8,
         },
         {
             key = "show_visualizer",
@@ -98,6 +111,10 @@ local function currentTimeline(model, session)
 end
 
 local function setup(context)
+    if descriptor and descriptor.backgroundLayer then
+        descriptor.backgroundLayer.blurRadius = player.clamp(
+            storage.get("background_blur"), 0, 24, 8)
+    end
     mediaCurrent = data.subscribe("media.current", {
         maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
@@ -279,15 +296,18 @@ local function startSessionTask(model, name, capability, extra)
     startTask(model, name, arguments)
 end
 
-local function controlButton(key, glyph, label, enabled, colors, primary)
-    local size = layout.cu(primary and 42 or 36)
+local function controlButton(key, glyph, label, enabled, colors, primary,
+    compact)
+    local size = layout.cu(primary and (compact and 38 or 42) or
+        (compact and 32 or 36))
     return view.iconButton({
         key = key,
         glyph = glyph,
         iconFont = "fa",
         width = size,
         height = size,
-        fontSize = layout.fontCu(primary and 16 or 13),
+        fontSize = layout.fontCu(primary and (compact and 15 or 16) or
+            (compact and 12 or 13)),
         enabled = enabled,
         action = { id = key },
         accessibility = { role = "button", label = label },
@@ -451,8 +471,26 @@ local function viewTree(context, model)
         (session and session.sourceName or
             l10n.tr("workshop.aurora_player.empty_hint"))
     local album = session and session.album or ""
-    local coverSize = math.max(layout.cu(112), math.min(
-        layout.cu(148), layout.height() - layout.cu(36)))
+    local width = layout.width()
+    local height = layout.height()
+    local plan = responsive.plan(width, height)
+    local padding = layout.cu(plan.compact and 12 or 18)
+    local contentGap = layout.cu(plan.compact and 10 or
+        (plan.vertical and 14 or 20))
+    local availableWidth = math.max(1, width - padding * 2)
+    local availableHeight = math.max(1, height - padding * 2)
+    local coverSize
+    if plan.vertical then
+        local coverMaximum = layout.cu(plan.compact and 92 or 180)
+        local coverMinimum = layout.cu(plan.compact and 72 or 104)
+        local heightShare = availableHeight * (plan.compact and 0.36 or 0.42)
+        coverSize = math.max(coverMinimum, math.min(
+            coverMaximum, availableWidth, heightShare))
+    else
+        coverSize = math.max(layout.cu(plan.compact and 88 or 112),
+            math.min(layout.cu(plan.compact and 104 or 148),
+                availableHeight))
+    end
     if not session or model.seekSessionId ~= session.id then
         clearSeekPreview(model)
     end
@@ -488,44 +526,34 @@ local function viewTree(context, model)
     local controlRow = view.row({
         key = "aurora.controls",
         width = "fill",
-        height = layout.cu(46),
-        gap = layout.cu(12),
+        height = layout.cu(plan.compact and 40 or 46),
+        gap = layout.cu(plan.compact and 8 or 12),
         alignItems = "center",
         justifyContent = "center",
         children = {
             controlButton("media.previous", glyphs.previous,
                 l10n.tr("workshop.aurora_player.previous"),
                 session ~= nil and canAct and controls.canPrevious == true,
-                colors, false),
+                colors, false, plan.compact),
             controlButton("media.toggle", playing and glyphs.pause or
                 glyphs.play, l10n.tr(playing and
                     "workshop.aurora_player.pause" or
                     "workshop.aurora_player.play"),
                 session ~= nil and canAct and controls.canPlayPause == true,
-                colors, true),
+                colors, true, plan.compact),
             controlButton("media.next", glyphs.next,
                 l10n.tr("workshop.aurora_player.next"),
                 session ~= nil and canAct and controls.canNext == true,
-                colors, false),
+                colors, false, plan.compact),
         },
     })
 
-    local progressRow = hasTimeline and view.row({
-        key = "aurora.progress.row",
+    local progressNode = hasTimeline and view.column({
+        key = "aurora.progress.group",
         width = "fill",
-        height = layout.cu(28),
-        gap = layout.cu(8),
-        alignItems = "center",
+        height = layout.cu(plan.compact and 34 or 40),
+        gap = 0,
         children = {
-            view.text({
-                key = "aurora.progress.current",
-                text = player.formatTime(position),
-                width = layout.cu(42),
-                height = "fill",
-                fontSize = layout.fontCu(10),
-                textAlign = "end",
-                style = { foreground = colors.subtle },
-            }),
             view.slider({
                 key = "aurora.progress",
                 value = progress,
@@ -533,7 +561,7 @@ local function viewTree(context, model)
                 max = 1,
                 step = 0.001,
                 width = "fill",
-                height = layout.cu(24),
+                height = layout.cu(plan.compact and 20 or 24),
                 enabled = seekEnabled,
                 events = {
                     change = { id = "media.seek.change" },
@@ -548,25 +576,49 @@ local function viewTree(context, model)
                 style = { foreground = colors.primary },
                 disabledStyle = { opacity = 0.40 },
             }),
-            view.text({
-                key = "aurora.progress.duration",
-                text = player.formatTime(duration),
-                width = layout.cu(42),
-                height = "fill",
-                fontSize = layout.fontCu(10),
-                style = { foreground = colors.subtle },
+            view.row({
+                key = "aurora.progress.times",
+                width = "fill",
+                height = layout.cu(plan.compact and 14 or 16),
+                justifyContent = "spaceBetween",
+                children = {
+                    view.text({
+                        key = "aurora.progress.current",
+                        text = player.formatTime(position),
+                        width = layout.cu(60),
+                        height = "fill",
+                        fontSize = layout.fontCu(plan.compact and 9 or 10),
+                        style = { foreground = colors.subtle },
+                    }),
+                    view.text({
+                        key = "aurora.progress.duration",
+                        text = player.formatTime(duration),
+                        width = layout.cu(60),
+                        height = "fill",
+                        fontSize = layout.fontCu(plan.compact and 9 or 10),
+                        textAlign = "end",
+                        style = { foreground = colors.subtle },
+                    }),
+                },
             }),
         },
     }) or nil
 
+    local textAlignment = plan.vertical and "center" or "start"
+    local metadataPadding = {
+        left = layout.cu(8),
+        right = layout.cu(8),
+    }
     local detailChildren = {
         view.text({
             key = "aurora.title",
             text = title,
             width = "fill",
-            height = layout.cu(31),
-            fontSize = layout.fontCu(19),
+            height = layout.cu(plan.compact and 24 or 31),
+            padding = metadataPadding,
+            fontSize = layout.fontCu(plan.compact and 16 or 19),
             fontWeight = 700,
+            textAlign = textAlignment,
             textWrap = "noWrap",
             overflowText = "ellipsis",
             style = { foreground = colors.primary },
@@ -576,52 +628,64 @@ local function viewTree(context, model)
             key = "aurora.artist",
             text = artist,
             width = "fill",
-            height = layout.cu(session and 22 or 38),
-            fontSize = layout.fontCu(session and 12 or 11),
+            height = layout.cu(plan.compact and 18 or
+                (session and 22 or 38)),
+            padding = metadataPadding,
+            fontSize = layout.fontCu(plan.compact and 10 or
+                (session and 12 or 11)),
+            textAlign = textAlignment,
             textWrap = session and "noWrap" or "wrap",
             maxLines = session and 1 or 2,
             overflowText = "ellipsis",
             style = { foreground = colors.secondary },
         }),
     }
-    if session then
+    if session and not plan.compact then
         detailChildren[#detailChildren + 1] = view.text({
             key = "aurora.album",
             text = album,
             width = "fill",
             height = layout.cu(20),
+            padding = metadataPadding,
             fontSize = layout.fontCu(10),
+            textAlign = textAlignment,
             textWrap = "noWrap",
             overflowText = "ellipsis",
             style = { foreground = colors.subtle },
         })
+    end
+    if session then
         detailChildren[#detailChildren + 1] = controlRow
-        if progressRow then
-            detailChildren[#detailChildren + 1] = progressRow
+        if progressNode then
+            detailChildren[#detailChildren + 1] = progressNode
         end
     end
 
     local details = view.column({
         key = "aurora.details",
         width = "fill",
-        height = coverSize,
-        gap = session and layout.cu(2) or layout.cu(6),
+        height = "fill",
+        gap = session and layout.cu(plan.compact and 0 or 2) or
+            layout.cu(6),
         justifyContent = "center",
         children = detailChildren,
     })
 
-    local content = view.row({
-        key = "aurora.content",
+    local contentDefinition = {
+        key = plan.vertical and "aurora.content.vertical" or
+            "aurora.content.horizontal",
         width = "fill",
         height = "fill",
-        padding = layout.cu(18),
-        gap = layout.cu(20),
+        padding = padding,
+        gap = contentGap,
         alignItems = "center",
         children = {
             coverNode(artwork, coverSize, colors, model.recordRotation),
             details,
         },
-    })
+    }
+    local content = plan.vertical and view.column(contentDefinition) or
+        view.row(contentDefinition)
 
     local children = {}
     local visualizer = visualizerNode(model, colors)
@@ -902,7 +966,7 @@ local function dispose()
     audioAnalysis = nil
 end
 
-return widget.define({
+descriptor = {
     name = l10n.tr("workshop.aurora_player.name"),
     useCustomStyle = true,
     followPersonalizationDefault = true,
@@ -924,4 +988,6 @@ return widget.define({
     event = event,
     menu = menu,
     dispose = dispose,
-})
+}
+
+return widget.define(descriptor)
