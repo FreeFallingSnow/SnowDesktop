@@ -165,32 +165,18 @@ local function backgroundLayer(context, model)
     local width = layout.width()
     local height = layout.height()
     if context.accessibility.highContrast then
-        draw.rect(0, 0, width, height, context.theme.background, 0, 1)
         return
     end
 
     local session = currentSession(model)
     local artwork = currentArtwork(model, session)
-    if artwork then
-        draw.imageFit(artwork, 0, 0, width, height,
-            "cover", "center", 0.92, "linear")
-        draw.gradientRect(0, 0, width, height,
-            0x070A17, 0x11152A, "horizontal", 0, 0.72)
-        draw.gradientRect(0, height * 0.38, width, height * 0.62,
-            0x11152A, 0x050713, "vertical", 0, 0.46)
-        return
-    end
-
+    if not artwork then return end
+    draw.imageFit(artwork, 0, 0, width, height,
+        "cover", "center", 0.92, "linear")
     draw.gradientRect(0, 0, width, height,
-        0x172554, 0x581C87, "diagonalDown", 0, 1)
-    draw.circle(width * 0.12, height * 0.16,
-        math.max(width, height) * 0.34, 0x06B6D4, 0.28)
-    draw.circle(width * 0.76, height * 0.14,
-        math.max(width, height) * 0.31, 0x8B5CF6, 0.34)
-    draw.circle(width * 0.86, height * 0.90,
-        math.max(width, height) * 0.38, 0xDB2777, 0.28)
-    draw.gradientRect(0, 0, width, height,
-        0x081020, 0x160A25, "vertical", 0, 0.30)
+        0x070A17, 0x11152A, "horizontal", 0, 0.72)
+    draw.gradientRect(0, height * 0.38, width, height * 0.62,
+        0x11152A, 0x050713, "vertical", 0, 0.46)
 end
 
 local function startTask(model, name, arguments, pendingPlayback)
@@ -626,8 +612,11 @@ end
 local function menu(_context, model, request)
     if request.id ~= "media.menu" then return nil end
     local session = currentSession(model)
+    local timeline = currentTimeline(model, session)
     local permission = widget.hasPermission("media.action")
     local function allowed(capability)
+        if capability == "canSeek" and
+            not player.hasTimeline(timeline) then return false end
         return player.canControl(session, permission, capability)
     end
     local rateItems = {}
