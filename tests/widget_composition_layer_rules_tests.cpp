@@ -157,6 +157,8 @@ int main(int argc, char** argv)
                 "app_widget_marquee_composition.cpp");
         const std::string engine = ReadFile(
             root / "src" / "widget_engine.cpp");
+        const std::string luaWidget = ReadFile(
+            root / "src" / "widgets" / "lua_script.cpp");
         const std::string pointer = ReadFile(
             root / "src" / "app" / "app_pointer_move.cpp");
         const std::string scrolling = ReadFile(
@@ -230,6 +232,22 @@ int main(int argc, char** argv)
                 engine.find("realtimeCompositionCallback_") ==
                 std::string::npos,
             "the widget runtime must not contain subscription-based composition promotion");
+        const std::size_t materialPass = luaWidget.find(
+            "materialEffects, !preview && registerBackdrop");
+        const std::size_t componentBackground = luaWidget.find(
+            "SafeRenderBackgroundLayer(", materialPass);
+        const std::size_t materialOverlay = luaWidget.find(
+            "&backgroundEffects, false", componentBackground);
+        const std::size_t widgetForeground = luaWidget.find(
+            "SafeRenderWidget(", materialOverlay);
+        Check(materialPass != std::string::npos &&
+                componentBackground != std::string::npos &&
+                materialOverlay != std::string::npos &&
+                widgetForeground != std::string::npos &&
+                materialPass < componentBackground &&
+                componentBackground < materialOverlay &&
+                materialOverlay < widgetForeground,
+            "Lua background layers must render after the material tint and before acrylic, border, and widget foreground content");
         Check(pointer.find(
                 "NeedsWidgetSurfaceRefresh(visual.layer)") !=
                 std::string::npos &&

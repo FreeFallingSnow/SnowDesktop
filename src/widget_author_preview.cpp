@@ -412,7 +412,8 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
 }
 
 void DrawHostBackground(ID2D1DeviceContext* context,
-    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale)
+    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale,
+    bool drawMaterial, bool drawOverlay)
 {
     const LuaWidgetTheme& theme = resolved.theme;
     const auto color = [](int rgb, float alpha) {
@@ -435,16 +436,16 @@ void DrawHostBackground(ID2D1DeviceContext* context,
             static_cast<float>(bounds.top),
             static_cast<float>(bounds.right),
             static_cast<float>(bounds.bottom)), radius, radius);
-    if (theme.alpha > 0.0f)
+    if (drawMaterial && theme.alpha > 0.0f)
         context->FillRoundedRectangle(rounded, fill.Get());
-    if (resolved.material.glassEnabled &&
+    if (drawOverlay && resolved.material.glassEnabled &&
         resolved.material.acrylicEnabled)
     {
         snowdesktop::widget_preview::DrawAcrylicNoise(
             context, bounds, radius,
             resolved.material.contentTheme == 1);
     }
-    if (theme.borderAlpha > 0.0f)
+    if (drawOverlay && theme.borderAlpha > 0.0f)
     {
         const float strokeWidth = std::clamp(
             resolved.material.widgetBorderWidth,
@@ -804,14 +805,26 @@ PreviewRenderResult RenderWidgetPreview(
                     resolvedStyle.theme.cornerRadius * dpiScale) }, {},
             background.pixels.empty() ? nullptr : &background);
     }
-    (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
-        context.Get(), componentBounds, request.columns, request.rows,
-        resolvedStyle.material.glassEnabled
-            ? resolvedStyle.material.glassBlurRadius : 0.0f,
-        std::max(0.0f,
-            resolvedStyle.theme.cornerRadius * dpiScale));
-    DrawHostBackground(
-        context.Get(), resolvedStyle, componentBounds, dpiScale);
+    const bool hasBackgroundLayer =
+        engine.HasBackgroundLayer(kPreviewWidgetId);
+    if (hasBackgroundLayer)
+    {
+        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+            dpiScale, true, false);
+        (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
+            context.Get(), componentBounds, request.columns, request.rows,
+            resolvedStyle.material.glassEnabled
+                ? resolvedStyle.material.glassBlurRadius : 0.0f,
+            std::max(0.0f,
+                resolvedStyle.theme.cornerRadius * dpiScale));
+        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+            dpiScale, false, true);
+    }
+    else
+    {
+        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+            dpiScale, true, true);
+    }
     engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
         request.columns, request.rows);
     DrawHostEdgeHighlight(

@@ -639,6 +639,7 @@ struct LuaWidget
     bool valid = false;                  ///< 是否已成功加载且可执行
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
+    bool hasBackgroundLayer = false;     ///< 是否声明桌面装饰背景层
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     LuaWidgetPreviewDataState previewDataState =
         LuaWidgetPreviewDataState::Ready; ///< 作者预览的确定性数据状态
@@ -952,7 +953,7 @@ public:
      */
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
-    /** Render the optional decorative layer below the host material. */
+    /** Render the optional decorative layer above the host material tint. */
     bool RenderWidgetBackgroundLayer(const std::wstring& widgetId,
         ID2D1DeviceContext* context, RECT bounds, int columns, int rows,
         float inheritedBlurRadius, float cornerRadius);
@@ -984,6 +985,8 @@ public:
      * @return 启用了自定义主题返回 true，否则返回 false
      */
     bool HasCustomStyle(const std::wstring& widgetId) const;
+    /** Return whether the loaded widget declares a desktop background layer. */
+    bool HasBackgroundLayer(const std::wstring& widgetId) const;
 
     /**
      * @brief 触发小部件的打开回调

@@ -15556,6 +15556,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         followPersonalizationDefault = lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
 
+    lua_getfield(state, -1, "backgroundLayer");
+    const bool hasBackgroundLayer = lua_istable(state, -1);
+    lua_pop(state, 1);
+
     std::vector<LuaWidgetManifest::Setting> scriptSettings;
     std::vector<LuaWidgetManifest::SettingGroup> scriptSettingGroups;
     std::vector<LuaWidgetManifest::SettingPreset> scriptPresets;
@@ -15718,6 +15722,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.valid = true;
     w.customStyle = customStyle;
     w.followPersonalizationDefault = followPersonalizationDefault;
+    w.hasBackgroundLayer = hasBackgroundLayer;
     if (preview && previewConfiguration)
     {
         w.theme = previewConfiguration->theme;
@@ -20816,6 +20821,12 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& widgetId) const
 {
     int idx = FindWidget(widgetId);
     return idx >= 0 && widgets_[idx].customStyle;
+}
+
+bool WidgetEngine::HasBackgroundLayer(const std::wstring& widgetId) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 && widgets_[index].hasBackgroundLayer;
 }
 
 void WidgetEngine::InvokeOpen(

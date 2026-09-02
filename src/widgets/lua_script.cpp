@@ -384,21 +384,41 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const float configuredStroke = std::clamp(
         effectSettings.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    if (engine && widgetOk)
+    PersonalizationSettings backgroundEffects = effectSettings;
+    backgroundEffects.widgetEdgeHighlightEnabled = false;
+    const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
+    const float panelStroke = selected
+        ? std::max(1.6f, configuredStroke) : configuredStroke;
+    const bool hasBackgroundLayer = engine && widgetOk &&
+        engine->HasBackgroundLayer(data_->id);
+    if (hasBackgroundLayer)
     {
+        PersonalizationSettings materialEffects = backgroundEffects;
+        materialEffects.acrylicEnabled = false;
+        D2D1_COLOR_F transparentBorder = borderColor;
+        transparentBorder.a = 0.0f;
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            fillColor, transparentBorder, false, panelStroke,
+            &materialEffects, !preview && registerBackdrop);
+
         const float inheritedBlurRadius = effectSettings.glassEnabled
             ? effectSettings.glassBlurRadius : 0.0f;
         (void)SafeRenderBackgroundLayer(data_->id, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows,
-            inheritedBlurRadius, static_cast<float>(Cu(cornerRadiusCu)));
+            inheritedBlurRadius, panelRadius);
+
+        D2D1_COLOR_F transparentFill = fillColor;
+        transparentFill.a = 0.0f;
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            transparentFill, borderColor, selected, panelStroke,
+            &backgroundEffects, false);
     }
-    PersonalizationSettings backgroundEffects = effectSettings;
-    backgroundEffects.widgetEdgeHighlightEnabled = false;
-    app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
-        fillColor, borderColor, selected,
-        selected ? std::max(1.6f, configuredStroke) : configuredStroke,
-        &backgroundEffects,
-        !preview && registerBackdrop);
+    else
+    {
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            fillColor, borderColor, selected, panelStroke,
+            &backgroundEffects, !preview && registerBackdrop);
+    }
 
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)

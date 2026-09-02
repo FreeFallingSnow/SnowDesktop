@@ -185,9 +185,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `backgroundLayer={render,opacity?,blurRadius?}` 要求 feature `widget.backgroundLayer`，只为
   desktop surface 绘制非交互装饰层。它复用现有 `draw.*` 图元和图片句柄，但不能注册
   `interaction.region` 或原生 marquee。宿主将其离屏录制并按圆角裁切，合成顺序为原生
-  backdrop、组件背景层、宿主材质/噪点/边框、前景 `view`/`render`。`opacity` 默认为 1，
+  backdrop、宿主材质色调、组件背景层、亚克力噪点/外轮廓、前景 `view`/`render` 和最终
+  边缘高光。组件背景不会被主题色调再次覆盖；其透明像素仍会露出主题材质。`opacity` 默认为 1，
   范围为 0–1；`blurRadius` 显式范围为 0–48，省略时在玻璃开启时继承宿主半径，关闭玻璃时
-  为 0。关闭玻璃并将材质 `alpha` 设为 0，可让该层直接构成组件表面。
+  为 0。
   `panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`

@@ -570,7 +570,7 @@ std::filesystem::path CreateBackgroundLayerFixture(
   "entry": "main.lua",
   "minHostVersion": "1.0.5.0",
   "name": "Preview background layer fixture",
-  "description": "Validates below-material component drawing.",
+  "description": "Validates component background drawing above material tint.",
   "author": "SnowDesktop",
   "license": "MIT",
   "defaultSize": {"columns": 2, "rows": 1},
@@ -699,11 +699,11 @@ int wmain(int argc, wchar_t** argv)
             "background layer preview remains opaque over the stage");
     const auto materialPixel = PixelAt(backgroundLayer, 24, 58);
     const auto foregroundPixel = PixelAt(backgroundLayer, 96, 58);
-    Check(materialPixel[0] >= 100 && materialPixel[0] <= 150 &&
-            materialPixel[1] < 32 && materialPixel[2] < 32 &&
+    Check(materialPixel[0] > 240 &&
+            materialPixel[1] < 16 && materialPixel[2] < 16 &&
             foregroundPixel[0] < 32 && foregroundPixel[1] > 220 &&
             foregroundPixel[2] < 32,
-        "background is tinted by host material while foreground remains above it");
+        "component background preserves its color above the material tint while foreground remains above it");
 
     const auto inheritedBlurOutput =
         temporary.path / L"background-layer-inherited-blur.png";

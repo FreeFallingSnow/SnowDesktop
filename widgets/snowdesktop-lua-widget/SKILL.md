@@ -134,7 +134,8 @@ By default:
   requires an independent material.
 - Use `backgroundLayer={render=...}` with required feature
   `widget.backgroundLayer` when a component deliberately needs images, color
-  blocks, gradients or paths below the host material. The callback is
+  blocks, gradients or paths above the host material tint and below foreground
+  content. The callback is
   decorative, desktop-only and cannot register interactions or native
   marquees. Full-surface drawing is expected inside this callback.
 - Do not draw a full-surface `draw.rect`, `draw.gradientRect`, image or view

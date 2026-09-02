@@ -642,7 +642,7 @@
 ---@alias SnowMenuModel SnowMenuItem[]
 
 ---@class SnowWidgetBackgroundLayer
----@field render fun(context: SnowWidgetContext, model: any) Draws a decorative, non-interactive desktop layer below the host material with the immediate draw API.
+---@field render fun(context: SnowWidgetContext, model: any) Draws a decorative, non-interactive desktop layer above the host material tint and below foreground content with the immediate draw API.
 ---@field opacity? number Composited opacity from 0..1; defaults to 1.
 ---@field blurRadius? number Explicit host-scaled blur radius from 0..48. Omit to inherit the glass material radius, or zero when glass is disabled.
 
@@ -650,7 +650,7 @@
 ---@field name? string
 ---@field render? fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2.
 ---@field view? fun(context: SnowWidgetContext, model: any): SnowViewNode Exactly one of view or render is required; requires view.tree.core for the current node subset.
----@field backgroundLayer? SnowWidgetBackgroundLayer Optional decorative desktop background below the host material; requires widget.backgroundLayer and can coexist with render or view.
+---@field backgroundLayer? SnowWidgetBackgroundLayer Optional decorative desktop background above the host material tint and below foreground content; requires widget.backgroundLayer and can coexist with render or view.
 ---@field panel? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the host-owned auxiliary panel surface opened with widget.openPanel. Return a declarative view after probing view.surface.panel, or nil for immediate drawing.
 ---@field dialog? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the non-blocking modal surface opened with widget.openDialog. Return a declarative view after probing view.surface.dialog, or nil for immediate drawing.
 ---@field popover? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the element-anchored surface opened with widget.openPopover. Return a declarative view after probing view.surface.popover, or nil for immediate drawing.
