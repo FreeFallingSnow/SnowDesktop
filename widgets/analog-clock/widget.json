@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Analog Clock",
   "nameKey": "lua_widget.analog_clock.name",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Displays a responsive analog clock.",
   "descriptionKey": "lua_widget.analog_clock.description",
   "locales": {
@@ -18,6 +18,9 @@
       "lua_widget.analog_clock.name": "指针时钟",
       "lua_widget.analog_clock.description": "显示可响应组件尺寸的指针时钟。",
       "lua_widget.analog_clock.preset_transparent": "透明表盘",
+      "lua_widget.analog_clock.face_theme": "表盘主题",
+      "lua_widget.analog_clock.theme_light": "浅色",
+      "lua_widget.analog_clock.theme_dark": "深色",
       "lua_widget.analog_clock.show_second_hand": "显示秒针",
       "lua_widget.analog_clock.show_numbers": "显示数字"
     },
@@ -25,6 +28,9 @@
       "lua_widget.analog_clock.name": "Analog Clock",
       "lua_widget.analog_clock.description": "Displays a responsive analog clock.",
       "lua_widget.analog_clock.preset_transparent": "Transparent Face",
+      "lua_widget.analog_clock.face_theme": "Clock Face Theme",
+      "lua_widget.analog_clock.theme_light": "Light",
+      "lua_widget.analog_clock.theme_dark": "Dark",
       "lua_widget.analog_clock.show_second_hand": "Show Second Hand",
       "lua_widget.analog_clock.show_numbers": "Show Numbers"
     },
@@ -32,6 +38,9 @@
       "lua_widget.analog_clock.name": "指針時鐘",
       "lua_widget.analog_clock.description": "顯示可隨元件大小調整的指針時鐘。",
       "lua_widget.analog_clock.preset_transparent": "透明錶盤",
+      "lua_widget.analog_clock.face_theme": "錶盤主題",
+      "lua_widget.analog_clock.theme_light": "淺色",
+      "lua_widget.analog_clock.theme_dark": "深色",
       "lua_widget.analog_clock.show_second_hand": "顯示秒針",
       "lua_widget.analog_clock.show_numbers": "顯示數字"
     },
@@ -39,6 +48,9 @@
       "lua_widget.analog_clock.name": "アナログ時計",
       "lua_widget.analog_clock.description": "応答性の高いアナログ時計を表示します。",
       "lua_widget.analog_clock.preset_transparent": "透明面",
+      "lua_widget.analog_clock.face_theme": "文字盤テーマ",
+      "lua_widget.analog_clock.theme_light": "ライト",
+      "lua_widget.analog_clock.theme_dark": "ダーク",
       "lua_widget.analog_clock.show_second_hand": "秒針を表示",
       "lua_widget.analog_clock.show_numbers": "番号を表示"
     },
@@ -46,6 +58,9 @@
       "lua_widget.analog_clock.name": "아날로그 시계",
       "lua_widget.analog_clock.description": "반응형 아날로그 시계를 표시합니다.",
       "lua_widget.analog_clock.preset_transparent": "투명 페이스",
+      "lua_widget.analog_clock.face_theme": "시계판 테마",
+      "lua_widget.analog_clock.theme_light": "밝은색",
+      "lua_widget.analog_clock.theme_dark": "어두운색",
       "lua_widget.analog_clock.show_second_hand": "초침 표시",
       "lua_widget.analog_clock.show_numbers": "숫자 표시"
     },
@@ -53,6 +68,9 @@
       "lua_widget.analog_clock.name": "Analoguhr",
       "lua_widget.analog_clock.description": "Zeigt eine analoge Uhr mit anpassbarer Größe an.",
       "lua_widget.analog_clock.preset_transparent": "Transparentes Zifferblatt",
+      "lua_widget.analog_clock.face_theme": "Zifferblattdesign",
+      "lua_widget.analog_clock.theme_light": "Hell",
+      "lua_widget.analog_clock.theme_dark": "Dunkel",
       "lua_widget.analog_clock.show_second_hand": "Sekundenzeiger anzeigen",
       "lua_widget.analog_clock.show_numbers": "Zahlen anzeigen"
     },
@@ -60,6 +78,9 @@
       "lua_widget.analog_clock.name": "Horloge analogique",
       "lua_widget.analog_clock.description": "Affiche une horloge analogique réactive.",
       "lua_widget.analog_clock.preset_transparent": "Face transparente",
+      "lua_widget.analog_clock.face_theme": "Thème du cadran",
+      "lua_widget.analog_clock.theme_light": "Clair",
+      "lua_widget.analog_clock.theme_dark": "Sombre",
       "lua_widget.analog_clock.show_second_hand": "Afficher la trotteuse",
       "lua_widget.analog_clock.show_numbers": "Afficher les chiffres"
     },
@@ -67,6 +88,9 @@
       "lua_widget.analog_clock.name": "Reloj analógico",
       "lua_widget.analog_clock.description": "Muestra un reloj analógico adaptable.",
       "lua_widget.analog_clock.preset_transparent": "Cara transparente",
+      "lua_widget.analog_clock.face_theme": "Tema de la esfera",
+      "lua_widget.analog_clock.theme_light": "Claro",
+      "lua_widget.analog_clock.theme_dark": "Oscuro",
       "lua_widget.analog_clock.show_second_hand": "Mostrar segundero",
       "lua_widget.analog_clock.show_numbers": "Mostrar números"
     },
@@ -74,6 +98,9 @@
       "lua_widget.analog_clock.name": "Reloj analógico",
       "lua_widget.analog_clock.description": "Muestra un reloj analógico receptivo.",
       "lua_widget.analog_clock.preset_transparent": "Cara transparente",
+      "lua_widget.analog_clock.face_theme": "Tema de la esfera",
+      "lua_widget.analog_clock.theme_light": "Claro",
+      "lua_widget.analog_clock.theme_dark": "Oscuro",
       "lua_widget.analog_clock.show_second_hand": "Mostrar segundero",
       "lua_widget.analog_clock.show_numbers": "Mostrar números"
     },
@@ -81,6 +108,9 @@
       "lua_widget.analog_clock.name": "Relógio Analógico",
       "lua_widget.analog_clock.description": "Exibe um relógio analógico responsivo.",
     "lua_widget.analog_clock.preset_transparent": "Mostrador transparente",
+    "lua_widget.analog_clock.face_theme": "Tema do mostrador",
+    "lua_widget.analog_clock.theme_light": "Claro",
+    "lua_widget.analog_clock.theme_dark": "Escuro",
     "lua_widget.analog_clock.show_second_hand": "Mostrar ponteiro dos segundos",
     "lua_widget.analog_clock.show_numbers": "Mostrar números"
     }

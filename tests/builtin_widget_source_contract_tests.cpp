@@ -555,8 +555,8 @@ void TestAudioAnalysisSubscriptionOptions(const fs::path& repository)
 
 void TestBuiltinWidgetForegroundThemes(const fs::path& repository)
 {
-    static constexpr std::array<std::string_view, 11> packages = {
-        "agenda", "analog-clock", "digital-clock", "media-controls",
+    static constexpr std::array<std::string_view, 10> packages = {
+        "agenda", "digital-clock", "media-controls",
         "month-calendar", "pomodoro", "quick-launcher", "reminders",
         "rss-reader", "sticky-note", "system-monitor"
     };
@@ -591,12 +591,14 @@ void TestBuiltinWidgetForegroundThemes(const fs::path& repository)
 
     const std::string analog = ReadFile(
         repository / "widgets" / "analog-clock" / "main.lua");
-    Check(analog.find("theme.contentTheme == 1") != std::string::npos &&
-            analog.find("lightForeground") != std::string::npos &&
-            analog.find("darkForeground") != std::string::npos &&
-            analog.find("colors.number") != std::string::npos &&
-            analog.find("colors.hourHand") != std::string::npos,
-        "analog clock dial content must follow both resolved foreground themes");
+    Check(analog.find("contentTheme") == std::string::npos &&
+            analog.find("key = \"faceTheme\"") != std::string::npos &&
+            analog.find("default = \"light\"") != std::string::npos &&
+            analog.find("storage.get(\"faceTheme\")") !=
+                std::string::npos &&
+            analog.find("palettes.dark") != std::string::npos &&
+            analog.find("palettes.light") != std::string::npos,
+        "analog-clock face theme must be user-selected and default to light");
 }
 
 void TestAllBuiltinWidgetsUseV2(const fs::path& repository)

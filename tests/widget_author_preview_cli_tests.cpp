@@ -639,36 +639,65 @@ int wmain(int argc, wchar_t** argv)
     CheckPng(output);
     const RgbaBitmap customDark = CheckOpaquePreview(output, 288, 360);
 
-    const auto lightForegroundOutput =
-        temporary.path / L"analog-clock-light-foreground.png";
-    const auto darkForegroundOutput =
-        temporary.path / L"analog-clock-dark-foreground.png";
-    const auto [lightForegroundExit, lightForegroundJson] = Run(snowwidget, {
-        L"preview", source.wstring(), lightForegroundOutput.wstring(),
+    const auto defaultLightGlobalLightOutput =
+        temporary.path / L"analog-clock-default-light-global-light.png";
+    const auto defaultLightGlobalDarkOutput =
+        temporary.path / L"analog-clock-default-light-global-dark.png";
+    const auto userDarkGlobalLightOutput =
+        temporary.path / L"analog-clock-user-dark-global-light.png";
+    const auto userDarkGlobalDarkOutput =
+        temporary.path / L"analog-clock-user-dark-global-dark.png";
+    const auto [defaultLightGlobalLightExit,
+        defaultLightGlobalLightJson] = Run(snowwidget, {
+        L"preview", source.wstring(), defaultLightGlobalLightOutput.wstring(),
         L"--appearance", L"acrylic-light", L"--storage",
         L"followPersonalization=0", L"--storage", L"__contentTheme=0",
         L"--host", host.wstring() });
-    const auto [darkForegroundExit, darkForegroundJson] = Run(snowwidget, {
-        L"preview", source.wstring(), darkForegroundOutput.wstring(),
+    const auto [defaultLightGlobalDarkExit,
+        defaultLightGlobalDarkJson] = Run(snowwidget, {
+        L"preview", source.wstring(), defaultLightGlobalDarkOutput.wstring(),
         L"--appearance", L"acrylic-light", L"--storage",
         L"followPersonalization=0", L"--storage", L"__contentTheme=1",
         L"--host", host.wstring() });
-    Check(lightForegroundExit == 0 && darkForegroundExit == 0 &&
-            lightForegroundJson.find("\"ok\":true") !=
+    const auto [userDarkGlobalLightExit, userDarkGlobalLightJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), userDarkGlobalLightOutput.wstring(),
+            L"--appearance", L"acrylic-light", L"--storage",
+            L"followPersonalization=0", L"--storage", L"__contentTheme=0",
+            L"--storage", L"faceTheme=dark", L"--host", host.wstring() });
+    const auto [userDarkGlobalDarkExit, userDarkGlobalDarkJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), userDarkGlobalDarkOutput.wstring(),
+            L"--appearance", L"acrylic-light", L"--storage",
+            L"followPersonalization=0", L"--storage", L"__contentTheme=1",
+            L"--storage", L"faceTheme=dark", L"--host", host.wstring() });
+    const RgbaBitmap defaultLightGlobalLight =
+        CheckOpaquePreview(defaultLightGlobalLightOutput, 192, 240);
+    const RgbaBitmap defaultLightGlobalDark =
+        CheckOpaquePreview(defaultLightGlobalDarkOutput, 192, 240);
+    const RgbaBitmap userDarkGlobalLight =
+        CheckOpaquePreview(userDarkGlobalLightOutput, 192, 240);
+    const RgbaBitmap userDarkGlobalDark =
+        CheckOpaquePreview(userDarkGlobalDarkOutput, 192, 240);
+    Check(defaultLightGlobalLightExit == 0 &&
+            defaultLightGlobalDarkExit == 0 &&
+            userDarkGlobalLightExit == 0 && userDarkGlobalDarkExit == 0 &&
+            defaultLightGlobalLightJson.find("\"ok\":true") !=
                 std::string::npos &&
-            lightForegroundJson.find("\"contentTheme\":0") !=
+            defaultLightGlobalLightJson.find("\"contentTheme\":0") !=
                 std::string::npos &&
-            lightForegroundJson.find("\"foregroundTheme\":\"light\"") !=
+            defaultLightGlobalDarkJson.find("\"contentTheme\":1") !=
                 std::string::npos &&
-            darkForegroundJson.find("\"ok\":true") !=
+            userDarkGlobalLightJson.find("\"contentTheme\":0") !=
                 std::string::npos &&
-            darkForegroundJson.find("\"contentTheme\":1") !=
+            userDarkGlobalDarkJson.find("\"contentTheme\":1") !=
                 std::string::npos &&
-            darkForegroundJson.find("\"foregroundTheme\":\"dark\"") !=
-                std::string::npos &&
-            CheckOpaquePreview(lightForegroundOutput, 192, 240).pixels !=
-                CheckOpaquePreview(darkForegroundOutput, 192, 240).pixels,
-        "custom foreground themes render independently of preview material");
+            defaultLightGlobalLight.pixels ==
+                defaultLightGlobalDark.pixels &&
+            userDarkGlobalLight.pixels == userDarkGlobalDark.pixels &&
+            defaultLightGlobalLight.pixels != userDarkGlobalLight.pixels,
+        "analog-clock face theme is user-selected and independent of the "
+        "preview foreground theme");
 
     const auto customGlassOutput =
         temporary.path / L"analog-clock-custom-glass.png";

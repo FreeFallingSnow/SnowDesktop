@@ -15,13 +15,24 @@ local settings = {
         }
     },
     fields = {
+        {
+            key = "faceTheme",
+            label = l10n.tr("lua_widget.analog_clock.face_theme"),
+            type = "select",
+            default = "light",
+            options = { "light", "dark" },
+            optionLabels = {
+                l10n.tr("lua_widget.analog_clock.theme_light"),
+                l10n.tr("lua_widget.analog_clock.theme_dark"),
+            },
+        },
         { key = "showSecondHand", label = l10n.tr("lua_widget.analog_clock.show_second_hand"), type = "bool", default = true },
         { key = "showNumbers", label = l10n.tr("lua_widget.analog_clock.show_numbers"), type = "bool", default = true },
     }
 }
 
 local palettes = {
-    lightForeground = {
+    dark = {
         shadow = 0x000000,
         outer = 0x334155,
         face = 0x111827,
@@ -36,7 +47,7 @@ local palettes = {
         capOuter = 0x0F172A,
         capInner = 0xF8FAFC,
     },
-    darkForeground = {
+    light = {
         shadow = 0x000000,
         outer = 0xD7DEE8,
         face = 0xFFFFFF,
@@ -54,11 +65,8 @@ local palettes = {
 }
 
 local function palette()
-    local theme = widget.theme()
-    if theme and theme.contentTheme == 1 then
-        return palettes.darkForeground
-    end
-    return palettes.lightForeground
+    local faceTheme = storage.get("faceTheme")
+    return faceTheme == "dark" and palettes.dark or palettes.light
 end
 
 local function setup()
