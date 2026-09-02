@@ -350,26 +350,25 @@ local function menu(_context, _model, request)
     if request.id ~= "rss.menu" then return nil end
     local articleUrl = request.value and tostring(request.value) or nil
     local canOpen = widget.hasPermission("shell.launch")
+    local items = {}
     if articleUrl and articleUrl ~= "" then
-        return ui.menu({
-            { id = "rss.open",
-                label = l10n.tr("lua_widget.rss_reader.open_article"),
-                icon = fluent.open, iconFont = "fluent",
-                enabled = canOpen },
-        })
+        items[#items + 1] = { id = "rss.open",
+            label = l10n.tr("lua_widget.rss_reader.open_article"),
+            icon = fluent.open, iconFont = "fluent", enabled = canOpen }
+        items[#items + 1] = { type = "separator" }
     end
-    local items = {
-        { id = "rss.refresh",
-            label = l10n.tr("lua_widget.rss_reader.refresh_now"),
-            icon = fluent.refresh, iconFont = "fluent" },
-        { id = "rss.clear",
+    items[#items + 1] = { id = "rss.refresh",
+        label = l10n.tr("lua_widget.rss_reader.refresh_now"),
+        icon = fluent.refresh, iconFont = "fluent" }
+    if not articleUrl or articleUrl == "" then
+        items[#items + 1] = { id = "rss.clear",
             label = l10n.tr("lua_widget.rss_reader.clear_cache"),
-            icon = fluent.clear, iconFont = "fluent" },
-    }
-    items[#items + 1] = { type = "separator" }
-    items[#items + 1] = { id = "rss.openSource",
-        label = l10n.tr("lua_widget.rss_reader.open_source"),
-        icon = fluent.open, iconFont = "fluent", enabled = canOpen }
+            icon = fluent.clear, iconFont = "fluent" }
+        items[#items + 1] = { type = "separator" }
+        items[#items + 1] = { id = "rss.openSource",
+            label = l10n.tr("lua_widget.rss_reader.open_source"),
+            icon = fluent.open, iconFont = "fluent", enabled = canOpen }
+    end
     return ui.menu(items)
 end
 
