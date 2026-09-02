@@ -7,6 +7,7 @@ local audioAnalysis
 local RECORD_FRAME = "aurora.record.spin"
 local PROGRESS_TICK = "aurora.timeline.tick"
 local PROGRESS_TICK_MS = 100
+local MEDIA_REFRESH_MS = 100
 
 local glyphs = {
     previous = utf8.char(0xF048),
@@ -85,15 +86,15 @@ end
 
 local function setup(context)
     mediaCurrent = data.subscribe("media.current", {
-        maxAgeMs = 500,
+        maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
     })
     mediaArtwork = data.subscribe("media.artwork", {
-        maxAgeMs = 500,
+        maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
     })
     mediaTimeline = data.subscribe("media.timeline", {
-        maxAgeMs = 250,
+        maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
     })
 
