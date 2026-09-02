@@ -928,6 +928,14 @@ HRESULT DesktopApp::HandleOleDrop(
     {
         // ── Handoff on item (desktop OR widget member) ──
         Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+        auto* targetDesktopIcon =
+            dynamic_cast<DesktopIcon*>(targetItem);
+        DesktopItem* targetDesktopItem = targetDesktopIcon
+            ? targetDesktopIcon->GetDesktopItem() : nullptr;
+        const bool recycleBinTarget = targetDesktopItem &&
+            _wcsicmp(
+                targetDesktopItem->desktopIconClsid.c_str(),
+                kDesktopIconClsidRecycleBin) == 0;
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
                 dragSession_.TargetContainer(),
@@ -943,6 +951,26 @@ HRESULT DesktopApp::HandleOleDrop(
         const DWORD targetAttributes = targetPath.empty()
             ? INVALID_FILE_ATTRIBUTES
             : GetFileAttributesW(targetPath.c_str());
+        if (recycleBinTarget && !dropPaths.empty())
+        {
+            const bool queued = QueueShellFileOperation(
+                snowdesktop::CreateRecycleBinDeleteRequest(
+                    std::move(dropPaths)),
+                [this](bool succeeded) {
+                    if (!succeeded)
+                    {
+                        MessageBeep(MB_ICONWARNING);
+                        return;
+                    }
+                    ReloadItems(false);
+                    CheckRecycleBinStatus();
+                });
+            *effect = queued
+                ? DROPEFFECT_MOVE
+                : DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
+        }
         if (dropPaths.empty() && !fileUrlReference &&
             !targetPath.empty() &&
             QueueAsyncShellDrop(

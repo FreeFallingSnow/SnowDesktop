@@ -461,6 +461,24 @@ bool TryGetDropEffectData(IDataObject* dataObject, DWORD& effect)
 
 } // namespace
 
+ShellFileOperationRequest CreateRecycleBinDeleteRequest(
+    std::vector<std::wstring> sources)
+{
+    ShellFileOperationRequest request;
+    if (sources.empty())
+        return request;
+
+    request.steps.push_back({
+        FO_DELETE,
+        std::move(sources),
+        {},
+        static_cast<FILEOP_FLAGS>(
+            FOF_ALLOWUNDO |
+            FOF_NOCONFIRMATION |
+            FOF_WANTNUKEWARNING) });
+    return request;
+}
+
 ShellFileOperationWorker::~ShellFileOperationWorker()
 {
     Stop();

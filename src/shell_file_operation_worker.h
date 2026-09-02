@@ -51,6 +51,15 @@ struct ShellFileOperationRequest
     std::vector<ShellShortcutOperationStep> shortcuts;
 };
 
+/**
+ * @brief Build a recoverable delete request for path-backed Recycle Bin drops.
+ *
+ * The permanent-delete warning remains enabled for paths that the Shell cannot
+ * place in the Recycle Bin (for example, unsupported volumes).
+ */
+ShellFileOperationRequest CreateRecycleBinDeleteRequest(
+    std::vector<std::wstring> sources);
+
 /** @brief Path-backed Shell IDropTarget handoff executed on the worker STA. */
 struct ShellDropRequest
 {

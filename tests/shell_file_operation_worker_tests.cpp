@@ -109,6 +109,21 @@ int wmain()
     constexpr FILEOP_FLAGS kTestFlags =
         FOF_SILENT | FOF_NOCONFIRMATION |
         FOF_NOERRORUI | FOF_NOCONFIRMMKDIR;
+    const std::vector<std::wstring> recycleSources = {
+        (sourceDirectory / L"recycle-one.txt").wstring(),
+        (sourceDirectory / L"recycle-two.txt").wstring() };
+    const auto recycleRequest =
+        snowdesktop::CreateRecycleBinDeleteRequest(recycleSources);
+    Expect(recycleRequest.steps.size() == 1 &&
+            recycleRequest.steps[0].function == FO_DELETE &&
+            recycleRequest.steps[0].sources == recycleSources &&
+            recycleRequest.steps[0].destination.empty(),
+        "Recycle Bin drops build one path-backed delete operation");
+    Expect((recycleRequest.steps[0].flags & FOF_ALLOWUNDO) != 0 &&
+            (recycleRequest.steps[0].flags & FOF_WANTNUKEWARNING) != 0,
+        "Recycle Bin deletes stay recoverable and warn before permanent deletion");
+    Expect(snowdesktop::CreateRecycleBinDeleteRequest({}).steps.empty(),
+        "an empty Recycle Bin drop does not create a delete operation");
     snowdesktop::ShellFileOperationRequest copyRequest;
     copyRequest.steps.push_back({
         FO_COPY,
