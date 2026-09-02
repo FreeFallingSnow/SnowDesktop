@@ -139,7 +139,6 @@ local function palette(context)
             cover = light and 0xE5E5E5 or 0x202020,
             record = light and 0x000000 or 0xFFFFFF,
             groove = light and 0xFFFFFF or 0x000000,
-            spindle = light and 0xFFFFFF or 0x000000,
         }
     end
     local theme = widget.theme()
@@ -156,7 +155,6 @@ local function palette(context)
             cover = 0x4338CA,
             record = 0x111827,
             groove = 0x94A3B8,
-            spindle = 0xF8FAFC,
         }
     end
     return {
@@ -171,7 +169,6 @@ local function palette(context)
         cover = 0x3730A3,
         record = 0x080A0F,
         groove = 0x64748B,
-        spindle = 0xE2E8F0,
     }
 end
 
@@ -188,9 +185,9 @@ local function backgroundLayer(context, model)
     draw.imageFit(artwork, 0, 0, width, height,
         "cover", "center", 0.92, "linear")
     draw.gradientRect(0, 0, width, height,
-        0x070A17, 0x11152A, "horizontal", 0, 0.72)
+        0x070A17, 0x11152A, "horizontal", 0, 0.62)
     draw.gradientRect(0, height * 0.38, width, height * 0.62,
-        0x11152A, 0x050713, "vertical", 0, 0.46)
+        0x11152A, 0x050713, "vertical", 0, 0.36)
 end
 
 local function startTask(model, name, arguments, pendingPlayback)
@@ -247,14 +244,13 @@ local function controlButton(key, glyph, label, enabled, colors, primary)
     })
 end
 
-local function recordSurface(key, size, style)
-    return view.column({
+local function recordCircle(key, size, style)
+    return view.shape({
         key = key,
+        shape = "circle",
         width = size,
         height = size,
         alignSelf = "center",
-        alignItems = "center",
-        justifyContent = "center",
         style = style,
     })
 end
@@ -262,24 +258,21 @@ end
 local function coverNode(artwork, size, colors, rotation)
     local labelSize = size * 0.64
     local children = {
-        recordSurface("aurora.record.disc", size, {
+        recordCircle("aurora.record.disc", size, {
             background = colors.record,
-            borderColor = colors.primary,
-            borderWidth = layout.cu(1),
-            cornerRadius = size * 0.5,
-            opacity = 0.96,
-        }),
-        recordSurface("aurora.record.groove.outer", size * 0.86, {
             borderColor = colors.groove,
             borderWidth = layout.cu(1),
-            cornerRadius = size * 0.43,
-            opacity = 0.38,
+            opacity = 0.98,
         }),
-        recordSurface("aurora.record.groove.inner", size * 0.76, {
+        recordCircle("aurora.record.groove.outer", size * 0.84, {
             borderColor = colors.groove,
             borderWidth = layout.cu(1),
-            cornerRadius = size * 0.38,
-            opacity = 0.24,
+            opacity = 0.28,
+        }),
+        recordCircle("aurora.record.groove.inner", size * 0.74, {
+            borderColor = colors.groove,
+            borderWidth = layout.cu(1),
+            opacity = 0.16,
         }),
     }
     if artwork then
@@ -298,8 +291,6 @@ local function coverNode(artwork, size, colors, rotation)
             },
             style = {
                 cornerRadius = labelSize * 0.5,
-                borderColor = colors.primary,
-                borderWidth = layout.cu(1),
             },
         })
     else
@@ -312,7 +303,7 @@ local function coverNode(artwork, size, colors, rotation)
             justifyContent = "center",
             style = {
                 background = colors.cover,
-                borderColor = colors.primary,
+                borderColor = colors.groove,
                 borderWidth = layout.cu(1),
                 cornerRadius = labelSize * 0.5,
                 opacity = 0.92,
@@ -333,20 +324,6 @@ local function coverNode(artwork, size, colors, rotation)
             },
         })
     end
-    children[#children + 1] = recordSurface("aurora.record.spindle",
-        size * 0.09, {
-            background = colors.record,
-            borderColor = colors.spindle,
-            borderWidth = layout.cu(1),
-            cornerRadius = size * 0.045,
-            opacity = 0.98,
-        })
-    children[#children + 1] = recordSurface("aurora.record.pin",
-        size * 0.025, {
-            background = colors.spindle,
-            cornerRadius = size * 0.0125,
-            opacity = 0.96,
-        })
     return view.stack({
         key = "aurora.record",
         width = size,
@@ -369,8 +346,8 @@ local function visualizerNode(model, colors)
             top = layout.cu(36), bottom = layout.cu(8) },
         min = 0,
         max = 1,
-        fillOpacity = 0.11,
-        style = { foreground = colors.primary, opacity = 0.56 },
+        fillOpacity = 0.26,
+        style = { foreground = colors.primary, opacity = 0.68 },
         accessibility = {
             label = l10n.tr("workshop.aurora_player.visualizer"),
             hidden = true,
@@ -835,7 +812,7 @@ return widget.define({
     backgroundLayer = {
         render = backgroundLayer,
         opacity = 1,
-        blurRadius = 14,
+        blurRadius = 8,
     },
     view = viewTree,
     event = event,

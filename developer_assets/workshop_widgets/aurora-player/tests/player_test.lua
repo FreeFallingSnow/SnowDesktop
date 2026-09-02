@@ -88,7 +88,7 @@ return {
             spectrum = { -1, 0.5, 2, math.huge },
         } }, 8, false)
         assert(#values == 8)
-        assert(values[1] == 0 and values[3] == 0.5)
+        assert(values[1] == 0 and values[3] > 0.8)
         assert(values[5] == 1 and values[7] == 0)
     end,
 

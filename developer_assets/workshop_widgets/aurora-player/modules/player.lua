@@ -145,7 +145,11 @@ function M.spectrum(snapshot, count, preview)
     for index = 1, length do
         local sourceIndex = #source == 0 and 0 or math.max(1,
             math.floor((index - 1) * #source / length) + 1)
-        result[index] = M.clamp(source[sourceIndex], 0, 1, 0)
+        local value = M.clamp(source[sourceIndex], 0, 1, 0)
+        if not preview and value > 0 then
+            value = M.clamp(math.sqrt(value) * 1.15, 0, 1, 0)
+        end
+        result[index] = value
     end
     return result
 end
