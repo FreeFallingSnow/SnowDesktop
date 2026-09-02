@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "../desktop_keyboard_rules.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
 #include "../http_runtime.h"
@@ -294,9 +295,10 @@ void DesktopApp::AttachWindowToDesktopHost(HWND host)
 /**
  * @brief 创建独立的键盘输入窗口。
  *
- * 输入窗口与渲染窗口属于同一个桌面宿主，但仅占 1x1 像素并放置在
- * 宿主客户区之外。它不参与 DirectComposition 渲染，只负责键盘焦点
- * 和全局热键，避免 WS_EX_LAYERED 渲染窗口的输入兼容问题。
+ * 输入窗口是 SnowDesktop 自己拥有的 1x1 顶层工具窗口。它平时位于
+ * 屏幕之外，不参与 DirectComposition 渲染，只负责键盘焦点和全局热键。
+ * 不把它挂成 Explorer 桌面宿主的跨进程子窗口，确保激活窗口与键盘焦点
+ * 属于同一输入队列。
  */
 bool DesktopApp::CreateDesktopInputWindow(HWND host)
 {
@@ -308,9 +310,9 @@ bool DesktopApp::CreateDesktopInputWindow(HWND host)
 
     inputHwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW,
         kInputWindowClassName, L"SnowDesktopInput",
-        WS_CHILD | WS_VISIBLE,
+        WS_POPUP | WS_VISIBLE,
         -32000, -32000, 1, 1,
-        host, nullptr, instance_, this);
+        nullptr, nullptr, instance_, this);
     if (!inputHwnd_)
         return false;
 
@@ -327,19 +329,16 @@ bool DesktopApp::CreateDesktopInputWindow(HWND host)
 }
 
 /**
- * @brief 将独立输入窗口重新挂载到当前桌面宿主。
+ * @brief 保持独立输入窗口为 SnowDesktop 顶层工具窗口。
  */
 void DesktopApp::AttachInputWindowToDesktopHost(HWND host)
 {
     if (!inputHwnd_ || !IsWindow(inputHwnd_) || !host || !IsWindow(host))
         return;
 
-    if (GetParent(inputHwnd_) != host)
-        SetParent(inputHwnd_, host);
-
     LONG_PTR style = GetWindowLongPtrW(inputHwnd_, GWL_STYLE);
-    style &= ~WS_POPUP;
-    style |= WS_CHILD | WS_VISIBLE;
+    style &= ~WS_CHILD;
+    style |= WS_POPUP | WS_VISIBLE;
     SetWindowLongPtrW(inputHwnd_, GWL_STYLE, style);
     SetWindowPos(inputHwnd_, HWND_TOP, -32000, -32000, 1, 1,
         SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
@@ -354,7 +353,7 @@ void DesktopApp::FocusDesktopInputWindow()
         ? inputHwnd_
         : (hwnd_ && IsWindow(hwnd_) ? hwnd_ : nullptr);
     (void)FocusKeyboardWindow(
-        target, false, L"Desktop input proxy");
+        target, true, L"Desktop input proxy");
 }
 
 bool DesktopApp::FocusKeyboardWindow(
@@ -364,51 +363,101 @@ bool DesktopApp::FocusKeyboardWindow(
     if (!target || !IsWindow(target))
         return false;
 
-    const auto requestFocus = [target, requestForeground]() {
+    HWND activationWindow = GetAncestor(target, GA_ROOT);
+    if (!activationWindow)
+        activationWindow = target;
+    const DWORD currentThread = GetCurrentThreadId();
+
+    struct FocusObservation
+    {
+        HWND foreground = nullptr;
+        HWND foregroundFocus = nullptr;
+        DWORD foregroundThread = 0;
+        bool foregroundFocusKnown = false;
+        bool ready = false;
+    };
+    const auto observeFocus = [target, activationWindow,
+                                  currentThread, requestForeground]() {
+        FocusObservation observation;
+        observation.foreground = GetForegroundWindow();
+        observation.foregroundThread = observation.foreground
+            ? GetWindowThreadProcessId(
+                observation.foreground, nullptr)
+            : 0;
+        GUITHREADINFO info{};
+        info.cbSize = sizeof(info);
+        if (observation.foregroundThread != 0 &&
+            GetGUIThreadInfo(
+                observation.foregroundThread, &info))
+        {
+            observation.foregroundFocusKnown = true;
+            observation.foregroundFocus = info.hwndFocus;
+        }
+        else if (observation.foregroundThread == currentThread)
+        {
+            observation.foregroundFocusKnown = true;
+            observation.foregroundFocus = GetFocus();
+        }
+        observation.ready = snowdesktop::desktop_keyboard_rules::
+            IsForegroundFocusReady(
+                observation.foregroundFocusKnown,
+                observation.foregroundFocus == target,
+                requestForeground,
+                observation.foreground == activationWindow);
+        return observation;
+    };
+    const auto requestFocus = [target, activationWindow,
+                                  requestForeground]() {
         if (requestForeground)
         {
             ShowWindow(target, SW_SHOWNOACTIVATE);
-            (void)SetForegroundWindow(target);
-            (void)SetActiveWindow(target);
+            (void)SetForegroundWindow(activationWindow);
+            (void)SetActiveWindow(activationWindow);
         }
         (void)SetFocus(target);
-        return GetFocus() == target &&
-            (!requestForeground ||
-                GetForegroundWindow() == target);
     };
-    if (requestFocus())
+
+    requestFocus();
+    FocusObservation observation = observeFocus();
+    if (observation.ready)
         return true;
 
-    // The desktop render and input HWNDs are children of Explorer's WorkerW.
-    // After a top-level Settings window or another process owned foreground,
-    // SetFocus from SnowDesktop's queue can be rejected even though the
-    // pointer gesture already selected the self-drawn input. Share only the
-    // foreground queue needed for one retry, then always detach.
-    const HWND foreground = GetForegroundWindow();
-    const DWORD foregroundThread = foreground
-        ? GetWindowThreadProcessId(foreground, nullptr)
-        : 0;
-    const DWORD currentThread = GetCurrentThreadId();
-    const bool attached = foregroundThread != 0 &&
-        foregroundThread != currentThread &&
+    // GetFocus only reports the calling thread's queue and can therefore
+    // claim success while Explorer or Settings still owns the foreground
+    // queue receiving physical keyboard input. Retry whenever the observed
+    // foreground queue is different, then validate that queue with
+    // GetGUIThreadInfo instead of trusting the local queue again.
+    const DWORD attachedThread = observation.foregroundThread;
+    const bool shouldAttach =
+        snowdesktop::desktop_keyboard_rules::
+            ShouldAttachForegroundInputQueue(
+                currentThread, attachedThread,
+                observation.ready);
+    const bool attached = shouldAttach &&
         AttachThreadInput(
-            currentThread, foregroundThread, TRUE) != FALSE;
-    bool focused = false;
+            currentThread, attachedThread, TRUE) != FALSE;
     if (attached)
     {
-        focused = requestFocus();
+        requestFocus();
         AttachThreadInput(
-            currentThread, foregroundThread, FALSE);
+            currentThread, attachedThread, FALSE);
     }
-    if (focused)
+    observation = observeFocus();
+    if (observation.ready)
         return true;
 
-    wchar_t message[256]{};
+    wchar_t message[384]{};
     swprintf_s(
         message,
-        L"%ls focus FAILED target=%p foreground=%p focus=%p attached=%d",
+        L"%ls focus FAILED target=%p activation=%p foreground=%p "
+        L"foregroundThread=%lu foregroundFocus=%p focusKnown=%d "
+        L"localFocus=%p attachRequested=%d attached=%d",
         diagnosticLabel ? diagnosticLabel : L"Keyboard window",
-        target, GetForegroundWindow(), GetFocus(),
+        target, activationWindow, observation.foreground,
+        observation.foregroundThread,
+        observation.foregroundFocus,
+        observation.foregroundFocusKnown ? 1 : 0,
+        GetFocus(), shouldAttach ? 1 : 0,
         attached ? 1 : 0);
     WriteDiagnosticLogEntry(message);
     return false;

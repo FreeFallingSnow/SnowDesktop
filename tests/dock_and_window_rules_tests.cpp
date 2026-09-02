@@ -22,6 +22,7 @@
 #include "app/native_menu_presentation_rules.h"
 #include "app/popup_window_pair_z_order.h"
 #include "desktop_window_discovery_rules.h"
+#include "desktop_keyboard_rules.h"
 #include "floating_dock_rules.h"
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
@@ -192,6 +193,27 @@ void CheckPopupWindowPairZOrderTransitions()
 
 int main(int argc, char** argv)
 {
+    using snowdesktop::desktop_keyboard_rules::
+        IsForegroundFocusReady;
+    using snowdesktop::desktop_keyboard_rules::
+        ShouldAttachForegroundInputQueue;
+
+    Check(!IsForegroundFocusReady(
+              true, false, false, false),
+        "a local-only focus observation cannot prove foreground key delivery");
+    Check(IsForegroundFocusReady(
+              true, true, false, false),
+        "a target focused on the foreground queue is ready without activation ownership");
+    Check(!IsForegroundFocusReady(
+              true, true, true, false) &&
+            IsForegroundFocusReady(
+              true, true, true, true),
+        "foreground activation is additionally required for popup input proxies");
+    Check(ShouldAttachForegroundInputQueue(10, 20, false) &&
+            !ShouldAttachForegroundInputQueue(10, 10, false) &&
+            !ShouldAttachForegroundInputQueue(10, 20, true),
+        "a failed cross-thread foreground focus check requires one queue attachment retry");
+
     CheckPopupWindowPairZOrderTransitions();
     const std::vector<std::wstring> savedPageOrder{
         L"page-1", L"page-2", L"page-3"};
@@ -4236,17 +4258,36 @@ int main(int argc, char** argv)
             : lifecycleSource.substr(
                 desktopFocusBegin,
                 floatingDockInputBegin - desktopFocusBegin);
+        const std::size_t createInputBegin = lifecycleSource.find(
+            "bool DesktopApp::CreateDesktopInputWindow(HWND host)");
+        const std::size_t attachInputBegin = lifecycleSource.find(
+            "void DesktopApp::AttachInputWindowToDesktopHost(HWND host)",
+            createInputBegin);
+        const std::string createInput =
+            createInputBegin == std::string::npos ||
+                attachInputBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                createInputBegin,
+                attachInputBegin - createInputBegin);
+        Check(createInput.find("WS_POPUP | WS_VISIBLE") !=
+                    std::string::npos &&
+                createInput.find("WS_CHILD | WS_VISIBLE") ==
+                    std::string::npos,
+            "desktop keyboard input uses an app-owned popup instead of an Explorer-owned cross-process child");
         Check(desktopFocus.find("FocusKeyboardWindow(") !=
                     std::string::npos &&
                 desktopFocus.find("GetForegroundWindow()") !=
                     std::string::npos &&
-                desktopFocus.find("GetFocus() == target") !=
+                desktopFocus.find("GetGUIThreadInfo(") !=
+                    std::string::npos &&
+                desktopFocus.find("target, true") !=
                     std::string::npos &&
                 desktopFocus.find("AttachThreadInput(") !=
                     std::string::npos &&
                 desktopFocus.find("TRUE") != std::string::npos &&
                 desktopFocus.find("FALSE") != std::string::npos,
-            "desktop text input verifies focus and retries through a short-lived foreground input-queue attachment");
+            "desktop text input validates foreground-queue delivery and retries through a short-lived attachment");
         Check(hostReady != std::string::npos &&
                 rebind != std::string::npos &&
                 show != std::string::npos &&
