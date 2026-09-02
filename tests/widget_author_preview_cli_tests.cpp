@@ -611,6 +611,72 @@ return widget.define({
 )lua");
     return source;
 }
+
+std::filesystem::path CreateRoundedImageFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"rounded-image-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview rounded image fixture directory is created");
+    WriteSolidBmp(source / L"cover.bmp", 255, 0, 0);
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "73a59d68-9220-495e-846f-2da3f273f0f0",
+  "slug": "preview-rounded-image-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "name": "Preview rounded image fixture",
+  "description": "Validates rounded image content clipping.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "requiredFeatures": [
+    "resource.package",
+    "view.flex.layout",
+    "view.image",
+    "view.tree.core"
+  ],
+  "resources": {
+    "cover": {"type": "image", "path": "cover.bmp"}
+  }
+})json");
+    Write(source / L"main.lua", R"lua(
+local cover = resource.image("cover")
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x0000FF,
+    alpha = 1,
+    borderAlpha = 0,
+    glassEnabled = false,
+    view = function()
+        return view.row({
+            key = "rounded-image-root",
+            width = "fill",
+            height = "fill",
+            padding = 18,
+            children = {
+                view.image({
+                    key = "rounded-cover",
+                    source = cover,
+                    alt = "",
+                    fit = "cover",
+                    width = 80,
+                    height = 80,
+                    style = { cornerRadius = 40 },
+                }),
+            },
+        })
+    end,
+})
+)lua");
+    return source;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -728,6 +794,24 @@ int wmain(int argc, wchar_t** argv)
             CountDifferingPixels(inheritedBlur, explicitZeroBlur,
                 backgroundBoundary) > 256,
         "omitted background blur inherits glass while explicit zero remains sharp");
+
+    const auto roundedImageSource =
+        CreateRoundedImageFixture(temporary.path);
+    const auto roundedImageOutput =
+        temporary.path / L"rounded-image.png";
+    const auto [roundedImageExit, roundedImageJson] = Run(snowwidget, {
+        L"preview", roundedImageSource.wstring(),
+        roundedImageOutput.wstring(), L"--host", host.wstring() });
+    const RgbaBitmap roundedImage = ReadPng(roundedImageOutput);
+    const auto roundedCenter = PixelAt(roundedImage, 58, 58);
+    const auto roundedCorner = PixelAt(roundedImage, 20, 20);
+    Check(roundedImageExit == 0 &&
+            roundedImageJson.find("\"ok\":true") != std::string::npos &&
+            roundedCenter[0] > 240 && roundedCenter[1] < 16 &&
+            roundedCenter[2] < 16 &&
+            roundedCorner[2] > 240 && roundedCorner[0] < 16 &&
+            roundedCorner[1] < 16,
+        "view.image cornerRadius clips bitmap content to the rounded shape");
 
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";

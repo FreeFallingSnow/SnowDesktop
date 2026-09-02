@@ -18131,8 +18131,28 @@ static void DrawWidgetViewNode(D2DState* state,
                 }
             }
         }
+        ComPtr<ID2D1RoundedRectangleGeometry> imageClip;
+        bool imageClipPushed = false;
+        if (node.type == ViewNodeType::Image && bitmap && radius > 0.0f)
+        {
+            ComPtr<ID2D1Factory> factory;
+            state->ctx->GetFactory(&factory);
+            const float clipRadius = std::min(radius,
+                std::min(node.frame.width, node.frame.height) * 0.5f);
+            if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                    D2D1::RoundedRect(rect, clipRadius, clipRadius),
+                    &imageClip)) && imageClip)
+            {
+                state->ctx->PushLayer(D2D1::LayerParameters(
+                    rect, imageClip.Get(),
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+                imageClipPushed = true;
+            }
+        }
         DrawWidgetViewBitmap(
             state, node, bitmap, rect, opacity, borderWidth, palette);
+        if (imageClipPushed)
+            state->ctx->PopLayer();
     }
 
     if ((node.type == ViewNodeType::Text ||

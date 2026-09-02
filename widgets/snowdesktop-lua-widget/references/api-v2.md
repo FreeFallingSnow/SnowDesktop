@@ -1000,7 +1000,9 @@ UIA VirtualizedItem，
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
-`view.image`。`referenceIcon` 使用相同的 `alt/fit/alignment/interpolation`，但以当前
+`view.image`。图片节点的 `style.cornerRadius` 同时裁切位图内容和节点表面；半径最大按
+节点短边的一半处理，因此可用正方形节点和半边长半径显示圆形图片。
+`referenceIcon` 使用相同的 `alt/fit/alignment/interpolation`，但以当前
 组件实例从宿主搜索、文件引用任务或逻辑槽位获得的 1–128 字节 opaque `reference`
 代替图片资源句柄；宿主在异步 Shell 图标缓存就绪后重绘，不在渲染热路径同步解码，
 也不会把目标路径交给 Lua。该节点本身不授予启动、打开、定位或文件内容权限，对应

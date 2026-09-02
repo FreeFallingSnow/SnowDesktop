@@ -224,7 +224,7 @@
 ---@field foreground? SnowViewColor RGB or host theme token.
 ---@field borderColor? SnowViewColor RGB or host theme token.
 ---@field borderWidth? number
----@field cornerRadius? number
+---@field cornerRadius? number Rounded frame radius; image nodes also clip bitmap content to this shape.
 ---@field opacity? number Between 0 and 1.
 
 ---@class SnowViewAccessibility
