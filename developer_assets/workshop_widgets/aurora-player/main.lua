@@ -766,7 +766,8 @@ local function event(_context, model, value)
         if not player.canControl(session,
             widget.hasPermission("media.action"),
             "canChangePlaybackRate") then return end
-        local rate = tonumber(value.id:sub(12):gsub("_", "."))
+        local rateText = value.id:sub(12):gsub("_", ".")
+        local rate = tonumber(rateText)
         if rate then startTask(model, "media.setRate", {
             sessionId = session.id, rate = rate,
         }) end
