@@ -151,38 +151,58 @@ void TestPointerPairingAndActions()
         "removed hovered region must retain its leave action for dispatch");
 }
 
-void TestComponentActionLookupBelowElement()
+void TestComponentMenuRegistrationIsSurfaceScoped()
 {
     WidgetInteractionRegions regions;
     std::string error;
-    auto component = Rect("component", 0, 0, 100, 100);
+    auto component = Rect("component-provider", 0, 0, 20, 20);
     InteractionAction componentMenu{ "component.menu", {} };
     componentMenu.contextMenuScope =
         InteractionAction::ContextMenuScope::Component;
     component.events.emplace("contextMenu", std::move(componentMenu));
-    auto article = Rect("article", 10, 10, 80, 30);
+    auto article = Rect("article", 30, 0, 30, 20);
     article.events.emplace("contextMenu",
         InteractionAction{ "article.menu", {} });
+    auto date = Rect("date", 0, 30, 60, 20);
+    date.events.emplace("click", InteractionAction{ "date.select", {} });
 
     regions.BeginFrame();
     Check(regions.Submit(std::move(component), error) &&
-            regions.Submit(std::move(article), error),
-        "overlapping component and element menus must stage");
+            regions.Submit(std::move(article), error) &&
+            regions.Submit(std::move(date), error),
+        "component, element, and non-menu regions must stage");
     regions.CommitFrame();
 
     std::string targetKey;
-    const auto* elementAction = regions.ActionAt(
-        20, 20, "contextMenu", &targetKey);
+    const auto* elementAction = regions.ContextMenuActionAt(
+        40, 10, false, &targetKey);
     Check(elementAction && elementAction->id == "article.menu" &&
             targetKey == "article",
-        "normal hit testing must retain the topmost element menu");
-    const auto* componentAction = regions.ComponentActionAt(
-        20, 20, "contextMenu", &targetKey);
+        "a directly hit element menu must retain priority");
+    const auto* componentAction = regions.ContextMenuActionAt(
+        40, 10, true, &targetKey);
     Check(componentAction && componentAction->id == "component.menu" &&
-            targetKey == "component",
-        "component lookup must continue below an element menu at the same point");
-    Check(!regions.ComponentActionAt(120, 120, "contextMenu"),
-        "component lookup must not select a region outside the original point");
+            targetKey == "component-provider",
+        "the component panel must ignore a directly hit element menu");
+    const auto* blankAction = regions.ContextMenuActionAt(
+        90, 90, false, &targetKey);
+    Check(blankAction && blankAction->id == "component.menu" &&
+            targetKey == "component-provider",
+        "a component menu registration must be available on blank surface areas");
+    const auto* dateAction = regions.ContextMenuActionAt(
+        10, 40, false, &targetKey);
+    Check(dateAction && dateAction->id == "component.menu" &&
+            targetKey == "component-provider",
+        "a hit region without its own menu must fall back to the surface component menu");
+
+    WidgetInteractionRegions empty;
+    empty.BeginFrame();
+    Check(empty.Submit(Rect("plain", 0, 0, 20, 20), error),
+        "a surface without menu registrations must stage");
+    empty.CommitFrame();
+    Check(!empty.ContextMenuActionAt(10, 10, false, &targetKey) &&
+            targetKey.empty(),
+        "a surface without a component menu must not synthesize one");
 }
 
 void TestOptInPointerCapture()
@@ -606,7 +626,7 @@ int main()
     TestFocusCueModality();
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
-    TestComponentActionLookupBelowElement();
+    TestComponentMenuRegistrationIsSurfaceScoped();
     TestOptInPointerCapture();
     TestShapesAndValidation();
     TestClippedHitTesting();

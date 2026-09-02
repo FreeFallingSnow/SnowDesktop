@@ -456,10 +456,11 @@ hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 point
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
 `contextMenu` 动作默认 `scope="element"`：命中后菜单只显示该元素返回的操作，不混入组件
 设置、悬浮和移除等总菜单，但宿主会固定追加“打开组件面板”入口，确保组件总菜单始终可达。
-覆盖整张组件表面的菜单应显式写
-`{ id="component.menu", scope="component" }`，其返回项会附加到组件总菜单。
-从元素菜单选择“打开组件面板”时，宿主会保留原始命中坐标，继续向下查找该坐标处已注册的
-`scope="component"` 菜单，并将其返回项与组件设置、悬浮和移除等宿主项目合并。
+组件总菜单应显式写 `{ id="component.menu", scope="component" }`。只要当前 surface 的任意启用
+region 声明过该作用域，其返回项就会注册到整个组件表面，并与组件设置、悬浮和移除等宿主项目
+合并；它不要求声明 region 的几何范围覆盖右键位置。元素菜单仍优先于组件菜单，从元素菜单选择
+“打开组件面板”时则忽略元素绑定，直接使用该 surface 已注册的组件菜单。面向具体目标的操作应
+使用默认的 `scope="element"`；同一 surface 重复声明组件作用域时应使用同一个稳定绑定。
 
 事件名称和节点适用性由宿主公共契约固定，未知名称会拒绝整棵 scene，而不是被静默忽略：
 

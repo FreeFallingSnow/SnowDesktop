@@ -255,8 +255,8 @@ public:
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;
-    const InteractionAction* ComponentActionAt(
-        float x, float y, std::string_view eventName,
+    const InteractionAction* ContextMenuActionAt(
+        float x, float y, bool componentScopeOnly,
         std::string* targetKey = nullptr) const noexcept;
 
     std::vector<std::string> KeyboardFocusableKeys() const;

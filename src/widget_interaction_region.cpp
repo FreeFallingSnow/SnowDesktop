@@ -766,21 +766,33 @@ const InteractionAction* WidgetInteractionRegions::ActionAt(
     return action == region->events.end() ? nullptr : &action->second;
 }
 
-const InteractionAction* WidgetInteractionRegions::ComponentActionAt(
-    float x, float y, std::string_view eventName,
+const InteractionAction* WidgetInteractionRegions::ContextMenuActionAt(
+    float x, float y, bool componentScopeOnly,
     std::string* targetKey) const noexcept
 {
-    for (auto region = active_.rbegin(); region != active_.rend(); ++region)
+    if (!componentScopeOnly)
     {
-        if (!region->enabled || !ContainsPoint(*region, x, y)) continue;
-        const auto action = region->events.find(eventName);
-        if (action == region->events.end() ||
+        std::string elementTargetKey;
+        if (const auto* action = ActionAt(
+                x, y, "contextMenu", &elementTargetKey))
+        {
+            if (targetKey) *targetKey = std::move(elementTargetKey);
+            return action;
+        }
+    }
+
+    for (const auto& region : active_)
+    {
+        if (!region.enabled) continue;
+        const auto action = region.events.find("contextMenu");
+        if (action == region.events.end() ||
             action->second.contextMenuScope !=
                 InteractionAction::ContextMenuScope::Component)
             continue;
-        if (targetKey) *targetKey = region->key;
+        if (targetKey) *targetKey = region.key;
         return &action->second;
     }
+    if (targetKey) targetKey->clear();
     return nullptr;
 }
 

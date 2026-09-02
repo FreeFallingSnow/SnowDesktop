@@ -20849,13 +20849,10 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         auto& interactionRegions =
             InteractionRegionsForSurface(w, surface);
         std::string targetKey;
-        const auto* requestActionPointer = componentScopeOnly
-            ? interactionRegions.ComponentActionAt(
-                  static_cast<float>(x), static_cast<float>(y),
-                  "contextMenu", &targetKey)
-            : interactionRegions.ActionAt(
-                  static_cast<float>(x), static_cast<float>(y),
-                  "contextMenu", &targetKey);
+        const auto* requestActionPointer =
+            interactionRegions.ContextMenuActionAt(
+                static_cast<float>(x), static_cast<float>(y),
+                componentScopeOnly, &targetKey);
         if (!requestActionPointer || targetKey.empty()) return result;
         const auto requestAction = *requestActionPointer;
         const std::uint64_t generation =
