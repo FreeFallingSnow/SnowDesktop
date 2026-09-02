@@ -51,21 +51,42 @@ function M.timeline(snapshot, session)
     return value
 end
 
-function M.progress(timeline)
-    if type(timeline) ~= "table" then return 0 end
+local function timelineBounds(timeline)
+    if type(timeline) ~= "table" then return 0, 0 end
     local minimum = math.max(0, finite(timeline.minimumSeekMs, 0))
+    local duration = math.max(0, finite(timeline.durationMs, 0))
     local maximum = math.max(minimum,
-        finite(timeline.maximumSeekMs, timeline.durationMs or minimum))
+        finite(timeline.maximumSeekMs, minimum))
+    if maximum <= minimum and duration > minimum then
+        maximum = duration
+    end
+    return minimum, maximum
+end
+
+function M.hasTimeline(timeline)
+    if type(timeline) ~= "table" then return false end
+    local minimum, maximum = timelineBounds(timeline)
+    return math.max(0, finite(timeline.durationMs, 0)) > 0 or
+        maximum > minimum
+end
+
+function M.duration(timeline)
+    if type(timeline) ~= "table" then return 0 end
+    local minimum, maximum = timelineBounds(timeline)
+    local duration = math.max(0, finite(timeline.durationMs, 0))
+    if duration > 0 then return duration end
+    return math.max(0, maximum - minimum)
+end
+
+function M.progress(timeline)
+    local minimum, maximum = timelineBounds(timeline)
     if maximum <= minimum then return 0 end
     local position = M.clamp(timeline.positionMs, minimum, maximum, minimum)
     return (position - minimum) / (maximum - minimum)
 end
 
 function M.seekPosition(timeline, fraction)
-    if type(timeline) ~= "table" then return 0 end
-    local minimum = math.max(0, finite(timeline.minimumSeekMs, 0))
-    local maximum = math.max(minimum,
-        finite(timeline.maximumSeekMs, timeline.durationMs or minimum))
+    local minimum, maximum = timelineBounds(timeline)
     local normalized = M.clamp(fraction, 0, 1, 0)
     return math.floor(minimum + (maximum - minimum) * normalized + 0.5)
 end

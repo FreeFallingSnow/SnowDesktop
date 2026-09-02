@@ -339,12 +339,18 @@ local function viewTree(context, model)
         model.seekPreview = nil
         model.seekSessionId = nil
     end
+    local hasTimeline = player.hasTimeline(timeline)
+    if not hasTimeline then
+        model.seekPreview = nil
+        model.seekSessionId = nil
+    end
     local progress = model.seekPreview or player.progress(timeline)
     local position = model.seekPreview and
         player.seekPosition(timeline, model.seekPreview) or
         (timeline and timeline.positionMs or 0)
-    local duration = timeline and timeline.durationMs or 0
-    local seekEnabled = session ~= nil and canAct and controls.canSeek == true
+    local duration = player.duration(timeline)
+    local seekEnabled = session ~= nil and hasTimeline and canAct and
+        controls.canSeek == true
 
     local controlRow = view.row({
         key = "aurora.controls",
@@ -371,7 +377,7 @@ local function viewTree(context, model)
         },
     })
 
-    local progressRow = view.row({
+    local progressRow = hasTimeline and view.row({
         key = "aurora.progress.row",
         width = "fill",
         height = layout.cu(28),
@@ -418,7 +424,7 @@ local function viewTree(context, model)
                 style = { foreground = colors.subtle },
             }),
         },
-    })
+    }) or nil
 
     local details = view.column({
         key = "aurora.details",
@@ -501,7 +507,7 @@ local function seekRelative(model, delta)
     if not player.canControl(session,
         widget.hasPermission("media.action"), "canSeek") then return end
     local timeline = currentTimeline(model, session)
-    if not timeline then return end
+    if not player.hasTimeline(timeline) then return end
     local minimum = tonumber(timeline.minimumSeekMs) or 0
     local maximum = tonumber(timeline.maximumSeekMs) or
         tonumber(timeline.durationMs) or minimum
@@ -516,7 +522,8 @@ end
 
 local function commitSeek(model, session, timeline, fraction)
     if not player.canControl(session,
-        widget.hasPermission("media.action"), "canSeek") or not timeline then
+        widget.hasPermission("media.action"), "canSeek") or
+        not player.hasTimeline(timeline) then
         model.seekPreview = nil
         model.seekSessionId = nil
         widget.invalidate()
@@ -575,7 +582,7 @@ local function event(_context, model, value)
         if not player.canControl(session,
             widget.hasPermission("media.action"), "canSeek") then return end
         local timeline = currentTimeline(model, session)
-        if not timeline then return end
+        if not player.hasTimeline(timeline) then return end
         local fraction = player.clamp(value.controlValue, 0, 1, 0)
         model.seekPreview = fraction
         model.seekSessionId = session.id

@@ -40,6 +40,37 @@ return {
         assert(player.seekPosition(timeline, 2) == 10000)
     end,
 
+    ["missing system timeline is not presented as zero duration media"] = function()
+        local missing = {
+            positionMs = 0,
+            minimumSeekMs = 0,
+            maximumSeekMs = 0,
+            durationMs = 0,
+        }
+        assert(not player.hasTimeline(missing))
+        assert(player.duration(missing) == 0)
+
+        local durationOnly = {
+            positionMs = 30000,
+            minimumSeekMs = 0,
+            maximumSeekMs = 0,
+            durationMs = 120000,
+        }
+        assert(player.hasTimeline(durationOnly))
+        assert(player.duration(durationOnly) == 120000)
+        assert(player.progress(durationOnly) == 0.25)
+
+        local seekRangeOnly = {
+            positionMs = 45000,
+            minimumSeekMs = 5000,
+            maximumSeekMs = 85000,
+            durationMs = 0,
+        }
+        assert(player.hasTimeline(seekRangeOnly))
+        assert(player.duration(seekRangeOnly) == 80000)
+        assert(player.progress(seekRangeOnly) == 0.5)
+    end,
+
     ["media controls require permission and reported capability"] = function()
         local session = { controls = { canStop = true, canSeek = false } }
         assert(player.canControl(session, true, "canStop"))
