@@ -885,8 +885,9 @@ void DesktopApp::OpenQuickNavigation(
         if (quickNavigationSearchEdit_ &&
             IsWindow(quickNavigationSearchEdit_))
         {
-            SetForegroundWindow(quickNavigationSearchEdit_);
-            SetFocus(quickNavigationSearchEdit_);
+            (void)FocusKeyboardWindow(
+                quickNavigationSearchEdit_, true,
+                L"Quick navigation search edit");
         }
         return;
     }
@@ -953,18 +954,18 @@ void DesktopApp::OpenQuickNavigation(
         if (quickNavigationSearchEdit_ &&
             IsWindow(quickNavigationSearchEdit_))
         {
-            SetForegroundWindow(
-                quickNavigationSearchEdit_);
-            SetFocus(quickNavigationSearchEdit_);
+            (void)FocusKeyboardWindow(
+                quickNavigationSearchEdit_, true,
+                L"Quick navigation search edit");
             SendMessageW(
                 quickNavigationSearchEdit_,
                 EM_SETSEL, 0, -1);
         }
         else
         {
-            SetForegroundWindow(
-                quickNavigationHwnd_);
-            SetFocus(quickNavigationHwnd_);
+            (void)FocusKeyboardWindow(
+                quickNavigationHwnd_, true,
+                L"Quick navigation window");
         }
         return;
     }
@@ -1040,14 +1041,16 @@ void DesktopApp::OpenQuickNavigation(
         ApplyQuickNavigationAnimationFrame();
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
     {
-        SetForegroundWindow(quickNavigationSearchEdit_);
-        SetFocus(quickNavigationSearchEdit_);
+        (void)FocusKeyboardWindow(
+            quickNavigationSearchEdit_, true,
+            L"Quick navigation search edit");
         SendMessageW(quickNavigationSearchEdit_, EM_SETSEL, 0, -1);
     }
     else
     {
-        SetForegroundWindow(quickNavigationHwnd_);
-        SetFocus(quickNavigationHwnd_);
+        (void)FocusKeyboardWindow(
+            quickNavigationHwnd_, true,
+            L"Quick navigation window");
     }
 }
 

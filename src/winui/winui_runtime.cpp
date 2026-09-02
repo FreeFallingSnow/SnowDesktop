@@ -435,6 +435,8 @@ bool WinUiRuntime::PreTranslateMessage(MSG* message) noexcept
         return false;
     if (!impl_->parentWindow || !impl_->islandWindow || !message->hwnd)
         return false;
+    if (!IsWindowVisible(impl_->parentWindow))
+        return false;
 
     // ContentPreTranslateMessage is process-global. Feeding it input for the
     // desktop, Dock, or helper HWNDs lets the Island consume unrelated keys.

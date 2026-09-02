@@ -350,10 +350,68 @@ void DesktopApp::AttachInputWindowToDesktopHost(HWND host)
  */
 void DesktopApp::FocusDesktopInputWindow()
 {
-    if (inputHwnd_ && IsWindow(inputHwnd_))
-        SetFocus(inputHwnd_);
-    else if (hwnd_ && IsWindow(hwnd_))
-        SetFocus(hwnd_);
+    const HWND target = inputHwnd_ && IsWindow(inputHwnd_)
+        ? inputHwnd_
+        : (hwnd_ && IsWindow(hwnd_) ? hwnd_ : nullptr);
+    (void)FocusKeyboardWindow(
+        target, false, L"Desktop input proxy");
+}
+
+bool DesktopApp::FocusKeyboardWindow(
+    HWND target, bool requestForeground,
+    const wchar_t* diagnosticLabel)
+{
+    if (!target || !IsWindow(target))
+        return false;
+
+    const auto requestFocus = [target, requestForeground]() {
+        if (requestForeground)
+        {
+            ShowWindow(target, SW_SHOWNOACTIVATE);
+            (void)SetForegroundWindow(target);
+            (void)SetActiveWindow(target);
+        }
+        (void)SetFocus(target);
+        return GetFocus() == target &&
+            (!requestForeground ||
+                GetForegroundWindow() == target);
+    };
+    if (requestFocus())
+        return true;
+
+    // The desktop render and input HWNDs are children of Explorer's WorkerW.
+    // After a top-level Settings window or another process owned foreground,
+    // SetFocus from SnowDesktop's queue can be rejected even though the
+    // pointer gesture already selected the self-drawn input. Share only the
+    // foreground queue needed for one retry, then always detach.
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground
+        ? GetWindowThreadProcessId(foreground, nullptr)
+        : 0;
+    const DWORD currentThread = GetCurrentThreadId();
+    const bool attached = foregroundThread != 0 &&
+        foregroundThread != currentThread &&
+        AttachThreadInput(
+            currentThread, foregroundThread, TRUE) != FALSE;
+    bool focused = false;
+    if (attached)
+    {
+        focused = requestFocus();
+        AttachThreadInput(
+            currentThread, foregroundThread, FALSE);
+    }
+    if (focused)
+        return true;
+
+    wchar_t message[256]{};
+    swprintf_s(
+        message,
+        L"%ls focus FAILED target=%p foreground=%p focus=%p attached=%d",
+        diagnosticLabel ? diagnosticLabel : L"Keyboard window",
+        target, GetForegroundWindow(), GetFocus(),
+        attached ? 1 : 0);
+    WriteDiagnosticLogEntry(message);
+    return false;
 }
 
 bool DesktopApp::EnsureFloatingDockInputWindow()

@@ -1006,13 +1006,15 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("latestSnapshot") != std::string::npos,
         "snapshot and view-scoped async work are coalesced on the DispatcherQueue with their respective stale-result gates");
 
-    Check(runtime.find("GetAncestor(target, GA_ROOTOWNER)") !=
+    Check(runtime.find("IsWindowVisible(impl_->parentWindow)") !=
+                std::string::npos &&
+            runtime.find("GetAncestor(target, GA_ROOTOWNER)") !=
                 std::string::npos &&
             runtime.find("!IsChild(impl_->parentWindow, target)") !=
                 std::string::npos &&
             runtime.find("return ::ContentPreTranslateMessage(message)") !=
                 std::string::npos,
-        "WinUI message preprocessing is restricted to the settings HWND tree");
+        "WinUI message preprocessing is restricted to the visible settings HWND tree");
 
     const std::size_t attachBegin = runtime.find(
         "bool WinUiRuntime::Attach(");

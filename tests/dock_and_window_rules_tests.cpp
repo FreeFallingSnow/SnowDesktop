@@ -4224,6 +4224,29 @@ int main(int argc, char** argv)
             "ShowWindow(hwnd_, SW_SHOWNOACTIVATE);");
         Check(!lifecycleSource.empty(),
             "application lifecycle source is readable");
+        const std::size_t desktopFocusBegin = lifecycleSource.find(
+            "void DesktopApp::FocusDesktopInputWindow()");
+        const std::size_t floatingDockInputBegin = lifecycleSource.find(
+            "bool DesktopApp::EnsureFloatingDockInputWindow()",
+            desktopFocusBegin);
+        const std::string desktopFocus =
+            desktopFocusBegin == std::string::npos ||
+                floatingDockInputBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                desktopFocusBegin,
+                floatingDockInputBegin - desktopFocusBegin);
+        Check(desktopFocus.find("FocusKeyboardWindow(") !=
+                    std::string::npos &&
+                desktopFocus.find("GetForegroundWindow()") !=
+                    std::string::npos &&
+                desktopFocus.find("GetFocus() == target") !=
+                    std::string::npos &&
+                desktopFocus.find("AttachThreadInput(") !=
+                    std::string::npos &&
+                desktopFocus.find("TRUE") != std::string::npos &&
+                desktopFocus.find("FALSE") != std::string::npos,
+            "desktop text input verifies focus and retries through a short-lived foreground input-queue attachment");
         Check(hostReady != std::string::npos &&
                 rebind != std::string::npos &&
                 show != std::string::npos &&
@@ -4379,6 +4402,12 @@ int main(int argc, char** argv)
         const std::string quickNavigationWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_window.cpp");
+        Check(quickNavigationWindowSource.find(
+                  "FocusKeyboardWindow(") != std::string::npos &&
+                quickNavigationWindowSource.find(
+                  "L\"Quick navigation search edit\"") !=
+                    std::string::npos,
+            "Quick Navigation uses the verified foreground focus path for its native search edit");
         const std::string quickNavigationInteractionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_interaction.cpp");
