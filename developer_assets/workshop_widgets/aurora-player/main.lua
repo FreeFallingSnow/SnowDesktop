@@ -114,6 +114,8 @@ local function setup(context)
         visualizer = analyze or context.preview == true,
         tasks = {},
         pendingPlayback = nil,
+        seekPreview = nil,
+        seekSessionId = nil,
     }
 end
 
@@ -192,14 +194,17 @@ local function backgroundLayer(context, model)
 end
 
 local function startTask(model, name, arguments, pendingPlayback)
-    if model.preview or not widget.hasPermission("media.action") then return end
+    if model.preview or not widget.hasPermission("media.action") then
+        return false
+    end
     local taskId, err = task.start(name, arguments)
     if not taskId then
         widget.log("warn", name .. " rejected: " .. tostring(err))
-        return
+        return false
     end
     model.tasks[tostring(taskId)] = name
     if pendingPlayback then model.pendingPlayback = pendingPlayback end
+    return true
 end
 
 local function startSessionTask(model, name, capability, extra)
@@ -330,8 +335,14 @@ local function viewTree(context, model)
     local album = session and session.album or ""
     local coverSize = math.max(layout.cu(112), math.min(
         layout.cu(148), layout.height() - layout.cu(36)))
-    local progress = player.progress(timeline)
-    local position = timeline and timeline.positionMs or 0
+    if not session or model.seekSessionId ~= session.id then
+        model.seekPreview = nil
+        model.seekSessionId = nil
+    end
+    local progress = model.seekPreview or player.progress(timeline)
+    local position = model.seekPreview and
+        player.seekPosition(timeline, model.seekPreview) or
+        (timeline and timeline.positionMs or 0)
     local duration = timeline and timeline.durationMs or 0
     local seekEnabled = session ~= nil and canAct and controls.canSeek == true
 
@@ -385,7 +396,10 @@ local function viewTree(context, model)
                 width = "fill",
                 height = layout.cu(24),
                 enabled = seekEnabled,
-                action = { id = "media.seek" },
+                events = {
+                    change = { id = "media.seek.change" },
+                    pointerUp = { id = "media.seek.commit" },
+                },
                 accessibility = {
                     label = l10n.tr(
                         "workshop.aurora_player.progress"),
@@ -500,11 +514,38 @@ local function seekRelative(model, delta)
     })
 end
 
+local function commitSeek(model, session, timeline, fraction)
+    if not player.canControl(session,
+        widget.hasPermission("media.action"), "canSeek") or not timeline then
+        model.seekPreview = nil
+        model.seekSessionId = nil
+        widget.invalidate()
+        return
+    end
+    local normalized = player.clamp(fraction, 0, 1, 0)
+    model.seekPreview = normalized
+    model.seekSessionId = session.id
+    local started = startTask(model, "media.seek", {
+        sessionId = session.id,
+        positionMs = player.seekPosition(timeline, normalized),
+    })
+    if not started then
+        model.seekPreview = nil
+        model.seekSessionId = nil
+    end
+    widget.invalidate()
+end
+
 local function event(_context, model, value)
     if value.kind == "task.complete" then
         local name, failed = player.finishTask(
             model.tasks, value.taskId, value.ok)
         if name then model.pendingPlayback = nil end
+        if name == "media.seek" then
+            model.seekPreview = nil
+            model.seekSessionId = nil
+            widget.invalidate()
+        end
         if failed then
             widget.log("warn", name .. " failed: " ..
                 tostring(value.error))
@@ -530,16 +571,23 @@ local function event(_context, model, value)
         seekRelative(model, -10000)
     elseif value.id == "media.forward10" then
         seekRelative(model, 10000)
-    elseif value.id == "media.seek" then
+    elseif value.id == "media.seek.change" then
         if not player.canControl(session,
             widget.hasPermission("media.action"), "canSeek") then return end
         local timeline = currentTimeline(model, session)
-        local fraction = tonumber(value.controlValue) or
-            (value.value and tonumber(value.value.controlValue)) or 0
-        startTask(model, "media.seek", {
-            sessionId = session.id,
-            positionMs = player.seekPosition(timeline, fraction),
-        })
+        if not timeline then return end
+        local fraction = player.clamp(value.controlValue, 0, 1, 0)
+        model.seekPreview = fraction
+        model.seekSessionId = session.id
+        widget.invalidate()
+        if value.source ~= "pointer" then
+            commitSeek(model, session, timeline, fraction)
+        end
+    elseif value.id == "media.seek.commit" then
+        if model.seekPreview == nil or model.seekSessionId ~=
+            (session and session.id or nil) then return end
+        commitSeek(model, session, currentTimeline(model, session),
+            model.seekPreview)
     elseif value.id:sub(1, 11) == "media.rate." then
         if not player.canControl(session,
             widget.hasPermission("media.action"),
