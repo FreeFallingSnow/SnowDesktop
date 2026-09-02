@@ -191,6 +191,10 @@ function M.shouldAnalyze(setting, hasFeature, hasPermission, reducedMotion)
         reducedMotion ~= true
 end
 
+function M.shouldUseArtworkBackground(setting, hasArtwork, highContrast)
+    return setting == true and hasArtwork == true and highContrast ~= true
+end
+
 function M.shouldSpinRecord(hasArtwork, playbackStatus, reducedMotion,
     visible, preview)
     return hasArtwork == true and playbackStatus == "playing" and

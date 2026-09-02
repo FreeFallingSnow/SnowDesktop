@@ -16,13 +16,22 @@ local glyphs = {
     music = utf8.char(0xF001),
 }
 
-local function settingEnabled(key)
+local function settingEnabled(key, defaultValue)
     local value = storage.get(key)
+    if value == nil then return defaultValue == true end
     return value == true or value == 1 or value == "1" or value == "true"
 end
 
 local settings = {
     fields = {
+        {
+            key = "cover_background",
+            label = l10n.tr("workshop.aurora_player.cover_background"),
+            description = l10n.tr(
+                "workshop.aurora_player.cover_background_description"),
+            type = "bool",
+            default = true,
+        },
         {
             key = "show_visualizer",
             label = l10n.tr("workshop.aurora_player.visualizer"),
@@ -172,7 +181,23 @@ local function updateProgressTicker(model, active)
     end
 end
 
-local function palette(context)
+local function lightForegroundPalette()
+    return {
+        primary = 0xFFFFFF,
+        secondary = 0xE2E8F0,
+        subtle = 0xB8C3D8,
+        button = 0xFFFFFF,
+        buttonText = 0x11142A,
+        secondaryButton = 0x111827,
+        secondaryButtonText = 0xFFFFFF,
+        disabled = 0x718096,
+        cover = 0x3730A3,
+        record = 0x080A0F,
+        groove = 0x64748B,
+    }
+end
+
+local function palette(context, artworkBackgroundActive)
     if context.accessibility.highContrast then
         local light = context.theme.mode == "light"
         return {
@@ -189,6 +214,7 @@ local function palette(context)
             groove = light and 0xFFFFFF or 0x000000,
         }
     end
+    if artworkBackgroundActive then return lightForegroundPalette() end
     local theme = widget.theme()
     if theme and theme.contentTheme == 1 then
         return {
@@ -205,19 +231,7 @@ local function palette(context)
             groove = 0x94A3B8,
         }
     end
-    return {
-        primary = 0xFFFFFF,
-        secondary = 0xE2E8F0,
-        subtle = 0xB8C3D8,
-        button = 0xFFFFFF,
-        buttonText = 0x11142A,
-        secondaryButton = 0x111827,
-        secondaryButtonText = 0xFFFFFF,
-        disabled = 0x718096,
-        cover = 0x3730A3,
-        record = 0x080A0F,
-        groove = 0x64748B,
-    }
+    return lightForegroundPalette()
 end
 
 local function backgroundLayer(context, model)
@@ -226,6 +240,7 @@ local function backgroundLayer(context, model)
     if context.accessibility.highContrast then
         return
     end
+    if not settingEnabled("cover_background", true) then return end
 
     local session, timestamp = currentSession(model)
     syncMediaIdentity(model, session, timestamp)
@@ -392,7 +407,7 @@ local function visualizerNode(model, colors)
         width = "fill",
         height = "fill",
         padding = { left = layout.cu(10), right = layout.cu(10),
-            top = layout.cu(36), bottom = layout.cu(8) },
+            top = layout.cu(36), bottom = 0 },
         min = 0,
         max = 1,
         fillOpacity = 0.26,
@@ -406,10 +421,13 @@ end
 
 local function viewTree(context, model)
     model.reducedMotion = context.accessibility.reducedMotion == true
-    local colors = palette(context)
     local session, timestamp = currentSession(model)
     syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)
+    local artworkBackgroundActive = player.shouldUseArtworkBackground(
+        settingEnabled("cover_background", true), artwork ~= nil,
+        context.accessibility.highContrast)
+    local colors = palette(context, artworkBackgroundActive)
     local timeline = currentTimeline(model, session)
     local canAct = model.preview or widget.hasPermission("media.action")
     local controls = session and session.controls or {}

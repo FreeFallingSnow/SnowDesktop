@@ -212,6 +212,14 @@ return {
         assert(values[5] == 1 and values[7] == 0)
     end,
 
+    ["artwork background requires its setting artwork and standard contrast"] =
+        function()
+            assert(player.shouldUseArtworkBackground(true, true, false))
+            assert(not player.shouldUseArtworkBackground(false, true, false))
+            assert(not player.shouldUseArtworkBackground(true, false, false))
+            assert(not player.shouldUseArtworkBackground(true, true, true))
+        end,
+
     ["record rotation follows artwork playback and motion gates"] = function()
         assert(player.shouldSpinRecord(true, "playing", false, true, false))
         assert(not player.shouldSpinRecord(false, "playing", false,
