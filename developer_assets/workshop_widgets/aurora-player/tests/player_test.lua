@@ -13,12 +13,15 @@ return {
 
     ["artwork and timeline must match the active session"] = function()
         local handle = {}
-        assert(player.artwork({ available = true, value = {
+        assert(player.artwork({ available = true, timestamp = 100, value = {
             sessionId = "other", image = handle,
         } }, "active") == nil)
-        assert(player.artwork({ available = true, value = {
+        assert(player.artwork({ available = true, timestamp = 100, value = {
             sessionId = "active", image = handle,
         } }, "active") == handle)
+        assert(player.artwork({ available = true, timestamp = 100, value = {
+            sessionId = "active", image = handle,
+        } }, "active", 101) == nil)
 
         local session = { id = "active", timeline = { positionMs = 10 } }
         local mismatched = player.timeline({ available = true, value = {
@@ -26,6 +29,39 @@ return {
         } }, session)
         assert(mismatched.positionMs == 10)
     end,
+
+    ["media identity changes with tracks but not playback position"] =
+        function()
+            local first = {
+                id = "stable-session",
+                title = "First",
+                artist = "Artist",
+                album = "Album",
+                timeline = { positionMs = 1000, durationMs = 120000 },
+            }
+            local progressed = {
+                id = "stable-session",
+                title = "First",
+                artist = "Artist",
+                album = "Album",
+                timeline = { positionMs = 90000, durationMs = 120000 },
+            }
+            local nextTrack = {
+                id = "stable-session",
+                title = "Second",
+                artist = "Artist",
+                album = "Album",
+                timeline = { positionMs = 0, durationMs = 180000 },
+            }
+            assert(player.mediaIdentity(first) ==
+                player.mediaIdentity(progressed))
+            assert(player.mediaIdentity(first) ~=
+                player.mediaIdentity(nextTrack))
+            assert(player.mediaIdentity(nil) == nil)
+            assert(not player.timelineIdentityConfirmed(100, 100, false))
+            assert(player.timelineIdentityConfirmed(101, 100, false))
+            assert(player.timelineIdentityConfirmed(100, 100, true))
+        end,
 
     ["progress and seek positions are clipped to the session range"] = function()
         local timeline = {

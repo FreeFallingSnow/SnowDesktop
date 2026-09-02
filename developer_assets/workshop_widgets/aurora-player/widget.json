@@ -281,7 +281,6 @@
     "animation.frame",
     "data.media.artwork",
     "data.media.current",
-    "data.media.timeline",
     "data.subscribe",
     "draw.advanced",
     "draw.immediate",

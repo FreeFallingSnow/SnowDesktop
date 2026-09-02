@@ -2,7 +2,6 @@ local player = module.require("modules/player.lua")
 
 local mediaCurrent
 local mediaArtwork
-local mediaTimeline
 local audioAnalysis
 local RECORD_FRAME = "aurora.record.spin"
 local PROGRESS_TICK = "aurora.timeline.tick"
@@ -67,21 +66,26 @@ local function previewSession()
 end
 
 local function currentSession(model)
-    if model and model.preview then return previewSession() end
-    return player.session(mediaCurrent and mediaCurrent:value() or nil)
+    if model and model.preview then return previewSession(), 0 end
+    local snapshot = mediaCurrent and mediaCurrent:value() or nil
+    return player.session(snapshot), tonumber(snapshot and
+        snapshot.timestamp) or 0
 end
 
 local function currentArtwork(model, session)
     if not session or (model and model.preview) then return nil end
-    return player.artwork(mediaArtwork and mediaArtwork:value() or nil,
-        session.id)
+    local artwork = player.artwork(
+        mediaArtwork and mediaArtwork:value() or nil,
+        session.id, model and model.artworkAfterMs or nil)
+    if artwork and model then model.artworkAfterMs = nil end
+    return artwork
 end
 
 local function currentTimeline(model, session)
-    if not session then return nil end
-    if model and model.preview then return session.timeline end
-    return player.timeline(mediaTimeline and mediaTimeline:value() or nil,
-        session)
+    if not session or (model and model.timelineAfterMs ~= nil) then
+        return nil
+    end
+    return session.timeline
 end
 
 local function setup(context)
@@ -93,11 +97,6 @@ local function setup(context)
         maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
     })
-    mediaTimeline = data.subscribe("media.timeline", {
-        maxAgeMs = MEDIA_REFRESH_MS,
-        whenHidden = "throttle",
-    })
-
     local analyze = player.shouldAnalyze(
         settingEnabled("show_visualizer"),
         widget.hasFeature("data.audio.output.analysis") and
@@ -125,6 +124,9 @@ local function setup(context)
         seekBaselineUpdatedAtMs = nil,
         seekBaselinePositionMs = nil,
         seekCommittedAtMs = nil,
+        mediaIdentity = nil,
+        artworkAfterMs = nil,
+        timelineAfterMs = nil,
         reducedMotion = context.accessibility.reducedMotion == true,
         visible = true,
         recordRotation = 0,
@@ -141,6 +143,23 @@ local function clearSeekPreview(model)
     model.seekBaselineUpdatedAtMs = nil
     model.seekBaselinePositionMs = nil
     model.seekCommittedAtMs = nil
+end
+
+local function syncMediaIdentity(model, session, timestamp)
+    local identity = player.mediaIdentity(session)
+    if model.mediaIdentity == identity then
+        if player.timelineIdentityConfirmed(timestamp,
+                model.timelineAfterMs, model.preview) then
+            model.timelineAfterMs = nil
+        end
+        return
+    end
+    model.mediaIdentity = identity
+    clearSeekPreview(model)
+    local changedAt = session and math.max(0,
+        tonumber(timestamp) or 0) or nil
+    model.artworkAfterMs = model.preview and nil or changedAt
+    model.timelineAfterMs = model.preview and nil or changedAt
 end
 
 local function updateProgressTicker(model, active)
@@ -208,7 +227,8 @@ local function backgroundLayer(context, model)
         return
     end
 
-    local session = currentSession(model)
+    local session, timestamp = currentSession(model)
+    syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)
     if not artwork then return end
     draw.imageFit(artwork, 0, 0, width, height,
@@ -387,7 +407,8 @@ end
 local function viewTree(context, model)
     model.reducedMotion = context.accessibility.reducedMotion == true
     local colors = palette(context)
-    local session = currentSession(model)
+    local session, timestamp = currentSession(model)
+    syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)
     local timeline = currentTimeline(model, session)
     local canAct = model.preview or widget.hasPermission("media.action")
@@ -661,7 +682,8 @@ local function event(_context, model, value)
     end
     if value.kind == "frame" and value.id == RECORD_FRAME then
         model.recordFramePending = false
-        local session = currentSession(model)
+        local session, timestamp = currentSession(model)
+        syncMediaIdentity(model, session, timestamp)
         local artwork = currentArtwork(model, session)
         local playing = session and session.playbackStatus == "playing"
         if model.pendingPlayback == "playing" then playing = true end
@@ -856,11 +878,9 @@ local function dispose()
     schedule.cancel(PROGRESS_TICK)
     if mediaCurrent then mediaCurrent:unsubscribe() end
     if mediaArtwork then mediaArtwork:unsubscribe() end
-    if mediaTimeline then mediaTimeline:unsubscribe() end
     if audioAnalysis then audioAnalysis:unsubscribe() end
     mediaCurrent = nil
     mediaArtwork = nil
-    mediaTimeline = nil
     audioAnalysis = nil
 end
 

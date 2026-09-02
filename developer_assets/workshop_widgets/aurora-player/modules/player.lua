@@ -27,14 +27,39 @@ function M.session(snapshot)
     return session
 end
 
-function M.artwork(snapshot, sessionId)
+function M.artwork(snapshot, sessionId, minimumTimestampMs)
     if type(snapshot) ~= "table" or snapshot.available ~= true or
         type(snapshot.value) ~= "table" then
         return nil
     end
+    local minimumTimestamp = math.max(0, finite(minimumTimestampMs, 0))
+    if finite(snapshot.timestamp, 0) < minimumTimestamp then return nil end
     local value = snapshot.value
     if value.sessionId ~= sessionId or value.image == nil then return nil end
     return value.image
+end
+
+function M.mediaIdentity(session)
+    if type(session) ~= "table" or type(session.id) ~= "string" or
+        session.id == "" then
+        return nil
+    end
+    local timeline = type(session.timeline) == "table" and
+        session.timeline or {}
+    return table.concat({
+        session.id,
+        tostring(session.title or ""),
+        tostring(session.artist or ""),
+        tostring(session.album or ""),
+        tostring(math.max(0, finite(timeline.durationMs, 0))),
+    }, "\31")
+end
+
+function M.timelineIdentityConfirmed(snapshotTimestampMs, changedAtMs,
+    preview)
+    if preview == true or changedAtMs == nil then return true end
+    return finite(snapshotTimestampMs, 0) >
+        math.max(0, finite(changedAtMs, 0))
 end
 
 function M.timeline(snapshot, session)
