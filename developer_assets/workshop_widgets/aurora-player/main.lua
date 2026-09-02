@@ -476,48 +476,55 @@ local function viewTree(context, model)
         },
     }) or nil
 
+    local detailChildren = {
+        view.text({
+            key = "aurora.title",
+            text = title,
+            width = "fill",
+            height = layout.cu(31),
+            fontSize = layout.fontCu(19),
+            fontWeight = 700,
+            textWrap = "noWrap",
+            overflowText = "ellipsis",
+            style = { foreground = colors.primary },
+            accessibility = { headingLevel = 2 },
+        }),
+        view.text({
+            key = "aurora.artist",
+            text = artist,
+            width = "fill",
+            height = layout.cu(session and 22 or 38),
+            fontSize = layout.fontCu(session and 12 or 11),
+            textWrap = session and "noWrap" or "wrap",
+            maxLines = session and 1 or 2,
+            overflowText = "ellipsis",
+            style = { foreground = colors.secondary },
+        }),
+    }
+    if session then
+        detailChildren[#detailChildren + 1] = view.text({
+            key = "aurora.album",
+            text = album,
+            width = "fill",
+            height = layout.cu(20),
+            fontSize = layout.fontCu(10),
+            textWrap = "noWrap",
+            overflowText = "ellipsis",
+            style = { foreground = colors.subtle },
+        })
+        detailChildren[#detailChildren + 1] = controlRow
+        if progressRow then
+            detailChildren[#detailChildren + 1] = progressRow
+        end
+    end
+
     local details = view.column({
         key = "aurora.details",
         width = "fill",
         height = coverSize,
-        gap = layout.cu(2),
+        gap = session and layout.cu(2) or layout.cu(6),
         justifyContent = "center",
-        children = {
-            view.text({
-                key = "aurora.title",
-                text = title,
-                width = "fill",
-                height = layout.cu(31),
-                fontSize = layout.fontCu(19),
-                fontWeight = 700,
-                textWrap = "noWrap",
-                overflowText = "ellipsis",
-                style = { foreground = colors.primary },
-                accessibility = { headingLevel = 2 },
-            }),
-            view.text({
-                key = "aurora.artist",
-                text = artist,
-                width = "fill",
-                height = layout.cu(22),
-                fontSize = layout.fontCu(12),
-                textWrap = "noWrap",
-                overflowText = "ellipsis",
-                style = { foreground = colors.secondary },
-            }),
-            view.text({
-                key = "aurora.album",
-                text = album,
-                width = "fill",
-                height = layout.cu(20),
-                fontSize = layout.fontCu(10),
-                textWrap = "noWrap",
-                overflowText = "ellipsis",
-                style = { foreground = colors.subtle },
-            }),
-            controlRow,
-            progressRow,
-        },
+        children = detailChildren,
     })
 
     local content = view.row({
