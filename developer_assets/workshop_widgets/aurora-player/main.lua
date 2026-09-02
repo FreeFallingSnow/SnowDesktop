@@ -630,15 +630,14 @@ local function seekRelative(model, delta)
         widget.hasPermission("media.action"), "canSeek") then return end
     local timeline = currentTimeline(model, session)
     if not player.hasTimeline(timeline) then return end
-    local minimum = tonumber(timeline.minimumSeekMs) or 0
-    local maximum = tonumber(timeline.maximumSeekMs) or
-        tonumber(timeline.durationMs) or minimum
-    local position = player.clamp(
-        (tonumber(timeline.positionMs) or minimum) + delta,
-        minimum, maximum, minimum)
+    local playing = session.playbackStatus == "playing"
+    if model.pendingPlayback == "playing" then playing = true end
+    if model.pendingPlayback == "paused" then playing = false end
+    local position = player.relativeSeekPosition(
+        timeline, delta, playing, time.now())
     startTask(model, "media.seek", {
         sessionId = session.id,
-        positionMs = math.floor(position + 0.5),
+        positionMs = position,
     })
 end
 

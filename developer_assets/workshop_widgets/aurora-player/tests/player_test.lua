@@ -87,8 +87,16 @@ return {
         assert(player.position(timeline, true, 102500) == 12500)
         assert(player.progress(timeline,
             player.position(timeline, true, 102500)) == 12500 / 120000)
+        assert(player.relativeSeekPosition(
+            timeline, 10000, true, 102500) == 22500)
+        assert(player.relativeSeekPosition(
+            timeline, -10000, true, 102500) == 2500)
         assert(player.position(timeline, false, 102500) == 10000)
+        assert(player.relativeSeekPosition(
+            timeline, 10000, false, 102500) == 20000)
         assert(player.position(timeline, true, 99000) == 10000)
+        assert(player.relativeSeekPosition(
+            timeline, -20000, true, 102500) == 0)
         assert(player.position(timeline, true, 500000) == 120000)
     end,
 

@@ -116,6 +116,13 @@ function M.position(timeline, playing, nowMs)
     return position
 end
 
+function M.relativeSeekPosition(timeline, deltaMs, playing, nowMs)
+    local minimum, maximum = timelineBounds(timeline)
+    local current = M.position(timeline, playing, nowMs)
+    return math.floor(M.clamp(current + finite(deltaMs, 0),
+        minimum, maximum, current) + 0.5)
+end
+
 function M.progress(timeline, positionMs)
     local minimum, maximum = timelineBounds(timeline)
     if maximum <= minimum then return 0 end
