@@ -92,6 +92,23 @@ return {
         assert(values[5] == 1 and values[7] == 0)
     end,
 
+    ["record rotation follows artwork playback and motion gates"] = function()
+        assert(player.shouldSpinRecord(true, "playing", false, true, false))
+        assert(not player.shouldSpinRecord(false, "playing", false,
+            true, false))
+        assert(not player.shouldSpinRecord(true, "paused", false,
+            true, false))
+        assert(not player.shouldSpinRecord(true, "playing", true,
+            true, false))
+        assert(not player.shouldSpinRecord(true, "playing", false,
+            false, false))
+        assert(not player.shouldSpinRecord(true, "playing", false,
+            true, true))
+        assert(math.abs(player.advanceRecordRotation(359, 1000) - 23) <
+            0.0001)
+        assert(player.advanceRecordRotation(-1, -1) == 0)
+    end,
+
     ["failed tasks clear pending state and report their action"] = function()
         local tasks = { ["42"] = "media.seek" }
         local name, failed = player.finishTask(tasks, 42, false)

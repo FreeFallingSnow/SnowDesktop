@@ -115,6 +115,18 @@ function M.shouldAnalyze(setting, hasFeature, hasPermission, reducedMotion)
         reducedMotion ~= true
 end
 
+function M.shouldSpinRecord(hasArtwork, playbackStatus, reducedMotion,
+    visible, preview)
+    return hasArtwork == true and playbackStatus == "playing" and
+        reducedMotion ~= true and visible ~= false and preview ~= true
+end
+
+function M.advanceRecordRotation(rotation, deltaMs)
+    local current = M.clamp(rotation, 0, 360, 0) % 360
+    local elapsed = M.clamp(deltaMs, 0, 1000, 0)
+    return (current + elapsed * 0.024) % 360
+end
+
 function M.spectrum(snapshot, count, preview)
     local result = {}
     local length = math.max(8, math.min(64,

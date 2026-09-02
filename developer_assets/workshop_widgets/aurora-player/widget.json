@@ -278,6 +278,7 @@
     "audio.output.analyze"
   ],
   "requiredFeatures": [
+    "animation.frame",
     "data.media.artwork",
     "data.media.current",
     "data.media.timeline",
@@ -301,6 +302,7 @@
     "view.layout.edgeInsets",
     "view.text.flow",
     "view.text.typography",
+    "view.transform.affine",
     "view.tree.core",
     "widget.backgroundLayer"
   ],

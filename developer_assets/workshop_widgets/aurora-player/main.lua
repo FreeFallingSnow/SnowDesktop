@@ -4,6 +4,7 @@ local mediaCurrent
 local mediaArtwork
 local mediaTimeline
 local audioAnalysis
+local RECORD_FRAME = "aurora.record.spin"
 
 local glyphs = {
     previous = utf8.char(0xF048),
@@ -116,6 +117,10 @@ local function setup(context)
         pendingPlayback = nil,
         seekPreview = nil,
         seekSessionId = nil,
+        reducedMotion = context.accessibility.reducedMotion == true,
+        visible = true,
+        recordRotation = 0,
+        recordFramePending = false,
     }
 end
 
@@ -132,6 +137,9 @@ local function palette(context)
             secondaryButtonText = light and 0x000000 or 0xFFFFFF,
             disabled = light and 0x777777 or 0x6B7280,
             cover = light and 0xE5E5E5 or 0x202020,
+            record = light and 0x000000 or 0xFFFFFF,
+            groove = light and 0xFFFFFF or 0x000000,
+            spindle = light and 0xFFFFFF or 0x000000,
         }
     end
     local theme = widget.theme()
@@ -146,6 +154,9 @@ local function palette(context)
             secondaryButtonText = 0x111827,
             disabled = 0x94A3B8,
             cover = 0x4338CA,
+            record = 0x111827,
+            groove = 0x94A3B8,
+            spindle = 0xF8FAFC,
         }
     end
     return {
@@ -158,6 +169,9 @@ local function palette(context)
         secondaryButtonText = 0xFFFFFF,
         disabled = 0x718096,
         cover = 0x3730A3,
+        record = 0x080A0F,
+        groove = 0x64748B,
+        spindle = 0xE2E8F0,
     }
 end
 
@@ -233,49 +247,111 @@ local function controlButton(key, glyph, label, enabled, colors, primary)
     })
 end
 
-local function coverNode(artwork, size, colors)
+local function recordSurface(key, size, style)
+    return view.column({
+        key = key,
+        width = size,
+        height = size,
+        alignSelf = "center",
+        alignItems = "center",
+        justifyContent = "center",
+        style = style,
+    })
+end
+
+local function coverNode(artwork, size, colors, rotation)
+    local labelSize = size * 0.64
+    local children = {
+        recordSurface("aurora.record.disc", size, {
+            background = colors.record,
+            borderColor = colors.primary,
+            borderWidth = layout.cu(1),
+            cornerRadius = size * 0.5,
+            opacity = 0.96,
+        }),
+        recordSurface("aurora.record.groove.outer", size * 0.86, {
+            borderColor = colors.groove,
+            borderWidth = layout.cu(1),
+            cornerRadius = size * 0.43,
+            opacity = 0.38,
+        }),
+        recordSurface("aurora.record.groove.inner", size * 0.76, {
+            borderColor = colors.groove,
+            borderWidth = layout.cu(1),
+            cornerRadius = size * 0.38,
+            opacity = 0.24,
+        }),
+    }
     if artwork then
-        return view.image({
-            key = "aurora.cover",
+        children[#children + 1] = view.image({
+            key = "aurora.record.artwork",
             source = artwork,
             alt = "",
             fit = "cover",
-            width = size,
-            height = size,
+            width = labelSize,
+            height = labelSize,
+            alignSelf = "center",
+            transform = {
+                rotate = rotation,
+                originX = 0.5,
+                originY = 0.5,
+            },
             style = {
-                cornerRadius = layout.cu(18),
+                cornerRadius = labelSize * 0.5,
                 borderColor = colors.primary,
                 borderWidth = layout.cu(1),
             },
         })
+    else
+        children[#children + 1] = view.column({
+            key = "aurora.record.placeholder",
+            width = labelSize,
+            height = labelSize,
+            alignSelf = "center",
+            alignItems = "center",
+            justifyContent = "center",
+            style = {
+                background = colors.cover,
+                borderColor = colors.primary,
+                borderWidth = layout.cu(1),
+                cornerRadius = labelSize * 0.5,
+                opacity = 0.92,
+            },
+            children = {
+                view.icon({
+                    key = "aurora.record.placeholder.icon",
+                    glyph = glyphs.music,
+                    iconFont = "fa",
+                    width = "fill",
+                    height = "fill",
+                    fontSize = layout.fontCu(27),
+                    textAlign = "center",
+                    verticalAlign = "center",
+                    style = { foreground = 0xFFFFFF, opacity = 0.86 },
+                    accessibility = { hidden = true },
+                }),
+            },
+        })
     end
-    return view.column({
-        key = "aurora.cover.placeholder",
+    children[#children + 1] = recordSurface("aurora.record.spindle",
+        size * 0.09, {
+            background = colors.record,
+            borderColor = colors.spindle,
+            borderWidth = layout.cu(1),
+            cornerRadius = size * 0.045,
+            opacity = 0.98,
+        })
+    children[#children + 1] = recordSurface("aurora.record.pin",
+        size * 0.025, {
+            background = colors.spindle,
+            cornerRadius = size * 0.0125,
+            opacity = 0.96,
+        })
+    return view.stack({
+        key = "aurora.record",
         width = size,
         height = size,
-        alignItems = "center",
-        justifyContent = "center",
-        style = {
-            background = colors.cover,
-            borderColor = colors.primary,
-            borderWidth = layout.cu(1),
-            cornerRadius = layout.cu(18),
-            opacity = 0.92,
-        },
-        children = {
-            view.icon({
-                key = "aurora.cover.icon",
-                glyph = glyphs.music,
-                iconFont = "fa",
-                width = "fill",
-                height = "fill",
-                fontSize = layout.fontCu(32),
-                textAlign = "center",
-                verticalAlign = "center",
-                style = { foreground = 0xFFFFFF, opacity = 0.86 },
-                accessibility = { hidden = true },
-            }),
-        },
+        children = children,
     })
 end
 
@@ -303,6 +379,7 @@ local function visualizerNode(model, colors)
 end
 
 local function viewTree(context, model)
+    model.reducedMotion = context.accessibility.reducedMotion == true
     local colors = palette(context)
     local session = currentSession(model)
     local artwork = currentArtwork(model, session)
@@ -312,6 +389,16 @@ local function viewTree(context, model)
     local playing = session and session.playbackStatus == "playing"
     if model.pendingPlayback == "playing" then playing = true end
     if model.pendingPlayback == "paused" then playing = false end
+    local spinRecord = player.shouldSpinRecord(artwork ~= nil,
+        playing and "playing" or "paused", model.reducedMotion,
+        model.visible, model.preview)
+    if spinRecord and not model.recordFramePending then
+        local accepted = animation.requestFrame(RECORD_FRAME)
+        model.recordFramePending = accepted == true
+    elseif not spinRecord and model.recordFramePending then
+        animation.cancelFrame(RECORD_FRAME)
+        model.recordFramePending = false
+    end
 
     local title = session and session.title ~= "" and session.title or
         l10n.tr("workshop.aurora_player.empty")
@@ -464,7 +551,7 @@ local function viewTree(context, model)
         gap = layout.cu(20),
         alignItems = "center",
         children = {
-            coverNode(artwork, coverSize, colors),
+            coverNode(artwork, coverSize, colors, model.recordRotation),
             details,
         },
     })
@@ -530,6 +617,34 @@ local function commitSeek(model, session, timeline, fraction)
 end
 
 local function event(_context, model, value)
+    if value.kind == "visibility" then
+        model.visible = value.visible == true
+        if not model.visible then
+            animation.cancelFrame(RECORD_FRAME)
+            model.recordFramePending = false
+        else
+            widget.invalidate()
+        end
+        return
+    end
+    if value.kind == "frame" and value.id == RECORD_FRAME then
+        model.recordFramePending = false
+        local session = currentSession(model)
+        local artwork = currentArtwork(model, session)
+        local playing = session and session.playbackStatus == "playing"
+        if model.pendingPlayback == "playing" then playing = true end
+        if model.pendingPlayback == "paused" then playing = false end
+        if player.shouldSpinRecord(artwork ~= nil,
+                playing and "playing" or "paused", model.reducedMotion,
+                model.visible, model.preview) then
+            model.recordRotation = player.advanceRecordRotation(
+                model.recordRotation, value.deltaMs)
+            local accepted = animation.requestFrame(RECORD_FRAME)
+            model.recordFramePending = accepted == true
+        end
+        widget.invalidate()
+        return
+    end
     if value.kind == "task.complete" then
         local name, failed = player.finishTask(
             model.tasks, value.taskId, value.ok)
@@ -693,6 +808,7 @@ local function menu(_context, model, request)
 end
 
 local function dispose()
+    animation.cancelFrame(RECORD_FRAME)
     if mediaCurrent then mediaCurrent:unsubscribe() end
     if mediaArtwork then mediaArtwork:unsubscribe() end
     if mediaTimeline then mediaTimeline:unsubscribe() end
@@ -719,6 +835,7 @@ return widget.define({
     backgroundLayer = {
         render = backgroundLayer,
         opacity = 1,
+        blurRadius = 14,
     },
     view = viewTree,
     event = event,
