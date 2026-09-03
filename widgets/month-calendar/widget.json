@@ -364,7 +364,6 @@
     "interaction.contextMenu",
     "interaction.pointerActions",
     "interaction.region",
-    "interaction.scroll",
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",

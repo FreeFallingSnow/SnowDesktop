@@ -376,109 +376,36 @@ local function render(context, model)
             nextShape, metrics)
         centeredText(title, 0, 0, width,
             headerHeight, titleFont, colors.text, true, 1.0)
-        local listTop = bodyTop
-        local listHeight = math.max(unit,
-            contentHeight - listTop - metrics.spacingXs)
-        local rowHeight = fontSize + metrics.spacingLg
-        local days = {}
-        for _, cell in ipairs(monthCells(model)) do
-            if cell.currentMonth then days[#days + 1] = cell end
-        end
-        local viewport = {
-            type = "rect", x = padding, y = listTop,
-            width = width - padding * 2, height = listHeight,
+    else
+        local previousShape = {
+            x = padding,
+            y = buttonY,
+            width = buttonSize,
+            height = buttonSize,
         }
-        local scroll = interaction.scroll({
-            key = "calendar.days", shape = viewport,
-            contentHeight = math.ceil(#days * rowHeight),
-        })
-        local first = math.max(1,
-            math.floor(scroll.offset / rowHeight) + 1)
-        local last = math.min(#days,
-            math.ceil((scroll.offset + listHeight) / rowHeight))
-        draw.pushClip(padding, listTop, width - padding * 2, listHeight)
-        for index = first, last do
-            local cell = days[index]
-            local y = listTop + (index - 1) * rowHeight - scroll.offset
-            local key = "calendar.date." .. cell.date
-            local isSelected = cell.date == selected
-            local isToday = cell.date == today
-            if isSelected or interaction.isHovered(key) then
-                draw.rect(padding, y, width - padding * 2,
-                    rowHeight - metrics.spacingXs, colors.text,
-                    metrics.controlRadius, isSelected and 0.18 or 0.08)
-            elseif isToday then
-                draw.strokeRect(padding + unit, y + unit,
-                    width - padding * 2 - unit * 2,
-                    rowHeight - metrics.spacingXs - unit * 2,
-                    colors.text, math.max(0, metrics.controlRadius - unit),
-                    metrics.strokeWidth, 0.38)
-            end
-            draw.text(padding + metrics.spacingSm,
-                y + math.max(0, (rowHeight - fontSize) / 2),
-                tostring(cell.info.day), fontSize, colors.text,
-                math.max(fontSize * 1.7, metrics.spacingLg), true, true)
-            local weekday = weekdayLabel(cell.info.weekday)
-            local weekdayMetrics = draw.measureText(
-                weekday, smallFont, 0, false)
-            draw.text(width - padding - weekdayMetrics.width -
-                    metrics.spacingSm,
-                y + math.max(0, (rowHeight - weekdayMetrics.height) / 2),
-                weekday, smallFont, colors.text,
-                weekdayMetrics.width + unit, false, true, 0, 0.68)
-            if counts[cell.date] then
-                draw.circle(padding + metrics.spacingXs,
-                    y + rowHeight / 2, px(1.5), colors.text, 0.86)
-            end
-            interaction.region({
-                key = key,
-                shape = { type = "roundedRect", x = padding, y = y,
-                    width = width - padding * 2,
-                    height = rowHeight - metrics.spacingXs,
-                    radius = metrics.controlRadius },
-                cursor = "hand",
-                events = {
-                    click = { id = "calendar.select",
-                        value = { date = cell.date } },
-                    contextMenu = { id = "calendar.menu",
-                        scope = "component" },
-                },
-                accessibility = { role = "button", label = cell.date },
-            })
-        end
-        draw.popClip()
-        return
+        local nextShape = {
+            x = padding + buttonSize + headerGap,
+            y = buttonY,
+            width = buttonSize,
+            height = buttonSize,
+        }
+        local todayShape = {
+            x = width - padding - todayWidth,
+            y = buttonY,
+            width = todayWidth,
+            height = buttonSize,
+        }
+        drawHeaderIconButton("calendar.previous", fluent.previous,
+            l10n.tr("lua_widget.month_calendar.previous_month"), colors,
+            previousShape, metrics)
+        drawHeaderIconButton("calendar.next", fluent.next,
+            l10n.tr("lua_widget.month_calendar.next_month"), colors,
+            nextShape, metrics)
+        drawHeaderTextButton("calendar.today", todayText, smallFont, colors,
+            todayShape, metrics)
+        centeredText(title, 0, 0, width, headerHeight,
+            titleFont, colors.text, true, 1.0)
     end
-
-    local previousShape = {
-        x = padding,
-        y = buttonY,
-        width = buttonSize,
-        height = buttonSize,
-    }
-    local nextShape = {
-        x = padding + buttonSize + headerGap,
-        y = buttonY,
-        width = buttonSize,
-        height = buttonSize,
-    }
-    local todayShape = {
-        x = width - padding - todayWidth,
-        y = buttonY,
-        width = todayWidth,
-        height = buttonSize,
-    }
-    drawHeaderIconButton("calendar.previous", fluent.previous,
-        l10n.tr("lua_widget.month_calendar.previous_month"), colors,
-        previousShape, metrics)
-    drawHeaderIconButton("calendar.next", fluent.next,
-        l10n.tr("lua_widget.month_calendar.next_month"), colors,
-        nextShape, metrics)
-    drawHeaderTextButton("calendar.today", todayText, smallFont, colors,
-        todayShape, metrics)
-
-    centeredText(title, 0, 0, width, headerHeight,
-        titleFont, colors.text, true, 1.0)
 
     local weekStart = effectiveWeekStart()
     local shortHeight = cellHeight < fontSize + metrics.spacingXs * 2
