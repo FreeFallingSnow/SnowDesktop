@@ -378,14 +378,6 @@
     "columns": 4,
     "rows": 2
   },
-  "minSize": {
-    "columns": 2,
-    "rows": 2
-  },
-  "maxSize": {
-    "columns": 6,
-    "rows": 6
-  },
   "resources": {},
   "slots": {},
   "permissions": [
