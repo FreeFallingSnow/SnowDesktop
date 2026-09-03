@@ -325,8 +325,8 @@ Use the lowest-cost checks first:
    implementation details.
 4. Run `snowwidget preview <directory> <output.png>` at the default span and at
    every materially different aspect ratio or density state. For proportional
-   widgets, also preview two different sizes with the same aspect ratio and
-   verify that all geometry scales by the same factor. Exercise relevant DPI,
+   visual widgets, also preview two different sizes with the same aspect ratio
+   and verify that all geometry scales by the same factor. Exercise relevant DPI,
    locale, appearance, foreground theme, data state and storage values.
 5. Open and visually inspect every PNG. A JSON result with `ok=true` proves only
    that rendering completed. It does not prove readable contrast, correct
