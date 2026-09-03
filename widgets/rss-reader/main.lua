@@ -186,6 +186,7 @@ local function render(context, model)
     local unit = metrics.strokeWidth
     local pad = metrics.spacingMd
     local headerFont = metrics.titleFontSize * cfg.fontScale
+    local countFont = metrics.controlFontSize * cfg.fontScale
     local bodyFont = metrics.bodyFontSize * cfg.fontScale
     local smallFont = metrics.captionFontSize * cfg.fontScale
     local title = model.feedTitle ~= "" and model.feedTitle or "RSS"
@@ -194,7 +195,7 @@ local function render(context, model)
 
     local countText = l10n.tr("lua_widget.rss_reader.article_count",
         tostring(#model.articles))
-    local countMetrics = draw.measureText(countText, smallFont, width, false)
+    local countMetrics = draw.measureText(countText, countFont, width, false)
     local headerHeight = math.min(height, metrics.titleAreaHeight)
     local titleMetrics = draw.measureText(title, headerFont, width, true)
     draw.text(pad, math.max(0,
@@ -205,7 +206,7 @@ local function render(context, model)
         false, true)
     draw.text(width - pad - countMetrics.width,
         math.max(0, (headerHeight - countMetrics.height) / 2),
-        countText, smallFont, colors.count, countMetrics.width + unit,
+        countText, countFont, colors.count, countMetrics.width + unit,
         false, true)
     local headerBottom = headerHeight
     draw.line(pad, headerBottom, width - pad, headerBottom,
