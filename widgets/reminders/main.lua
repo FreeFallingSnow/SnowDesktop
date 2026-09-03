@@ -276,8 +276,8 @@ local function render(context, model)
     local pad = scaled(14)
     local gap = scaled(7)
     local palette = getPalette()
-    local fontSize = scaledFont(15)
-    local smallFont = scaledFont(12)
+    local fontSize = scaledFont(12)
+    local smallFont = scaledFont(10)
     local total = taskCounts()
 
     local inputY = pad

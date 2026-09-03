@@ -175,7 +175,7 @@ local function render()
         shape = shape,
         placeholder = l10n.tr("lua_widget.sticky_note.empty_hint"),
         placeholderWhenWhitespace = true,
-        fontSize = scaled(15) * fontScale(),
+        fontSize = scaled(12) * fontScale(),
         textColor = color,
         placeholderColor = color,
         backgroundColor = color,

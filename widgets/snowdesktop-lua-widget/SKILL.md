@@ -128,6 +128,14 @@ Constants used only as ratios are fine. Output clamps such as
 `math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
 make two equal-aspect surfaces render differently and should be avoided.
 
+Choose font values by their share of the default short edge instead of reusing
+one numeric size across different default spans. On ordinary card surfaces,
+body text should usually occupy about 6–6.5% of that edge, with supporting
+text around 4.5–5.5%. This corresponds to roughly `layout.rpx(12)` for a 2×2
+default and `layout.rpx(15)` for a 3×2 or 4×2 default. Reserve substantially
+larger text for primary data such as a clock, timer or single metric. Thin
+horizontal surfaces may use a larger percentage to retain legibility.
+
 ## Create a package
 
 1. For a new widget, use the bundled deterministic initializer rather than

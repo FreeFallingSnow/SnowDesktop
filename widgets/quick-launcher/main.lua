@@ -245,7 +245,7 @@ local function render(context, model)
     local width = layout.contentWidth()
     local height = layout.contentHeight()
     local pad = scaled(13)
-    local fontSize = scaledFont(15)
+    local fontSize = scaledFont(12)
     local inputHeight = scaled(34) * math.max(1, fontScale())
 
     control.textInput({
@@ -279,7 +279,7 @@ local function render(context, model)
         drawCenteredStatus(
             l10n.tr("lua_widget.quick_launcher.empty_prompt"),
             pad, listTop, width - pad * 2, viewportHeight,
-            scaledFont(13), colors.muted)
+            scaledFont(10), colors.muted)
         return
     end
 
@@ -290,7 +290,7 @@ local function render(context, model)
                 l10n.tr("lua_widget.quick_launcher.searching") or
                 l10n.tr("lua_widget.quick_launcher.no_matches"),
             pad, listTop, width - pad * 2, viewportHeight,
-            scaledFont(13), colors.muted)
+            scaledFont(10), colors.muted)
         return
     end
 
@@ -316,7 +316,7 @@ local function render(context, model)
         if y + rowHeight >= listTop and y <= listTop + viewportHeight then
             if row.kind == "header" then
                 draw.text(pad + scaled(4), y + scaled(5), row.title,
-                    scaledFont(12), colors.muted,
+                    scaledFont(10), colors.muted,
                     width - pad * 2 - scaled(8), false, true)
             else
                 local item = row.item
