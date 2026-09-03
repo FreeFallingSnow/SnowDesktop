@@ -470,7 +470,7 @@ local function buildView(context)
     infoWidth = math.max(infoWidth, requiredTimeWidth)
     local timeHeight = timeFont * 1.18
     local statusFont = math.min(short * 0.055, infoWidth * 0.075)
-    actionFont = math.min(short * 0.065, actionWidth * 0.105)
+    actionFont = math.min(short * 0.065, actionWidth * 0.15)
     local progressWidth = infoWidth * 0.76
 
     local status = view.badge({
