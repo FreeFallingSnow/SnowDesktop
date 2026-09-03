@@ -396,10 +396,12 @@ local function render(context, model)
     local selected = selectedDate(model)
     local canWrite = widget.hasPermission("calendar.write") and not context.preview
 
-    local button = metrics.compactControlHeight
+    local headerHeight = math.min(height, metrics.titleAreaHeight)
+    local button = math.min(metrics.compactControlHeight,
+        math.max(unit, headerHeight - metrics.spacingSm))
     local gap = metrics.spacingXs
-    local headerY = pad
-    local listTop
+    local headerY = math.max(0, (headerHeight - button) / 2)
+    local listTop = math.min(height, headerHeight + metrics.spacingSm)
     local narrowHeader = width < pad * 2 + button * 2 + gap +
         metrics.spacingMd
     if narrowHeader then
@@ -411,11 +413,11 @@ local function render(context, model)
             l10n.tr("lua_widget.agenda.next_day"),
             { x = width - pad - button, y = headerY,
                 width = button, height = button }, colors, true, metrics)
-        local dateY = headerY + button + gap
-        centeredText(formatDate(selected, false), pad, dateY,
-            width - pad * 2, metrics.compactControlHeight,
+        centeredText(formatDate(selected, false),
+            pad + button + gap, 0,
+            math.max(unit, width - pad * 2 - button * 2 - gap * 2),
+            headerHeight,
             titleFont, colors.text, true)
-        listTop = dateY + metrics.compactControlHeight + metrics.spacingSm
     else
         drawHeaderButton("agenda.previous", fluent.previous,
             l10n.tr("lua_widget.agenda.previous_day"),
@@ -442,10 +444,9 @@ local function render(context, model)
             metrics, smallFont)
         local titleX = pad + button * 2 + gap * 2
         local titleRight = todayX - gap
-        centeredText(formatDate(selected, false), titleX, headerY,
-            math.max(unit, titleRight - titleX), button,
+        centeredText(formatDate(selected, false), titleX, 0,
+            math.max(unit, titleRight - titleX), headerHeight,
             titleFont, colors.text, true)
-        listTop = headerY + button + metrics.spacingSm
     end
 
     local listBottom = height - metrics.spacingXs
@@ -466,18 +467,17 @@ local function render(context, model)
     if #items == 0 then
         centeredText(l10n.tr("lua_widget.agenda.empty"),
             pad, listTop + viewportHeight * 0.34,
-            width - pad * 2, metrics.compactControlHeight, titleFont,
+            width - pad * 2, titleFont + metrics.spacingSm, titleFont,
             colors.text, true, 0.78)
         centeredText(l10n.tr("lua_widget.agenda.empty_hint"),
             pad, listTop + viewportHeight * 0.34 +
-                metrics.compactControlHeight,
-            width - pad * 2, metrics.compactControlHeight, smallFont,
+                titleFont + metrics.spacingSm,
+            width - pad * 2, smallFont + metrics.spacingSm, smallFont,
             colors.muted, false, canWrite and 0.72 or 0.38)
         return
     end
 
-    local rowHeight = math.max(metrics.rowHeight + metrics.spacingSm,
-        mainFont + smallFont + metrics.spacingLg)
+    local rowHeight = mainFont + smallFont + metrics.spacingLg
     local rowGap = metrics.spacingXs
     local scroll = interaction.scroll({
         key = "agenda.scroll",

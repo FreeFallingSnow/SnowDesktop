@@ -6,28 +6,11 @@
 namespace snowdesktop::widget_runtime
 {
 
-// Host-wide semantic UI tokens expressed in page CU. Components receive the
-// resolved pixel values through ui.metrics(); their individual span never
-// participates in this calculation.
+// Host-level structure expressed in page CU. Detailed component content uses
+// its own available rectangle instead of becoming a collection of global knobs.
 struct SemanticUiMetricTokens
 {
-    float spacingXs = 4.0f;
-    float spacingSm = 8.0f;
-    float spacingMd = 12.0f;
-    float spacingLg = 16.0f;
-    float captionFontSize = 10.0f;
-    float bodyFontSize = 12.0f;
-    float titleFontSize = 14.0f;
-    float controlFontSize = 12.0f;
-    float compactControlHeight = 28.0f;
-    float controlHeight = 32.0f;
-    float compactRowHeight = 32.0f;
-    float rowHeight = 40.0f;
-    float smallIconSize = 12.0f;
-    float iconSize = 16.0f;
-    float largeIconSize = 20.0f;
-    float controlRadius = 8.0f;
-    float strokeWidth = 1.0f;
+    float titleAreaHeight = 40.0f;
 
     bool operator==(const SemanticUiMetricTokens&) const = default;
 };
@@ -35,47 +18,16 @@ struct SemanticUiMetricTokens
 inline SemanticUiMetricTokens NormalizeSemanticUiMetricTokens(
     SemanticUiMetricTokens value) noexcept
 {
-    const auto clamp = [](float candidate, float fallback,
-                           float minimum, float maximum) noexcept {
-        return std::isfinite(candidate)
-            ? std::clamp(candidate, minimum, maximum)
-            : fallback;
-    };
-    const SemanticUiMetricTokens defaults;
-    value.spacingXs = clamp(value.spacingXs, defaults.spacingXs, 0.0f, 24.0f);
-    value.spacingSm = clamp(value.spacingSm, defaults.spacingSm, 0.0f, 32.0f);
-    value.spacingMd = clamp(value.spacingMd, defaults.spacingMd, 0.0f, 40.0f);
-    value.spacingLg = clamp(value.spacingLg, defaults.spacingLg, 0.0f, 48.0f);
-    value.captionFontSize = clamp(value.captionFontSize,
-        defaults.captionFontSize, 6.0f, 28.0f);
-    value.bodyFontSize = clamp(value.bodyFontSize,
-        defaults.bodyFontSize, 6.0f, 32.0f);
-    value.titleFontSize = clamp(value.titleFontSize,
-        defaults.titleFontSize, 6.0f, 40.0f);
-    value.controlFontSize = clamp(value.controlFontSize,
-        defaults.controlFontSize, 6.0f, 32.0f);
-    value.compactControlHeight = clamp(value.compactControlHeight,
-        defaults.compactControlHeight, 16.0f, 64.0f);
-    value.controlHeight = clamp(value.controlHeight,
-        defaults.controlHeight, 16.0f, 72.0f);
-    value.compactRowHeight = clamp(value.compactRowHeight,
-        defaults.compactRowHeight, 16.0f, 72.0f);
-    value.rowHeight = clamp(value.rowHeight,
-        defaults.rowHeight, 16.0f, 88.0f);
-    value.smallIconSize = clamp(value.smallIconSize,
-        defaults.smallIconSize, 6.0f, 40.0f);
-    value.iconSize = clamp(value.iconSize, defaults.iconSize, 6.0f, 48.0f);
-    value.largeIconSize = clamp(value.largeIconSize,
-        defaults.largeIconSize, 6.0f, 64.0f);
-    value.controlRadius = clamp(value.controlRadius,
-        defaults.controlRadius, 0.0f, 28.0f);
-    value.strokeWidth = clamp(value.strokeWidth,
-        defaults.strokeWidth, 0.5f, 4.0f);
+    if (!std::isfinite(value.titleAreaHeight))
+        value.titleAreaHeight = SemanticUiMetricTokens{}.titleAreaHeight;
+    value.titleAreaHeight = std::clamp(
+        value.titleAreaHeight, 24.0f, 64.0f);
     return value;
 }
 
 struct SemanticUiMetrics
 {
+    float titleAreaHeight = 40.0f;
     float spacingXs = 4.0f;
     float spacingSm = 8.0f;
     float spacingMd = 12.0f;
@@ -102,35 +54,40 @@ inline SemanticUiMetrics ResolveSemanticUiMetrics(
     const SemanticUiMetricTokens tokens =
         NormalizeSemanticUiMetricTokens(rawTokens);
     const float geometryScale = std::clamp(pageCuScale, 0.1f, 8.0f);
-    const float typographyScale = geometryScale *
-        std::clamp(textScale, 0.5f, 5.0f);
+    const float accessibilityScale = std::clamp(textScale, 0.5f, 5.0f);
+    const float headerScale = tokens.titleAreaHeight / 40.0f;
+    const float typographyScale = geometryScale * accessibilityScale;
+    const float headerTypographyScale = typographyScale * headerScale;
+
     SemanticUiMetrics result;
-    result.spacingXs = tokens.spacingXs * geometryScale;
-    result.spacingSm = tokens.spacingSm * geometryScale;
-    result.spacingMd = tokens.spacingMd * geometryScale;
-    result.spacingLg = tokens.spacingLg * geometryScale;
-    result.captionFontSize = tokens.captionFontSize * typographyScale;
-    result.bodyFontSize = tokens.bodyFontSize * typographyScale;
-    result.titleFontSize = tokens.titleFontSize * typographyScale;
-    result.controlFontSize = tokens.controlFontSize * typographyScale;
+    result.titleAreaHeight = tokens.titleAreaHeight * geometryScale;
+    result.spacingXs = 4.0f * geometryScale;
+    result.spacingSm = 8.0f * geometryScale;
+    result.spacingMd = 12.0f * geometryScale;
+    result.spacingLg = 16.0f * geometryScale;
+    result.captionFontSize = 10.0f * typographyScale;
+    result.bodyFontSize = 12.0f * typographyScale;
+    result.titleFontSize = 14.0f * headerTypographyScale;
+    result.controlFontSize = 12.0f * headerTypographyScale;
     result.compactControlHeight = std::max(
-        tokens.compactControlHeight * geometryScale,
-        result.controlFontSize + tokens.spacingMd * geometryScale);
+        (tokens.titleAreaHeight - 12.0f) * geometryScale,
+        result.controlFontSize + 12.0f * geometryScale);
     result.controlHeight = std::max(
-        tokens.controlHeight * geometryScale,
-        result.controlFontSize + tokens.spacingLg * geometryScale);
+        (tokens.titleAreaHeight - 8.0f) * geometryScale,
+        result.controlFontSize + 16.0f * geometryScale);
+    // Retained for source compatibility. Content rows should normally derive
+    // their intrinsic size from text and their component-specific layout.
     result.compactRowHeight = std::max(
-        tokens.compactRowHeight * geometryScale,
-        result.bodyFontSize + tokens.spacingLg * geometryScale);
+        32.0f * geometryScale,
+        result.bodyFontSize + 16.0f * geometryScale);
     result.rowHeight = std::max(
-        tokens.rowHeight * geometryScale,
-        result.bodyFontSize + (tokens.spacingMd + tokens.spacingLg) *
-            geometryScale);
-    result.smallIconSize = tokens.smallIconSize * geometryScale;
-    result.iconSize = tokens.iconSize * geometryScale;
-    result.largeIconSize = tokens.largeIconSize * geometryScale;
-    result.controlRadius = tokens.controlRadius * geometryScale;
-    result.strokeWidth = tokens.strokeWidth * geometryScale;
+        40.0f * geometryScale,
+        result.bodyFontSize + 20.0f * geometryScale);
+    result.smallIconSize = 12.0f * headerScale * geometryScale;
+    result.iconSize = 16.0f * headerScale * geometryScale;
+    result.largeIconSize = 20.0f * headerScale * geometryScale;
+    result.controlRadius = 8.0f * geometryScale;
+    result.strokeWidth = 1.0f * geometryScale;
     return result;
 }
 

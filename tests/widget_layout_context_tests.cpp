@@ -106,34 +106,34 @@ void TestReferencePixelsUseTheManifestDefaultShortEdge()
         "reference axes scale independently from width and height");
 }
 
-void TestSemanticUiMetricsUseEditablePageCuTokens()
+void TestSemanticUiMetricsUseTitleAreaAndPageCu()
 {
     using snowdesktop::widget_runtime::SemanticUiMetricTokens;
     using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
     const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
-    Expect(standard.bodyFontSize == 12.0f &&
+    Expect(standard.titleAreaHeight == 40.0f &&
+            standard.bodyFontSize == 12.0f &&
             standard.controlHeight == 32.0f &&
             standard.compactControlHeight == 28.0f &&
             standard.rowHeight == 40.0f,
         "semantic UI metrics expose shared page-CU defaults");
     const auto denserPage = ResolveSemanticUiMetrics(0.75f, 1.0f);
-    Expect(denserPage.bodyFontSize == 9.0f &&
+    Expect(denserPage.titleAreaHeight == 30.0f &&
+            denserPage.bodyFontSize == 9.0f &&
             denserPage.controlHeight == 24.0f &&
             denserPage.spacingSm == 6.0f,
         "semantic UI metrics follow the stable page CU scale");
     SemanticUiMetricTokens custom;
-    custom.bodyFontSize = 11.0f;
-    custom.controlHeight = 36.0f;
-    custom.spacingSm = 6.0f;
+    custom.titleAreaHeight = 48.0f;
     const auto customized = ResolveSemanticUiMetrics(custom, 1.0f, 1.0f);
-    Expect(customized.bodyFontSize == 11.0f &&
-            customized.controlHeight == 36.0f &&
-            customized.spacingSm == 6.0f,
-        "host-wide semantic tokens remain independently adjustable");
+    Expect(customized.titleAreaHeight == 48.0f &&
+            customized.controlHeight == 40.0f &&
+            customized.spacingSm == 8.0f,
+        "title area height drives linked header controls without changing content spacing");
     const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
     Expect(largeText.bodyFontSize == 24.0f &&
             largeText.controlHeight == 40.0f &&
-            largeText.rowHeight == 52.0f,
+            largeText.rowHeight == 44.0f,
         "semantic controls expand only when accessibility text needs room");
 }
 
@@ -165,7 +165,7 @@ int main()
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
     TestReferencePixelsUseTheManifestDefaultShortEdge();
-    TestSemanticUiMetricsUseEditablePageCuTokens();
+    TestSemanticUiMetricsUseTitleAreaAndPageCu();
     TestLegacyPointSizesMigrateToCuOnce();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";

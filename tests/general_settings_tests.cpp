@@ -197,9 +197,7 @@ int main()
     savedAppearance.widgetEdgeHighlightEnabled = true;
     savedAppearance.widgetEdgeHighlightWidth = 2.5f;
     savedAppearance.widgetEdgeHighlightStrength = 0.42f;
-    savedAppearance.widgetUiMetrics.titleFontSize = 13.0f;
-    savedAppearance.widgetUiMetrics.controlHeight = 29.0f;
-    savedAppearance.widgetUiMetrics.spacingSm = 7.0f;
+    savedAppearance.luaWidgetTitleAreaHeight = 44.0f;
     Check(SavePersonalization(
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
@@ -211,11 +209,9 @@ int main()
             loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
             std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
-            loadedAppearance.widgetUiMetrics.titleFontSize == 13.0f &&
-            loadedAppearance.widgetUiMetrics.controlHeight == 29.0f &&
-            loadedAppearance.widgetUiMetrics.spacingSm == 7.0f &&
+            loadedAppearance.luaWidgetTitleAreaHeight == 44.0f &&
             !loadedAppearance.glassEnabled,
-        "appearance and editable semantic UI tokens round trip independently");
+        "appearance and Lua widget title area height round trip independently");
 
     {
         std::ofstream legacyGlass(
@@ -260,8 +256,7 @@ int main()
                            "  \"widgetEdgeHighlightEnabled\": false,\n"
                            "  \"widgetEdgeHighlightWidth\": 99,\n"
                            "  \"widgetEdgeHighlightStrength\": -1,\n"
-                           "  \"widgetUiTitleFontSizeCu\": 999,\n"
-                           "  \"widgetUiStrokeWidthCu\": 0\n"
+                           "  \"luaWidgetTitleAreaHeight\": 999\n"
                            "}\n";
     }
     PersonalizationSettings explicitAppearance;
@@ -273,9 +268,8 @@ int main()
             explicitAppearance.widgetEdgeHighlightWidth ==
                 kMaximumWidgetBorderWidth &&
             explicitAppearance.widgetEdgeHighlightStrength == 0.0f &&
-            explicitAppearance.widgetUiMetrics.titleFontSize == 40.0f &&
-            explicitAppearance.widgetUiMetrics.strokeWidth == 0.5f,
-        "explicit appearance and semantic UI fields clamp to supported ranges");
+            explicitAppearance.luaWidgetTitleAreaHeight == 64.0f,
+        "explicit appearance and Lua title area height clamp to supported ranges");
     std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);

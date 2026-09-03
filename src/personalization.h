@@ -10,8 +10,6 @@
 #include <d2d1_1.h>
 #include <string>
 
-#include "widget_ui_metrics.h"
-
 constexpr int kAppearancePresetDark = 0;
 constexpr int kAppearancePresetLight = 1;
 constexpr int kAppearancePresetGlassDark = 6;
@@ -149,8 +147,8 @@ struct PersonalizationSettings
      */
     float categorizedTabHeight = 34.0f;
 
-    /** Host-wide semantic widget UI tokens, stored in page CU. */
-    snowdesktop::widget_runtime::SemanticUiMetricTokens widgetUiMetrics;
+    /** Lua desktop widget title area height in page CU. */
+    float luaWidgetTitleAreaHeight = 40.0f;
 
     /**
      * @brief 分类标签（桌面文件、映射文件夹）是否显示文件数量。

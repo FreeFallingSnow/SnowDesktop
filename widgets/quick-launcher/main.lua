@@ -242,17 +242,19 @@ local function render(context, model)
     local scale = fontScale()
     local pad = metrics.spacingMd
     local fontSize = metrics.bodyFontSize * scale
+    local inputFont = metrics.controlFontSize * scale
     local smallFont = metrics.captionFontSize * scale
-    local inputHeight = math.max(metrics.controlHeight,
-        fontSize + metrics.spacingLg)
-    local inputTop = metrics.spacingMd
+    local titleAreaHeight = math.min(height, metrics.titleAreaHeight)
+    local inputHeight = math.min(metrics.controlHeight,
+        math.max(unit, titleAreaHeight - metrics.spacingSm))
+    local inputTop = math.max(0, (titleAreaHeight - inputHeight) / 2)
 
     control.textInput({
         key = "quick.search", storageKey = "query",
         shape = { type = "rect", x = pad, y = inputTop,
             width = width - pad * 2, height = inputHeight },
         placeholder = l10n.tr("lua_widget.quick_launcher.search_placeholder"),
-        fontSize = fontSize, textColor = colors.input,
+        fontSize = inputFont, textColor = colors.input,
         placeholderColor = colors.muted, backgroundColor = colors.surface,
         borderColor = colors.border, focusedBorderColor = colors.accent,
         backgroundAlpha = 0.065, focusedBackgroundAlpha = 0.11,
@@ -262,7 +264,8 @@ local function render(context, model)
         liveUpdate = true, maxBytes = 256,
     })
 
-    local listTop = inputTop + inputHeight + metrics.spacingSm
+    local listTop = math.min(height,
+        titleAreaHeight + metrics.spacingSm)
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
@@ -293,10 +296,8 @@ local function render(context, model)
         return
     end
 
-    local headerHeight = math.max(metrics.compactControlHeight,
-        smallFont + metrics.spacingMd)
-    local itemHeight = math.max(metrics.rowHeight,
-        fontSize + metrics.spacingLg)
+    local headerHeight = smallFont + metrics.spacingMd
+    local itemHeight = fontSize + metrics.spacingLg
     local offsets = {}
     local contentHeight = 0
     for index, row in ipairs(model.rows) do
@@ -308,7 +309,8 @@ local function render(context, model)
         key = "quick-results", shape = viewport,
         contentHeight = math.ceil(contentHeight),
     })
-    local iconSize = metrics.largeIconSize
+    local iconSize = math.max(fontSize + metrics.spacingXs,
+        metrics.spacingLg)
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
     for index, row in ipairs(model.rows) do
         local rowHeight = row.kind == "header" and headerHeight or itemHeight

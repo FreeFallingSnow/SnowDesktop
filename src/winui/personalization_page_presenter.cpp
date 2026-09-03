@@ -55,8 +55,6 @@ struct ContinuousControl
     muxc::TextBlock unit{nullptr};
     muxc::Button reset{nullptr};
     float PersonalizationSettings::* member = nullptr;
-    float snowdesktop::widget_runtime::SemanticUiMetricTokens::*
-        semanticMember = nullptr;
     double scale = 1.0;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     bool dirty = false;
@@ -148,10 +146,6 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
-    SettingsCard semanticTypographyCard;
-    SettingsCard semanticSpacingCard;
-    SettingsCard semanticControlsCard;
-    SettingsCard semanticIconsCard;
 
     muxc::ComboBox presetCombo{nullptr};
     muxc::ComboBox quickNavigationThemeCombo{nullptr};
@@ -174,23 +168,7 @@ struct PersonalizationPagePresenter::Impl
     ContinuousControl cornerRadius;
     ContinuousControl barHeight;
     ContinuousControl categorizedTabHeight;
-    ContinuousControl semanticCaptionFontSize;
-    ContinuousControl semanticBodyFontSize;
-    ContinuousControl semanticTitleFontSize;
-    ContinuousControl semanticControlFontSize;
-    ContinuousControl semanticSpacingXs;
-    ContinuousControl semanticSpacingSm;
-    ContinuousControl semanticSpacingMd;
-    ContinuousControl semanticSpacingLg;
-    ContinuousControl semanticCompactControlHeight;
-    ContinuousControl semanticControlHeight;
-    ContinuousControl semanticCompactRowHeight;
-    ContinuousControl semanticRowHeight;
-    ContinuousControl semanticSmallIconSize;
-    ContinuousControl semanticIconSize;
-    ContinuousControl semanticLargeIconSize;
-    ContinuousControl semanticControlRadius;
-    ContinuousControl semanticStrokeWidth;
+    ContinuousControl luaWidgetTitleAreaHeight;
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -202,7 +180,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 27> continuousControls = {
+    std::array<ContinuousControl*, 11> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -213,23 +191,7 @@ struct PersonalizationPagePresenter::Impl
         &cornerRadius,
         &barHeight,
         &categorizedTabHeight,
-        &semanticCaptionFontSize,
-        &semanticBodyFontSize,
-        &semanticTitleFontSize,
-        &semanticControlFontSize,
-        &semanticSpacingXs,
-        &semanticSpacingSm,
-        &semanticSpacingMd,
-        &semanticSpacingLg,
-        &semanticCompactControlHeight,
-        &semanticControlHeight,
-        &semanticCompactRowHeight,
-        &semanticRowHeight,
-        &semanticSmallIconSize,
-        &semanticIconSize,
-        &semanticLargeIconSize,
-        &semanticControlRadius,
-        &semanticStrokeWidth,
+        &luaWidgetTitleAreaHeight,
     };
     std::array<ColorControl*, 2> colorControls = {
         &backgroundColor,
@@ -437,92 +399,12 @@ struct PersonalizationPagePresenter::Impl
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
-
-        InitializeCard(semanticTypographyCard, cardStyle, widgetLayoutRoot);
-        InitializeSemanticContinuousControl(semanticCaptionFontSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::captionFontSize,
-            6.0, 28.0, 1.0, 10.0);
-        InitializeSemanticContinuousControl(semanticBodyFontSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::bodyFontSize,
-            6.0, 32.0, 1.0, 12.0);
-        InitializeSemanticContinuousControl(semanticTitleFontSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::titleFontSize,
-            6.0, 40.0, 1.0, 14.0);
-        InitializeSemanticContinuousControl(semanticControlFontSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::controlFontSize,
-            6.0, 32.0, 1.0, 12.0);
-        for (ContinuousControl* control : { &semanticCaptionFontSize,
-                 &semanticBodyFontSize, &semanticTitleFontSize,
-                 &semanticControlFontSize })
-        {
-            SetUnit(*control, L"cu");
-            semanticTypographyCard.content.Children().Append(control->row.root);
-        }
-
-        InitializeCard(semanticSpacingCard, cardStyle, widgetLayoutRoot);
-        InitializeSemanticContinuousControl(semanticSpacingXs,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::spacingXs,
-            0.0, 24.0, 1.0, 4.0);
-        InitializeSemanticContinuousControl(semanticSpacingSm,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::spacingSm,
-            0.0, 32.0, 1.0, 8.0);
-        InitializeSemanticContinuousControl(semanticSpacingMd,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::spacingMd,
-            0.0, 40.0, 1.0, 12.0);
-        InitializeSemanticContinuousControl(semanticSpacingLg,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::spacingLg,
-            0.0, 48.0, 1.0, 16.0);
-        for (ContinuousControl* control : { &semanticSpacingXs,
-                 &semanticSpacingSm, &semanticSpacingMd, &semanticSpacingLg })
-        {
-            SetUnit(*control, L"cu");
-            semanticSpacingCard.content.Children().Append(control->row.root);
-        }
-
-        InitializeCard(semanticControlsCard, cardStyle, widgetLayoutRoot);
-        InitializeSemanticContinuousControl(semanticCompactControlHeight,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::compactControlHeight,
-            16.0, 64.0, 1.0, 28.0);
-        InitializeSemanticContinuousControl(semanticControlHeight,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::controlHeight,
-            16.0, 72.0, 1.0, 32.0);
-        InitializeSemanticContinuousControl(semanticCompactRowHeight,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::compactRowHeight,
-            16.0, 72.0, 1.0, 32.0);
-        InitializeSemanticContinuousControl(semanticRowHeight,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::rowHeight,
-            16.0, 88.0, 1.0, 40.0);
-        InitializeSemanticContinuousControl(semanticControlRadius,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::controlRadius,
-            0.0, 28.0, 1.0, 8.0);
-        InitializeSemanticContinuousControl(semanticStrokeWidth,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::strokeWidth,
-            0.5, 4.0, 0.5, 1.0);
-        for (ContinuousControl* control : { &semanticCompactControlHeight,
-                 &semanticControlHeight, &semanticCompactRowHeight,
-                 &semanticRowHeight, &semanticControlRadius,
-                 &semanticStrokeWidth })
-        {
-            SetUnit(*control, L"cu");
-            semanticControlsCard.content.Children().Append(control->row.root);
-        }
-
-        InitializeCard(semanticIconsCard, cardStyle, widgetLayoutRoot);
-        InitializeSemanticContinuousControl(semanticSmallIconSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::smallIconSize,
-            6.0, 40.0, 1.0, 12.0);
-        InitializeSemanticContinuousControl(semanticIconSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::iconSize,
-            6.0, 48.0, 1.0, 16.0);
-        InitializeSemanticContinuousControl(semanticLargeIconSize,
-            &snowdesktop::widget_runtime::SemanticUiMetricTokens::largeIconSize,
-            6.0, 64.0, 1.0, 20.0);
-        for (ContinuousControl* control : { &semanticSmallIconSize,
-                 &semanticIconSize, &semanticLargeIconSize })
-        {
-            SetUnit(*control, L"cu");
-            semanticIconsCard.content.Children().Append(control->row.root);
-        }
+        InitializeContinuousControl(luaWidgetTitleAreaHeight,
+            &PersonalizationSettings::luaWidgetTitleAreaHeight,
+            24.0, 64.0, 1.0, 1.0, 40.0);
+        SetUnit(luaWidgetTitleAreaHeight, L"cu");
+        layoutCard.content.Children().Append(
+            luaWidgetTitleAreaHeight.row.root);
     }
 
     void InitializeColorControl(
@@ -590,7 +472,6 @@ struct PersonalizationPagePresenter::Impl
         control.unit.Opacity(0.72);
         control.unit.Visibility(mux::Visibility::Collapsed);
         control.member = member;
-        control.semanticMember = nullptr;
         control.scale = scale;
         control.defaultValue = defaultValue;
         control.editors.Children().Append(control.slider);
@@ -614,33 +495,6 @@ struct PersonalizationPagePresenter::Impl
             control.editors.Children().Append(control.reset);
         }
         control.row.Initialize(control.editors);
-    }
-
-    void InitializeSemanticContinuousControl(
-        ContinuousControl& control,
-        float snowdesktop::widget_runtime::SemanticUiMetricTokens::* member,
-        double minimum, double maximum, double step, double defaultValue)
-    {
-        InitializeContinuousControl(control, nullptr, minimum, maximum,
-            step, 1.0, defaultValue);
-        control.semanticMember = member;
-    }
-
-    static float ReadContinuousValue(const ContinuousControl& control,
-        const PersonalizationSettings& settings) noexcept
-    {
-        return control.semanticMember
-            ? settings.widgetUiMetrics.*control.semanticMember
-            : settings.*control.member;
-    }
-
-    static void WriteContinuousValue(const ContinuousControl& control,
-        PersonalizationSettings& settings, float value) noexcept
-    {
-        if (control.semanticMember)
-            settings.widgetUiMetrics.*control.semanticMember = value;
-        else
-            settings.*control.member = value;
     }
 
     static void SetUnit(ContinuousControl& control, std::wstring text)
@@ -688,14 +542,16 @@ struct PersonalizationPagePresenter::Impl
                         const float corner = settings.cornerRadius;
                         const float bar = settings.barHeight;
                         const float tab = settings.categorizedTabHeight;
-                        const auto widgetUiMetrics = settings.widgetUiMetrics;
+                        const float luaWidgetTitleAreaHeight =
+                            settings.luaWidgetTitleAreaHeight;
                         const bool counts = settings.showCategoryTabCounts;
                         const int menu = settings.contextMenuStyle;
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
                         settings.barHeight = bar;
                         settings.categorizedTabHeight = tab;
-                        settings.widgetUiMetrics = widgetUiMetrics;
+                        settings.luaWidgetTitleAreaHeight =
+                            luaWidgetTitleAreaHeight;
                         settings.showCategoryTabCounts = counts;
                         settings.contextMenuStyle = menu;
                     });
@@ -855,9 +711,10 @@ struct PersonalizationPagePresenter::Impl
                     control.dirty = false;
                     const float value = static_cast<float>(
                         control.defaultValue * control.scale);
+                    const auto member = control.member;
                     Emit(SettingsUpdateMode::PreviewAndCommit,
-                        [&control, value](PersonalizationSettings& settings) {
-                            WriteContinuousValue(control, settings, value);
+                        [member, value](PersonalizationSettings& settings) {
+                            settings.*member = value;
                         });
                 });
         }
@@ -878,9 +735,10 @@ struct PersonalizationPagePresenter::Impl
         if (!control.dirty || !CanEmit())
             return;
         const float value = static_cast<float>(uiValue * control.scale);
+        const auto member = control.member;
         Emit(SettingsUpdateMode::Preview,
-            [&control, value](PersonalizationSettings& settings) {
-                WriteContinuousValue(control, settings, value);
+            [member, value](PersonalizationSettings& settings) {
+                settings.*member = value;
             });
     }
 
@@ -894,9 +752,10 @@ struct PersonalizationPagePresenter::Impl
         control.dirty = false;
         const float value = static_cast<float>(
             control.slider.Value() * control.scale);
+        const auto member = control.member;
         Emit(SettingsUpdateMode::PreviewAndCommit,
-            [&control, value](PersonalizationSettings& settings) {
-                WriteContinuousValue(control, settings, value);
+            [member, value](PersonalizationSettings& settings) {
+                settings.*member = value;
             });
     }
 
@@ -904,8 +763,7 @@ struct PersonalizationPagePresenter::Impl
         ContinuousControl& control,
         const PersonalizationSettings& settings)
     {
-        const double value = static_cast<double>(
-            ReadContinuousValue(control, settings)) /
+        const double value = static_cast<double>(settings.*control.member) /
             control.scale;
         const double clamped = QuantizeNumericValue(value,
             control.slider.Minimum(), control.slider.Maximum(),
@@ -1055,14 +913,6 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.context_menu_appearance", L"Context Menu");
         SetCardText(layoutCard,
             "app.settings.widget_layout", L"Widget Layout");
-        SetCardText(semanticTypographyCard,
-            "app.settings.widget_ui_typography", L"Widget Typography");
-        SetCardText(semanticSpacingCard,
-            "app.settings.widget_ui_spacing", L"Widget Spacing");
-        SetCardText(semanticControlsCard,
-            "app.settings.widget_ui_controls", L"Widget Controls and Rows");
-        SetCardText(semanticIconsCard,
-            "app.settings.widget_ui_icons", L"Widget Icons");
 
         presetRow.SetText(L("app.settings.theme", L"Theme"));
         ReplaceComboItems(presetCombo, {
@@ -1147,42 +997,9 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.bar_height", L"Bar Height");
         SetContinuousText(categorizedTabHeight,
             "app.settings.tab_height", L"Category Tab Height");
-        SetContinuousText(semanticCaptionFontSize,
-            "app.settings.widget_ui_caption_font", L"Caption Font Size");
-        SetContinuousText(semanticBodyFontSize,
-            "app.settings.widget_ui_body_font", L"Body Font Size");
-        SetContinuousText(semanticTitleFontSize,
-            "app.settings.widget_ui_title_font", L"Title Font Size");
-        SetContinuousText(semanticControlFontSize,
-            "app.settings.widget_ui_control_font", L"Control Font Size");
-        SetContinuousText(semanticSpacingXs,
-            "app.settings.widget_ui_spacing_xs", L"Extra Small Spacing");
-        SetContinuousText(semanticSpacingSm,
-            "app.settings.widget_ui_spacing_sm", L"Small Spacing");
-        SetContinuousText(semanticSpacingMd,
-            "app.settings.widget_ui_spacing_md", L"Medium Spacing");
-        SetContinuousText(semanticSpacingLg,
-            "app.settings.widget_ui_spacing_lg", L"Large Spacing");
-        SetContinuousText(semanticCompactControlHeight,
-            "app.settings.widget_ui_compact_control_height",
-            L"Compact Control Height");
-        SetContinuousText(semanticControlHeight,
-            "app.settings.widget_ui_control_height", L"Control Height");
-        SetContinuousText(semanticCompactRowHeight,
-            "app.settings.widget_ui_compact_row_height",
-            L"Compact Row Height");
-        SetContinuousText(semanticRowHeight,
-            "app.settings.widget_ui_row_height", L"Row Height");
-        SetContinuousText(semanticSmallIconSize,
-            "app.settings.widget_ui_small_icon_size", L"Small Icon Size");
-        SetContinuousText(semanticIconSize,
-            "app.settings.widget_ui_icon_size", L"Icon Size");
-        SetContinuousText(semanticLargeIconSize,
-            "app.settings.widget_ui_large_icon_size", L"Large Icon Size");
-        SetContinuousText(semanticControlRadius,
-            "app.settings.widget_ui_control_radius", L"Control Corner Radius");
-        SetContinuousText(semanticStrokeWidth,
-            "app.settings.widget_ui_stroke_width", L"Stroke Width");
+        SetContinuousText(luaWidgetTitleAreaHeight,
+            "app.settings.lua_widget_title_area_height",
+            L"Lua Widget Title Area Height");
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1290,6 +1107,8 @@ struct PersonalizationPagePresenter::Impl
             return cornerRadius.slider;
         if (id == "personalization.barHeight")
             return barHeight.slider;
+        if (id == "personalization.luaWidgetTitleAreaHeight")
+            return luaWidgetTitleAreaHeight.slider;
         if (id == "desktop.categoryLayout" ||
             id == "desktop.tabHeight" ||
             id == "personalization.tabHeight")

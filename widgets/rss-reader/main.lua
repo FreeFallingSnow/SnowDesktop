@@ -185,7 +185,6 @@ local function render(context, model)
     local metrics = ui.metrics()
     local unit = metrics.strokeWidth
     local pad = metrics.spacingMd
-    local headerTop = metrics.spacingMd
     local headerFont = metrics.titleFontSize * cfg.fontScale
     local bodyFont = metrics.bodyFontSize * cfg.fontScale
     local smallFont = metrics.captionFontSize * cfg.fontScale
@@ -196,17 +195,19 @@ local function render(context, model)
     local countText = l10n.tr("lua_widget.rss_reader.article_count",
         tostring(#model.articles))
     local countMetrics = draw.measureText(countText, smallFont, width, false)
-    local headerHeight = math.max(metrics.controlHeight,
-        headerFont + metrics.spacingSm)
-    draw.text(pad, headerTop, title, headerFont, colors.header,
+    local headerHeight = math.min(height, metrics.titleAreaHeight)
+    local titleMetrics = draw.measureText(title, headerFont, width, true)
+    draw.text(pad, math.max(0,
+            (headerHeight - titleMetrics.height) / 2),
+        title, headerFont, colors.header,
         math.max(unit, width - pad * 2 - countMetrics.width -
             metrics.spacingSm),
         false, true)
     draw.text(width - pad - countMetrics.width,
-        headerTop + math.max(0, (headerHeight - countMetrics.height) / 2),
+        math.max(0, (headerHeight - countMetrics.height) / 2),
         countText, smallFont, colors.count, countMetrics.width + unit,
         false, true)
-    local headerBottom = headerTop + headerHeight
+    local headerBottom = headerHeight
     draw.line(pad, headerBottom, width - pad, headerBottom,
         metrics.strokeWidth, colors.divider, 0.10)
 
@@ -237,7 +238,7 @@ local function render(context, model)
             bodyFont, colors.error,
             width - pad * 2, false, false)
         draw.text(pad, listTop + viewportHeight * 0.27 +
-                metrics.controlHeight,
+                bodyFont + metrics.spacingSm,
             l10n.tr("lua_widget.rss_reader.settings_hint"),
             smallFont, colors.status,
             width - pad * 2, false, true)
@@ -251,8 +252,7 @@ local function render(context, model)
         return
     end
 
-    local rowHeight = math.max(metrics.rowHeight + metrics.spacingSm,
-        bodyFont + smallFont + metrics.spacingLg)
+    local rowHeight = bodyFont + smallFont + metrics.spacingLg
     local scroll = interaction.scroll({
         key = "rss.scroll", shape = scrollViewport,
         contentHeight = math.ceil(#model.articles * rowHeight),
@@ -260,7 +260,7 @@ local function render(context, model)
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#model.articles,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
-    local numberWidth = metrics.largeIconSize
+    local numberWidth = math.max(bodyFont * 1.7, metrics.spacingLg)
     local textX = pad + numberWidth + metrics.spacingSm
     local textWidth = math.max(unit, width - textX - pad)
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)

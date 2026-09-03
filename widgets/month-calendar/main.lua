@@ -297,19 +297,23 @@ local function render(context, model)
     local unit = metrics.strokeWidth
     local function px(value) return value * unit end
     local padding = metrics.spacingMd
-    local headerHeight = metrics.controlHeight
+    local headerHeight = math.min(contentHeight, metrics.titleAreaHeight)
     local calendarGap = metrics.spacingSm
-    local weekdayHeight = metrics.compactControlHeight
-    local weekdayTop = padding + headerHeight + calendarGap
-    local gridTop = weekdayTop + weekdayHeight
-    local gridHeight = math.max(px(90),
-        contentHeight - metrics.spacingXs - gridTop)
-    local cellWidth = (width - padding * 2) / 7
-    local cellHeight = gridHeight / 6
+    local bodyTop = math.min(contentHeight, headerHeight + calendarGap)
+    local bodyHeight = math.max(unit,
+        contentHeight - bodyTop - metrics.spacingXs)
     local textScale = fontScale()
     local fontSize = metrics.bodyFontSize * textScale
     local smallFont = metrics.captionFontSize * textScale
     local titleFont = metrics.titleFontSize * textScale
+    local weekdayHeight = math.min(bodyHeight * 0.18,
+        math.max(smallFont + metrics.spacingXs, bodyHeight * 0.12))
+    local weekdayTop = bodyTop
+    local gridTop = weekdayTop + weekdayHeight
+    local gridHeight = math.max(unit,
+        contentHeight - metrics.spacingXs - gridTop)
+    local cellWidth = (width - padding * 2) / 7
+    local cellHeight = gridHeight / 6
     local selected = context.preview and model.selectedDate or
         (selectedDate() or model.selectedDate)
     local today = todayDate()
@@ -331,19 +335,19 @@ local function render(context, model)
         },
     })
 
-    local buttonSize = metrics.compactControlHeight
-    local buttonY = padding + (headerHeight - buttonSize) / 2
+    local buttonSize = math.min(metrics.compactControlHeight,
+        math.max(unit, headerHeight - metrics.spacingSm))
+    local buttonY = math.max(0, (headerHeight - buttonSize) / 2)
     local iconFont = metrics.titleFontSize * textScale
     local narrowWidth = width < padding * 2 + buttonSize * 2 +
         metrics.spacingXs + metrics.spacingMd
     if narrowWidth then
-        centeredText(title, padding, padding, width - padding * 2,
+        centeredText(title, padding, 0, width - padding * 2,
             headerHeight, titleFont, colors.text, true, 1.0)
-        local listTop = padding + headerHeight + metrics.spacingSm
+        local listTop = bodyTop
         local listHeight = math.max(unit,
             contentHeight - listTop - metrics.spacingXs)
-        local rowHeight = math.max(metrics.compactRowHeight,
-            fontSize + metrics.spacingLg)
+        local rowHeight = fontSize + metrics.spacingLg
         local days = {}
         for _, cell in ipairs(monthCells(model)) do
             if cell.currentMonth then days[#days + 1] = cell end
@@ -381,7 +385,7 @@ local function render(context, model)
             draw.text(padding + metrics.spacingSm,
                 y + math.max(0, (rowHeight - fontSize) / 2),
                 tostring(cell.info.day), fontSize, colors.text,
-                metrics.largeIconSize, true, true)
+                math.max(fontSize * 1.7, metrics.spacingLg), true, true)
             local weekday = weekdayLabel(cell.info.weekday)
             local weekdayMetrics = draw.measureText(
                 weekday, smallFont, 0, false)
@@ -428,7 +432,7 @@ local function render(context, model)
     }
     local todayText = l10n.tr("lua_widget.month_calendar.today")
     local todayMetrics = draw.measureText(todayText, smallFont, 0, true)
-    local todayWidth = math.max(metrics.rowHeight,
+    local todayWidth = math.max(metrics.controlHeight,
         todayMetrics.width + metrics.spacingMd)
     local todayShape = {
         x = width - padding - todayWidth,
@@ -446,14 +450,13 @@ local function render(context, model)
     local titleX = nextShape.x + nextShape.width + metrics.spacingSm
     local titleWidth = math.max(unit,
         todayShape.x - titleX - metrics.spacingXs)
-    centeredText(title, titleX, padding, titleWidth, headerHeight,
+    centeredText(title, titleX, 0, titleWidth, headerHeight,
         titleFont, colors.text, true, 1.0)
 
     local weekStart = effectiveWeekStart()
-    local shortHeight = contentHeight < padding + headerHeight +
-        calendarGap + weekdayHeight + metrics.compactRowHeight * 3
+    local shortHeight = cellHeight < fontSize + metrics.spacingXs * 2
     if shortHeight then
-        local weekTop = padding + headerHeight + metrics.spacingXs
+        local weekTop = bodyTop
         local weekHeight = math.max(unit,
             contentHeight - weekTop - metrics.spacingXs)
         local anchor = selected or today
@@ -474,7 +477,7 @@ local function render(context, model)
             local dayTop = weekTop + smallFont + metrics.spacingXs
             local dayHeight = math.max(unit,
                 weekHeight - smallFont - metrics.spacingXs)
-            local diameter = math.min(metrics.compactControlHeight,
+            local diameter = math.min(fontSize + metrics.spacingMd,
                 cellWidth * 0.78, dayHeight * 0.90)
             local centerX = x + cellWidth / 2
             local centerY = dayTop + dayHeight / 2
@@ -534,8 +537,7 @@ local function render(context, model)
             local key = "calendar.date." .. cell.date
             local isSelected = cell.date == selected
             local isToday = cell.date == today
-            local diameter = math.min(
-                metrics.compactControlHeight * math.max(1, textScale),
+            local diameter = math.min(fontSize + metrics.spacingMd,
                 cellWidth * 0.78, cellHeight * 0.78)
             local centerX = x + cellWidth / 2
             local centerY = y + cellHeight * 0.44

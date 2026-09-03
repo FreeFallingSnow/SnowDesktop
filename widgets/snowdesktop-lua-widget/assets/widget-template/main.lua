@@ -9,7 +9,7 @@ local function buildView(context, _model)
     local padding = metrics.spacingMd
     local gap = metrics.spacingSm
     local labelFont = metrics.captionFontSize
-    local messageFont = metrics.titleFontSize
+    local messageFont = metrics.bodyFontSize
     local contentWidth = width - padding * 2
     local labelWidth = vertical and "fill" or contentWidth * 0.30
 

@@ -273,13 +273,15 @@ local function render(context, model)
     local palette = getPalette()
     local scale = fontScale()
     local fontSize = metrics.bodyFontSize * scale
+    local inputFont = metrics.controlFontSize * scale
     local smallFont = metrics.captionFontSize * scale
     local titleFont = metrics.titleFontSize * scale
     local total = taskCounts()
 
-    local inputY = pad
-    local inputH = math.max(metrics.controlHeight,
-        fontSize + metrics.spacingLg)
+    local headerHeight = math.min(h, metrics.titleAreaHeight)
+    local inputH = math.min(metrics.controlHeight,
+        math.max(unit, headerHeight - metrics.spacingSm))
+    local inputY = math.max(0, (headerHeight - inputH) / 2)
     local addSize = inputH
     local inputW = math.max(metrics.compactControlHeight,
         w - pad * 2 - addSize - gap)
@@ -289,7 +291,7 @@ local function render(context, model)
         shape = { type = "rect", x = pad, y = inputY,
             width = inputW, height = inputH },
         placeholder = l10n.tr("lua_widget.reminders.add_placeholder"),
-        fontSize = fontSize,
+        fontSize = inputFont,
         textColor = palette.inputText,
         placeholderColor = palette.placeholder,
         backgroundColor = palette.inputBg,
@@ -331,7 +333,7 @@ local function render(context, model)
         role = "button", label = l10n.tr("lua_widget.reminders.add_task"),
     }, addEnabled)
 
-    local listTop = inputY + inputH + metrics.spacingSm
+    local listTop = math.min(h, headerHeight + metrics.spacingSm)
     local listBottom = h - metrics.spacingXs
     local viewportH = math.max(unit, listBottom - listTop)
     local viewportShape = { type = "rect", x = pad, y = listTop,
@@ -341,8 +343,7 @@ local function render(context, model)
         contextMenu = { id = "task.menu", scope = "component" },
     }, { role = "list", label = l10n.tr("lua_widget.reminders.name") })
 
-    local rowH = math.max(metrics.rowHeight,
-        fontSize + metrics.spacingLg)
+    local rowH = fontSize + metrics.spacingLg
     local rowGap = metrics.spacingXs
     local cardH = rowH - rowGap
     local tasks = loadTasks(showCompleted())
@@ -353,7 +354,8 @@ local function render(context, model)
         local emptyTitle = total > 0 and
             l10n.tr("lua_widget.reminders.all_done") or
             l10n.tr("lua_widget.reminders.empty")
-        local emptyIconSize = metrics.largeIconSize * 2
+        local emptyIconSize = math.max(fontSize * 3.2,
+            metrics.spacingLg * 2)
         local emptyBlockH = px(88)
         local emptyTop = listTop + math.max(0, (viewportH - emptyBlockH) / 2)
         local emptyCy = emptyTop + emptyIconSize / 2
@@ -417,8 +419,8 @@ local function render(context, model)
             contextMenu = { id = "task.menu", value = task.id },
         }, { role = "listitem", label = task.text })
 
-        local checkboxSize = math.min(
-            metrics.largeIconSize, cardH - metrics.spacingSm)
+        local checkboxSize = math.min(fontSize + metrics.spacingSm,
+            cardH - metrics.spacingSm)
         local checkboxX = pad + metrics.spacingSm
         local checkboxY = cardY + (cardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id

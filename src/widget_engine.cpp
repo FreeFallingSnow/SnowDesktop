@@ -8637,7 +8637,8 @@ static int lua_UiMetrics(lua_State* L)
             d2d ? d2d->semanticCuScale : 1.0f,
             static_cast<float>(system.textScale));
 
-    lua_createtable(L, 0, 17);
+    lua_createtable(L, 0, 18);
+    SetNumberField(L, "titleAreaHeight", metrics.titleAreaHeight);
     SetNumberField(L, "spacingXs", metrics.spacingXs);
     SetNumberField(L, "spacingSm", metrics.spacingSm);
     SetNumberField(L, "spacingMd", metrics.spacingMd);

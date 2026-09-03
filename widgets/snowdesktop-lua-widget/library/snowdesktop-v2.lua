@@ -2281,6 +2281,7 @@ function control.focus(key) end
 function control.blur(key) end
 
 ---@class SnowUiMetrics
+---@field titleAreaHeight number
 ---@field spacingXs number
 ---@field spacingSm number
 ---@field spacingMd number
@@ -2307,7 +2308,7 @@ ui = {}
 ---@return SnowMenuModel
 function ui.menu(items) end
 
----Return host-wide semantic dimensions resolved from editable page-CU tokens and accessibility text scale. Values do not depend on widget span or grid gaps.
+---Return page-CU semantic dimensions. titleAreaHeight is host-configurable; header controls and typography derive from it. Content metrics remain compatibility defaults. Values do not depend on widget span or grid gaps.
 ---@return SnowUiMetrics
 function ui.metrics() end
 

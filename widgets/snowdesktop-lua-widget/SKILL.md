@@ -107,14 +107,16 @@ Choose the sizing model before writing geometry:
   this model. Recalculate and center the group of children that are actually
   visible when optional content disappears.
 - **Proportional information model — the default for desktop information
-  tools.** Use `ui.metrics()` for shared search fields, inputs, buttons, list
-  rows, typography, icons, radii and spacing so equivalent controls remain the
-  same size on one page. The host stores these semantic tokens in page `cu`,
-  resolves them with the page CU scale and Windows accessibility text scale,
-  and lets users tune every token under Appearance > Widgets & Layout. They do
-  not depend on an individual widget's span or the configured gap between grid
-  cells. Use `layout.rpxX()` and `layout.rpxY()` only for component-specific
-  axis geometry. A larger span
+  tools.** Use `ui.metrics().titleAreaHeight` for the shared title band and
+  place search fields, inputs, navigation buttons and title text inside it.
+  Their control height, font and icon metrics derive from the same host setting,
+  expressed in page `cu`, so equivalent header controls remain the same size on
+  one page. These values do not depend on an individual widget's span or the
+  configured gap between grid cells. Lay out lists, calendars and empty states
+  from the rectangle left after the title band; derive their rows and internal
+  geometry from content, available space and component-specific proportions.
+  Use `layout.rpxX()` and `layout.rpxY()` only for component-specific axis
+  geometry. A larger span
   should expose more rows, wider text or more composition space instead of
   enlarging ordinary controls. Use `layout.rpx()` or `vmin` for an isotropic
   decoration that must preserve its shape.
@@ -135,11 +137,13 @@ Constants used only as ratios are fine. Output clamps such as
 `math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
 make two equal-aspect surfaces render differently and should be avoided.
 
-Use `ui.metrics().bodyFontSize`, `captionFontSize` and `titleFontSize` for
-ordinary information typography. A component font-size preference should be a
-percentage multiplier over those resolved values; it must not replace or
-duplicate the host-wide semantic token controls. Reserve span-relative text for
-primary visual data such as a clock, timer or single metric.
+Use `ui.metrics().bodyFontSize` and `captionFontSize` for ordinary information
+typography, and `titleFontSize/controlFontSize` within the title band. A
+component font-size preference should be a percentage multiplier over those
+resolved values. Reserve span-relative text for primary visual data such as a
+clock, timer or single metric. `compactRowHeight` and `rowHeight` remain for
+source compatibility; do not use them to impose a host-wide height on a
+component's content rows.
 
 ## Create a package
 
