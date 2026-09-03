@@ -5,11 +5,10 @@ local function buildView(context, _model)
     local width = context.layoutSize.width
     local height = context.layoutSize.height
     local vertical = height > width * 1.05
-    local short = math.min(width, height)
-    local padding = short * 0.08
-    local gap = short * 0.05
-    local labelFont = short * 0.07
-    local messageFont = short * 0.12
+    local padding = layout.rpx(9)
+    local gap = layout.rpx(6)
+    local labelFont = layout.rpx(10)
+    local messageFont = layout.rpx(14)
     local contentWidth = width - padding * 2
     local labelWidth = vertical and "fill" or contentWidth * 0.30
 

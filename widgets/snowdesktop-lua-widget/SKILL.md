@@ -95,25 +95,35 @@ Choose the sizing model before writing geometry:
 - **Proportional visual model — the default for visually composed widgets.**
   Use it for artwork, media players, clocks, instruments, custom controls and
   other components whose parts form one visual composition. Read
-  `layout.contentWidth()` and `layout.contentHeight()`, choose structural
-  variants from the aspect ratio, and derive every visible length from width,
-  height, `vw`, `vh` or `vmin`. If two surfaces have the same aspect ratio and
-  one is scaled by `k`, every geometric metric should also scale by `k`.
+  `layout.contentWidth()` and `layout.contentHeight()`, and derive every visible
+  length from width, height, `vw`, `vh` or `vmin`. Choose structural variants
+  from the aspect ratio only when the content relationship benefits from a
+  different arrangement. A vertically composed instrument may keep one
+  structure at every ratio, while a spectrum may declare a horizontal-only
+  grid range. Do not invent horizontal or vertical branches merely because the
+  widget is resizable. If two surfaces have the same aspect ratio and one is
+  scaled by `k`, every geometric metric should also scale by `k`.
   Avoid `sizeClass`, grid-span breakpoints, absolute minima and scale caps in
   this model. Recalculate and center the group of children that are actually
   visible when optional content disappears.
-- **Grid-density model — for information tools that must align with the host
-  grid.** Use `layout.cu()` and `layout.fontCu()` for system status, calendars,
-  lists, launchers, forms and similar widgets where larger spans should reveal
-  or reflow more information while text, rows and hit targets retain a stable
-  density. Grid metrics and size classes may drive meaningful content-density
-  changes in this model.
+- **Proportional information model — the default for desktop information
+  tools.** Use `layout.rpx()` for spacing, rows, icons, strokes, text and hit
+  targets in agendas, calendars, lists, search, RSS, launchers and notes.
+  `rpx` uses the manifest `defaultSize` short edge as the design-space
+  baseline. Larger spans may reveal more rows or longer text, while two
+  equal-aspect surfaces remain complete linear scale copies.
+- **Grid-density model — only for content that explicitly aligns to host grid
+  metrics.** Use `layout.cu()` and `layout.fontCu()` for a system-status card
+  matrix or another component whose information units intentionally track the
+  host grid. Grid metrics and size classes may drive those card boundaries.
 - Mix the models only for an intentional fixed-density overlay. `cu` and
   `fontCu` do not grow linearly with the whole widget, so using them for a
   proportional component's main geometry breaks same-ratio rendering.
 
-For a proportional plan, prefer homogeneous formulas such as
-`short * 0.08`, `width * 0.3` and `math.min(width * 0.4, height * 0.6)`.
+For a proportional plan, prefer `layout.rpx(value)` when values come from a
+design at the manifest default span. Homogeneous formulas such as
+`short * 0.08`, `width * 0.3` and `math.min(width * 0.4, height * 0.6)` are
+also appropriate.
 Constants used only as ratios are fine. Output clamps such as
 `math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
 make two equal-aspect surfaces render differently and should be avoided.

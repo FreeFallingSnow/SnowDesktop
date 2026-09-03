@@ -2319,6 +2319,10 @@ function layout.vmin(percent) end
 ---@return number
 function layout.vmax(percent) end
 
+---@param value number Design-space pixels measured against the canonical short edge of the manifest defaultSize. The result scales linearly with the current root content short edge.
+---@return number
+function layout.rpx(value) end
+
 ---@return integer
 function layout.columns() end
 
@@ -2337,11 +2341,11 @@ function layout.cellHeight() end
 ---@return number
 function layout.cellScale() end
 
----@param value number Grid-density unit for status, list, calendar, launcher, form, and similar UI. It does not scale linearly with the whole widget.
+---@param value number Grid-density unit for content that explicitly aligns to host grid metrics, such as a system-status card matrix. It does not scale linearly with the whole widget.
 ---@return integer
 function layout.cu(value) end
 
----@param value number Grid-density font unit. It does not scale linearly with the whole widget.
+---@param value number Grid-density font unit for content that explicitly aligns to host grid metrics. It does not scale linearly with the whole widget.
 ---@return number
 function layout.fontCu(value) end
 

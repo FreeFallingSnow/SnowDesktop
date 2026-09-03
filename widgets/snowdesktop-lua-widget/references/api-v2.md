@@ -174,6 +174,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `layout.relativeUnits`：与声明式 View Tree 根内容框同坐标系的
   `layout.contentWidth/contentHeight/vw/vh/vmin/vmax`，以及
   `widget.context().layoutSize`；
+- `layout.referencePixels`：`layout.rpx` 按 manifest `defaultSize` 的标准短边
+  将设计坐标线性缩放到当前内容短边；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -2320,15 +2322,27 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 对应比例。圆形、方形和跨宽高比保持一致的控件优先使用 `vmin`；横向或纵向结构分别
 使用 `vw`、`vh`。这些函数直接返回可用于声明式数值尺寸和即时绘制坐标的布局值，
 不要再与 DPI 归一化的 `context.logicalSize` 混用。图像、媒体、时钟、乐器等视觉构图型
-组件应优先采用比例布局：只根据 `contentWidth/contentHeight` 的横纵比选择结构，并让
-全部可见尺寸随宽高线性变化。相同横纵比的不同尺寸应呈现同一构图的等比缩放结果。
+组件应优先采用比例布局，并让全部可见尺寸随宽高线性变化。仅当内容关系确实受益时，
+才根据 `contentWidth/contentHeight` 的横纵比切换结构；木鱼等纵向构图可以在全部比例下
+保持一种结构，频谱等横向内容可以通过清单限定可用格子范围。相同横纵比的不同尺寸应
+呈现同一构图的等比缩放结果。
+
+探测 `layout.referencePixels` 后，可用 `layout.rpx(value)` 直接按设计坐标书写
+上述比例布局。宿主用标准网格单元 92×116、间距 8 和 manifest `defaultSize`
+计算参考短边，再乘以“当前内容短边 / 参考短边”。例如默认 3×2 的参考短边为
+240，`layout.rpx(16)` 在默认大小返回 16，在同宽高比且短边为 480 的 surface
+返回 32；默认 2×2 的参考短边为 192。间距、行高、图标、描边、字体和命中区域
+使用同一函数后，相同宽高比会保持完整等比。它接受绝对值不超过 1,000,000 的
+有限数值，负值可用于相对偏移。该单位不决定结构分支，也不替组件限制无意义的
+尺寸；木鱼可以始终保持纵向构图，频谱可在 manifest 中限制为横向跨度。
 
 `columns/rows/sizeClass` 返回跨度与尺寸档位。
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
-`layout.cu(value)` 和 `layout.fontCu(value)` 主要用于系统状态、日历、列表、启动器、
-表单等需要与宿主网格对齐的信息密度型组件，用来保持点击尺寸、描边、行高、局部间距和
-字体在不同网格密度下的稳定尺度。它们不会随组件跨度同比增长，不能代替视觉构图型组件的
-总宽高比例单位；将其用作主体图形、主控件或全局缩放下限会破坏相同横纵比的等比结果。
+`layout.cu(value)` 和 `layout.fontCu(value)` 只应用于明确要和宿主网格指标对齐的
+内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、启动器和便签的
+桌面主表面也应使用 `rpx` 或百分比单位；更大的空间可以显示更多行或更完整的文字，
+但基础间距、行高、图标、描边和字体仍从组件尺寸等比得出。`cu/fontCu` 不会随组件
+跨度同比增长，将其用作主体几何或全局缩放下限会破坏相同宽高比的等比结果。
 
 ### `storage`
 

@@ -15446,6 +15446,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         "__widget_resource_content_keys");
     lua_pushboolean(state, preview ? 1 : 0);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_preview");
+    lua_pushinteger(state, std::max(1, pending.manifest.defaultColumns));
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_default_columns");
+    lua_pushinteger(state, std::max(1, pending.manifest.defaultRows));
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_default_rows");
     lua_pushboolean(state, 1);
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_loading");
     if (d2dState_)
@@ -32062,6 +32066,33 @@ static int lua_LayoutVmax(lua_State* L)
     return PushRelativeLayoutUnit(L, std::max(
         CurrentLayoutContentWidth(state),
         CurrentLayoutContentHeight(state)), "layout.vmax");
+}
+
+static int lua_LayoutRpx(lua_State* L)
+{
+    const double value = luaL_checknumber(L, 1);
+    if (!std::isfinite(value) || std::abs(value) > 1000000.0)
+    {
+        return luaL_error(L,
+            "layout.rpx: value must be finite and between -1000000 and 1000000");
+    }
+    auto readDefaultSpan = [L](const char* key) {
+        lua_getfield(L, LUA_REGISTRYINDEX, key);
+        const int result = lua_isinteger(L, -1)
+            ? std::max(1, static_cast<int>(lua_tointeger(L, -1)))
+            : 1;
+        lua_pop(L, 1);
+        return result;
+    };
+    auto* state = GetD2D(L);
+    const float scaled = snowdesktop::widget_runtime::ScaleReferencePixel(
+        static_cast<float>(value),
+        CurrentLayoutContentWidth(state),
+        CurrentLayoutContentHeight(state),
+        readDefaultSpan("__widget_default_columns"),
+        readDefaultSpan("__widget_default_rows"));
+    lua_pushnumber(L, scaled);
+    return 1;
 }
 
 static int lua_StorageTransaction(lua_State* state)

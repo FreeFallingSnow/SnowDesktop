@@ -466,6 +466,7 @@ std::filesystem::path CreateEnvironmentFixture(
   "requiredFeatures": [
     "draw.immediate",
     "draw.marqueeText",
+    "layout.referencePixels",
     "layout.relativeUnits",
     "lifecycle.model",
     "widget.context",
@@ -498,6 +499,9 @@ return widget.define({
         assert(layout.vw(50) == 144 and layout.vh(50) == 87 and
             layout.vmin(50) == 87 and layout.vmax(50) == 144,
             "relative layout units must use the root content extents")
+        assert(layout.rpx(10) == 15 and layout.rpx(-4) == -6 and
+            pcall(layout.rpx, 1000001) == false,
+            "reference pixels must scale from the manifest default short edge")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,
             "relative layout units must reject out-of-range percentages")

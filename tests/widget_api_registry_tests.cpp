@@ -375,6 +375,8 @@ void TestV2Contract()
                 "interaction.tooltip.rich") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature(
+                "layout.referencePixels") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "layout.relativeUnits") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
@@ -1112,7 +1114,7 @@ void TestPublicApiContract()
 {
     const auto contracts =
         snowdesktop::widget_api::PublicApiFunctionContracts();
-    Check(contracts.size() == 164,
+    Check(contracts.size() == 165,
         "public Lua host API function count must match the reviewed catalog");
 
     std::unordered_set<std::string> sandboxLibraries;

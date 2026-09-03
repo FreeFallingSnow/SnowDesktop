@@ -1,12 +1,38 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include <dwrite.h>
 
 namespace snowdesktop::widget_runtime
 {
+inline constexpr float kReferenceCellWidth = 92.0f;
+inline constexpr float kReferenceCellHeight = 116.0f;
+inline constexpr float kReferenceCellGap = 8.0f;
+
+inline float ReferenceSpanShortEdge(int columns, int rows) noexcept
+{
+    const int safeColumns = std::max(1, columns);
+    const int safeRows = std::max(1, rows);
+    const float width = safeColumns * kReferenceCellWidth +
+        (safeColumns - 1) * kReferenceCellGap;
+    const float height = safeRows * kReferenceCellHeight +
+        (safeRows - 1) * kReferenceCellGap;
+    return std::min(width, height);
+}
+
+inline float ScaleReferencePixel(float value, float contentWidth,
+    float contentHeight, int defaultColumns, int defaultRows) noexcept
+{
+    const float currentShortEdge = std::max(0.0f,
+        std::min(contentWidth, contentHeight));
+    const float referenceShortEdge = ReferenceSpanShortEdge(
+        defaultColumns, defaultRows);
+    return value * currentShortEdge / referenceShortEdge;
+}
+
 struct LayoutMetrics
 {
     int gridCellWidth = 92;

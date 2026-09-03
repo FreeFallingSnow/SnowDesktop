@@ -202,6 +202,23 @@ return widget.define({
         "background layers must declare their host capability");
 }
 
+void TestReferencePixelFeatureContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.requiredFeatures = { "layout.referencePixels" };
+    const auto declared = LintWidgetSource(manifest, "main.lua",
+        "local padding = layout.rpx(12)\n");
+    Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
+        "layout.rpx is valid when its host capability is declared");
+
+    manifest.requiredFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua",
+        "local padding = layout.rpx(12)\n");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "layout.rpx must declare its host capability");
+}
+
 void TestLocaleAndPreviewQuality()
 {
     TemporaryDirectory temporary;
@@ -237,6 +254,7 @@ int main()
     TestSyntaxFailure();
     TestImmediateDrawingQualityWarnings();
     TestBackgroundLayerContract();
+    TestReferencePixelFeatureContract();
     TestLocaleAndPreviewQuality();
     std::cout << "widget author lint tests passed\n";
     return 0;

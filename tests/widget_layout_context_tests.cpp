@@ -80,6 +80,20 @@ void TestFontCuUsesOnlyTheLocalCellScale()
         "font cu preserves the shared minimum readable pixel size");
 }
 
+void TestReferencePixelsUseTheManifestDefaultShortEdge()
+{
+    using snowdesktop::widget_runtime::ReferenceSpanShortEdge;
+    using snowdesktop::widget_runtime::ScaleReferencePixel;
+    Expect(ReferenceSpanShortEdge(3, 2) == 240.0f,
+        "a 3 by 2 default span uses its 240 pixel reference short edge");
+    Expect(ReferenceSpanShortEdge(2, 2) == 192.0f,
+        "a 2 by 2 default span uses its 192 pixel reference short edge");
+    Expect(ScaleReferencePixel(16.0f, 584.0f, 480.0f, 3, 2) == 32.0f,
+        "reference pixels scale linearly from the current short edge");
+    Expect(ScaleReferencePixel(16.0f, 292.0f, 240.0f, 3, 2) == 16.0f,
+        "reference pixels are identity-sized at the canonical default span");
+}
+
 void TestLegacyPointSizesMigrateToCuOnce()
 {
     using snowdesktop::font_cu_rules::LegacyPointsToCu;
@@ -107,6 +121,7 @@ int main()
     TestNestedWidgetMetricsRestoreInOrder();
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
+    TestReferencePixelsUseTheManifestDefaultShortEdge();
     TestLegacyPointSizesMigrateToCuOnce();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";

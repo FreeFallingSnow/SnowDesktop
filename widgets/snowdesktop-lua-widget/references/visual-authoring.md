@@ -141,12 +141,15 @@ different state:
    contrast and clipping.
 5. Check that the host outer surface remains visible and is not duplicated by a
    widget-drawn full-size card.
-6. For a proportional visual component, compare small and large previews with
+6. For a proportional visual or information component, compare small and large previews with
    the same aspect ratio: structure must stay the same and every part must
-   scale uniformly. Also check each aspect-ratio branch and center the complete
-   group of currently visible parts. For a grid-density information component,
-   check that extra space reveals or reflows useful information while text,
-   rows and hit targets retain a stable density.
+   scale uniformly. Check each intentional aspect-ratio branch, or verify that
+   a single-structure composition remains centered across its supported range.
+   Center the complete group of currently visible parts. Agendas, calendars,
+   lists, search, RSS, launchers and notes should use `layout.rpx()` so their
+   base geometry scales with the component while larger spans can reveal more
+   content. Reserve grid-density checks for components that explicitly align
+   information units to host grid metrics, such as a system-status card matrix.
 7. Fix the smallest failing area, render again and repeat.
 
 Do not treat CLI success as visual acceptance. Preview time is deterministic;
