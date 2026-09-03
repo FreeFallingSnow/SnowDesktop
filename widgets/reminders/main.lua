@@ -277,18 +277,17 @@ local function render(context, model)
     local titleFont = metrics.titleFontSize * scale
     local total = taskCounts()
 
-    local headerHeight = math.min(h, metrics.layoutRowHeight)
-    local inputH = math.min(headerHeight, metrics.compactControlHeight)
-    local headerInset = math.max(0, (headerHeight - inputH) / 2)
-    local contentInset = headerInset
-    local inputY = headerInset
+    local contentInset = metrics.spacingSm
+    local inputH = math.min(metrics.layoutRowHeight,
+        math.max(unit, h - contentInset * 2))
+    local inputY = contentInset
     local addSize = inputH
     local inputW = math.max(unit,
-        w - headerInset * 2 - addSize - gap)
+        w - contentInset * 2 - addSize - gap)
     control.textInput({
         key = "new-task",
         storageKey = "draft",
-        shape = { type = "rect", x = headerInset, y = inputY,
+        shape = { type = "rect", x = contentInset, y = inputY,
             width = inputW, height = inputH },
         placeholder = l10n.tr("lua_widget.reminders.add_placeholder"),
         fontSize = inputFont,
@@ -311,7 +310,7 @@ local function render(context, model)
 
     local addEnabled = trim(storage.get("draft") or "") ~= "" and
         total < MAX_TASKS
-    local addX = headerInset + inputW + gap
+    local addX = contentInset + inputW + gap
     local addY = inputY + (inputH - addSize) / 2
     local addKey = "task.add"
     local addHovered = interaction.isHovered(addKey)
@@ -333,7 +332,8 @@ local function render(context, model)
         role = "button", label = l10n.tr("lua_widget.reminders.add_task"),
     }, addEnabled)
 
-    local listTop = headerHeight
+    local listTop = math.min(h,
+        inputY + inputH + metrics.spacingXs)
     local listBottom = h - metrics.spacingXs
     local viewportH = math.max(unit, listBottom - listTop)
     local viewportShape = { type = "rect", x = contentInset, y = listTop,
@@ -343,9 +343,9 @@ local function render(context, model)
         contextMenu = { id = "task.menu", scope = "component" },
     }, { role = "list", label = l10n.tr("lua_widget.reminders.name") })
 
-    local rowH = fontSize + metrics.spacingLg
+    local cardH = math.max(unit, metrics.layoutRowHeight)
     local rowGap = metrics.spacingXs
-    local cardH = rowH - rowGap
+    local rowH = cardH + rowGap
     local tasks = loadTasks(showCompleted())
     if #tasks == 0 then
         local hint = total > 0 and
@@ -376,7 +376,7 @@ local function render(context, model)
     local scroll = interaction.scroll({
         key = "tasks.scroll",
         shape = viewportShape,
-        contentHeight = math.ceil(#tasks * rowH),
+        contentHeight = math.ceil(#tasks * rowH - rowGap),
     })
     local first = math.max(1, math.floor(scroll.offset / rowH) + 1)
     local last = math.min(#tasks,

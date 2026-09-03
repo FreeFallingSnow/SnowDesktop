@@ -384,13 +384,18 @@ bool LoadPersonalization(
         if (categorizedTabHeightLoaded)
             *categorizedTabHeightLoaded = true;
     }
-    const bool luaWidgetRowHeightLoaded =
-        ReadDoubleField(text, "luaWidgetRowHeight", v) ||
-        ReadDoubleField(text, "luaWidgetTitleAreaHeight", v);
-    if (luaWidgetRowHeightLoaded && std::isfinite(v))
+    if (ReadDoubleField(text, "luaWidgetContentRowHeight", v) &&
+        std::isfinite(v))
     {
-        s.luaWidgetRowHeight = std::clamp(
-            static_cast<float>(v), 24.0f, 64.0f);
+        s.luaWidgetContentRowHeight = std::clamp(
+            static_cast<float>(v), 18.0f, 48.0f);
+    }
+    else if ((ReadDoubleField(text, "luaWidgetRowHeight", v) ||
+              ReadDoubleField(text, "luaWidgetTitleAreaHeight", v)) &&
+             std::isfinite(v))
+    {
+        s.luaWidgetContentRowHeight = std::clamp(
+            static_cast<float>(v) * 0.70f, 18.0f, 48.0f);
     }
     if (ReadDoubleField(text, "backgroundPreset", v))
     {
@@ -441,7 +446,8 @@ bool LoadPersonalization(
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
-        const float luaWidgetRowHeight = s.luaWidgetRowHeight;
+        const float luaWidgetContentRowHeight =
+            s.luaWidgetContentRowHeight;
         const bool showCategoryTabCounts =
             s.showCategoryTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
@@ -450,7 +456,7 @@ bool LoadPersonalization(
         s.barHeight = barHeight;
         s.categorizedTabHeight =
             categorizedTabHeight;
-        s.luaWidgetRowHeight = luaWidgetRowHeight;
+        s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
         s.showCategoryTabCounts =
             showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
@@ -516,8 +522,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                 s.categorizedTabHeight,
                 24.0f, 48.0f)
          << ",\n";
-    file << "  \"luaWidgetRowHeight\": "
-         << std::clamp(s.luaWidgetRowHeight, 24.0f, 64.0f)
+    file << "  \"luaWidgetContentRowHeight\": "
+         << std::clamp(s.luaWidgetContentRowHeight, 18.0f, 48.0f)
          << ",\n";
     file << "  \"showCategoryTabCounts\": "
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";

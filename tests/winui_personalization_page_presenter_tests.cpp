@@ -118,12 +118,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.category_show_count") ==
                 std::string::npos,
         "widget layout owns category tab height while category count behavior stays elsewhere");
-    Check(source.find("ContinuousControl luaWidgetRowHeight") !=
+    Check(source.find("ContinuousControl luaWidgetContentRowHeight") !=
                 std::string::npos &&
             source.find(
-              "&PersonalizationSettings::luaWidgetRowHeight") !=
+              "&PersonalizationSettings::luaWidgetContentRowHeight") !=
                 std::string::npos &&
-            source.find("SetContinuousText(luaWidgetRowHeight") !=
+            source.find("SetContinuousText(luaWidgetContentRowHeight") !=
                 std::string::npos &&
             source.find("SemanticUiMetricTokens::") == std::string::npos,
         "widget layout exposes one row-height control and derives semantic metrics");

@@ -244,18 +244,15 @@ local function render(context, model)
     local inputFont = metrics.controlFontSize * scale
     local smallFont = metrics.captionFontSize * scale
     local titleFont = metrics.titleFontSize * scale
-    local layoutRowHeight = math.min(height, metrics.layoutRowHeight)
-    local inputHeight = math.min(layoutRowHeight,
-        metrics.compactControlHeight)
-    local headerInset = math.max(0,
-        (layoutRowHeight - inputHeight) / 2)
-    local contentInset = headerInset
-    local inputTop = headerInset
+    local contentInset = metrics.spacingSm
+    local inputHeight = math.min(metrics.layoutRowHeight,
+        math.max(unit, height - contentInset * 2))
+    local inputTop = contentInset
 
     control.textInput({
         key = "quick.search", storageKey = "query",
-        shape = { type = "rect", x = headerInset, y = inputTop,
-            width = width - headerInset * 2, height = inputHeight },
+        shape = { type = "rect", x = contentInset, y = inputTop,
+            width = width - contentInset * 2, height = inputHeight },
         placeholder = l10n.tr("lua_widget.quick_launcher.search_placeholder"),
         fontSize = inputFont, textColor = colors.input,
         placeholderColor = colors.muted, backgroundColor = colors.surface,
@@ -267,7 +264,8 @@ local function render(context, model)
         liveUpdate = true, maxBytes = 256,
     })
 
-    local listTop = layoutRowHeight
+    local listTop = math.min(height,
+        inputTop + inputHeight + metrics.spacingXs)
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = contentInset, y = listTop,
@@ -304,13 +302,18 @@ local function render(context, model)
     end
 
     local headerHeight = smallFont + metrics.spacingMd
-    local itemHeight = fontSize + metrics.spacingLg
+    local itemHeight = metrics.layoutRowHeight
+    local itemGap = metrics.spacingXs
+    local itemStride = itemHeight + itemGap
     local offsets = {}
     local contentHeight = 0
     for index, row in ipairs(model.rows) do
         offsets[index] = contentHeight
         contentHeight = contentHeight +
-            (row.kind == "header" and headerHeight or itemHeight)
+            (row.kind == "header" and headerHeight or itemStride)
+    end
+    if model.rows[#model.rows].kind ~= "header" then
+        contentHeight = contentHeight - itemGap
     end
     local scroll = interaction.scroll({
         key = "quick-results", shape = viewport,
@@ -321,7 +324,7 @@ local function render(context, model)
     draw.pushClip(contentInset, listTop,
         width - contentInset * 2, viewportHeight)
     for index, row in ipairs(model.rows) do
-        local rowHeight = row.kind == "header" and headerHeight or itemHeight
+        local rowHeight = row.kind == "header" and headerHeight or itemStride
         local y = listTop + offsets[index] - scroll.offset
         if y + rowHeight >= listTop and y <= listTop + viewportHeight then
             if row.kind == "header" then
@@ -337,13 +340,13 @@ local function render(context, model)
                 local hovered = interaction.isHovered(key)
                 if selected or hovered then
                     draw.rect(contentInset, y, width - contentInset * 2,
-                        itemHeight - unit * 2, colors.surface,
+                        itemHeight, colors.surface,
                         metrics.controlRadius, selected and 0.12 or 0.075)
                 end
                 if selected then
                     draw.strokeRect(contentInset + unit, y + unit,
                         width - contentInset * 2 - unit * 2,
-                        itemHeight - unit * 4, colors.accent,
+                        itemHeight - unit * 2, colors.accent,
                         math.max(0, metrics.controlRadius - unit),
                         metrics.strokeWidth, 0.42)
                 end
@@ -353,7 +356,7 @@ local function render(context, model)
                 registerRegion(key, {
                     type = "roundedRect", x = contentInset, y = y,
                     width = width - contentInset * 2,
-                    height = itemHeight - unit * 2,
+                    height = itemHeight,
                     radius = metrics.controlRadius,
                 }, {
                     click = { id = "quick.select", value = actionValue },
@@ -361,8 +364,7 @@ local function render(context, model)
                     contextMenu = { id = "quick.menu", value = actionValue },
                 }, item.title)
                 local iconX = contentInset + metrics.spacingSm
-                local iconY = y + math.max(0, (itemHeight - iconSize) / 2) -
-                    unit
+                local iconY = y + math.max(0, (itemHeight - iconSize) / 2)
                 if item.preview then
                     draw.fluent(fluent.open, iconX, iconY, iconSize,
                         colors.text)

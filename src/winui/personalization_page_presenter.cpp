@@ -168,7 +168,7 @@ struct PersonalizationPagePresenter::Impl
     ContinuousControl cornerRadius;
     ContinuousControl barHeight;
     ContinuousControl categorizedTabHeight;
-    ContinuousControl luaWidgetRowHeight;
+    ContinuousControl luaWidgetContentRowHeight;
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -191,7 +191,7 @@ struct PersonalizationPagePresenter::Impl
         &cornerRadius,
         &barHeight,
         &categorizedTabHeight,
-        &luaWidgetRowHeight,
+        &luaWidgetContentRowHeight,
     };
     std::array<ColorControl*, 2> colorControls = {
         &backgroundColor,
@@ -399,12 +399,12 @@ struct PersonalizationPagePresenter::Impl
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
-        InitializeContinuousControl(luaWidgetRowHeight,
-            &PersonalizationSettings::luaWidgetRowHeight,
-            24.0, 64.0, 1.0, 1.0, 40.0);
-        SetUnit(luaWidgetRowHeight, L"cu");
+        InitializeContinuousControl(luaWidgetContentRowHeight,
+            &PersonalizationSettings::luaWidgetContentRowHeight,
+            18.0, 48.0, 1.0, 1.0, 28.0);
+        SetUnit(luaWidgetContentRowHeight, L"cu");
         layoutCard.content.Children().Append(
-            luaWidgetRowHeight.row.root);
+            luaWidgetContentRowHeight.row.root);
     }
 
     void InitializeColorControl(
@@ -542,15 +542,16 @@ struct PersonalizationPagePresenter::Impl
                         const float corner = settings.cornerRadius;
                         const float bar = settings.barHeight;
                         const float tab = settings.categorizedTabHeight;
-                        const float luaWidgetRowHeight =
-                            settings.luaWidgetRowHeight;
+                        const float luaWidgetContentRowHeight =
+                            settings.luaWidgetContentRowHeight;
                         const bool counts = settings.showCategoryTabCounts;
                         const int menu = settings.contextMenuStyle;
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
                         settings.barHeight = bar;
                         settings.categorizedTabHeight = tab;
-                        settings.luaWidgetRowHeight = luaWidgetRowHeight;
+                        settings.luaWidgetContentRowHeight =
+                            luaWidgetContentRowHeight;
                         settings.showCategoryTabCounts = counts;
                         settings.contextMenuStyle = menu;
                     });
@@ -996,7 +997,7 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.bar_height", L"Bar Height");
         SetContinuousText(categorizedTabHeight,
             "app.settings.tab_height", L"Category Tab Height");
-        SetContinuousText(luaWidgetRowHeight,
+        SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
             L"Lua Widget Row Height");
         muxa::AutomationProperties::SetName(
@@ -1107,7 +1108,7 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.barHeight")
             return barHeight.slider;
         if (id == "personalization.luaWidgetRowHeight")
-            return luaWidgetRowHeight.slider;
+            return luaWidgetContentRowHeight.slider;
         if (id == "desktop.categoryLayout" ||
             id == "desktop.tabHeight" ||
             id == "personalization.tabHeight")

@@ -179,8 +179,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
   的标准内容宽、高缩放设计坐标；
 - `ui.semanticMetrics`：`ui.metrics()` 返回以页面 CU 解析的语义控件度量；
-- `ui.semanticMetrics.rowUnit`：新增 `layoutRowHeight`；字体、间距、图标和控件高度均由
-  同一行高派生，一至两行使用页面基准，更高组件只随纵向跨度缓慢增长，横向跨度不影响；
+- `ui.semanticMetrics.rowUnit`：新增 `layoutRowHeight`，表示输入框、普通按钮或单行条目的
+  可见内容高度，不包含外边距和行间距；字体、间距、图标和控件高度均由同一行高派生，
+  一至两行使用页面基准，更高组件只随纵向跨度缓慢增长，横向跨度不影响；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -1487,8 +1488,9 @@ end
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
 
 探测 `ui.semanticMetrics` 后，`ui.metrics()` 返回当前页面和辅助功能环境下的
-宿主语义度量。探测 `ui.semanticMetrics.rowUnit` 后还会返回 `layoutRowHeight`；
-`titleAreaHeight` 是同值的兼容别名。其余字段包含
+宿主语义度量。探测 `ui.semanticMetrics.rowUnit` 后还会返回 `layoutRowHeight`；它表示
+搜索框、普通输入、按钮或单行条目的可见内容高度，不包含组件外边距和行间距。
+`titleAreaHeight` 保留旧版外层带高度语义，仅用于源码兼容。其余字段包含
 `spacingXs/spacingSm/spacingMd/spacingLg`、
 `captionFontSize/bodyFontSize/titleFontSize/controlFontSize`、
 `compactControlHeight/controlHeight`、`compactRowHeight/rowHeight`、
@@ -1497,9 +1499,10 @@ end
 解析为 `layoutRowHeight`，并由它派生字体、间距、图标和控件高度。运行时用页面 CU
 缩放几何，字体及需要容纳字体的控件还会响应 Windows 文本缩放。一至两行组件使用
 页面基准，更高组件的行高缓慢增长。同一纵向跨度的组件获得相同行高，横向跨度不会
-改变这些纵向度量。搜索框、普通输入、导航按钮和标题文字所在的顶部控件行通常占
-`1x layoutRowHeight`，正文从这一行的边界直接开始，不再额外添加“标题区间隔”。列表项、
-日历网格和空状态使用行高的明确倍数，或组合已经随行高解析的正文字号和间距。
+改变这些纵向度量。搜索框、普通输入、导航按钮和单行条目使用
+`1x layoutRowHeight` 作为可见内容高度；组件再用 `spacingXs/spacingSm` 单独添加外边距和
+行间距。多行列表项使用行高的明确倍数或组合已经随行高解析的正文字号和间距；月历
+网格和空状态继续按剩余内容矩形排布。
 `compactRowHeight/rowHeight` 仅为源码兼容保留；新组件不应再对语义字段应用第二次
 `rpxY` 缩放，宽度也不得决定纵向控件或行高。组件字体设置应作为相应字号的百分比乘数。
 
@@ -2372,10 +2375,10 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
 `layout.cu(value)` 和 `layout.fontCu(value)` 只应用于组件自己定义、且明确要和宿主
 网格指标对齐的内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、
-启动器和便签的桌面主表面中，顶部控件行使用
-`ui.metrics().layoutRowHeight`，其中的搜索框、输入框、按钮、标题文字和图标使用对应
-语义字段。正文区域从该行边界后的剩余矩形自适应排布；列表行可使用
-`layoutRowHeight` 的明确倍数，月历网格则按剩余矩形分配。语义字段已经随纵向跨度
+启动器和便签的桌面主表面中，搜索框、输入框、普通按钮和单行条目的可见内容高度使用
+`ui.metrics().layoutRowHeight`，外边距和行间距由组件通过 `spacingXs/spacingSm` 单独
+组合。多行列表项可使用 `layoutRowHeight` 的明确倍数，月历网格则按扣除顶部内容行与
+组件自定间距后的剩余矩形分配。语义字段已经随纵向跨度
 缓慢增长，不要再次乘 `rpxY`。组件特有几何仍可使用 `rpxX/rpxY` 或百分比单位，
 但任何纵向控件或正文行高都不应由宽度决定。
 

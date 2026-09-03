@@ -304,8 +304,12 @@ local function render(context, model)
     local unit = metrics.strokeWidth
     local function px(value) return value * unit end
     local padding = metrics.spacingMd
-    local headerHeight = math.min(contentHeight, metrics.layoutRowHeight)
-    local bodyTop = headerHeight
+    local headerTop = math.min(metrics.spacingSm,
+        math.max(0, contentHeight - unit))
+    local headerHeight = math.min(metrics.layoutRowHeight,
+        math.max(unit, contentHeight - headerTop))
+    local bodyTop = math.min(contentHeight,
+        headerTop + headerHeight + metrics.spacingXs)
     local bodyHeight = math.max(unit,
         contentHeight - bodyTop - metrics.spacingXs)
     local textScale = fontScale()
@@ -346,9 +350,8 @@ local function render(context, model)
         },
     })
 
-    local buttonSize = math.min(metrics.compactControlHeight,
-        math.max(unit, headerHeight - metrics.spacingSm))
-    local buttonY = math.max(0, (headerHeight - buttonSize) / 2)
+    local buttonSize = headerHeight
+    local buttonY = headerTop
     local headerGap = metrics.spacingXs
     local todayText = l10n.tr("lua_widget.month_calendar.today")
     local todayMetrics = draw.measureText(todayText, smallFont, 0, true)
@@ -373,7 +376,7 @@ local function render(context, model)
         drawHeaderIconButton("calendar.next", fluent.next,
             l10n.tr("lua_widget.month_calendar.next_month"), colors,
             nextShape, metrics)
-        centeredText(title, 0, 0, width,
+        centeredText(title, 0, headerTop, width,
             headerHeight, titleFont, colors.text, true, 1.0)
     else
         local previousShape = {
@@ -402,7 +405,7 @@ local function render(context, model)
             nextShape, metrics)
         drawHeaderTextButton("calendar.today", todayText, smallFont, colors,
             todayShape, metrics)
-        centeredText(title, 0, 0, width, headerHeight,
+        centeredText(title, 0, headerTop, width, headerHeight,
             titleFont, colors.text, true, 1.0)
     end
 

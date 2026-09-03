@@ -11,7 +11,7 @@ namespace snowdesktop::widget_runtime
 // global knobs.
 struct SemanticUiMetricTokens
 {
-    float rowHeight = 40.0f;
+    float rowHeight = 28.0f;
 
     bool operator==(const SemanticUiMetricTokens&) const = default;
 };
@@ -21,14 +21,14 @@ inline SemanticUiMetricTokens NormalizeSemanticUiMetricTokens(
 {
     if (!std::isfinite(value.rowHeight))
         value.rowHeight = SemanticUiMetricTokens{}.rowHeight;
-    value.rowHeight = std::clamp(value.rowHeight, 24.0f, 64.0f);
+    value.rowHeight = std::clamp(value.rowHeight, 18.0f, 48.0f);
     return value;
 }
 
 struct SemanticUiMetrics
 {
-    float layoutRowHeight = 40.0f;
-    // Compatibility alias for packages authored before row-unit semantics.
+    float layoutRowHeight = 28.0f;
+    // Compatibility metric preserving the older outer-band height.
     float titleAreaHeight = 40.0f;
     float spacingXs = 4.0f;
     float spacingSm = 8.0f;
@@ -39,7 +39,7 @@ struct SemanticUiMetrics
     float titleFontSize = 14.0f;
     float controlFontSize = 12.0f;
     float compactControlHeight = 28.0f;
-    float controlHeight = 32.0f;
+    float controlHeight = 28.0f;
     float compactRowHeight = 32.0f;
     float rowHeight = 40.0f;
     float smallIconSize = 12.0f;
@@ -69,13 +69,11 @@ inline SemanticUiMetrics ResolveSemanticUiMetrics(
     const float normalizedRowScale = std::isfinite(rowScale)
         ? std::max(1.0f, rowScale) : 1.0f;
     const float resolvedRowHeight = tokens.rowHeight * normalizedRowScale;
-    const float metricScale = resolvedRowHeight / 40.0f;
+    const float metricScale = resolvedRowHeight / 28.0f;
     const float semanticGeometryScale = geometryScale * metricScale;
     const float typographyScale = semanticGeometryScale * accessibilityScale;
 
     SemanticUiMetrics result;
-    result.layoutRowHeight = resolvedRowHeight * geometryScale;
-    result.titleAreaHeight = result.layoutRowHeight;
     result.spacingXs = 4.0f * semanticGeometryScale;
     result.spacingSm = 8.0f * semanticGeometryScale;
     result.spacingMd = 12.0f * semanticGeometryScale;
@@ -84,12 +82,12 @@ inline SemanticUiMetrics ResolveSemanticUiMetrics(
     result.bodyFontSize = 12.0f * typographyScale;
     result.titleFontSize = 14.0f * typographyScale;
     result.controlFontSize = 12.0f * typographyScale;
-    result.compactControlHeight = std::max(
-        28.0f * semanticGeometryScale,
-        result.controlFontSize + 12.0f * semanticGeometryScale);
-    result.controlHeight = std::max(
-        32.0f * semanticGeometryScale,
-        result.controlFontSize + 16.0f * semanticGeometryScale);
+    result.layoutRowHeight = std::max(
+        resolvedRowHeight * geometryScale,
+        result.controlFontSize + result.spacingXs * 2.0f);
+    result.titleAreaHeight = result.layoutRowHeight + result.spacingMd;
+    result.compactControlHeight = result.layoutRowHeight;
+    result.controlHeight = result.layoutRowHeight;
     // Retained for source compatibility. Content rows should normally derive
     // their intrinsic size from text and their component-specific layout.
     result.compactRowHeight = std::max(

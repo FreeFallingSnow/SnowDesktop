@@ -206,23 +206,28 @@ local function render(context, model)
     local countText = l10n.tr("lua_widget.rss_reader.article_count",
         tostring(#model.articles))
     local countMetrics = draw.measureText(countText, countFont, width, false)
-    local headerHeight = math.min(height, metrics.layoutRowHeight)
+    local headerTop = math.min(metrics.spacingSm,
+        math.max(0, height - unit))
+    local headerHeight = math.min(metrics.layoutRowHeight,
+        math.max(unit, height - headerTop))
     local titleMetrics = draw.measureText(title, headerFont, width, true)
-    draw.text(pad, math.max(0,
+    draw.text(pad, headerTop + math.max(0,
             (headerHeight - titleMetrics.height) / 2),
         title, headerFont, colors.header,
         math.max(unit, width - pad * 2 - countMetrics.width -
             metrics.spacingSm),
         false, true)
     draw.text(width - pad - countMetrics.width,
-        math.max(0, (headerHeight - countMetrics.height) / 2),
+        headerTop + math.max(0,
+            (headerHeight - countMetrics.height) / 2),
         countText, countFont, colors.count, countMetrics.width + unit,
         false, true)
-    local headerBottom = headerHeight
+    local headerBottom = headerTop + headerHeight
     draw.line(pad, headerBottom, width - pad, headerBottom,
         metrics.strokeWidth, colors.divider, 0.10)
 
-    local listTop = headerBottom
+    local listTop = math.min(height,
+        headerBottom + metrics.spacingXs)
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
@@ -263,10 +268,13 @@ local function render(context, model)
         return
     end
 
-    local rowHeight = bodyFont + smallFont + metrics.spacingLg
+    local itemHeight = math.max(metrics.layoutRowHeight * 1.35,
+        bodyFont + smallFont + metrics.spacingSm)
+    local itemGap = metrics.spacingXs
+    local rowHeight = itemHeight + itemGap
     local scroll = interaction.scroll({
         key = "rss.scroll", shape = scrollViewport,
-        contentHeight = math.ceil(#model.articles * rowHeight),
+        contentHeight = math.ceil(#model.articles * rowHeight - itemGap),
     })
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#model.articles,
@@ -281,12 +289,12 @@ local function render(context, model)
         local key = "rss.article." .. tostring(index)
         if interaction.isHovered(key) then
             draw.rect(pad, y, width - pad * 2,
-                rowHeight - metrics.spacingXs,
+                itemHeight,
                 colors.card, metrics.controlRadius, 0.07)
         end
         registerRegion(key, { type = "roundedRect", x = pad, y = y,
             width = width - pad * 2,
-            height = rowHeight - metrics.spacingXs,
+            height = itemHeight,
             radius = metrics.controlRadius }, {
             doubleClick = { id = "rss.open", value = article.link },
             contextMenu = { id = "rss.menu", value = article.link },
@@ -295,7 +303,7 @@ local function render(context, model)
         local numberMetrics = draw.measureText(number,
             smallFont, numberWidth, true)
         draw.text(pad + math.max(0, (numberWidth - numberMetrics.width) / 2),
-            y + math.max(0, (rowHeight - numberMetrics.height) / 2),
+            y + math.max(0, (itemHeight - numberMetrics.height) / 2),
             number, smallFont, colors.number,
             numberWidth, true, true)
         draw.text(textX, y + metrics.spacingXs, article.title,
@@ -305,11 +313,11 @@ local function render(context, model)
             article.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or
             article.date:sub(1, 16)
         if shortDate == "" then shortDate = article.link:sub(1, 42) end
-        draw.text(textX, y + rowHeight - smallFont - metrics.spacingSm,
+        draw.text(textX, y + itemHeight - smallFont - metrics.spacingSm,
             shortDate,
             smallFont, colors.date, textWidth, false, true)
-        draw.line(textX, y + rowHeight - unit, width - pad,
-            y + rowHeight - unit, metrics.strokeWidth,
+        draw.line(textX, y + itemHeight - unit, width - pad,
+            y + itemHeight - unit, metrics.strokeWidth,
             colors.divider, 0.07)
     end
     draw.popClip()

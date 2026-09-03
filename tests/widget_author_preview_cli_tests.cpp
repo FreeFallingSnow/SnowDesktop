@@ -510,10 +510,10 @@ return widget.define({
             pcall(layout.rpxY, -1000001) == false,
             "reference axes must scale independently from manifest defaults")
         local metrics = ui.metrics()
-        assert(metrics.layoutRowHeight == 60 and
-            metrics.titleAreaHeight == metrics.layoutRowHeight and
+        assert(metrics.layoutRowHeight == 42 and
+            metrics.titleAreaHeight == 60 and
             metrics.bodyFontSize == 18 and
-            metrics.controlHeight == 48 and metrics.spacingSm == 12,
+            metrics.controlHeight == 42 and metrics.spacingSm == 12,
             "semantic UI metrics must follow page CU without using widget span")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,

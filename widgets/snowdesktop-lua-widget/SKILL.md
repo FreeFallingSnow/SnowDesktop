@@ -108,18 +108,19 @@ Choose the sizing model before writing geometry:
   visible when optional content disappears.
 - **Proportional information model — the default for desktop information
   tools.** Use `ui.metrics().layoutRowHeight` as the shared semantic row unit.
-  A top row containing search fields, inputs, navigation buttons or headings
-  normally occupies `1x` this value; place its controls inside that row using
-  the returned control, font, icon and spacing metrics. Lists and other body
-  rows choose explicit multiples of the same row unit or combine the returned
-  body font and spacing values. The host keeps the row unit at the page baseline
+  It is the visible content height of a search field, input, ordinary button or
+  single-line item; exterior insets and gaps are not included. Use `1x` for
+  those controls and items, then add `spacingXs` or `spacingSm` separately when
+  the component needs space between rows. Multi-line body items choose an
+  explicit multiple of the same row unit or combine the returned body font and
+  spacing values. The host keeps the row unit at the page baseline
   for one- and two-row widgets, then grows it slowly with vertical span. All
   derived semantic metrics grow with it. Horizontal span never changes them,
-  so components with the same row span stay aligned. Begin body layout at the
-  row boundary without adding another title-band gap. Use `layout.rpxX()` and
+  so components with the same row span stay aligned. Use `layout.rpxX()` and
   `layout.rpxY()` only for component-specific axis geometry, and never derive
-  vertical controls or rows from width. `titleAreaHeight` is a compatibility
-  alias; new packages should require `ui.semanticMetrics.rowUnit` and use
+  vertical controls or rows from width. `titleAreaHeight` preserves the older
+  outer-band metric for source compatibility; new packages should require
+  `ui.semanticMetrics.rowUnit` and use
   `layoutRowHeight`. Use `layout.rpx()` or `vmin` for isotropic decoration.
 - **Grid-density model — only for content that explicitly aligns to host grid
   metrics.** Use `layout.cu()` and `layout.fontCu()` for a system-status card

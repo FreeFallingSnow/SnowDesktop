@@ -112,29 +112,29 @@ void TestSemanticUiMetricsUseRowHeightAndPageCu()
     using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
     using snowdesktop::widget_runtime::ResolveSemanticRowScale;
     const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
-    Expect(standard.layoutRowHeight == 40.0f &&
-            standard.titleAreaHeight == standard.layoutRowHeight &&
+    Expect(standard.layoutRowHeight == 28.0f &&
+            standard.titleAreaHeight == 40.0f &&
             standard.bodyFontSize == 12.0f &&
-            standard.controlHeight == 32.0f &&
+            standard.controlHeight == 28.0f &&
             standard.compactControlHeight == 28.0f &&
             standard.rowHeight == 40.0f,
         "semantic UI metrics expose shared page-CU defaults");
     const auto denserPage = ResolveSemanticUiMetrics(0.75f, 1.0f);
-    Expect(denserPage.layoutRowHeight == 30.0f &&
-            denserPage.titleAreaHeight == denserPage.layoutRowHeight &&
+    Expect(denserPage.layoutRowHeight == 21.0f &&
+            denserPage.titleAreaHeight == 30.0f &&
             denserPage.bodyFontSize == 9.0f &&
-            denserPage.controlHeight == 24.0f &&
+            denserPage.controlHeight == 21.0f &&
             denserPage.spacingSm == 6.0f,
         "semantic UI metrics follow the stable page CU scale");
     SemanticUiMetricTokens custom;
-    custom.rowHeight = 48.0f;
+    custom.rowHeight = 35.0f;
     const auto customized = ResolveSemanticUiMetrics(custom, 1.0f, 1.0f);
-    Expect(customized.layoutRowHeight == 48.0f &&
-            customized.titleAreaHeight == customized.layoutRowHeight &&
-            std::abs(customized.bodyFontSize - 14.4f) < 0.001f &&
-            std::abs(customized.spacingSm - 9.6f) < 0.001f &&
-            std::abs(customized.controlHeight - 38.4f) < 0.001f &&
-            customized.rowHeight == 48.0f,
+    Expect(customized.layoutRowHeight == 35.0f &&
+            customized.titleAreaHeight == 50.0f &&
+            customized.bodyFontSize == 15.0f &&
+            customized.spacingSm == 10.0f &&
+            customized.controlHeight == 35.0f &&
+            customized.rowHeight == 50.0f,
         "row height drives all linked semantic metrics");
     const float mediumScale = ResolveSemanticRowScale(3);
     const auto medium = ResolveSemanticUiMetrics(1.0f, 1.0f, mediumScale);
@@ -143,17 +143,18 @@ void TestSemanticUiMetricsUseRowHeightAndPageCu()
     Expect(ResolveSemanticRowScale(1) == 1.0f &&
             ResolveSemanticRowScale(2) == 1.0f &&
             std::abs(medium.layoutRowHeight -
-                40.0f * std::sqrt(1.5f)) < 0.001f &&
+                28.0f * std::sqrt(1.5f)) < 0.001f &&
             std::abs(medium.bodyFontSize -
                 12.0f * mediumScale) < 0.001f &&
-            tallScale == 2.0f && tall.layoutRowHeight == 80.0f &&
-            tall.titleAreaHeight == tall.layoutRowHeight &&
+            tallScale == 2.0f && tall.layoutRowHeight == 56.0f &&
+            tall.titleAreaHeight == 80.0f &&
             tall.bodyFontSize == 24.0f &&
-            tall.controlHeight == 64.0f,
+            tall.controlHeight == 56.0f,
         "row units scale all semantic metrics without using width");
     const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
     Expect(largeText.bodyFontSize == 24.0f &&
-            largeText.controlHeight == 40.0f &&
+            largeText.layoutRowHeight == 32.0f &&
+            largeText.controlHeight == 32.0f &&
             largeText.rowHeight == 44.0f,
         "semantic controls expand only when accessibility text needs room");
 }

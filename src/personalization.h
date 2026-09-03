@@ -148,7 +148,7 @@ struct PersonalizationSettings
     float categorizedTabHeight = 34.0f;
 
     /** Lua desktop widget semantic row height in page CU. */
-    float luaWidgetRowHeight = 40.0f;
+    float luaWidgetContentRowHeight = 28.0f;
 
     /**
      * @brief 分类标签（桌面文件、映射文件夹）是否显示文件数量。

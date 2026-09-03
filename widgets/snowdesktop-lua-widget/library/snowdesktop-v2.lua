@@ -2281,8 +2281,8 @@ function control.focus(key) end
 function control.blur(key) end
 
 ---@class SnowUiMetrics
----@field layoutRowHeight number Host-resolved semantic row unit. A top control row normally occupies 1x this value.
----@field titleAreaHeight number
+---@field layoutRowHeight number Visible content height for a search field, input, ordinary button or single-line item. Exterior insets and row gaps are excluded.
+---@field titleAreaHeight number Compatibility metric preserving the older outer-band height.
 ---@field spacingXs number
 ---@field spacingSm number
 ---@field spacingMd number
@@ -2309,7 +2309,7 @@ ui = {}
 ---@return SnowMenuModel
 function ui.menu(items) end
 
----Return page-CU semantic dimensions. layoutRowHeight is the shared row unit; titleAreaHeight is a compatibility alias. Fonts, spacing, icons and controls derive from the row unit, which stays at the page baseline for one or two rows and grows slowly for taller widgets. Horizontal span does not affect it.
+---Return page-CU semantic dimensions. layoutRowHeight is the visible content height for ordinary controls and single-line items; components add exterior insets and row gaps separately. titleAreaHeight preserves the older outer-band metric for compatibility. Fonts, spacing, icons and controls derive from the content row height, which stays at the page baseline for one or two rows and grows slowly for taller widgets. Horizontal span does not affect it.
 ---@return SnowUiMetrics
 function ui.metrics() end
 
