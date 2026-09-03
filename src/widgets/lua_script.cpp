@@ -182,6 +182,47 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const int globalContentTheme =
         app_->CurrentPersonalization().contentTheme;
 
+    // Seed the widget-local layout context before package evaluation so
+    // top-level code and setup() observe the same semantic CU metrics as
+    // render(). SetWidgetLayoutMetrics also stores the values after load.
+    if (engine)
+    {
+        const POINT center = {
+            (frame.left + frame.right) / 2,
+            (frame.top + frame.bottom) / 2 };
+        const GridPage* preloadPage = preview
+            ? FindGridPage(app_->gridPages_, data_->gridCell.pageId)
+            : nullptr;
+        if (!preloadPage && !preview)
+        {
+            for (const auto& page : app_->gridPages_)
+            {
+                if (PtInRect(&page.bounds, center))
+                {
+                    preloadPage = &page;
+                    break;
+                }
+            }
+            if (!preloadPage)
+                preloadPage = FindGridPage(
+                    app_->gridPages_, data_->gridCell.pageId);
+        }
+        const int preloadCellWidth = preloadPage
+            ? preloadPage->cellWidth
+            : std::max(1, static_cast<int>(frame.right - frame.left) /
+                  std::max(1, data_->gridSpan.columns));
+        const int preloadCellHeight = preloadPage
+            ? preloadPage->cellHeight
+            : std::max(1, static_cast<int>(frame.bottom - frame.top) /
+                  std::max(1, data_->gridSpan.rows));
+        engine->SetWidgetLayoutMetrics(data_->id,
+            preloadCellWidth, preloadCellHeight,
+            preloadPage ? preloadPage->gapY : Cu(8.0f),
+            static_cast<int>(GetBarHeight()), app_->GetItemFontWeight(),
+            preloadPage ? GetGridPageCuScale(*preloadPage) : data_->cellScale,
+            app_->CurrentPersonalization().widgetUiMetrics);
+    }
+
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
@@ -314,7 +355,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             engine->SetWidgetLayoutMetrics(data_->id,
                 cellWidth, cellHeight, gapY,
                 static_cast<int>(GetBarHeight()),
-                app_->GetItemFontWeight());
+                app_->GetItemFontWeight(),
+                realPage ? GetGridPageCuScale(*realPage) : data_->cellScale,
+                app_->CurrentPersonalization().widgetUiMetrics);
         }
         else
         {
@@ -335,7 +378,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     realPage->cellWidth, realPage->cellHeight,
                     realPage->gapY,
                     static_cast<int>(GetBarHeight()),
-                    app_->GetItemFontWeight());
+                    app_->GetItemFontWeight(),
+                    GetGridPageCuScale(*realPage),
+                    app_->CurrentPersonalization().widgetUiMetrics);
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;

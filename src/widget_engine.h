@@ -1479,7 +1479,9 @@ public:
      */
     void SetWidgetLayoutMetrics(const std::wstring& widgetId,
         int cellWidth, int cellHeight, int gapY, int barHeight,
-        DWRITE_FONT_WEIGHT fontWeight);
+        DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale,
+        const snowdesktop::widget_runtime::SemanticUiMetricTokens&
+            semanticUiMetrics);
     void SetWidgetSurfaceContext(const std::wstring& widgetId,
         const LuaWidgetSurfaceContext& context);
     LuaWidgetContextState RuntimeGetWidgetContextState(

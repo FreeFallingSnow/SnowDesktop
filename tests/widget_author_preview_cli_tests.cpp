@@ -511,7 +511,7 @@ return widget.define({
         local metrics = ui.metrics()
         assert(metrics.bodyFontSize == 18 and
             metrics.controlHeight == 48 and metrics.spacingSm == 12,
-            "semantic UI metrics must follow DPI without using widget span")
+            "semantic UI metrics must follow page CU without using widget span")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,
             "relative layout units must reject out-of-range percentages")

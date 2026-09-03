@@ -384,6 +384,38 @@ bool LoadPersonalization(
         if (categorizedTabHeightLoaded)
             *categorizedTabHeightLoaded = true;
     }
+    auto semanticTokens = s.widgetUiMetrics;
+    const auto readSemanticToken = [&](const char* field, float& value) {
+        if (ReadDoubleField(text, field, v) && std::isfinite(v))
+            value = static_cast<float>(v);
+    };
+    readSemanticToken("widgetUiSpacingXsCu", semanticTokens.spacingXs);
+    readSemanticToken("widgetUiSpacingSmCu", semanticTokens.spacingSm);
+    readSemanticToken("widgetUiSpacingMdCu", semanticTokens.spacingMd);
+    readSemanticToken("widgetUiSpacingLgCu", semanticTokens.spacingLg);
+    readSemanticToken("widgetUiCaptionFontSizeCu",
+        semanticTokens.captionFontSize);
+    readSemanticToken("widgetUiBodyFontSizeCu", semanticTokens.bodyFontSize);
+    readSemanticToken("widgetUiTitleFontSizeCu", semanticTokens.titleFontSize);
+    readSemanticToken("widgetUiControlFontSizeCu",
+        semanticTokens.controlFontSize);
+    readSemanticToken("widgetUiCompactControlHeightCu",
+        semanticTokens.compactControlHeight);
+    readSemanticToken("widgetUiControlHeightCu",
+        semanticTokens.controlHeight);
+    readSemanticToken("widgetUiCompactRowHeightCu",
+        semanticTokens.compactRowHeight);
+    readSemanticToken("widgetUiRowHeightCu", semanticTokens.rowHeight);
+    readSemanticToken("widgetUiSmallIconSizeCu",
+        semanticTokens.smallIconSize);
+    readSemanticToken("widgetUiIconSizeCu", semanticTokens.iconSize);
+    readSemanticToken("widgetUiLargeIconSizeCu",
+        semanticTokens.largeIconSize);
+    readSemanticToken("widgetUiControlRadiusCu",
+        semanticTokens.controlRadius);
+    readSemanticToken("widgetUiStrokeWidthCu", semanticTokens.strokeWidth);
+    s.widgetUiMetrics = snowdesktop::widget_runtime::
+        NormalizeSemanticUiMetricTokens(semanticTokens);
     if (ReadDoubleField(text, "backgroundPreset", v))
     {
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
@@ -433,6 +465,7 @@ bool LoadPersonalization(
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
+        const auto widgetUiMetrics = s.widgetUiMetrics;
         const bool showCategoryTabCounts =
             s.showCategoryTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
@@ -441,6 +474,7 @@ bool LoadPersonalization(
         s.barHeight = barHeight;
         s.categorizedTabHeight =
             categorizedTabHeight;
+        s.widgetUiMetrics = widgetUiMetrics;
         s.showCategoryTabCounts =
             showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
@@ -506,6 +540,37 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                 s.categorizedTabHeight,
                 24.0f, 48.0f)
          << ",\n";
+    const auto semanticTokens = snowdesktop::widget_runtime::
+        NormalizeSemanticUiMetricTokens(s.widgetUiMetrics);
+    file << "  \"widgetUiSpacingXsCu\": " << semanticTokens.spacingXs << ",\n";
+    file << "  \"widgetUiSpacingSmCu\": " << semanticTokens.spacingSm << ",\n";
+    file << "  \"widgetUiSpacingMdCu\": " << semanticTokens.spacingMd << ",\n";
+    file << "  \"widgetUiSpacingLgCu\": " << semanticTokens.spacingLg << ",\n";
+    file << "  \"widgetUiCaptionFontSizeCu\": "
+         << semanticTokens.captionFontSize << ",\n";
+    file << "  \"widgetUiBodyFontSizeCu\": "
+         << semanticTokens.bodyFontSize << ",\n";
+    file << "  \"widgetUiTitleFontSizeCu\": "
+         << semanticTokens.titleFontSize << ",\n";
+    file << "  \"widgetUiControlFontSizeCu\": "
+         << semanticTokens.controlFontSize << ",\n";
+    file << "  \"widgetUiCompactControlHeightCu\": "
+         << semanticTokens.compactControlHeight << ",\n";
+    file << "  \"widgetUiControlHeightCu\": "
+         << semanticTokens.controlHeight << ",\n";
+    file << "  \"widgetUiCompactRowHeightCu\": "
+         << semanticTokens.compactRowHeight << ",\n";
+    file << "  \"widgetUiRowHeightCu\": "
+         << semanticTokens.rowHeight << ",\n";
+    file << "  \"widgetUiSmallIconSizeCu\": "
+         << semanticTokens.smallIconSize << ",\n";
+    file << "  \"widgetUiIconSizeCu\": " << semanticTokens.iconSize << ",\n";
+    file << "  \"widgetUiLargeIconSizeCu\": "
+         << semanticTokens.largeIconSize << ",\n";
+    file << "  \"widgetUiControlRadiusCu\": "
+         << semanticTokens.controlRadius << ",\n";
+    file << "  \"widgetUiStrokeWidthCu\": "
+         << semanticTokens.strokeWidth << ",\n";
     file << "  \"showCategoryTabCounts\": "
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";

@@ -2307,7 +2307,7 @@ ui = {}
 ---@return SnowMenuModel
 function ui.menu(items) end
 
----Return host semantic dimensions scaled for the current display DPI and accessibility text scale. Values do not depend on widget span or desktop grid density.
+---Return host-wide semantic dimensions resolved from editable page-CU tokens and accessibility text scale. Values do not depend on widget span or grid gaps.
 ---@return SnowUiMetrics
 function ui.metrics() end
 

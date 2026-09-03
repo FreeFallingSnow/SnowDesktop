@@ -197,6 +197,9 @@ int main()
     savedAppearance.widgetEdgeHighlightEnabled = true;
     savedAppearance.widgetEdgeHighlightWidth = 2.5f;
     savedAppearance.widgetEdgeHighlightStrength = 0.42f;
+    savedAppearance.widgetUiMetrics.titleFontSize = 13.0f;
+    savedAppearance.widgetUiMetrics.controlHeight = 29.0f;
+    savedAppearance.widgetUiMetrics.spacingSm = 7.0f;
     Check(SavePersonalization(
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
@@ -208,8 +211,11 @@ int main()
             loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
             std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
+            loadedAppearance.widgetUiMetrics.titleFontSize == 13.0f &&
+            loadedAppearance.widgetUiMetrics.controlHeight == 29.0f &&
+            loadedAppearance.widgetUiMetrics.spacingSm == 7.0f &&
             !loadedAppearance.glassEnabled,
-        "border and edge-highlight fields round trip independently from glass");
+        "appearance and editable semantic UI tokens round trip independently");
 
     {
         std::ofstream legacyGlass(
@@ -253,7 +259,9 @@ int main()
                            "  \"widgetBorderWidth\": 99,\n"
                            "  \"widgetEdgeHighlightEnabled\": false,\n"
                            "  \"widgetEdgeHighlightWidth\": 99,\n"
-                           "  \"widgetEdgeHighlightStrength\": -1\n"
+                           "  \"widgetEdgeHighlightStrength\": -1,\n"
+                           "  \"widgetUiTitleFontSizeCu\": 999,\n"
+                           "  \"widgetUiStrokeWidthCu\": 0\n"
                            "}\n";
     }
     PersonalizationSettings explicitAppearance;
@@ -264,8 +272,10 @@ int main()
                 kMaximumWidgetBorderWidth &&
             explicitAppearance.widgetEdgeHighlightWidth ==
                 kMaximumWidgetBorderWidth &&
-            explicitAppearance.widgetEdgeHighlightStrength == 0.0f,
-        "explicit acrylic border and edge fields take priority and clamp to supported ranges");
+            explicitAppearance.widgetEdgeHighlightStrength == 0.0f &&
+            explicitAppearance.widgetUiMetrics.titleFontSize == 40.0f &&
+            explicitAppearance.widgetUiMetrics.strokeWidth == 0.5f,
+        "explicit appearance and semantic UI fields clamp to supported ranges");
     std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);

@@ -6,6 +6,8 @@
 
 #include <dwrite.h>
 
+#include "widget_ui_metrics.h"
+
 namespace snowdesktop::widget_runtime
 {
 inline constexpr float kReferenceCellWidth = 92.0f;
@@ -57,13 +59,16 @@ struct LayoutMetrics
     int barHeight = 24;
     DWRITE_FONT_WEIGHT itemFontWeight =
         DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    float semanticCuScale = 1.0f;
+    SemanticUiMetricTokens semanticUiMetrics;
 
     bool operator==(const LayoutMetrics&) const = default;
 };
 
 inline LayoutMetrics NormalizeLayoutMetrics(
     int cellWidth, int cellHeight, int gapY, int barHeight,
-    DWRITE_FONT_WEIGHT fontWeight)
+    DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale = 1.0f,
+    SemanticUiMetricTokens semanticUiMetrics = {})
 {
     return {
         std::max(4, cellWidth),
@@ -71,6 +76,8 @@ inline LayoutMetrics NormalizeLayoutMetrics(
         std::max(0, gapY),
         barHeight,
         fontWeight,
+        std::clamp(semanticCuScale, 0.1f, 8.0f),
+        NormalizeSemanticUiMetricTokens(semanticUiMetrics),
     };
 }
 
@@ -83,6 +90,8 @@ LayoutMetrics CaptureLayoutMetrics(const State& state)
         state.gridGapY,
         state.barHeight,
         state.itemFontWeight,
+        state.semanticCuScale,
+        state.semanticUiMetrics,
     };
 }
 
@@ -94,6 +103,8 @@ void ApplyLayoutMetrics(State& state, const LayoutMetrics& metrics)
     state.gridGapY = metrics.gridGapY;
     state.barHeight = metrics.barHeight;
     state.itemFontWeight = metrics.itemFontWeight;
+    state.semanticCuScale = metrics.semanticCuScale;
+    state.semanticUiMetrics = metrics.semanticUiMetrics;
 }
 
 template<typename State, typename Activate>

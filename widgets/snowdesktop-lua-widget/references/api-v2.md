@@ -178,8 +178,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   将设计坐标线性缩放到当前内容短边；
 - `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
   的标准内容宽、高缩放设计坐标；
-- `ui.semanticMetrics`：`ui.metrics()` 返回不随组件跨度或网格疏密变化的
-  宿主语义控件、字体、图标和间距度量；
+- `ui.semanticMetrics`：`ui.metrics()` 返回由页面 CU 和宿主全局设置统一解析、
+  不随单个组件跨度或网格间距变化的语义控件、字体、图标和间距度量；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -1485,13 +1485,14 @@ end
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
 
-探测 `ui.semanticMetrics` 后，`ui.metrics()` 返回当前显示器和辅助功能环境下的
+探测 `ui.semanticMetrics` 后，`ui.metrics()` 返回当前页面和辅助功能环境下的
 宿主语义度量。返回值包含 `spacingXs/spacingSm/spacingMd/spacingLg`、
 `captionFontSize/bodyFontSize/titleFontSize/controlFontSize`、
 `compactControlHeight/controlHeight`、`compactRowHeight/rowHeight`、
-`smallIconSize/iconSize/largeIconSize`、`controlRadius/strokeWidth`。这些值按当前
-surface 的 DPI 缩放，字体及需要容纳字体的控件还会响应 Windows 文本缩放；它们不随
-组件列数、行数或用户网格疏密变化。搜索框、普通输入、导航按钮、列表行和正文等跨
+`smallIconSize/iconSize/largeIconSize`、`controlRadius/strokeWidth`。宿主在
+“外观 > 组件与布局”中以页面 `cu` 保存并允许统一调整每个字段；运行时用页面 CU
+缩放几何，字体及需要容纳字体的控件还会响应 Windows 文本缩放。值不随单个组件的
+列数、行数或网格间距变化。搜索框、普通输入、导航按钮、列表行和正文等跨
 组件复用的界面元素应使用这组度量，使同一桌面上的同类控件保持一致。组件字体设置
 应作为这些字号的百分比乘数。扩大组件时增加可见内容、文本宽度或构图空间，不应仅因
 跨度增加而放大标准控件。
@@ -2363,11 +2364,11 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 
 `columns/rows/sizeClass` 返回跨度与尺寸档位。
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
-`layout.cu(value)` 和 `layout.fontCu(value)` 只应用于明确要和宿主网格指标对齐的
-内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、启动器和便签的
-桌面主表面的组件特有几何应使用 `rpxX/rpxY` 或百分比单位；共用控件和文字应使用
-`ui.metrics()`。更大的空间可以显示更多行或更完整的文字。`cu/fontCu` 会随用户网格
-疏密变化，仅适合明确与网格信息单元对齐的内容。
+`layout.cu(value)` 和 `layout.fontCu(value)` 只应用于组件自己定义、且明确要和宿主
+网格指标对齐的内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、
+启动器和便签的桌面主表面中，共用控件和文字应使用 `ui.metrics()`；它同样以页面 CU
+为基准，但数值由宿主统一设置，所以不同组件不会各自决定搜索框、按钮或正文的尺寸。
+组件特有几何使用 `rpxX/rpxY` 或百分比单位。更大的空间可以显示更多行或更完整的文字。
 
 ### `storage`
 

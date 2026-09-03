@@ -109,9 +109,12 @@ Choose the sizing model before writing geometry:
 - **Proportional information model — the default for desktop information
   tools.** Use `ui.metrics()` for shared search fields, inputs, buttons, list
   rows, typography, icons, radii and spacing so equivalent controls remain the
-  same size across the desktop. These values follow DPI and accessibility text
-  scale, but not widget span or desktop grid density. Use `layout.rpxX()` and
-  `layout.rpxY()` only for component-specific axis geometry. A larger span
+  same size on one page. The host stores these semantic tokens in page `cu`,
+  resolves them with the page CU scale and Windows accessibility text scale,
+  and lets users tune every token under Appearance > Widgets & Layout. They do
+  not depend on an individual widget's span or the configured gap between grid
+  cells. Use `layout.rpxX()` and `layout.rpxY()` only for component-specific
+  axis geometry. A larger span
   should expose more rows, wider text or more composition space instead of
   enlarging ordinary controls. Use `layout.rpx()` or `vmin` for an isotropic
   decoration that must preserve its shape.
@@ -134,7 +137,8 @@ make two equal-aspect surfaces render differently and should be avoided.
 
 Use `ui.metrics().bodyFontSize`, `captionFontSize` and `titleFontSize` for
 ordinary information typography. A component font-size preference should be a
-percentage multiplier over those values. Reserve span-relative text for
+percentage multiplier over those resolved values; it must not replace or
+duplicate the host-wide semantic token controls. Reserve span-relative text for
 primary visual data such as a clock, timer or single metric.
 
 ## Create a package

@@ -147,8 +147,10 @@ different state:
    a single-structure composition remains centered across its supported range.
    Center the complete group of currently visible parts. Agendas, calendars,
    lists, search, RSS, launchers and notes should use `ui.metrics()` for shared
-   controls and typography, then `layout.rpxX/rpxY()` only for component-specific
-   axis geometry. Larger spans should reveal more content. Reserve grid-density
+   controls and typography. Those values are host-wide semantic tokens stored
+   in page CU and editable under Appearance > Widgets & Layout. Use
+   `layout.rpxX/rpxY()` only for component-specific axis geometry. Larger spans
+   should reveal more content. Reserve grid-density
    checks for components that explicitly align
    information units to host grid metrics, such as a system-status card matrix.
 7. Fix the smallest failing area, render again and repeat.

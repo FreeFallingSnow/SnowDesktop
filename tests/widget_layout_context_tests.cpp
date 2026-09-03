@@ -23,6 +23,8 @@ struct TestRenderState
     int gridGapY = 0;
     int barHeight = 0;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_NORMAL;
+    float semanticCuScale = 1.0f;
+    snowdesktop::widget_runtime::SemanticUiMetricTokens semanticUiMetrics;
 };
 
 void TestNestedWidgetMetricsRestoreInOrder()
@@ -104,24 +106,34 @@ void TestReferencePixelsUseTheManifestDefaultShortEdge()
         "reference axes scale independently from width and height");
 }
 
-void TestSemanticUiMetricsIgnoreWidgetSpanAndGridDensity()
+void TestSemanticUiMetricsUseEditablePageCuTokens()
 {
+    using snowdesktop::widget_runtime::SemanticUiMetricTokens;
     using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
     const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
     Expect(standard.bodyFontSize == 12.0f &&
             standard.controlHeight == 32.0f &&
             standard.compactControlHeight == 28.0f &&
             standard.rowHeight == 40.0f,
-        "semantic UI metrics expose the shared page-scale defaults");
-    const auto highDpi = ResolveSemanticUiMetrics(1.5f, 1.0f);
-    Expect(highDpi.bodyFontSize == 18.0f &&
-            highDpi.controlHeight == 48.0f &&
-            highDpi.spacingSm == 12.0f,
-        "semantic UI metrics follow display DPI");
+        "semantic UI metrics expose shared page-CU defaults");
+    const auto denserPage = ResolveSemanticUiMetrics(0.75f, 1.0f);
+    Expect(denserPage.bodyFontSize == 9.0f &&
+            denserPage.controlHeight == 24.0f &&
+            denserPage.spacingSm == 6.0f,
+        "semantic UI metrics follow the stable page CU scale");
+    SemanticUiMetricTokens custom;
+    custom.bodyFontSize = 11.0f;
+    custom.controlHeight = 36.0f;
+    custom.spacingSm = 6.0f;
+    const auto customized = ResolveSemanticUiMetrics(custom, 1.0f, 1.0f);
+    Expect(customized.bodyFontSize == 11.0f &&
+            customized.controlHeight == 36.0f &&
+            customized.spacingSm == 6.0f,
+        "host-wide semantic tokens remain independently adjustable");
     const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
     Expect(largeText.bodyFontSize == 24.0f &&
             largeText.controlHeight == 40.0f &&
-            largeText.rowHeight == 44.0f,
+            largeText.rowHeight == 52.0f,
         "semantic controls expand only when accessibility text needs room");
 }
 
@@ -153,7 +165,7 @@ int main()
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
     TestReferencePixelsUseTheManifestDefaultShortEdge();
-    TestSemanticUiMetricsIgnoreWidgetSpanAndGridDensity();
+    TestSemanticUiMetricsUseEditablePageCuTokens();
     TestLegacyPointSizesMigrateToCuOnce();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";

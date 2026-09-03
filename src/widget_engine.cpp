@@ -745,6 +745,8 @@ struct D2DState
     int gridCellH = 116;
     int gridGapY = 8;
     int barHeight = 24;
+    float semanticCuScale = 1.0f;
+    snowdesktop::widget_runtime::SemanticUiMetricTokens semanticUiMetrics;
     float layoutContentWidth = 0.0f;
     float layoutContentHeight = 0.0f;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
@@ -8627,15 +8629,13 @@ static WidgetSystemEnvironment QueryWidgetSystemEnvironment()
 static int lua_UiMetrics(lua_State* L)
 {
     auto* d2d = GetD2D(L);
-    const LuaWidgetContextState context = d2d && d2d->engine
-        ? d2d->engine->RuntimeGetWidgetContextState(BoundWidgetId(L))
-        : LuaWidgetContextState{};
     const WidgetSystemEnvironment system = QueryWidgetSystemEnvironment();
-    const float dpiScale = static_cast<float>(context.surface.dpiY) /
-        static_cast<float>(USER_DEFAULT_SCREEN_DPI);
     const auto metrics = snowdesktop::widget_runtime::
         ResolveSemanticUiMetrics(
-            dpiScale, static_cast<float>(system.textScale));
+            d2d ? d2d->semanticUiMetrics :
+                snowdesktop::widget_runtime::SemanticUiMetricTokens{},
+            d2d ? d2d->semanticCuScale : 1.0f,
+            static_cast<float>(system.textScale));
 
     lua_createtable(L, 0, 17);
     SetNumberField(L, "spacingXs", metrics.spacingXs);
@@ -15813,8 +15813,16 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
                 previewConfiguration->cellHeight,
                 previewConfiguration->gap,
                 previewConfiguration->barHeight,
-                previewConfiguration->fontWeight);
+                previewConfiguration->fontWeight,
+                CalculateWidgetCellScale(
+                    previewConfiguration->cellWidth,
+                    previewConfiguration->cellHeight));
         w.previewDataState = previewConfiguration->dataState;
+    }
+    else if (d2dState_)
+    {
+        w.layoutMetrics = snowdesktop::widget_runtime::
+            CaptureLayoutMetrics(*d2dState_);
     }
     w.scriptSettings = std::move(scriptSettings);
     w.scriptSettingGroups = std::move(scriptSettingGroups);
@@ -29123,15 +29131,21 @@ void WidgetEngine::SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetT
 void WidgetEngine::SetWidgetLayoutMetrics(
     const std::wstring& widgetId,
     int cellWidth, int cellHeight, int gapY, int barHeight,
-    DWRITE_FONT_WEIGHT fontWeight)
+    DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale,
+    const snowdesktop::widget_runtime::SemanticUiMetricTokens&
+        semanticUiMetrics)
 {
     const int index = FindWidget(widgetId);
-    if (index < 0)
-        return;
-    widgets_[index].layoutMetrics =
-        snowdesktop::widget_runtime::NormalizeLayoutMetrics(
+    const auto metrics = snowdesktop::widget_runtime::NormalizeLayoutMetrics(
             cellWidth, cellHeight, gapY, barHeight,
-            fontWeight);
+            fontWeight, semanticCuScale, semanticUiMetrics);
+    if (index >= 0)
+        widgets_[index].layoutMetrics = metrics;
+    // A package chunk and its setup callback may query ui.metrics() before the
+    // LuaWidget has entered widgets_. Keep the pending execution state aligned
+    // with the instance that the host is about to load.
+    if (d2dState_)
+        snowdesktop::widget_runtime::ApplyLayoutMetrics(*d2dState_, metrics);
 }
 
 void WidgetEngine::SetWidgetSurfaceContext(

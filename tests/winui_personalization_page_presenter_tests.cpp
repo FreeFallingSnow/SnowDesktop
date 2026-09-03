@@ -64,6 +64,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find(
               "InitializeCard(layoutCard, cardStyle, widgetLayoutRoot)") !=
                 std::string::npos &&
+            source.find(
+              "InitializeCard(semanticTypographyCard, cardStyle, widgetLayoutRoot)") !=
+                std::string::npos &&
+            source.find(
+              "InitializeCard(semanticControlsCard, cardStyle, widgetLayoutRoot)") !=
+                std::string::npos &&
             source.find("customCard") == std::string::npos,
         "custom theme controls stay on the theme page while layout owns the widget page");
     Check(source.find("snapshot.domainRevisions.personalization") !=
@@ -118,6 +124,22 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.category_show_count") ==
                 std::string::npos,
         "widget layout owns category tab height while category count behavior stays elsewhere");
+    for (const char* semanticMember : {
+             "captionFontSize", "bodyFontSize", "titleFontSize",
+             "controlFontSize", "spacingXs", "spacingSm", "spacingMd",
+             "spacingLg", "compactControlHeight", "controlHeight",
+             "compactRowHeight", "rowHeight", "smallIconSize", "iconSize",
+             "largeIconSize", "controlRadius", "strokeWidth"})
+    {
+        Check(source.find(std::string("SemanticUiMetricTokens::") +
+                  semanticMember) != std::string::npos,
+            "every semantic widget UI token has a WinUI numeric binding");
+    }
+    Check(source.find("WriteContinuousValue(control, settings, value)") !=
+                std::string::npos &&
+            source.find("settings.widgetUiMetrics.*control.semanticMember") !=
+                std::string::npos,
+        "semantic widget UI controls use the shared preview and commit path");
     for (const char* control : {
              "muxc::Slider", "muxc::NumberBox",
              "muxc::ToggleSwitch", "muxc::ComboBox"})
