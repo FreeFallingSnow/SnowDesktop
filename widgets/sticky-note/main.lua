@@ -137,10 +137,6 @@ local function fontScale()
     return legacy / 15
 end
 
-local function scaled(value)
-    return layout.rpx(value)
-end
-
 local function resetDefaults()
     storage.set("bg", tostring(0xFFF7D1))
     storage.set("border", tostring(0xD0D0D0))
@@ -160,13 +156,14 @@ local function render()
     loadStyle()
     local width = layout.contentWidth()
     local height = layout.contentHeight()
-    local padding = scaled(14)
+    local metrics = ui.metrics()
+    local padding = metrics.spacingMd
     local shape = {
         type = "rect",
         x = padding,
         y = padding,
-        width = math.max(scaled(1), width - padding * 2),
-        height = math.max(scaled(1), height - padding * 2),
+        width = math.max(metrics.strokeWidth, width - padding * 2),
+        height = math.max(metrics.strokeWidth, height - padding * 2),
     }
     local color = textColor()
     control.textArea({
@@ -175,7 +172,7 @@ local function render()
         shape = shape,
         placeholder = l10n.tr("lua_widget.sticky_note.empty_hint"),
         placeholderWhenWhitespace = true,
-        fontSize = scaled(12) * fontScale(),
+        fontSize = metrics.bodyFontSize * fontScale(),
         textColor = color,
         placeholderColor = color,
         backgroundColor = color,
@@ -185,9 +182,9 @@ local function render()
         focusedBackgroundAlpha = 0.0,
         borderAlpha = 0.0,
         focusedBorderAlpha = 0.0,
-        radius = scaled(7),
-        padding = scaled(2),
-        borderThickness = scaled(1),
+        radius = metrics.controlRadius,
+        padding = metrics.spacingXs,
+        borderThickness = metrics.strokeWidth,
         selectAll = false,
         liveUpdate = true,
         maxBytes = 65536,

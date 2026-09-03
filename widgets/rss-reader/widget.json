@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "RSS Reader",
   "nameKey": "lua_widget.rss_reader.name",
-  "version": "3.0.8",
+  "version": "3.0.9",
   "description": "Subscribes to RSS and Atom feeds, lists headlines and dates, and opens articles on double-click.",
   "descriptionKey": "lua_widget.rss_reader.description",
   "locales": {
@@ -315,14 +315,14 @@
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
-    "layout.referencePixels",
     "layout.relativeUnits",
     "schedule.basic",
     "schedule.visibility",
     "task.network.request",
     "task.shell.openUri",
     "task.start",
-    "time.basic"
+    "time.basic",
+    "ui.semanticMetrics"
   ],
   "optionalFeatures": []
 }

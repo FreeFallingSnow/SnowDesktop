@@ -54,14 +54,6 @@ local function fontScale()
     return legacy / 15
 end
 
-local function scaled(value)
-    return layout.rpx(value)
-end
-
-local function scaledFont(value)
-    return scaled(value) * fontScale()
-end
-
 local function trim(value)
     return (value or ""):match("^%s*(.-)%s*$")
 end
@@ -230,12 +222,13 @@ local function registerRegion(key, shape, events, label)
     })
 end
 
-local function drawCenteredStatus(text, x, y, width, height, font, color)
+local function drawCenteredStatus(text, x, y, width, height, font, color,
+    unit)
     local measured = draw.measureText(text, font, width, false)
     local measuredWidth = math.min(width, measured.width)
     local drawY = y + math.max(0, (height - measured.height) / 2)
     draw.text(x + math.max(0, (width - measuredWidth) / 2), drawY,
-        text, font, color, math.max(scaled(1), measuredWidth + scaled(1)),
+        text, font, color, math.max(unit, measuredWidth + unit),
         false, true)
 end
 
@@ -244,13 +237,19 @@ local function render(context, model)
     local colors = palette(context)
     local width = layout.contentWidth()
     local height = layout.contentHeight()
-    local pad = scaled(13)
-    local fontSize = scaledFont(12)
-    local inputHeight = scaled(34) * math.max(1, fontScale())
+    local metrics = ui.metrics()
+    local unit = metrics.strokeWidth
+    local scale = fontScale()
+    local pad = metrics.spacingMd
+    local fontSize = metrics.bodyFontSize * scale
+    local smallFont = metrics.captionFontSize * scale
+    local inputHeight = math.max(metrics.controlHeight,
+        fontSize + metrics.spacingLg)
+    local inputTop = metrics.spacingMd
 
     control.textInput({
         key = "quick.search", storageKey = "query",
-        shape = { type = "rect", x = pad, y = scaled(10),
+        shape = { type = "rect", x = pad, y = inputTop,
             width = width - pad * 2, height = inputHeight },
         placeholder = l10n.tr("lua_widget.quick_launcher.search_placeholder"),
         fontSize = fontSize, textColor = colors.input,
@@ -258,14 +257,14 @@ local function render(context, model)
         borderColor = colors.border, focusedBorderColor = colors.accent,
         backgroundAlpha = 0.065, focusedBackgroundAlpha = 0.11,
         borderAlpha = 0.16, focusedBorderAlpha = 0.70,
-        radius = scaled(9), padding = scaled(10),
-        borderThickness = scaled(1), selectAll = false,
+        radius = metrics.controlRadius, padding = metrics.spacingSm,
+        borderThickness = metrics.strokeWidth, selectAll = false,
         liveUpdate = true, maxBytes = 256,
     })
 
-    local listTop = scaled(10) + inputHeight + scaled(9)
-    local listBottom = height - scaled(5)
-    local viewportHeight = math.max(scaled(1), listBottom - listTop)
+    local listTop = inputTop + inputHeight + metrics.spacingSm
+    local listBottom = height - metrics.spacingXs
+    local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }
     interaction.region({
@@ -279,7 +278,7 @@ local function render(context, model)
         drawCenteredStatus(
             l10n.tr("lua_widget.quick_launcher.empty_prompt"),
             pad, listTop, width - pad * 2, viewportHeight,
-            scaledFont(10), colors.muted)
+            smallFont, colors.muted, unit)
         return
     end
 
@@ -290,13 +289,14 @@ local function render(context, model)
                 l10n.tr("lua_widget.quick_launcher.searching") or
                 l10n.tr("lua_widget.quick_launcher.no_matches"),
             pad, listTop, width - pad * 2, viewportHeight,
-            scaledFont(10), colors.muted)
+            smallFont, colors.muted, unit)
         return
     end
 
-    local densityScale = math.max(1, fontScale())
-    local headerHeight = scaled(25) * densityScale
-    local itemHeight = scaled(38) * densityScale
+    local headerHeight = math.max(metrics.compactControlHeight,
+        smallFont + metrics.spacingMd)
+    local itemHeight = math.max(metrics.rowHeight,
+        fontSize + metrics.spacingLg)
     local offsets = {}
     local contentHeight = 0
     for index, row in ipairs(model.rows) do
@@ -308,16 +308,17 @@ local function render(context, model)
         key = "quick-results", shape = viewport,
         contentHeight = math.ceil(contentHeight),
     })
-    local iconSize = scaled(25)
+    local iconSize = metrics.largeIconSize
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
     for index, row in ipairs(model.rows) do
         local rowHeight = row.kind == "header" and headerHeight or itemHeight
         local y = listTop + offsets[index] - scroll.offset
         if y + rowHeight >= listTop and y <= listTop + viewportHeight then
             if row.kind == "header" then
-                draw.text(pad + scaled(4), y + scaled(5), row.title,
-                    scaledFont(10), colors.muted,
-                    width - pad * 2 - scaled(8), false, true)
+                draw.text(pad + metrics.spacingXs,
+                    y + metrics.spacingXs, row.title,
+                    smallFont, colors.muted,
+                    width - pad * 2 - metrics.spacingSm, false, true)
             else
                 local item = row.item
                 local key = "quick.item." .. tostring(index)
@@ -325,14 +326,15 @@ local function render(context, model)
                 local hovered = interaction.isHovered(key)
                 if selected or hovered then
                     draw.rect(pad, y, width - pad * 2,
-                        itemHeight - scaled(2), colors.surface,
-                        scaled(7), selected and 0.12 or 0.075)
+                        itemHeight - unit * 2, colors.surface,
+                        metrics.controlRadius, selected and 0.12 or 0.075)
                 end
                 if selected then
-                    draw.strokeRect(pad + scaled(1), y + scaled(1),
-                        width - pad * 2 - scaled(2),
-                        itemHeight - scaled(4), colors.accent,
-                        scaled(6), scaled(1), 0.42)
+                    draw.strokeRect(pad + unit, y + unit,
+                        width - pad * 2 - unit * 2,
+                        itemHeight - unit * 4, colors.accent,
+                        math.max(0, metrics.controlRadius - unit),
+                        metrics.strokeWidth, 0.42)
                 end
                 local actionValue = {
                     ref = item.ref, kind = item.kind, title = item.title,
@@ -340,16 +342,16 @@ local function render(context, model)
                 registerRegion(key, {
                     type = "roundedRect", x = pad, y = y,
                     width = width - pad * 2,
-                    height = itemHeight - scaled(2),
-                    radius = scaled(7),
+                    height = itemHeight - unit * 2,
+                    radius = metrics.controlRadius,
                 }, {
                     click = { id = "quick.select", value = actionValue },
                     doubleClick = { id = "quick.open", value = actionValue },
                     contextMenu = { id = "quick.menu", value = actionValue },
                 }, item.title)
-                local iconX = pad + scaled(6)
+                local iconX = pad + metrics.spacingSm
                 local iconY = y + math.max(0, (itemHeight - iconSize) / 2) -
-                    scaled(1)
+                    unit
                 if item.preview then
                     draw.fluent(fluent.open, iconX, iconY, iconSize,
                         colors.text)
@@ -357,10 +359,15 @@ local function render(context, model)
                     draw.icon(item.ref, iconX, iconY, iconSize,
                         (selected or hovered) and 1.0 or 0.86)
                 end
-                local textX = iconX + iconSize + scaled(9)
-                draw.text(textX, y + scaled(8), item.title,
+                local textX = iconX + iconSize + metrics.spacingSm
+                local textMetrics = draw.measureText(
+                    item.title, fontSize, 0, false)
+                local textY = y + math.max(0,
+                    (itemHeight - textMetrics.height) / 2)
+                draw.text(textX, textY, item.title,
                     fontSize, colors.text,
-                    math.max(scaled(1), width - pad - textX - scaled(5)),
+                    math.max(unit,
+                        width - pad - textX - metrics.spacingXs),
                     false, true)
             end
         end

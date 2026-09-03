@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Schedule",
   "nameKey": "lua_widget.agenda.name",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "A local schedule linked with the month calendar, including notes and reminders.",
   "descriptionKey": "lua_widget.agenda.description",
   "locales": {
@@ -552,13 +552,13 @@
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
-    "layout.referencePixels",
     "layout.relativeUnits",
     "settings.select.localizedOptions",
     "storage.transaction",
     "task.calendar.write",
     "task.start",
     "time.basic",
+    "ui.semanticMetrics",
     "widget.panel"
   ],
   "optionalFeatures": []

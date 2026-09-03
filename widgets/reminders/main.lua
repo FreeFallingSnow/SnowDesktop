@@ -237,14 +237,6 @@ local function fontScale()
     return legacy / 15
 end
 
-local function scaled(value)
-    return layout.rpx(value)
-end
-
-local function scaledFont(value)
-    return scaled(value) * fontScale()
-end
-
 local function showCompleted()
     return storage.get("showCompleted") ~= "0"
 end
@@ -273,17 +265,24 @@ local function render(context, model)
     end
     local w = layout.contentWidth()
     local h = layout.contentHeight()
-    local pad = scaled(14)
-    local gap = scaled(7)
+    local metrics = ui.metrics()
+    local unit = metrics.strokeWidth
+    local function px(value) return value * unit end
+    local pad = metrics.spacingMd
+    local gap = metrics.spacingSm
     local palette = getPalette()
-    local fontSize = scaledFont(12)
-    local smallFont = scaledFont(10)
+    local scale = fontScale()
+    local fontSize = metrics.bodyFontSize * scale
+    local smallFont = metrics.captionFontSize * scale
+    local titleFont = metrics.titleFontSize * scale
     local total = taskCounts()
 
     local inputY = pad
-    local inputH = scaled(34)
-    local addSize = scaled(36)
-    local inputW = math.max(scaled(28), w - pad * 2 - addSize - gap)
+    local inputH = math.max(metrics.controlHeight,
+        fontSize + metrics.spacingLg)
+    local addSize = inputH
+    local inputW = math.max(metrics.compactControlHeight,
+        w - pad * 2 - addSize - gap)
     control.textInput({
         key = "new-task",
         storageKey = "draft",
@@ -300,9 +299,9 @@ local function render(context, model)
         focusedBackgroundAlpha = 0.11,
         borderAlpha = 0.10,
         focusedBorderAlpha = 0.75,
-        radius = scaled(10),
-        padding = scaled(10),
-        borderThickness = scaled(1),
+        radius = metrics.controlRadius,
+        padding = metrics.spacingSm,
+        borderThickness = metrics.strokeWidth,
         selectAll = false,
         liveUpdate = true,
         maxBytes = 4096,
@@ -321,10 +320,10 @@ local function render(context, model)
     local addCx = addX + addSize / 2
     local addCy = addY + addSize / 2
     draw.line(addCx - addSize * 0.27, addCy,
-        addCx + addSize * 0.27, addCy, scaled(3), palette.add,
+        addCx + addSize * 0.27, addCy, px(3), palette.add,
         addEnabled and 1.0 or 0.28)
     draw.line(addCx, addCy - addSize * 0.27,
-        addCx, addCy + addSize * 0.27, scaled(3), palette.add,
+        addCx, addCy + addSize * 0.27, px(3), palette.add,
         addEnabled and 1.0 or 0.28)
     registerRegion(addKey, {
         type = "circle", x = addCx, y = addCy, radius = addSize / 2,
@@ -332,9 +331,9 @@ local function render(context, model)
         role = "button", label = l10n.tr("lua_widget.reminders.add_task"),
     }, addEnabled)
 
-    local listTop = inputY + inputH + scaled(12)
-    local listBottom = h - scaled(7)
-    local viewportH = math.max(scaled(1), listBottom - listTop)
+    local listTop = inputY + inputH + metrics.spacingSm
+    local listBottom = h - metrics.spacingXs
+    local viewportH = math.max(unit, listBottom - listTop)
     local viewportShape = { type = "rect", x = pad, y = listTop,
         width = w - pad * 2, height = viewportH }
     registerRegion("tasks.background", viewportShape, "default", {
@@ -342,8 +341,9 @@ local function render(context, model)
         contextMenu = { id = "task.menu", scope = "component" },
     }, { role = "list", label = l10n.tr("lua_widget.reminders.name") })
 
-    local rowH = scaled(43) * math.max(1, fontScale())
-    local rowGap = scaled(5)
+    local rowH = math.max(metrics.rowHeight,
+        fontSize + metrics.spacingLg)
+    local rowGap = metrics.spacingXs
     local cardH = rowH - rowGap
     local tasks = loadTasks(showCompleted())
     if #tasks == 0 then
@@ -353,28 +353,28 @@ local function render(context, model)
         local emptyTitle = total > 0 and
             l10n.tr("lua_widget.reminders.all_done") or
             l10n.tr("lua_widget.reminders.empty")
-        local emptyIconSize = scaled(42)
-        local emptyBlockH = scaled(88)
+        local emptyIconSize = metrics.largeIconSize * 2
+        local emptyBlockH = px(88)
         local emptyTop = listTop + math.max(0, (viewportH - emptyBlockH) / 2)
         local emptyCy = emptyTop + emptyIconSize / 2
         draw.circle(w / 2, emptyCy, emptyIconSize / 2, palette.accent, 0.13)
         draw.line(w / 2 - emptyIconSize * 0.22, emptyCy,
             w / 2 - emptyIconSize * 0.05, emptyCy + emptyIconSize * 0.17,
-            scaled(2.0), palette.accent, 0.82)
+            px(2.0), palette.accent, 0.82)
         draw.line(w / 2 - emptyIconSize * 0.05,
             emptyCy + emptyIconSize * 0.17,
             w / 2 + emptyIconSize * 0.27,
             emptyCy - emptyIconSize * 0.22,
-            scaled(2.0), palette.accent, 0.82)
-        local titleMetrics = draw.measureText(emptyTitle, fontSize, 0, true)
+            px(2.0), palette.accent, 0.82)
+        local titleMetrics = draw.measureText(emptyTitle, titleFont, 0, true)
         local hintMetrics = draw.measureText(hint, smallFont, 0, false)
         draw.text(math.max(pad, (w - titleMetrics.width) / 2),
-            emptyCy + scaled(29), emptyTitle, fontSize, palette.text,
-            math.min(w - pad * 2, titleMetrics.width + scaled(2)), true,
+            emptyCy + px(29), emptyTitle, titleFont, palette.text,
+            math.min(w - pad * 2, titleMetrics.width + px(2)), true,
             true)
         draw.text(math.max(pad, (w - hintMetrics.width) / 2),
-            emptyCy + scaled(53), hint, smallFont, palette.muted,
-            math.min(w - pad * 2, hintMetrics.width + scaled(2)), false,
+            emptyCy + px(53), hint, smallFont, palette.muted,
+            math.min(w - pad * 2, hintMetrics.width + px(2)), false,
             true)
         return
     end
@@ -397,53 +397,58 @@ local function render(context, model)
         local rowKey = "task.row." .. task.id
         local selected = task.id == selectedId
         local rowHovered = interaction.isHovered(rowKey)
-        draw.rect(pad, cardY, cardW, cardH, palette.card, scaled(10),
+        draw.rect(pad, cardY, cardW, cardH, palette.card,
+            metrics.controlRadius,
             selected and 0.105 or (rowHovered and 0.08 or 0.055))
         if selected then
-            local inset = scaled(1.2)
+            local inset = px(1.2)
             draw.strokeRect(pad + inset, cardY + inset,
                 cardW - inset * 2, cardH - inset * 2, palette.accent,
-                math.max(0, scaled(10) - inset), scaled(1), 0.42)
+                math.max(0, metrics.controlRadius - inset),
+                metrics.strokeWidth, 0.42)
         end
         registerRegion(rowKey, {
             type = "roundedRect", x = pad, y = cardY,
-            width = cardW, height = cardH, radius = scaled(10),
+            width = cardW, height = cardH,
+            radius = metrics.controlRadius,
         }, "hand", {
             click = { id = "task.select", value = task.id },
             doubleClick = { id = "task.edit", value = task.id },
             contextMenu = { id = "task.menu", value = task.id },
         }, { role = "listitem", label = task.text })
 
-        local checkboxSize = math.min(scaled(22), cardH - scaled(10))
-        local checkboxX = pad + scaled(11)
+        local checkboxSize = math.min(
+            metrics.largeIconSize, cardH - metrics.spacingSm)
+        local checkboxX = pad + metrics.spacingSm
         local checkboxY = cardY + (cardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id
         local checkboxHovered = interaction.isHovered(checkboxKey)
         draw.strokeRect(checkboxX, checkboxY, checkboxSize, checkboxSize,
-            palette.accent, checkboxSize / 2, scaled(1.5),
+            palette.accent, checkboxSize / 2, px(1.5),
             checkboxHovered and 1.0 or (task.done and 1.0 or 0.62))
         if task.done then
             local cx = checkboxX + checkboxSize / 2
             local cy = checkboxY + checkboxSize / 2
             draw.line(cx - checkboxSize * 0.24, cy,
                 cx - checkboxSize * 0.06, cy + checkboxSize * 0.20,
-                scaled(1.5), palette.accent, 1.0)
+                px(1.5), palette.accent, 1.0)
             draw.line(cx - checkboxSize * 0.06, cy + checkboxSize * 0.20,
                 cx + checkboxSize * 0.28, cy - checkboxSize * 0.22,
-                scaled(1.5), palette.accent, 1.0)
+                px(1.5), palette.accent, 1.0)
         end
         registerRegion(checkboxKey, {
             type = "circle", x = checkboxX + checkboxSize / 2,
             y = checkboxY + checkboxSize / 2,
-            radius = checkboxSize / 2 + scaled(4),
+            radius = checkboxSize / 2 + metrics.spacingXs,
         }, "hand", { click = { id = "task.toggle", value = task.id } }, {
             role = "checkbox", label = task.text,
         })
 
-        local deleteSize = scaled(16)
-        local deleteX = w - pad - deleteSize - scaled(11)
-        local textX = checkboxX + checkboxSize + scaled(10)
-        local textW = math.max(scaled(1), deleteX - textX - scaled(8))
+        local deleteSize = metrics.iconSize
+        local deleteX = w - pad - deleteSize - metrics.spacingSm
+        local textX = checkboxX + checkboxSize + metrics.spacingSm
+        local textW = math.max(unit,
+            deleteX - textX - metrics.spacingSm)
         local displayText = task.text ~= "" and task.text or
             l10n.tr("lua_widget.reminders.untitled")
         local measured = draw.measureText(displayText, fontSize, 0, false)
@@ -468,7 +473,7 @@ local function render(context, model)
                 focusedBorderAlpha = 0.0,
                 radius = 0,
                 padding = 0,
-                borderThickness = scaled(1),
+                borderThickness = metrics.strokeWidth,
                 selectAll = true,
                 liveUpdate = true,
                 maxBytes = 4096,
@@ -480,7 +485,7 @@ local function render(context, model)
             if task.done then
                 draw.line(textX, cardY + cardH / 2,
                     textX + math.min(textW, measured.width),
-                    cardY + cardH / 2, scaled(1),
+                    cardY + cardH / 2, metrics.strokeWidth,
                     palette.completed, 0.72)
             end
         end
@@ -497,8 +502,9 @@ local function render(context, model)
                 cardY + (cardH - deleteSize) / 2,
                 deleteSize, palette.delete)
             registerRegion(deleteKey, {
-                type = "rect", x = deleteX - scaled(5), y = cardY,
-                width = deleteSize + scaled(10), height = cardH,
+                type = "rect", x = deleteX - metrics.spacingXs,
+                y = cardY,
+                width = deleteSize + metrics.spacingSm, height = cardH,
             }, "hand", {
                 click = { id = "task.delete", value = task.id },
             }, { role = "button",

@@ -343,43 +343,40 @@ local function centeredText(text, x, y, width, height, size, color, bold, alpha)
         color, math.max(1, width), bold, true, 0, alpha or 1.0)
 end
 
-local function scaled(value)
-    return layout.rpx(value)
-end
-
-local function scaledFont(value)
-    return scaled(value) * fontScale()
-end
-
-local function drawHeaderButton(key, glyph, label, shape, colors, enabled)
+local function drawHeaderButton(key, glyph, label, shape, colors, enabled,
+    metrics)
     local hovered = enabled and interaction.isHovered(key)
     local pressed = enabled and interaction.isPressed(key)
     if hovered then
         draw.rect(shape.x, shape.y, shape.width, shape.height,
-            colors.accent, scaled(7), pressed and 0.16 or 0.10)
+            colors.accent, metrics.controlRadius,
+            pressed and 0.16 or 0.10)
     end
     draw.fluent(glyph,
-        shape.x + (shape.width - scaled(16)) / 2,
-        shape.y + (shape.height - scaled(16)) / 2,
-        scaled(16), colors.accent, enabled and 1.0 or 0.28)
+        shape.x + (shape.width - metrics.iconSize) / 2,
+        shape.y + (shape.height - metrics.iconSize) / 2,
+        metrics.iconSize, colors.accent, enabled and 1.0 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
-        width = shape.width, height = shape.height, radius = scaled(7) },
+        width = shape.width, height = shape.height,
+        radius = metrics.controlRadius },
         { click = { id = key }, contextMenu = {
             id = "agenda.menu", scope = "component" } },
         label, enabled)
 end
 
-local function drawHeaderTextButton(key, label, shape, colors, enabled)
+local function drawHeaderTextButton(key, label, shape, colors, enabled,
+    metrics, fontSize)
     local hovered = enabled and interaction.isHovered(key)
     local pressed = enabled and interaction.isPressed(key)
     draw.rect(shape.x, shape.y, shape.width, shape.height,
-        colors.accent, scaled(7),
+        colors.accent, metrics.controlRadius,
         pressed and 0.16 or (hovered and 0.10 or 0.055))
     centeredText(label, shape.x, shape.y, shape.width, shape.height,
-        scaledFont(11), colors.accent, true,
+        fontSize, colors.accent, true,
         enabled and 0.92 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
-        width = shape.width, height = shape.height, radius = scaled(7) },
+        width = shape.width, height = shape.height,
+        radius = metrics.controlRadius },
         { click = { id = key }, contextMenu = {
             id = "agenda.menu", scope = "component" } },
         label, enabled)
@@ -388,47 +385,71 @@ end
 local function render(context, model)
     local width = layout.contentWidth()
     local height = layout.contentHeight()
-    local pad = scaled(11)
+    local metrics = ui.metrics()
+    local unit = metrics.strokeWidth
+    local pad = metrics.spacingMd
     local colors = palette(context)
-    local mainFont = scaledFont(15)
-    local smallFont = scaledFont(12)
+    local scale = fontScale()
+    local titleFont = metrics.titleFontSize * scale
+    local mainFont = metrics.bodyFontSize * scale
+    local smallFont = metrics.captionFontSize * scale
     local selected = selectedDate(model)
     local canWrite = widget.hasPermission("calendar.write") and not context.preview
 
-    local button = scaled(28)
-    local gap = scaled(3)
+    local button = metrics.compactControlHeight
+    local gap = metrics.spacingXs
     local headerY = pad
-    drawHeaderButton("agenda.previous", fluent.previous,
-        l10n.tr("lua_widget.agenda.previous_day"),
-        { x = pad, y = headerY, width = button, height = button },
-        colors, true)
-    drawHeaderButton("agenda.next", fluent.next,
-        l10n.tr("lua_widget.agenda.next_day"),
-        { x = pad + button + gap, y = headerY,
-            width = button, height = button }, colors, true)
-    local addX = width - pad - button
-    drawHeaderButton("agenda.add", fluent.add,
-        l10n.tr("lua_widget.agenda.add"),
-        { x = addX, y = headerY,
-            width = button, height = button }, colors, canWrite)
-    local todayLabel = l10n.tr("lua_widget.agenda.today")
-    local todayMetrics = draw.measureText(todayLabel,
-        scaledFont(11), 0, true)
-    local todayWidth = math.max(button, math.min(width * 0.25,
-        todayMetrics.width + scaled(14)))
-    local todayX = addX - gap - todayWidth
-    drawHeaderTextButton("agenda.today", todayLabel,
-        { x = todayX, y = headerY,
-            width = todayWidth, height = button }, colors, true)
-    local titleX = pad + button * 2 + gap * 2
-    local titleRight = todayX - gap
-    centeredText(formatDate(selected, false), titleX, headerY,
-        math.max(scaled(1), titleRight - titleX), button,
-        mainFont, colors.text, true)
+    local listTop
+    local narrowHeader = width < pad * 2 + button * 2 + gap +
+        metrics.spacingMd
+    if narrowHeader then
+        drawHeaderButton("agenda.previous", fluent.previous,
+            l10n.tr("lua_widget.agenda.previous_day"),
+            { x = pad, y = headerY, width = button, height = button },
+            colors, true, metrics)
+        drawHeaderButton("agenda.next", fluent.next,
+            l10n.tr("lua_widget.agenda.next_day"),
+            { x = width - pad - button, y = headerY,
+                width = button, height = button }, colors, true, metrics)
+        local dateY = headerY + button + gap
+        centeredText(formatDate(selected, false), pad, dateY,
+            width - pad * 2, metrics.compactControlHeight,
+            titleFont, colors.text, true)
+        listTop = dateY + metrics.compactControlHeight + metrics.spacingSm
+    else
+        drawHeaderButton("agenda.previous", fluent.previous,
+            l10n.tr("lua_widget.agenda.previous_day"),
+            { x = pad, y = headerY, width = button, height = button },
+            colors, true, metrics)
+        drawHeaderButton("agenda.next", fluent.next,
+            l10n.tr("lua_widget.agenda.next_day"),
+            { x = pad + button + gap, y = headerY,
+                width = button, height = button }, colors, true, metrics)
+        local addX = width - pad - button
+        drawHeaderButton("agenda.add", fluent.add,
+            l10n.tr("lua_widget.agenda.add"),
+            { x = addX, y = headerY,
+                width = button, height = button }, colors, canWrite, metrics)
+        local todayLabel = l10n.tr("lua_widget.agenda.today")
+        local todayMetrics = draw.measureText(todayLabel,
+            smallFont, 0, true)
+        local todayWidth = math.max(button, math.min(width * 0.25,
+            todayMetrics.width + metrics.spacingMd))
+        local todayX = addX - gap - todayWidth
+        drawHeaderTextButton("agenda.today", todayLabel,
+            { x = todayX, y = headerY,
+                width = todayWidth, height = button }, colors, true,
+            metrics, smallFont)
+        local titleX = pad + button * 2 + gap * 2
+        local titleRight = todayX - gap
+        centeredText(formatDate(selected, false), titleX, headerY,
+            math.max(unit, titleRight - titleX), button,
+            titleFont, colors.text, true)
+        listTop = headerY + button + metrics.spacingSm
+    end
 
-    local listTop = headerY + button + scaled(9)
-    local listBottom = height - scaled(6)
-    local viewportHeight = math.max(scaled(1), listBottom - listTop)
+    local listBottom = height - metrics.spacingXs
+    local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }
     interaction.region({
@@ -445,17 +466,19 @@ local function render(context, model)
     if #items == 0 then
         centeredText(l10n.tr("lua_widget.agenda.empty"),
             pad, listTop + viewportHeight * 0.34,
-            width - pad * 2, scaled(26), mainFont,
+            width - pad * 2, metrics.compactControlHeight, titleFont,
             colors.text, true, 0.78)
         centeredText(l10n.tr("lua_widget.agenda.empty_hint"),
-            pad, listTop + viewportHeight * 0.34 + scaled(28),
-            width - pad * 2, scaled(22), smallFont,
+            pad, listTop + viewportHeight * 0.34 +
+                metrics.compactControlHeight,
+            width - pad * 2, metrics.compactControlHeight, smallFont,
             colors.muted, false, canWrite and 0.72 or 0.38)
         return
     end
 
-    local rowHeight = scaled(52) * math.max(1, fontScale())
-    local rowGap = scaled(5)
+    local rowHeight = math.max(metrics.rowHeight + metrics.spacingSm,
+        mainFont + smallFont + metrics.spacingLg)
+    local rowGap = metrics.spacingXs
     local scroll = interaction.scroll({
         key = "agenda.scroll",
         shape = viewport,
@@ -474,30 +497,31 @@ local function render(context, model)
         local highlighted = context.selected and selectedId == item.id
         local hovered = interaction.isHovered(key)
         draw.rect(pad, y, width - pad * 2, cardHeight,
-            colors.card, scaled(9),
+            colors.card, metrics.controlRadius,
             highlighted and 0.12 or (hovered and 0.085 or 0.05))
         if highlighted then
-            draw.strokeRect(pad + scaled(1), y + scaled(1),
-                width - pad * 2 - scaled(2), cardHeight - scaled(2),
-                colors.accent, scaled(8), scaled(1), 0.40)
+            draw.strokeRect(pad + unit, y + unit,
+                width - pad * 2 - unit * 2, cardHeight - unit * 2,
+                colors.accent, math.max(0, metrics.controlRadius - unit),
+                metrics.strokeWidth, 0.40)
         end
         registerRegion(key, { type = "roundedRect", x = pad, y = y,
             width = width - pad * 2, height = cardHeight,
-            radius = scaled(9) }, {
+            radius = metrics.controlRadius }, {
             click = { id = "agenda.select", value = item.id },
             doubleClick = { id = "agenda.edit", value = item.id },
             contextMenu = { id = "agenda.menu", value = item.id },
         }, item.title or l10n.tr("lua_widget.agenda.untitled"), true)
 
-        local textX = pad + scaled(11)
-        local textWidth = width - pad * 2 - scaled(22)
-        draw.text(textX, y + scaled(7),
+        local textX = pad + metrics.spacingSm
+        local textWidth = width - pad * 2 - metrics.spacingLg
+        draw.text(textX, y + metrics.spacingXs,
             item.title ~= "" and item.title or
                 l10n.tr("lua_widget.agenda.untitled"),
             mainFont, colors.text, textWidth, true, true)
         local timing = item.allDay and l10n.tr("lua_widget.agenda.all_day") or
             (formatTime(item.startMinutes) .. " – " .. formatTime(item.endMinutes))
-        draw.text(textX, y + cardHeight - scaled(23),
+        draw.text(textX, y + cardHeight - smallFont - metrics.spacingSm,
             formatDate(item.date, true) .. " · " .. timing,
             smallFont, colors.secondary, textWidth, false, true, 0, 0.92)
     end
