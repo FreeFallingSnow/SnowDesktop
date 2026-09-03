@@ -1229,10 +1229,11 @@ int wmain(int argc, wchar_t** argv)
 
     const auto invalidOutput = temporary.path / L"invalid.png";
     const auto boundedSource =
-        repository / L"widgets" / L"media-controls";
+        repository / L"developer_assets" / L"workshop_widgets" /
+            L"audio-spectrum";
     const auto [invalidExit, invalidJson] = Run(snowwidget, {
         L"preview", boundedSource.wstring(), invalidOutput.wstring(),
-        L"--columns", L"8", L"--host", host.wstring() });
+        L"--rows", L"2", L"--host", host.wstring() });
     Check(invalidExit != 0 &&
             invalidJson.find("\"stage\":\"request.size\"") !=
                 std::string::npos &&
