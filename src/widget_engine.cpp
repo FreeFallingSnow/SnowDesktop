@@ -46,6 +46,7 @@
 #include "widget_secret_store.h"
 #include "widget_setting_rules.h"
 #include "widget_system_settings.h"
+#include "widget_ui_metrics.h"
 #include "atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
 
@@ -784,6 +785,28 @@ static float CurrentLayoutContentHeight(const D2DState* state) noexcept
         return state->layoutContentHeight;
     return std::max(1.0f,
         state->widgetRect.bottom - state->widgetRect.top);
+}
+
+static int ReadPositiveRegistryInteger(
+    lua_State* state, const char* key, int fallback = 1)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, key);
+    const int result = lua_isinteger(state, -1)
+        ? std::max(1, static_cast<int>(lua_tointeger(state, -1)))
+        : std::max(1, fallback);
+    lua_pop(state, 1);
+    return result;
+}
+
+static bool ReadRegistryBoolean(
+    lua_State* state, const char* key, bool fallback)
+{
+    lua_getfield(state, LUA_REGISTRYINDEX, key);
+    const bool result = lua_isboolean(state, -1)
+        ? lua_toboolean(state, -1) != 0
+        : fallback;
+    lua_pop(state, 1);
+    return result;
 }
 
 static std::string BindRuntimeImageToken(
@@ -8601,6 +8624,41 @@ static WidgetSystemEnvironment QueryWidgetSystemEnvironment()
     return result;
 }
 
+static int lua_UiMetrics(lua_State* L)
+{
+    auto* d2d = GetD2D(L);
+    const LuaWidgetContextState context = d2d && d2d->engine
+        ? d2d->engine->RuntimeGetWidgetContextState(BoundWidgetId(L))
+        : LuaWidgetContextState{};
+    const WidgetSystemEnvironment system = QueryWidgetSystemEnvironment();
+    const float dpiScale = static_cast<float>(context.surface.dpiY) /
+        static_cast<float>(USER_DEFAULT_SCREEN_DPI);
+    const auto metrics = snowdesktop::widget_runtime::
+        ResolveSemanticUiMetrics(
+            dpiScale, static_cast<float>(system.textScale));
+
+    lua_createtable(L, 0, 17);
+    SetNumberField(L, "spacingXs", metrics.spacingXs);
+    SetNumberField(L, "spacingSm", metrics.spacingSm);
+    SetNumberField(L, "spacingMd", metrics.spacingMd);
+    SetNumberField(L, "spacingLg", metrics.spacingLg);
+    SetNumberField(L, "captionFontSize", metrics.captionFontSize);
+    SetNumberField(L, "bodyFontSize", metrics.bodyFontSize);
+    SetNumberField(L, "titleFontSize", metrics.titleFontSize);
+    SetNumberField(L, "controlFontSize", metrics.controlFontSize);
+    SetNumberField(L, "compactControlHeight",
+        metrics.compactControlHeight);
+    SetNumberField(L, "controlHeight", metrics.controlHeight);
+    SetNumberField(L, "compactRowHeight", metrics.compactRowHeight);
+    SetNumberField(L, "rowHeight", metrics.rowHeight);
+    SetNumberField(L, "smallIconSize", metrics.smallIconSize);
+    SetNumberField(L, "iconSize", metrics.iconSize);
+    SetNumberField(L, "largeIconSize", metrics.largeIconSize);
+    SetNumberField(L, "controlRadius", metrics.controlRadius);
+    SetNumberField(L, "strokeWidth", metrics.strokeWidth);
+    return 1;
+}
+
 static void PushContextRect(lua_State* L, const RECT& rect,
     double scaleX, double scaleY)
 {
@@ -15563,6 +15621,21 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_getfield(state, -1, "backgroundLayer");
     const bool hasBackgroundLayer = lua_istable(state, -1);
     lua_pop(state, 1);
+
+    lua_getfield(state, -1, "showTitle");
+    const bool showTitle = !lua_isnil(state, -1) &&
+        lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_pushboolean(state, showTitle ? 1 : 0);
+    lua_setfield(state, LUA_REGISTRYINDEX, "__widget_show_title");
+
+    lua_getfield(state, -1, "bottomBarHover");
+    const bool bottomBarHover = lua_isnil(state, -1) ||
+        lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    lua_pushboolean(state, bottomBarHover ? 1 : 0);
+    lua_setfield(state, LUA_REGISTRYINDEX,
+        "__widget_bottom_bar_hover");
 
     std::vector<LuaWidgetManifest::Setting> scriptSettings;
     std::vector<LuaWidgetManifest::SettingGroup> scriptSettingGroups;
@@ -32068,29 +32141,93 @@ static int lua_LayoutVmax(lua_State* L)
         CurrentLayoutContentHeight(state)), "layout.vmax");
 }
 
-static int lua_LayoutRpx(lua_State* L)
+static double CheckReferencePixelValue(
+    lua_State* state, const char* functionName)
 {
-    const double value = luaL_checknumber(L, 1);
+    const double value = luaL_checknumber(state, 1);
     if (!std::isfinite(value) || std::abs(value) > 1000000.0)
     {
-        return luaL_error(L,
-            "layout.rpx: value must be finite and between -1000000 and 1000000");
+        luaL_error(state,
+            "%s: value must be finite and between -1000000 and 1000000",
+            functionName);
+        return 0.0;
     }
-    auto readDefaultSpan = [L](const char* key) {
-        lua_getfield(L, LUA_REGISTRYINDEX, key);
-        const int result = lua_isinteger(L, -1)
-            ? std::max(1, static_cast<int>(lua_tointeger(L, -1)))
-            : 1;
-        lua_pop(L, 1);
-        return result;
-    };
+    return value;
+}
+
+static float ReferenceAxisContentHeight(lua_State* state, D2DState* d2d)
+{
+    const float fullHeight = snowdesktop::widget_runtime::
+        ReferenceSpanHeight(ReadPositiveRegistryInteger(
+            state, "__widget_default_rows"));
+    if (!d2d || std::strcmp(d2d->surfaceKind, "desktop") != 0)
+        return fullHeight;
+    const bool showTitle = ReadRegistryBoolean(
+        state, "__widget_show_title", false);
+    const bool bottomBarHover = ReadRegistryBoolean(
+        state, "__widget_bottom_bar_hover", true);
+    const int reservedBarHeight = snowdesktop::widget_chrome_rules::
+        ReservedBottomBarHeight(showTitle, bottomBarHover,
+            std::max(0, d2d->barHeight));
+    return std::max(1.0f,
+        fullHeight - static_cast<float>(reservedBarHeight));
+}
+
+static float CurrentAxisContentHeight(lua_State* state, D2DState* d2d)
+{
+    if (!d2d || std::strcmp(d2d->surfaceKind, "desktop") != 0)
+        return CurrentLayoutContentHeight(d2d);
+    const bool showTitle = ReadRegistryBoolean(
+        state, "__widget_show_title", false);
+    const bool bottomBarHover = ReadRegistryBoolean(
+        state, "__widget_bottom_bar_hover", true);
+    const int scaledBarHeight = static_cast<int>(std::round(
+        static_cast<float>(d2d->barHeight) *
+        CalculateWidgetCellScale(
+            std::max(4, d2d->gridCellW),
+            std::max(4, d2d->gridCellH))));
+    const int reservedBarHeight = snowdesktop::widget_chrome_rules::
+        ReservedBottomBarHeight(
+            showTitle, bottomBarHover, scaledBarHeight);
+    return std::max(1.0f,
+        d2d->widgetRect.bottom - d2d->widgetRect.top -
+            static_cast<float>(reservedBarHeight));
+}
+
+static int lua_LayoutRpx(lua_State* L)
+{
+    const double value = CheckReferencePixelValue(L, "layout.rpx");
     auto* state = GetD2D(L);
     const float scaled = snowdesktop::widget_runtime::ScaleReferencePixel(
         static_cast<float>(value),
         CurrentLayoutContentWidth(state),
         CurrentLayoutContentHeight(state),
-        readDefaultSpan("__widget_default_columns"),
-        readDefaultSpan("__widget_default_rows"));
+        ReadPositiveRegistryInteger(L, "__widget_default_columns"),
+        ReadPositiveRegistryInteger(L, "__widget_default_rows"));
+    lua_pushnumber(L, scaled);
+    return 1;
+}
+
+static int lua_LayoutRpxX(lua_State* L)
+{
+    const double value = CheckReferencePixelValue(L, "layout.rpxX");
+    auto* state = GetD2D(L);
+    const float scaled = snowdesktop::widget_runtime::ScaleReferenceAxis(
+        static_cast<float>(value), CurrentLayoutContentWidth(state),
+        snowdesktop::widget_runtime::ReferenceSpanWidth(
+            ReadPositiveRegistryInteger(
+                L, "__widget_default_columns")));
+    lua_pushnumber(L, scaled);
+    return 1;
+}
+
+static int lua_LayoutRpxY(lua_State* L)
+{
+    const double value = CheckReferencePixelValue(L, "layout.rpxY");
+    auto* state = GetD2D(L);
+    const float scaled = snowdesktop::widget_runtime::ScaleReferenceAxis(
+        static_cast<float>(value), CurrentAxisContentHeight(L, state),
+        ReferenceAxisContentHeight(L, state));
     lua_pushnumber(L, scaled);
     return 1;
 }

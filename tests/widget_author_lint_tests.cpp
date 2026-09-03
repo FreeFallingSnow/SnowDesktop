@@ -217,6 +217,38 @@ void TestReferencePixelFeatureContract()
         "local padding = layout.rpx(12)\n");
     Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
         "layout.rpx must declare its host capability");
+
+    manifest.requiredFeatures = { "layout.referenceAxes" };
+    const auto axesDeclared = LintWidgetSource(manifest, "main.lua",
+        "local width = layout.rpxX(12)\n"
+        "local height = layout.rpxY(8)\n");
+    Check(axesDeclared.Ok() &&
+            !HasIssue(axesDeclared, "feature.undeclared"),
+        "reference axes are valid when their host capability is declared");
+
+    manifest.requiredFeatures.clear();
+    const auto axesMissing = LintWidgetSource(manifest, "main.lua",
+        "local height = layout.rpxY(8)\n");
+    Check(!axesMissing.Ok() &&
+            HasIssue(axesMissing, "feature.undeclared"),
+        "reference axes must declare their host capability");
+}
+
+void TestSemanticUiMetricsFeatureContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.requiredFeatures = { "ui.semanticMetrics" };
+    const auto declared = LintWidgetSource(manifest, "main.lua",
+        "local metrics = ui.metrics()\n");
+    Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
+        "semantic UI metrics are valid when their capability is declared");
+
+    manifest.requiredFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua",
+        "local metrics = ui.metrics()\n");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "semantic UI metrics must declare their host capability");
 }
 
 void TestLocaleAndPreviewQuality()
@@ -255,6 +287,7 @@ int main()
     TestImmediateDrawingQualityWarnings();
     TestBackgroundLayerContract();
     TestReferencePixelFeatureContract();
+    TestSemanticUiMetricsFeatureContract();
     TestLocaleAndPreviewQuality();
     std::cout << "widget author lint tests passed\n";
     return 0;

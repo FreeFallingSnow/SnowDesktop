@@ -1,4 +1,5 @@
 #include "widget_layout_context.h"
+#include "widget_ui_metrics.h"
 #include "font_cu_rules.h"
 
 #include <iostream>
@@ -82,8 +83,14 @@ void TestFontCuUsesOnlyTheLocalCellScale()
 
 void TestReferencePixelsUseTheManifestDefaultShortEdge()
 {
+    using snowdesktop::widget_runtime::ReferenceSpanHeight;
     using snowdesktop::widget_runtime::ReferenceSpanShortEdge;
+    using snowdesktop::widget_runtime::ReferenceSpanWidth;
+    using snowdesktop::widget_runtime::ScaleReferenceAxis;
     using snowdesktop::widget_runtime::ScaleReferencePixel;
+    Expect(ReferenceSpanWidth(3) == 292.0f &&
+            ReferenceSpanHeight(2) == 240.0f,
+        "reference axes use the canonical cell dimensions and gap");
     Expect(ReferenceSpanShortEdge(3, 2) == 240.0f,
         "a 3 by 2 default span uses its 240 pixel reference short edge");
     Expect(ReferenceSpanShortEdge(2, 2) == 192.0f,
@@ -92,6 +99,30 @@ void TestReferencePixelsUseTheManifestDefaultShortEdge()
         "reference pixels scale linearly from the current short edge");
     Expect(ScaleReferencePixel(16.0f, 292.0f, 240.0f, 3, 2) == 16.0f,
         "reference pixels are identity-sized at the canonical default span");
+    Expect(ScaleReferenceAxis(16.0f, 584.0f, 292.0f) == 32.0f &&
+            ScaleReferenceAxis(16.0f, 360.0f, 240.0f) == 24.0f,
+        "reference axes scale independently from width and height");
+}
+
+void TestSemanticUiMetricsIgnoreWidgetSpanAndGridDensity()
+{
+    using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
+    const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
+    Expect(standard.bodyFontSize == 12.0f &&
+            standard.controlHeight == 32.0f &&
+            standard.compactControlHeight == 28.0f &&
+            standard.rowHeight == 40.0f,
+        "semantic UI metrics expose the shared page-scale defaults");
+    const auto highDpi = ResolveSemanticUiMetrics(1.5f, 1.0f);
+    Expect(highDpi.bodyFontSize == 18.0f &&
+            highDpi.controlHeight == 48.0f &&
+            highDpi.spacingSm == 12.0f,
+        "semantic UI metrics follow display DPI");
+    const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
+    Expect(largeText.bodyFontSize == 24.0f &&
+            largeText.controlHeight == 40.0f &&
+            largeText.rowHeight == 44.0f,
+        "semantic controls expand only when accessibility text needs room");
 }
 
 void TestLegacyPointSizesMigrateToCuOnce()
@@ -122,6 +153,7 @@ int main()
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
     TestReferencePixelsUseTheManifestDefaultShortEdge();
+    TestSemanticUiMetricsIgnoreWidgetSpanAndGridDensity();
     TestLegacyPointSizesMigrateToCuOnce();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";

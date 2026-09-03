@@ -146,9 +146,10 @@ different state:
    scale uniformly. Check each intentional aspect-ratio branch, or verify that
    a single-structure composition remains centered across its supported range.
    Center the complete group of currently visible parts. Agendas, calendars,
-   lists, search, RSS, launchers and notes should use `layout.rpx()` so their
-   base geometry scales with the component while larger spans can reveal more
-   content. Reserve grid-density checks for components that explicitly align
+   lists, search, RSS, launchers and notes should use `ui.metrics()` for shared
+   controls and typography, then `layout.rpxX/rpxY()` only for component-specific
+   axis geometry. Larger spans should reveal more content. Reserve grid-density
+   checks for components that explicitly align
    information units to host grid metrics, such as a system-status card matrix.
 7. Fix the smallest failing area, render again and repeat.
 

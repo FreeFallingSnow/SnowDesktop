@@ -107,11 +107,14 @@ Choose the sizing model before writing geometry:
   this model. Recalculate and center the group of children that are actually
   visible when optional content disappears.
 - **Proportional information model — the default for desktop information
-  tools.** Use `layout.rpx()` for spacing, rows, icons, strokes, text and hit
-  targets in agendas, calendars, lists, search, RSS, launchers and notes.
-  `rpx` uses the manifest `defaultSize` short edge as the design-space
-  baseline. Larger spans may reveal more rows or longer text, while two
-  equal-aspect surfaces remain complete linear scale copies.
+  tools.** Use `ui.metrics()` for shared search fields, inputs, buttons, list
+  rows, typography, icons, radii and spacing so equivalent controls remain the
+  same size across the desktop. These values follow DPI and accessibility text
+  scale, but not widget span or desktop grid density. Use `layout.rpxX()` and
+  `layout.rpxY()` only for component-specific axis geometry. A larger span
+  should expose more rows, wider text or more composition space instead of
+  enlarging ordinary controls. Use `layout.rpx()` or `vmin` for an isotropic
+  decoration that must preserve its shape.
 - **Grid-density model — only for content that explicitly aligns to host grid
   metrics.** Use `layout.cu()` and `layout.fontCu()` for a system-status card
   matrix or another component whose information units intentionally track the
@@ -120,21 +123,19 @@ Choose the sizing model before writing geometry:
   `fontCu` do not grow linearly with the whole widget, so using them for a
   proportional component's main geometry breaks same-ratio rendering.
 
-For a proportional plan, prefer `layout.rpx(value)` when values come from a
-design at the manifest default span. Homogeneous formulas such as
+For a proportional plan, prefer `layout.rpxX(value)` and `layout.rpxY(value)`
+when axis-specific values come from a design at the manifest default span.
+Use `layout.rpx(value)` for isotropic artwork. Homogeneous formulas such as
 `short * 0.08`, `width * 0.3` and `math.min(width * 0.4, height * 0.6)` are
 also appropriate.
 Constants used only as ratios are fine. Output clamps such as
 `math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
 make two equal-aspect surfaces render differently and should be avoided.
 
-Choose font values by their share of the default short edge instead of reusing
-one numeric size across different default spans. On ordinary card surfaces,
-body text should usually occupy about 6–6.5% of that edge, with supporting
-text around 4.5–5.5%. This corresponds to roughly `layout.rpx(12)` for a 2×2
-default and `layout.rpx(15)` for a 3×2 or 4×2 default. Reserve substantially
-larger text for primary data such as a clock, timer or single metric. Thin
-horizontal surfaces may use a larger percentage to retain legibility.
+Use `ui.metrics().bodyFontSize`, `captionFontSize` and `titleFontSize` for
+ordinary information typography. A component font-size preference should be a
+percentage multiplier over those values. Reserve span-relative text for
+primary visual data such as a clock, timer or single metric.
 
 ## Create a package
 

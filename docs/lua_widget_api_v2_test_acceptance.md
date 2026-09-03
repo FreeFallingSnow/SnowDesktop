@@ -2,7 +2,7 @@
 
 本文档用于逐项验证 SnowDesktop Lua 组件宿主 API。清单以
 [`src/widget_public_api.inc`](../src/widget_public_api.inc) 为唯一函数目录基准，覆盖当前公开的
-**20 个宿主库、165 个函数 API**。接口参数、返回值和数据结构以
+**20 个宿主库、168 个函数 API**。接口参数、返回值和数据结构以
 [`widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua`](../widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua)
 为准，详细行为说明参见
 [`widgets/snowdesktop-lua-widget/references/api-v2.md`](../widgets/snowdesktop-lua-widget/references/api-v2.md)。
@@ -31,7 +31,7 @@
 
 ## 总体验收门槛
 
-- [x] `snowwidget api-contract` 返回 `ok:true`、`apiVersion:2`，函数总数为 165，且与本表名称逐项一致。
+- [x] `snowwidget api-contract` 返回 `ok:true`、`apiVersion:2`，函数总数为 168，且与本表名称逐项一致。
 - [x] `snowwidget lint <组件目录>` 能识别不存在、版本不匹配或缺少权限声明的调用。
 - [x] `snowwidget preview <组件目录> <输出.png>` 能覆盖预览适用的绘制、视图、资源和状态接口。
 - [ ] 在真实桌面宿主中完成可信手势、辅助 surface、权限、系统数据、异步任务和生命周期测试。
@@ -199,11 +199,12 @@
 | R-03 | `resource.font` | 获取已声明字体的不透明资源句柄；核对加载、字体应用、配额和失败状态。 | v2 | — |  |  |
 | R-04 | `resource.status` | 查询图片或字体句柄状态；核对 ready/error、错误码和无效句柄。 | v2 | — |  |  |
 
-## 9. `ui` 即时宿主 UI API（1 项）
+## 9. `ui` 即时宿主 UI API（2 项）
 
 | 编号 | API | 中文说明与验收重点 | 引入版本 | 权限 | 结果 | 证据 / 备注 |
 |---|---|---|---:|---|---|---|
 | U-01 | `ui.menu` | 打开宿主管理的菜单并返回选择；核对可信手势、禁用项、取消和动作投递。 | v2 | — |  |  |
+| U-02 | `ui.metrics` | 获取跨组件统一的语义尺寸；核对 DPI、文本缩放以及组件跨度和网格疏密不影响结果。 | v2 | — |  |  |
 
 ## 10. `control` 即时输入控件 API（4 项）
 
@@ -222,7 +223,7 @@
 | CAL-02 | `calendar.dateInfo` | 获取指定日期的年、月、日、星期等信息；核对闰年和非法日期。 | v1 | — |  |  |
 | CAL-03 | `calendar.addDays` | 对日期增加或减少天数；核对跨月、跨年、闰日和负偏移。 | v1 | — |  |  |
 
-## 12. `layout` 尺寸换算 API（19 项）
+## 12. `layout` 尺寸换算 API（21 项）
 
 | 编号 | API | 中文说明与验收重点 | 引入版本 | 权限 | 结果 | 证据 / 备注 |
 |---|---|---|---:|---|---|---|
@@ -235,16 +236,18 @@
 | L-07 | `layout.vmin` | 按内容宽高较小值换算百分比单位；核对横竖尺寸变化。 | v2 | — |  |  |
 | L-08 | `layout.vmax` | 按内容宽高较大值换算百分比单位；核对横竖尺寸变化。 | v2 | — |  |  |
 | L-09 | `layout.rpx` | 按 manifest 默认跨度的标准短边缩放设计坐标；核对默认尺寸恒等、同宽高比线性缩放、DPI 和非法数值。 | v2 | — |  |  |
-| L-10 | `layout.columns` | 获取当前组件占用的网格列数；核对 resize 后更新。 | v1 | — |  |  |
-| L-11 | `layout.rows` | 获取当前组件占用的网格行数；核对 resize 后更新。 | v1 | — |  |  |
-| L-12 | `layout.sizeClass` | 获取 small/medium/large 尺寸分类；核对分类边界和 resize。 | v1 | — |  |  |
-| L-13 | `layout.cellWidth` | 获取单个桌面网格单元宽度；核对 DPI 与布局设置变化。 | v1 | — |  |  |
-| L-14 | `layout.cellHeight` | 获取单个桌面网格单元高度；核对 DPI 与布局设置变化。 | v1 | — |  |  |
-| L-15 | `layout.cellScale` | 获取相对基准网格单元的缩放值；核对不同 DPI/网格设置。 | v1 | — |  |  |
-| L-16 | `layout.cu` | 将网格相对单位换算为逻辑长度；核对正负值和缩放一致性。 | v1 | — |  |  |
-| L-17 | `layout.fontCu` | 将网格相对单位换算为字体尺寸；核对文本缩放与 DPI。 | v1 | — |  |  |
-| L-18 | `layout.cellGap` | 获取桌面网格单元间距；核对布局设置变化。 | v1 | — |  |  |
-| L-19 | `layout.barHeight` | 获取启用组件底栏时的兼容高度；核对标题栏显示配置。 | v1 | — |  |  |
+| L-10 | `layout.rpxX` | 按 manifest 默认跨度的标准内容宽度缩放横向设计坐标；核对宽度独立缩放和非法数值。 | v2 | — |  |  |
+| L-11 | `layout.rpxY` | 按 manifest 默认跨度的标准内容高度缩放纵向设计坐标；核对高度独立缩放、固定底栏占位和非法数值。 | v2 | — |  |  |
+| L-12 | `layout.columns` | 获取当前组件占用的网格列数；核对 resize 后更新。 | v1 | — |  |  |
+| L-13 | `layout.rows` | 获取当前组件占用的网格行数；核对 resize 后更新。 | v1 | — |  |  |
+| L-14 | `layout.sizeClass` | 获取 small/medium/large 尺寸分类；核对分类边界和 resize。 | v1 | — |  |  |
+| L-15 | `layout.cellWidth` | 获取单个桌面网格单元宽度；核对 DPI 与布局设置变化。 | v1 | — |  |  |
+| L-16 | `layout.cellHeight` | 获取单个桌面网格单元高度；核对 DPI 与布局设置变化。 | v1 | — |  |  |
+| L-17 | `layout.cellScale` | 获取相对基准网格单元的缩放值；核对不同 DPI/网格设置。 | v1 | — |  |  |
+| L-18 | `layout.cu` | 将网格相对单位换算为逻辑长度；核对正负值和缩放一致性。 | v1 | — |  |  |
+| L-19 | `layout.fontCu` | 将网格相对单位换算为字体尺寸；核对文本缩放与 DPI。 | v1 | — |  |  |
+| L-20 | `layout.cellGap` | 获取桌面网格单元间距；核对布局设置变化。 | v1 | — |  |  |
+| L-21 | `layout.barHeight` | 获取启用组件底栏时的兼容高度；核对标题栏显示配置。 | v1 | — |  |  |
 
 ## 13. `storage` 持久化存储 API（5 项）
 
@@ -332,10 +335,10 @@
 | `time` | 6 |  |  |  |  |  |
 | `module` | 1 |  |  |  |  |  |
 | `resource` | 4 |  |  |  |  |  |
-| `ui` | 1 |  |  |  |  |  |
+| `ui` | 2 |  |  |  |  |  |
 | `control` | 4 |  |  |  |  |  |
 | `calendar` | 3 |  |  |  |  |  |
-| `layout` | 19 |  |  |  |  |  |
+| `layout` | 21 |  |  |  |  |  |
 | `storage` | 5 |  |  |  |  |  |
 | `slots` | 6 |  |  |  |  |  |
 | `state` | 6 |  |  |  |  |  |
@@ -344,7 +347,7 @@
 | `data` | 1 |  |  |  |  |  |
 | `task` | 2 |  |  |  |  |  |
 | `l10n` | 7 |  |  |  |  |  |
-| **合计** | **165** |  |  |  |  |  |
+| **合计** | **168** |  |  |  |  |  |
 
 最终结论：`□ 通过`　`□ 有条件通过`　`□ 不通过`
 

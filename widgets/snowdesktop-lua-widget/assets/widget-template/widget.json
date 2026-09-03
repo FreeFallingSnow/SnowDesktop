@@ -180,10 +180,10 @@
     ]
   },
   "requiredFeatures": [
-    "layout.referencePixels",
     "layout.relativeUnits",
     "lifecycle.model",
     "l10n.basic",
+    "ui.semanticMetrics",
     "view.theme.tokens",
     "view.tree.core",
     "widget.context"

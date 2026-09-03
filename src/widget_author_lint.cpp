@@ -692,6 +692,72 @@ void LintReferencePixelFeature(LintReport& report,
         "layout.rpx requires manifest feature layout.referencePixels");
 }
 
+void LintReferenceAxisFeature(LintReport& report,
+    const snowdesktop::widget::PackageManifest& manifest,
+    const std::filesystem::path& path, const std::vector<Token>& tokens)
+{
+    std::optional<std::size_t> callIndex;
+    std::string function;
+    for (std::size_t index = 0; index + 3 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind == TokenKind::Identifier &&
+                tokens[index].text == "layout" &&
+                IsSymbol(tokens[index + 1], ".") &&
+                tokens[index + 2].kind == TokenKind::Identifier &&
+                (tokens[index + 2].text == "rpxX" ||
+                    tokens[index + 2].text == "rpxY") &&
+                IsSymbol(tokens[index + 3], "("))
+        {
+            callIndex = index;
+            function = tokens[index + 2].text;
+            break;
+        }
+    }
+    if (!callIndex) return;
+    const auto declares = [&](const auto& features) {
+        return std::find(features.begin(), features.end(),
+            "layout.referenceAxes") != features.end();
+    };
+    if (declares(manifest.requiredFeatures) ||
+        declares(manifest.optionalFeatures))
+        return;
+    AddIssue(report, LintSeverity::Error,
+        "feature.undeclared", path, tokens[*callIndex].line,
+        "layout." + function +
+            " requires manifest feature layout.referenceAxes");
+}
+
+void LintSemanticUiMetricsFeature(LintReport& report,
+    const snowdesktop::widget::PackageManifest& manifest,
+    const std::filesystem::path& path, const std::vector<Token>& tokens)
+{
+    std::optional<std::size_t> callIndex;
+    for (std::size_t index = 0; index + 3 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind == TokenKind::Identifier &&
+                tokens[index].text == "ui" &&
+                IsSymbol(tokens[index + 1], ".") &&
+                tokens[index + 2].kind == TokenKind::Identifier &&
+                tokens[index + 2].text == "metrics" &&
+                IsSymbol(tokens[index + 3], "("))
+        {
+            callIndex = index;
+            break;
+        }
+    }
+    if (!callIndex) return;
+    const auto declares = [&](const auto& features) {
+        return std::find(features.begin(), features.end(),
+            "ui.semanticMetrics") != features.end();
+    };
+    if (declares(manifest.requiredFeatures) ||
+        declares(manifest.optionalFeatures))
+        return;
+    AddIssue(report, LintSeverity::Error,
+        "feature.undeclared", path, tokens[*callIndex].line,
+        "ui.metrics requires manifest feature ui.semanticMetrics");
+}
+
 void LintImmediateDrawing(LintReport& report,
     const std::filesystem::path& path, const std::vector<Token>& tokens,
     bool allowFullSurfaceContent,
@@ -824,6 +890,9 @@ LintReport LintWidgetSource(
     LintBackgroundLayerFeature(report, manifest, relativePath, tokens,
         backgroundLayerRanges);
     LintReferencePixelFeature(report, manifest, relativePath, tokens);
+    LintReferenceAxisFeature(report, manifest, relativePath, tokens);
+    LintSemanticUiMetricsFeature(
+        report, manifest, relativePath, tokens);
     LintViewConstructors(report, relativePath, tokens);
     LintImmediateDrawing(report, relativePath, tokens,
         source.find("-- snowwidget: allow-full-surface-content") !=

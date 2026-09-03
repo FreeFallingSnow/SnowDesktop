@@ -2280,6 +2280,25 @@ function control.focus(key) end
 ---@return 'trustedGestureRequired'|'controlNotFocused'|'hostUnavailable'|nil error
 function control.blur(key) end
 
+---@class SnowUiMetrics
+---@field spacingXs number
+---@field spacingSm number
+---@field spacingMd number
+---@field spacingLg number
+---@field captionFontSize number
+---@field bodyFontSize number
+---@field titleFontSize number
+---@field controlFontSize number
+---@field compactControlHeight number
+---@field controlHeight number
+---@field compactRowHeight number
+---@field rowHeight number
+---@field smallIconSize number
+---@field iconSize number
+---@field largeIconSize number
+---@field controlRadius number
+---@field strokeWidth number
+
 ---@class snow.ui
 ui = {}
 
@@ -2287,6 +2306,10 @@ ui = {}
 ---@param items SnowMenuModel
 ---@return SnowMenuModel
 function ui.menu(items) end
+
+---Return host semantic dimensions scaled for the current display DPI and accessibility text scale. Values do not depend on widget span or desktop grid density.
+---@return SnowUiMetrics
+function ui.metrics() end
 
 ---@class snow.layout
 layout = {}
@@ -2322,6 +2345,14 @@ function layout.vmax(percent) end
 ---@param value number Design-space pixels measured against the canonical short edge of the manifest defaultSize. The result scales linearly with the current root content short edge.
 ---@return number
 function layout.rpx(value) end
+
+---@param value number Horizontal design-space pixels measured against the canonical width of the manifest defaultSize. The result scales linearly with the current root content width.
+---@return number
+function layout.rpxX(value) end
+
+---@param value number Vertical design-space pixels measured against the canonical content height of the manifest defaultSize. The result scales linearly with the current root content height.
+---@return number
+function layout.rpxY(value) end
 
 ---@return integer
 function layout.columns() end

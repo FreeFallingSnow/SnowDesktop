@@ -12,15 +12,24 @@ inline constexpr float kReferenceCellWidth = 92.0f;
 inline constexpr float kReferenceCellHeight = 116.0f;
 inline constexpr float kReferenceCellGap = 8.0f;
 
-inline float ReferenceSpanShortEdge(int columns, int rows) noexcept
+inline float ReferenceSpanWidth(int columns) noexcept
 {
     const int safeColumns = std::max(1, columns);
-    const int safeRows = std::max(1, rows);
-    const float width = safeColumns * kReferenceCellWidth +
+    return safeColumns * kReferenceCellWidth +
         (safeColumns - 1) * kReferenceCellGap;
-    const float height = safeRows * kReferenceCellHeight +
+}
+
+inline float ReferenceSpanHeight(int rows) noexcept
+{
+    const int safeRows = std::max(1, rows);
+    return safeRows * kReferenceCellHeight +
         (safeRows - 1) * kReferenceCellGap;
-    return std::min(width, height);
+}
+
+inline float ReferenceSpanShortEdge(int columns, int rows) noexcept
+{
+    return std::min(
+        ReferenceSpanWidth(columns), ReferenceSpanHeight(rows));
 }
 
 inline float ScaleReferencePixel(float value, float contentWidth,
@@ -31,6 +40,13 @@ inline float ScaleReferencePixel(float value, float contentWidth,
     const float referenceShortEdge = ReferenceSpanShortEdge(
         defaultColumns, defaultRows);
     return value * currentShortEdge / referenceShortEdge;
+}
+
+inline float ScaleReferenceAxis(float value, float currentExtent,
+    float referenceExtent) noexcept
+{
+    return value * std::max(0.0f, currentExtent) /
+        std::max(1.0f, referenceExtent);
 }
 
 struct LayoutMetrics

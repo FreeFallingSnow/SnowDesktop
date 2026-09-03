@@ -176,6 +176,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `widget.context().layoutSize`；
 - `layout.referencePixels`：`layout.rpx` 按 manifest `defaultSize` 的标准短边
   将设计坐标线性缩放到当前内容短边；
+- `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
+  的标准内容宽、高缩放设计坐标；
+- `ui.semanticMetrics`：`ui.metrics()` 返回不随组件跨度或网格疏密变化的
+  宿主语义控件、字体、图标和间距度量；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -1480,6 +1484,18 @@ end
 移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
+
+探测 `ui.semanticMetrics` 后，`ui.metrics()` 返回当前显示器和辅助功能环境下的
+宿主语义度量。返回值包含 `spacingXs/spacingSm/spacingMd/spacingLg`、
+`captionFontSize/bodyFontSize/titleFontSize/controlFontSize`、
+`compactControlHeight/controlHeight`、`compactRowHeight/rowHeight`、
+`smallIconSize/iconSize/largeIconSize`、`controlRadius/strokeWidth`。这些值按当前
+surface 的 DPI 缩放，字体及需要容纳字体的控件还会响应 Windows 文本缩放；它们不随
+组件列数、行数或用户网格疏密变化。搜索框、普通输入、导航按钮、列表行和正文等跨
+组件复用的界面元素应使用这组度量，使同一桌面上的同类控件保持一致。组件字体设置
+应作为这些字号的百分比乘数。扩大组件时增加可见内容、文本宽度或构图空间，不应仅因
+跨度增加而放大标准控件。
+
 - v2 不暴露旧 `widget.editText(...)`；文本编辑统一使用声明式输入节点或
   `control.textInput/textArea`。
 
@@ -2336,13 +2352,22 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 有限数值，负值可用于相对偏移。该单位不决定结构分支，也不替组件限制无意义的
 尺寸；木鱼可以始终保持纵向构图，频谱可在 manifest 中限制为横向跨度。
 
+探测 `layout.referenceAxes` 后，可用 `layout.rpxX(value)` 和
+`layout.rpxY(value)` 分别按 manifest `defaultSize` 的标准内容宽度和内容高度
+缩放设计值。横向坐标、宽度和左右间距使用 `rpxX`；纵向坐标、高度和组件特有的
+上下间距使用 `rpxY`。若 manifest 默认开启固定占位的桌面
+底栏，`rpxY` 会自动从参考高度和当前高度中扣除对应占位，组件不需要自行补偿。
+相同宽高比缩放时，`rpxX` 与 `rpxY` 的比例相同；圆形封面、唱片等需要严格
+保持各向等比的装饰仍应使用 `rpx` 或 `vmin`。`rpxX/rpxY` 接受与 `rpx`
+相同范围的有限数值。
+
 `columns/rows/sizeClass` 返回跨度与尺寸档位。
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
 `layout.cu(value)` 和 `layout.fontCu(value)` 只应用于明确要和宿主网格指标对齐的
 内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、启动器和便签的
-桌面主表面也应使用 `rpx` 或百分比单位；更大的空间可以显示更多行或更完整的文字，
-但基础间距、行高、图标、描边和字体仍从组件尺寸等比得出。`cu/fontCu` 不会随组件
-跨度同比增长，将其用作主体几何或全局缩放下限会破坏相同宽高比的等比结果。
+桌面主表面的组件特有几何应使用 `rpxX/rpxY` 或百分比单位；共用控件和文字应使用
+`ui.metrics()`。更大的空间可以显示更多行或更完整的文字。`cu/fontCu` 会随用户网格
+疏密变化，仅适合明确与网格信息单元对齐的内容。
 
 ### `storage`
 

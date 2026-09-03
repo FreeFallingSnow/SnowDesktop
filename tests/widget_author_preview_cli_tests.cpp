@@ -466,9 +466,11 @@ std::filesystem::path CreateEnvironmentFixture(
   "requiredFeatures": [
     "draw.immediate",
     "draw.marqueeText",
+    "layout.referenceAxes",
     "layout.referencePixels",
     "layout.relativeUnits",
     "lifecycle.model",
+    "ui.semanticMetrics",
     "widget.context",
     "data.subscribe",
     "data.system.cpu"
@@ -502,6 +504,14 @@ return widget.define({
         assert(layout.rpx(10) == 15 and layout.rpx(-4) == -6 and
             pcall(layout.rpx, 1000001) == false,
             "reference pixels must scale from the manifest default short edge")
+        assert(layout.rpxX(10) == 15 and layout.rpxY(10) == 15 and
+            pcall(layout.rpxX, 1000001) == false and
+            pcall(layout.rpxY, -1000001) == false,
+            "reference axes must scale independently from manifest defaults")
+        local metrics = ui.metrics()
+        assert(metrics.bodyFontSize == 18 and
+            metrics.controlHeight == 48 and metrics.spacingSm == 12,
+            "semantic UI metrics must follow DPI without using widget span")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,
             "relative layout units must reject out-of-range percentages")
