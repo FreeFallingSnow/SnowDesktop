@@ -11108,12 +11108,12 @@ static int lua_DrawImageFit(lua_State* state)
         luaL_optnumber(state, 11, 0.5));
     const float originY = static_cast<float>(
         luaL_optnumber(state, 12, 0.5));
-    const double cornerRadiusValue = luaL_optnumber(state, 13, 0.0);
-    if (!std::isfinite(cornerRadiusValue) || cornerRadiusValue < 0.0 ||
-        cornerRadiusValue > 100000.0)
-        return luaL_error(state,
+    const float cornerRadius = static_cast<float>(
+        luaL_optnumber(state, 13, 0.0));
+    if (!std::isfinite(cornerRadius) || cornerRadius < 0.0f ||
+        cornerRadius > 100000.0f)
+        luaL_error(state,
             "draw.imageFit: cornerRadius must be finite and between 0 and 100000");
-    const float cornerRadius = static_cast<float>(cornerRadiusValue);
     using Fit = snowdesktop::widget_runtime::DrawImageFit;
     using Alignment = snowdesktop::widget_runtime::DrawImageAlignment;
     Fit fit = Fit::Contain;
