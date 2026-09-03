@@ -47,20 +47,34 @@ struct SemanticUiMetrics
     float strokeWidth = 1.0f;
 };
 
+inline float ResolveSemanticTitleAreaScale(int gridRows) noexcept
+{
+    // Two rows and below use the page baseline. Taller widgets grow slowly so
+    // shared headers remain comparable without consuming a linear share of
+    // the content area. Width never participates in vertical control sizing.
+    return std::sqrt(std::max(1.0f,
+        static_cast<float>(std::max(1, gridRows)) / 2.0f));
+}
+
 inline SemanticUiMetrics ResolveSemanticUiMetrics(
     const SemanticUiMetricTokens& rawTokens,
-    float pageCuScale, float textScale) noexcept
+    float pageCuScale, float textScale,
+    float titleAreaScale = 1.0f) noexcept
 {
     const SemanticUiMetricTokens tokens =
         NormalizeSemanticUiMetricTokens(rawTokens);
     const float geometryScale = std::clamp(pageCuScale, 0.1f, 8.0f);
     const float accessibilityScale = std::clamp(textScale, 0.5f, 5.0f);
-    const float headerScale = tokens.titleAreaHeight / 40.0f;
+    const float normalizedTitleAreaScale = std::isfinite(titleAreaScale)
+        ? std::max(1.0f, titleAreaScale) : 1.0f;
+    const float resolvedTitleAreaHeight =
+        tokens.titleAreaHeight * normalizedTitleAreaScale;
+    const float headerScale = resolvedTitleAreaHeight / 40.0f;
     const float typographyScale = geometryScale * accessibilityScale;
     const float headerTypographyScale = typographyScale * headerScale;
 
     SemanticUiMetrics result;
-    result.titleAreaHeight = tokens.titleAreaHeight * geometryScale;
+    result.titleAreaHeight = resolvedTitleAreaHeight * geometryScale;
     result.spacingXs = 4.0f * geometryScale;
     result.spacingSm = 8.0f * geometryScale;
     result.spacingMd = 12.0f * geometryScale;
@@ -70,11 +84,11 @@ inline SemanticUiMetrics ResolveSemanticUiMetrics(
     result.titleFontSize = 14.0f * headerTypographyScale;
     result.controlFontSize = 12.0f * headerTypographyScale;
     result.compactControlHeight = std::max(
-        (tokens.titleAreaHeight - 12.0f) * geometryScale,
-        result.controlFontSize + 12.0f * geometryScale);
+        28.0f * headerScale * geometryScale,
+        result.controlFontSize + 12.0f * headerScale * geometryScale);
     result.controlHeight = std::max(
-        (tokens.titleAreaHeight - 8.0f) * geometryScale,
-        result.controlFontSize + 16.0f * geometryScale);
+        32.0f * headerScale * geometryScale,
+        result.controlFontSize + 16.0f * headerScale * geometryScale);
     // Retained for source compatibility. Content rows should normally derive
     // their intrinsic size from text and their component-specific layout.
     result.compactRowHeight = std::max(
@@ -92,10 +106,11 @@ inline SemanticUiMetrics ResolveSemanticUiMetrics(
 }
 
 inline SemanticUiMetrics ResolveSemanticUiMetrics(
-    float pageCuScale, float textScale) noexcept
+    float pageCuScale, float textScale,
+    float titleAreaScale = 1.0f) noexcept
 {
     return ResolveSemanticUiMetrics(
-        SemanticUiMetricTokens{}, pageCuScale, textScale);
+        SemanticUiMetricTokens{}, pageCuScale, textScale, titleAreaScale);
 }
 
 } // namespace snowdesktop::widget_runtime

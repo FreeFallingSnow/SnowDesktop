@@ -279,16 +279,16 @@ local function render(context, model)
     local total = taskCounts()
 
     local headerHeight = math.min(h, metrics.titleAreaHeight)
-    local inputH = math.min(metrics.compactControlHeight,
-        math.max(unit, headerHeight - metrics.spacingSm))
-    local inputY = math.max(0, (headerHeight - inputH) / 2)
+    local headerInset = math.min(metrics.spacingMd, headerHeight * 0.20)
+    local inputH = math.max(unit, headerHeight - headerInset * 2)
+    local inputY = headerInset
     local addSize = inputH
-    local inputW = math.max(metrics.compactControlHeight,
-        w - pad * 2 - addSize - gap)
+    local inputW = math.max(unit,
+        w - headerInset * 2 - addSize - gap)
     control.textInput({
         key = "new-task",
         storageKey = "draft",
-        shape = { type = "rect", x = pad, y = inputY,
+        shape = { type = "rect", x = headerInset, y = inputY,
             width = inputW, height = inputH },
         placeholder = l10n.tr("lua_widget.reminders.add_placeholder"),
         fontSize = inputFont,
@@ -311,7 +311,7 @@ local function render(context, model)
 
     local addEnabled = trim(storage.get("draft") or "") ~= "" and
         total < MAX_TASKS
-    local addX = pad + inputW + gap
+    local addX = headerInset + inputW + gap
     local addY = inputY + (inputH - addSize) / 2
     local addKey = "task.add"
     local addHovered = interaction.isHovered(addKey)

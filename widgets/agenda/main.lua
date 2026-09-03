@@ -337,7 +337,7 @@ local function registerRegion(key, shape, eventsValue, label, enabled)
 end
 
 local function centeredText(text, x, y, width, height, size, color, bold, alpha)
-    local measured = draw.measureText(text, size, width, bold)
+    local measured = draw.measureText(text, size, 0, bold)
     draw.text(x + math.max(0, (width - measured.width) / 2),
         y + math.max(0, (height - measured.height) / 2), text, size,
         color, math.max(1, width), bold, true, 0, alpha or 1.0)
@@ -402,8 +402,16 @@ local function render(context, model)
     local gap = metrics.spacingXs
     local headerY = math.max(0, (headerHeight - button) / 2)
     local listTop = math.min(height, headerHeight + metrics.spacingSm)
-    local narrowHeader = width < pad * 2 + button * 2 + gap +
-        metrics.spacingMd
+    local titleText = formatDate(selected, false)
+    local titleMetrics = draw.measureText(titleText, titleFont, width, true)
+    local todayLabel = l10n.tr("lua_widget.agenda.today")
+    local todayMetrics = draw.measureText(todayLabel,
+        smallFont, 0, true)
+    local todayWidth = math.max(headerHeight,
+        todayMetrics.width + headerHeight * 0.30)
+    local wideHeaderWidth = pad * 2 + button * 3 + todayWidth +
+        gap * 5 + math.max(headerHeight, titleMetrics.width)
+    local narrowHeader = width < wideHeaderWidth
     if narrowHeader then
         drawHeaderButton("agenda.previous", fluent.previous,
             l10n.tr("lua_widget.agenda.previous_day"),
@@ -413,7 +421,7 @@ local function render(context, model)
             l10n.tr("lua_widget.agenda.next_day"),
             { x = width - pad - button, y = headerY,
                 width = button, height = button }, colors, true, metrics)
-        centeredText(formatDate(selected, false),
+        centeredText(titleText,
             pad + button + gap, 0,
             math.max(unit, width - pad * 2 - button * 2 - gap * 2),
             headerHeight,
@@ -432,11 +440,6 @@ local function render(context, model)
             l10n.tr("lua_widget.agenda.add"),
             { x = addX, y = headerY,
                 width = button, height = button }, colors, canWrite, metrics)
-        local todayLabel = l10n.tr("lua_widget.agenda.today")
-        local todayMetrics = draw.measureText(todayLabel,
-            smallFont, 0, true)
-        local todayWidth = math.max(button, math.min(width * 0.25,
-            todayMetrics.width + metrics.spacingMd))
         local todayX = addX - gap - todayWidth
         drawHeaderTextButton("agenda.today", todayLabel,
             { x = todayX, y = headerY,
@@ -444,7 +447,7 @@ local function render(context, model)
             metrics, smallFont)
         local titleX = pad + button * 2 + gap * 2
         local titleRight = todayX - gap
-        centeredText(formatDate(selected, false), titleX, 0,
+        centeredText(titleText, titleX, 0,
             math.max(unit, titleRight - titleX), headerHeight,
             titleFont, colors.text, true)
     end

@@ -224,7 +224,7 @@ end
 
 local function centeredText(text, x, y, width, height,
     size, color, bold, alpha)
-    local measured = draw.measureText(text, size, width, bold)
+    local measured = draw.measureText(text, size, 0, bold)
     draw.text(x + math.max(0, (width - measured.width) / 2),
         y + math.max(0, (height - measured.height) / 2),
         text, size, color, math.max(1, width), bold, true, 0,
@@ -350,10 +350,31 @@ local function render(context, model)
     local buttonSize = math.min(metrics.compactControlHeight,
         math.max(unit, headerHeight - metrics.spacingSm))
     local buttonY = math.max(0, (headerHeight - buttonSize) / 2)
-    local narrowWidth = width < padding * 2 + buttonSize * 2 +
-        metrics.spacingXs + metrics.spacingMd
+    local headerGap = metrics.spacingXs
+    local todayText = l10n.tr("lua_widget.month_calendar.today")
+    local todayMetrics = draw.measureText(todayText, smallFont, 0, true)
+    local todayWidth = math.max(headerHeight,
+        todayMetrics.width + headerHeight * 0.30)
+    local titleMetrics = draw.measureText(title, titleFont, width, true)
+    local wideHeaderWidth = padding * 2 + buttonSize * 2 + todayWidth +
+        headerGap * 4 + math.max(headerHeight, titleMetrics.width)
+    local narrowWidth = width < wideHeaderWidth
     if narrowWidth then
-        centeredText(title, padding, 0, width - padding * 2,
+        local previousShape = {
+            x = padding, y = buttonY,
+            width = buttonSize, height = buttonSize,
+        }
+        local nextShape = {
+            x = width - padding - buttonSize, y = buttonY,
+            width = buttonSize, height = buttonSize,
+        }
+        drawHeaderIconButton("calendar.previous", fluent.previous,
+            l10n.tr("lua_widget.month_calendar.previous_month"), colors,
+            previousShape, metrics)
+        drawHeaderIconButton("calendar.next", fluent.next,
+            l10n.tr("lua_widget.month_calendar.next_month"), colors,
+            nextShape, metrics)
+        centeredText(title, 0, 0, width,
             headerHeight, titleFont, colors.text, true, 1.0)
         local listTop = bodyTop
         local listHeight = math.max(unit,
@@ -436,15 +457,11 @@ local function render(context, model)
         height = buttonSize,
     }
     local nextShape = {
-        x = padding + buttonSize + metrics.spacingXs,
+        x = padding + buttonSize + headerGap,
         y = buttonY,
         width = buttonSize,
         height = buttonSize,
     }
-    local todayText = l10n.tr("lua_widget.month_calendar.today")
-    local todayMetrics = draw.measureText(todayText, smallFont, 0, true)
-    local todayWidth = math.max(buttonSize, math.min(width * 0.25,
-        todayMetrics.width + metrics.spacingMd))
     local todayShape = {
         x = width - padding - todayWidth,
         y = buttonY,
@@ -460,10 +477,7 @@ local function render(context, model)
     drawHeaderTextButton("calendar.today", todayText, smallFont, colors,
         todayShape, metrics)
 
-    local titleX = nextShape.x + nextShape.width + metrics.spacingSm
-    local titleWidth = math.max(unit,
-        todayShape.x - titleX - metrics.spacingXs)
-    centeredText(title, titleX, 0, titleWidth, headerHeight,
+    centeredText(title, 0, 0, width, headerHeight,
         titleFont, colors.text, true, 1.0)
 
     local weekStart = effectiveWeekStart()

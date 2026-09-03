@@ -110,10 +110,12 @@ Choose the sizing model before writing geometry:
   tools.** Use `ui.metrics().titleAreaHeight` for the shared title band and
   place search fields, inputs, navigation buttons and title text inside it.
   Their control height, font and icon metrics derive from the same host setting,
-  expressed in page `cu`, so equivalent header controls remain the same size on
-  one page. These values do not depend on an individual widget's span or the
-  configured gap between grid cells. Lay out lists, calendars and empty states
-  from the rectangle left after the title band; derive their rows and internal
+  expressed in page `cu`. The returned title band stays at the page baseline for
+  one- and two-row widgets, then grows slowly with vertical span; horizontal
+  span never changes its height. Components with the same row span therefore
+  receive the same title height and must use the resolved value instead of
+  recalculating it from width. Lay out lists, calendars and empty states from
+  the rectangle left after the title band; derive their rows and internal
   geometry from content, available space and component-specific proportions.
   Use `layout.rpxX()` and `layout.rpxY()` only for component-specific axis
   geometry. A larger span

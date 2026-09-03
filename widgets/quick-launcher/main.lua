@@ -245,14 +245,16 @@ local function render(context, model)
     local inputFont = metrics.controlFontSize * scale
     local smallFont = metrics.captionFontSize * scale
     local titleAreaHeight = math.min(height, metrics.titleAreaHeight)
-    local inputHeight = math.min(metrics.compactControlHeight,
-        math.max(unit, titleAreaHeight - metrics.spacingSm))
-    local inputTop = math.max(0, (titleAreaHeight - inputHeight) / 2)
+    local headerInset = math.min(metrics.spacingMd,
+        titleAreaHeight * 0.20)
+    local inputHeight = math.max(unit,
+        titleAreaHeight - headerInset * 2)
+    local inputTop = headerInset
 
     control.textInput({
         key = "quick.search", storageKey = "query",
-        shape = { type = "rect", x = pad, y = inputTop,
-            width = width - pad * 2, height = inputHeight },
+        shape = { type = "rect", x = headerInset, y = inputTop,
+            width = width - headerInset * 2, height = inputHeight },
         placeholder = l10n.tr("lua_widget.quick_launcher.search_placeholder"),
         fontSize = inputFont, textColor = colors.input,
         placeholderColor = colors.muted, backgroundColor = colors.surface,

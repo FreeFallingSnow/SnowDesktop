@@ -148,10 +148,13 @@ different state:
    Center the complete group of currently visible parts. Agendas, calendars,
    lists, search and RSS should use `ui.metrics().titleAreaHeight` for a shared
    title band. Search fields, inputs, navigation buttons and title typography
-   live inside that band and derive from the same page-CU setting. Lay out the
-   content below it from the remaining rectangle; do not use compatibility row
-   metrics to fix calendar grids or list rows. Use `layout.rpxX/rpxY()` only for
-   component-specific axis geometry. Larger spans should reveal more content.
+   live inside that band and derive from the same page-CU setting. Compare
+   components with the same row span to confirm equal title heights, and verify
+   that changing only width does not resize the band. Taller spans may grow the
+   resolved band slowly. Lay out the content below it from the remaining
+   rectangle; do not use compatibility row metrics to fix calendar grids or
+   list rows. Use `layout.rpxX/rpxY()` only for component-specific axis
+   geometry. Larger spans should reveal more content.
    Reserve grid-density
    checks for components that explicitly align
    information units to host grid metrics, such as a system-status card matrix.

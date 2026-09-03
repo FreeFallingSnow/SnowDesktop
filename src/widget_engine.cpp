@@ -8635,7 +8635,9 @@ static int lua_UiMetrics(lua_State* L)
             d2d ? d2d->semanticUiMetrics :
                 snowdesktop::widget_runtime::SemanticUiMetricTokens{},
             d2d ? d2d->semanticCuScale : 1.0f,
-            static_cast<float>(system.textScale));
+            static_cast<float>(system.textScale),
+            snowdesktop::widget_runtime::ResolveSemanticTitleAreaScale(
+                d2d ? d2d->gridRows : 2));
 
     lua_createtable(L, 0, 18);
     SetNumberField(L, "titleAreaHeight", metrics.titleAreaHeight);

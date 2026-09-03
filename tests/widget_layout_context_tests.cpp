@@ -110,6 +110,7 @@ void TestSemanticUiMetricsUseTitleAreaAndPageCu()
 {
     using snowdesktop::widget_runtime::SemanticUiMetricTokens;
     using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
+    using snowdesktop::widget_runtime::ResolveSemanticTitleAreaScale;
     const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
     Expect(standard.titleAreaHeight == 40.0f &&
             standard.bodyFontSize == 12.0f &&
@@ -127,9 +128,20 @@ void TestSemanticUiMetricsUseTitleAreaAndPageCu()
     custom.titleAreaHeight = 48.0f;
     const auto customized = ResolveSemanticUiMetrics(custom, 1.0f, 1.0f);
     Expect(customized.titleAreaHeight == 48.0f &&
-            customized.controlHeight == 40.0f &&
+            std::abs(customized.controlHeight - 38.4f) < 0.001f &&
             customized.spacingSm == 8.0f,
         "title area height drives linked header controls without changing content spacing");
+    const float mediumScale = ResolveSemanticTitleAreaScale(3);
+    const auto medium = ResolveSemanticUiMetrics(1.0f, 1.0f, mediumScale);
+    const float tallScale = ResolveSemanticTitleAreaScale(8);
+    const auto tall = ResolveSemanticUiMetrics(1.0f, 1.0f, tallScale);
+    Expect(ResolveSemanticTitleAreaScale(1) == 1.0f &&
+            ResolveSemanticTitleAreaScale(2) == 1.0f &&
+            std::abs(medium.titleAreaHeight -
+                40.0f * std::sqrt(1.5f)) < 0.001f &&
+            tallScale == 2.0f && tall.titleAreaHeight == 80.0f &&
+            tall.controlHeight == 64.0f,
+        "title areas grow from vertical widget scale without using width");
     const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
     Expect(largeText.bodyFontSize == 24.0f &&
             largeText.controlHeight == 40.0f &&

@@ -179,7 +179,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
   的标准内容宽、高缩放设计坐标；
 - `ui.semanticMetrics`：`ui.metrics()` 返回以页面 CU 解析的标题区与语义控件度量；
-  标题、输入框和标题栏按钮由同一个标题区设置联动，且不随单个组件跨度或网格间距变化；
+  标题、输入框和标题栏按钮由同一个标题区设置联动，一至两行使用页面基准，更高组件
+  只随纵向跨度缓慢增长，横向跨度不影响高度；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -1493,8 +1494,10 @@ end
 `smallIconSize/iconSize/largeIconSize`、`controlRadius/strokeWidth`。宿主在
 “外观 > 组件与布局”中以页面 `cu` 保存一个 `titleAreaHeight`；标题字号、控件字号、
 控件高度和标题栏图标从它派生并联动变化。运行时用页面 CU 缩放几何，字体及需要
-容纳字体的控件还会响应 Windows 文本缩放。值不随单个组件的列数、行数或网格间距
-变化。搜索框、普通输入、导航按钮和标题文字应放在 `0..titleAreaHeight` 的标题区内，
+容纳字体的控件还会响应 Windows 文本缩放。一至两行组件使用页面标题区基准；更高
+组件的标题区按纵向跨度缓慢增长。同一纵向跨度的组件获得相同标题区高度，横向跨度
+不会改变标题区或控件高度。搜索框、普通输入、导航按钮和标题文字应放在
+`0..titleAreaHeight` 的标题区内，
 输入框无需单独的高度设置。标题区之后的列表、日历网格、空状态和其他正文应根据
 剩余矩形、内容和组件自身比例响应排布；`compactRowHeight/rowHeight` 仅为源码兼容
 保留，不应再用于固定正文行高。组件字体设置应作为相应字号的百分比乘数。
@@ -2369,9 +2372,10 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 `layout.cu(value)` 和 `layout.fontCu(value)` 只应用于组件自己定义、且明确要和宿主
 网格指标对齐的内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、
 启动器和便签的桌面主表面中，标题区使用 `ui.metrics().titleAreaHeight`，并让其中的
-搜索框、输入框、按钮、标题文字和图标使用对应语义字段。正文区域从标题区之后的
-剩余矩形自适应排布，不以兼容字段 `rowHeight` 固定月历网格或列表内容。组件特有
-几何使用 `rpxX/rpxY` 或百分比单位。更大的空间可以显示更多行或更完整的文字。
+搜索框、输入框、按钮、标题文字和图标使用对应语义字段。标题区只随纵向跨度缓慢
+增长，不能由宽度或横向跨度重算。正文区域从标题区之后的剩余矩形自适应排布，
+不以兼容字段 `rowHeight` 固定月历网格或列表内容。组件特有几何使用
+`rpxX/rpxY` 或百分比单位。更大的空间可以显示更多行或更完整的文字。
 
 ### `storage`
 

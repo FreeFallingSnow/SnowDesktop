@@ -2308,7 +2308,7 @@ ui = {}
 ---@return SnowMenuModel
 function ui.menu(items) end
 
----Return page-CU semantic dimensions. titleAreaHeight is host-configurable; header controls and typography derive from it. Content metrics remain compatibility defaults. Values do not depend on widget span or grid gaps.
+---Return page-CU semantic dimensions. titleAreaHeight is host-configurable; header controls and typography derive from it. The resolved title area uses the page baseline for one or two rows and grows slowly for taller widgets; horizontal span does not affect it. Content row metrics remain compatibility defaults.
 ---@return SnowUiMetrics
 function ui.metrics() end
 
