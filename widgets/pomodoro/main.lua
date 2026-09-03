@@ -358,7 +358,8 @@ local function buildView(context)
     loadStyle()
     local config = loadConfig()
     local palette = getPalette()
-    local width = math.max(1, context.layoutSize.width)
+    local width = context.layoutSize.width
+    local height = context.layoutSize.height
     local state = getState()
     local remaining = remainingSeconds(config, nowSeconds())
     local activePhase = state
@@ -375,28 +376,18 @@ local function buildView(context)
         completedInSet = config.longBreakInterval
     end
 
-    local padding = math.max(layout.cu(8), math.min(
-        layout.cu(14), layout.vmin(4)))
-    local availableWidth = math.max(1, width - padding * 2)
-    local infoGap = math.max(layout.cu(7), math.min(
-        layout.cu(13), layout.vmin(3.8)))
-    local majorGap = math.max(layout.cu(14), math.min(
-        layout.cu(26), layout.vmin(7)))
-    local buttonGap = math.max(layout.cu(6), math.min(
-        layout.cu(9), layout.vmin(2.8)))
-    local statusFont = math.max(layout.fontCu(10), math.min(
-        layout.fontCu(14), layout.vmin(4)))
-    local statusHeight = math.max(layout.cu(25), math.min(
-        layout.cu(31), layout.vmin(9)))
-    local timeFont = math.max(layout.fontCu(38), math.min(
-        layout.fontCu(68), layout.vmin(20)))
+    local vertical = height > width * 1.05
+    local short = math.min(width, height)
+    local padding = short * 0.06
+    local availableWidth = width - padding * 2
+    local infoGap = short * 0.035
+    local majorGap = short * 0.07
+    local buttonGap = short * 0.03
+    local statusHeight = short * 0.14
+    local timeFont = short * 0.20
     local timeHeight = timeFont * 1.18
-    local progressHeight = math.max(layout.cu(4), math.min(
-        layout.cu(7), layout.vmin(2)))
-    local buttonHeight = math.max(layout.cu(39), math.min(
-        layout.cu(48), layout.vmin(14)))
-    local actionFont = math.max(layout.fontCu(11), math.min(
-        layout.fontCu(15), buttonHeight * 0.34))
+    local progressHeight = short * 0.025
+    local buttonHeight = short * 0.22
 
     local subline = ""
     if activePhase == "work" then
@@ -408,6 +399,7 @@ local function buildView(context)
     end
     local label = stateLabel(state) .. subline
     local timeText = formatTime(remaining)
+    local actionFont
 
     local function actionButton(id, buttonLabel, height,
         background, foreground, primary)
@@ -456,16 +448,20 @@ local function buildView(context)
             l10n.tr("lua_widget.pomodoro.skip") }
     end
 
-    local infoWidth = math.min(availableWidth, math.max(
-        layout.cu(148), math.min(layout.cu(300), layout.vmin(88))))
-    local actionWidth = math.min(availableWidth * 0.82, math.max(
-        layout.cu(145), math.min(layout.cu(240), layout.vmin(75))))
-    local timeLayoutFactor = #timeText > 5 and 4.00 or 3.35
-    local timeLayoutWidth = math.min(infoWidth, math.max(
-        layout.cu(124), timeFont * timeLayoutFactor))
-    local progressWidthFactor = #timeText > 5 and 3.15 or 2.62
-    local progressWidth = math.min(infoWidth, math.max(
-        layout.cu(96), timeFont * progressWidthFactor))
+    local infoWidth
+    local actionWidth
+    if vertical then
+        infoWidth = availableWidth * 0.90
+        actionWidth = availableWidth * 0.88
+    else
+        local sharedWidth = availableWidth - majorGap
+        infoWidth = sharedWidth * 0.56
+        actionWidth = sharedWidth * 0.44
+    end
+    local statusFont = math.min(short * 0.055, infoWidth * 0.075)
+    actionFont = math.min(short * 0.065, actionWidth * 0.105)
+    local timeLayoutWidth = infoWidth
+    local progressWidth = infoWidth * 0.76
 
     local status = view.badge({
         key = "pomodoro.state",
@@ -537,7 +533,7 @@ local function buildView(context)
         },
     })
 
-    return view.column({
+    local content = {
         key = "pomodoro.surface",
         width = "fill",
         height = "fill",
@@ -554,7 +550,8 @@ local function buildView(context)
             label = l10n.tr("lua_widget.pomodoro.name"),
         },
         children = { overview, actions },
-    })
+    }
+    return vertical and view.column(content) or view.row(content)
 end
 
 local function event(_context, model, value)

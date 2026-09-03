@@ -322,10 +322,6 @@
     "columns": 2,
     "rows": 2
   },
-  "minSize": {
-    "columns": 2,
-    "rows": 2
-  },
   "resources": {},
   "permissions": [],
   "optionalPermissions": [

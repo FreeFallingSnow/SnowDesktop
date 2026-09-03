@@ -107,10 +107,12 @@ local function render()
     local weekdayStr = l10n.tr("lua_widget.digital_clock.weekday_format",
         weekDays[t.wday or 1])
 
-    local timeBaseSize = layout.fontCu(28)
-    local secondaryBaseSize = layout.fontCu(9)
-    local innerWidth = math.max(layout.cu(80), w - layout.cu(24))
-    local gap = math.max(layout.cu(2), math.floor(h * 0.015))
+    -- Base sizes only establish the typographic ratio. The fitted result is
+    -- derived entirely from the current surface dimensions.
+    local timeBaseSize = 28
+    local secondaryBaseSize = 9
+    local innerWidth = w * 0.88
+    local gap = h * 0.015
     local lines = {
         { text = timeStr, size = timeBaseSize },
     }
@@ -134,13 +136,12 @@ local function render()
         totalBaseHeight = totalBaseHeight + lines[i].probe.height
     end
 
-    local innerHeight = math.max(layout.cu(40), h - layout.cu(24))
+    local innerHeight = h * 0.88
     local widthScale = innerWidth / math.max(1, widest)
     local heightScale =
         (innerHeight - gap * math.max(0, #lines - 1)) /
         math.max(1, totalBaseHeight)
-    local scale = math.max(0.7, math.min(widthScale, heightScale)) *
-        clockScale
+    local scale = math.min(widthScale, heightScale) * clockScale
 
     for i = 1, #lines do
         lines[i].size = lines[i].size * scale
@@ -155,10 +156,10 @@ local function render()
     end
 
     local y = (h - blockH) * 0.5
-    local secondaryGap = math.max(layout.cu(1), math.floor(gap * 0.35))
+    local secondaryGap = gap * 0.35
     for i = 1, #lines do
         local line = lines[i]
-        local drawMaxW = math.max(1, line.metrics.width + 2)
+        local drawMaxW = line.metrics.width * 1.02
         draw.text((w - line.metrics.width) * 0.5, y, line.text,
             line.size, textColor, drawMaxW, true, false, 0, textOpacity)
         if i == 1 and #lines > 1 then

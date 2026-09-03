@@ -83,18 +83,12 @@ local function render()
     local cx = w / 2
     local cy = h / 2
     local size = math.min(w, h)
-    local minSpan = math.max(1, math.min(layout.columns(), layout.rows()))
-
-    local function scu(value)
-        return layout.cu(value * minSpan)
-    end
-
-    local r = size / 2 - scu(10)
-    if r < scu(24) then r = size / 2 - scu(5) end
+    local unit = size / 96
+    local r = size / 2 - unit * 10
     if r <= 0 then return end
 
-    local function su(value, minimum)
-        return math.max(minimum or 1, scu(value))
+    local function su(value)
+        return unit * value
     end
 
     local outerStroke = su(1.4)
@@ -104,8 +98,8 @@ local function render()
     local hourTickWidth = su(1.6)
     local quarterTickWidth = su(2.2)
     local minuteTickWidth = su(0.75)
-    local hourHandWidth = su(4.0, 2)
-    local minuteHandWidth = su(2.8, 2)
+    local hourHandWidth = su(4.0)
+    local minuteHandWidth = su(2.8)
     local secondHandWidth = su(1.1)
 
     local function point(angle, radius)
@@ -123,7 +117,7 @@ local function render()
         colors.shadow, 0.10)
     draw.circle(cx, cy, r + outerStroke, colors.outer, 0.95)
     draw.circle(cx, cy, r, colors.face, 1.0)
-    local innerR = math.max(su(8), r - su(5) - innerStroke)
+    local innerR = r - su(5) - innerStroke
     draw.circle(cx, cy, innerR + innerStroke, colors.innerStroke, 0.72)
     draw.circle(cx, cy, innerR, colors.innerFace, 1.0)
 
@@ -142,8 +136,8 @@ local function render()
     end
 
     if showNumbers then
-        local numberFont = math.max(8, layout.fontCu(10.5 * minSpan))
-        local numberRadius = math.max(su(14), r - su(16))
+        local numberFont = su(10.5)
+        local numberRadius = r - su(16)
         for hour = 1, 12 do
             local a = hour * math.pi / 6 - math.pi / 2
             local label = tostring(hour)
@@ -157,7 +151,7 @@ local function render()
     local ha = ((t.hour % 12) + t.min / 60) * math.pi / 6 - math.pi / 2
     local ma = (t.min + t.sec / 60) * math.pi / 30 - math.pi / 2
 
-    -- 指针和中心帽按跨格缩放单位计算，跨多格时比例保持一致。
+    -- 指针和中心帽随表盘短边线性缩放。
     hand(ha, r * 0.45, su(7), hourHandWidth + su(1.0),
         colors.handShadow, 0.45)
     hand(ma, r * 0.65, su(8), minuteHandWidth + su(0.8),

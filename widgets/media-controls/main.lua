@@ -211,7 +211,6 @@ local function render(_context, model)
         subtitle = l10n.tr("lua_widget.media_control.configure_launcher")
     end
 
-    local interactiveHeight = math.max(1, height)
     interaction.region({
         key = "media.surface",
         shape = {
@@ -219,7 +218,7 @@ local function render(_context, model)
             x = 0,
             y = 0,
             width = width,
-            height = interactiveHeight,
+            height = height,
         },
         events = {
             doubleClick = { id = "launcher.open" },
@@ -231,37 +230,91 @@ local function render(_context, model)
         },
     })
 
-    local buttonSize = layout.cu(40)
-    local buttonGap = layout.cu(12)
-    local total = buttonSize * 3 + buttonGap * 2
-    local buttonY = height - buttonSize - layout.cu(8)
-    local buttonX = (width - total) / 2
-
-    local textX = layout.cu(18)
+    local vertical = height > width * 1.05
+    local padding = math.min(width * 0.045, height * 0.075)
+    local contentWidth = width - padding * 2
+    local contentHeight = height - padding * 2
+    local artworkSize = 0
+    local contentGap = 0
     if artwork then
-        local artworkSize = math.min(layout.cu(52),
-            buttonY - layout.cu(16))
-        if artworkSize >= layout.cu(24) then
-            local artworkY = math.max(layout.cu(8),
-                (buttonY - artworkSize) / 2)
-            draw.imageFit(artwork.image, textX, artworkY,
-                artworkSize, artworkSize, "cover", "center", 1.0, "linear")
-            draw.strokeRect(textX, artworkY, artworkSize, artworkSize,
-                palette.btnText, layout.cu(5), layout.cu(1), 0.16)
-            textX = textX + artworkSize + layout.cu(12)
+        if vertical then
+            artworkSize = math.min(contentWidth * 0.62,
+                contentHeight * 0.45)
+        else
+            artworkSize = math.min(contentHeight * 0.72,
+                contentWidth * 0.38)
         end
+        contentGap = math.min(width * 0.035, height * 0.08)
     end
 
-    local titleY = subtitle ~= "" and height * 0.14 or height * 0.25
-    local textWidth = math.max(layout.cu(24),
-        width - textX - layout.cu(18))
-    draw.text(textX, titleY, title, layout.fontCu(15),
-        palette.title, textWidth, true, true)
-    if subtitle ~= "" then
-        draw.text(textX, titleY + layout.cu(22), subtitle,
-            layout.fontCu(12), palette.subtitle,
-            textWidth, true, true)
+    local detailsWidth = vertical and contentWidth or
+        contentWidth - artworkSize - contentGap
+    local buttonSize
+    local titleFont
+    if vertical then
+        buttonSize = math.min(contentWidth * 0.16,
+            contentHeight * 0.14)
+        titleFont = math.min(contentWidth * 0.075,
+            contentHeight * 0.06)
+    else
+        buttonSize = math.min(contentHeight * 0.30,
+            detailsWidth * 0.18)
+        titleFont = math.min(contentHeight * 0.15,
+            detailsWidth * 0.09)
     end
+    local subtitleFont = titleFont * 0.76
+    local buttonGap = buttonSize * 0.30
+    local buttonTotal = buttonSize * 3 + buttonGap * 2
+    local titleHeight = titleFont * 1.45
+    local subtitleHeight = subtitle ~= "" and subtitleFont * 1.45 or 0
+    local textGap = subtitle ~= "" and titleFont * 0.16 or 0
+    local controlGap = titleFont * 0.38
+    local detailsHeight = titleHeight + subtitleHeight + textGap +
+        controlGap + buttonSize
+
+    local artworkX
+    local artworkY
+    local textX
+    local detailsY
+    if vertical then
+        local groupHeight = artworkSize + contentGap + detailsHeight
+        local groupY = (height - groupHeight) * 0.5
+        artworkX = (width - artworkSize) * 0.5
+        artworkY = groupY
+        textX = padding
+        detailsY = groupY + artworkSize + contentGap
+    else
+        artworkX = padding
+        artworkY = (height - artworkSize) * 0.5
+        textX = padding + artworkSize + contentGap
+        detailsY = (height - detailsHeight) * 0.5
+    end
+
+    if artwork then
+        draw.imageFit(artwork.image, artworkX, artworkY,
+            artworkSize, artworkSize, "cover", "center", 1.0, "linear")
+        draw.strokeRect(artworkX, artworkY, artworkSize, artworkSize,
+            palette.btnText, artworkSize * 0.10, artworkSize * 0.012, 0.16)
+    end
+
+    local function drawLabel(text, y, font, color, bold)
+        local x = textX
+        if vertical then
+            local metrics = draw.measureText(text, font, detailsWidth, bold)
+            x = textX + (detailsWidth - metrics.width) * 0.5
+        end
+        draw.text(x, y, text, font, color, detailsWidth, bold, true)
+    end
+
+    drawLabel(title, detailsY, titleFont, palette.title, true)
+    if subtitle ~= "" then
+        drawLabel(subtitle, detailsY + titleHeight + textGap,
+            subtitleFont, palette.subtitle, false)
+    end
+
+    local buttonY = detailsY + titleHeight + subtitleHeight + textGap +
+        controlGap
+    local buttonX = textX + (detailsWidth - buttonTotal) * 0.5
 
     drawButton(model, "media.previous", "media.previous", "",
         l10n.tr("lua_widget.media_control.previous"),
