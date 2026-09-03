@@ -19,20 +19,25 @@ local settings = {
         { key = "maxItems",
             label = l10n.tr("lua_widget.rss_reader.max_items"),
             type = "int", default = 30, min = 10, max = 100 },
-        { key = "fontScale",
-            label = l10n.tr("lua_widget.rss_reader.article_font_scale"),
+        { key = "rowScale",
+            label = l10n.tr("lua_widget.rss_reader.article_row_scale"),
             type = "int", default = 100, min = 70, max = 160 },
     },
 }
 
 local function config()
-    local fontScale = tonumber(storage.get("fontScale"))
-    if fontScale then
-        fontScale = math.max(70, math.min(160, fontScale)) / 100
+    local rowScale = tonumber(storage.get("rowScale"))
+    if rowScale then
+        rowScale = math.max(70, math.min(160, rowScale)) / 100
     else
-        local legacy = math.max(10, math.min(24,
-            tonumber(storage.get("fontSize")) or 15))
-        fontScale = legacy / 15
+        local previousScale = tonumber(storage.get("fontScale"))
+        if previousScale then
+            rowScale = math.max(70, math.min(160, previousScale)) / 100
+        else
+            local legacy = math.max(10, math.min(24,
+                tonumber(storage.get("fontSize")) or 15))
+            rowScale = legacy / 15
+        end
     end
     return {
         url = storage.get("url") or DEFAULT_URL,
@@ -40,7 +45,7 @@ local function config()
             tonumber(storage.get("interval")) or 1800)),
         maxItems = math.max(10, math.min(100,
             tonumber(storage.get("maxItems")) or 30)),
-        fontScale = fontScale,
+        rowScale = rowScale,
     }
 end
 
@@ -195,10 +200,10 @@ local function render(context, model)
     local metrics = ui.metrics()
     local unit = metrics.strokeWidth
     local pad = metrics.spacingMd
-    local headerFont = metrics.titleFontSize * cfg.fontScale
-    local countFont = metrics.controlFontSize * cfg.fontScale
-    local bodyFont = metrics.bodyFontSize * cfg.fontScale
-    local smallFont = metrics.captionFontSize * cfg.fontScale
+    local headerFont = metrics.titleFontSize
+    local countFont = metrics.controlFontSize
+    local bodyFont = metrics.bodyFontSize * cfg.rowScale
+    local smallFont = metrics.captionFontSize * cfg.rowScale
     local title = model.feedTitle ~= "" and model.feedTitle or "RSS"
     widget.setTitle(model.feedTitle ~= "" and model.feedTitle or
         l10n.tr("lua_widget.rss_reader.name"))
@@ -268,9 +273,17 @@ local function render(context, model)
         return
     end
 
-    local itemHeight = math.max(metrics.layoutRowHeight * 1.35,
-        bodyFont + smallFont + metrics.spacingSm)
-    local itemGap = metrics.spacingXs
+    local rowPadding = metrics.spacingXs * cfg.rowScale
+    local rowTextGap = math.max(unit,
+        metrics.spacingXs * 0.5 * cfg.rowScale)
+    local bodyMetrics = draw.measureText("Ag", bodyFont, 0, false)
+    local smallMetrics = draw.measureText("Ag", smallFont, 0, false)
+    local itemHeight = math.max(
+        metrics.layoutRowHeight * 1.35 * cfg.rowScale,
+        rowPadding * 2 + bodyMetrics.height + rowTextGap +
+            smallMetrics.height)
+    local itemGap = math.max(unit,
+        metrics.spacingXs * math.min(cfg.rowScale, 1.25))
     local rowHeight = itemHeight + itemGap
     local scroll = interaction.scroll({
         key = "rss.scroll", shape = scrollViewport,
@@ -279,15 +292,21 @@ local function render(context, model)
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#model.articles,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
-    local numberWidth = math.max(bodyFont * 1.7, metrics.spacingLg)
-    local textX = pad + numberWidth + metrics.spacingSm
+    local numberMetrics = draw.measureText(tostring(#model.articles),
+        smallFont, 0, true)
+    local numberPadding = math.max(unit,
+        metrics.spacingXs * 0.5 * cfg.rowScale)
+    local numberWidth = numberMetrics.width + numberPadding * 2
+    local textX = pad + numberWidth +
+        math.max(unit, metrics.spacingXs * cfg.rowScale)
     local textWidth = math.max(unit, width - textX - pad)
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
     for index = first, last do
         local article = model.articles[index]
         local y = listTop + (index - 1) * rowHeight - scroll.offset
         local key = "rss.article." .. tostring(index)
-        if interaction.isHovered(key) then
+        local hovered = interaction.isHovered(key)
+        if hovered then
             draw.rect(pad, y, width - pad * 2,
                 itemHeight,
                 colors.card, metrics.controlRadius, 0.07)
@@ -300,20 +319,40 @@ local function render(context, model)
             contextMenu = { id = "rss.menu", value = article.link },
         }, article.title, article.link ~= "")
         local number = tostring(index)
-        local numberMetrics = draw.measureText(number,
+        local currentNumberMetrics = draw.measureText(number,
             smallFont, numberWidth, true)
-        draw.text(pad + math.max(0, (numberWidth - numberMetrics.width) / 2),
-            y + math.max(0, (itemHeight - numberMetrics.height) / 2),
+        draw.text(pad + math.max(0,
+                (numberWidth - currentNumberMetrics.width) / 2),
+            y + math.max(0,
+                (itemHeight - currentNumberMetrics.height) / 2),
             number, smallFont, colors.number,
             numberWidth, true, true)
-        draw.text(textX, y + metrics.spacingXs, article.title,
-            bodyFont, colors.title,
-            textWidth, false, true)
+        local titleY = y + rowPadding
+        if hovered then
+            draw.marqueeText({
+                key = key .. ".title",
+                x = textX,
+                y = titleY,
+                width = textWidth,
+                height = bodyMetrics.height,
+                text = article.title,
+                size = bodyFont,
+                color = colors.title,
+                speed = 24,
+                gap = math.max(metrics.spacingLg,
+                    metrics.spacingLg * cfg.rowScale),
+            })
+        else
+            draw.text(textX, titleY, article.title,
+                bodyFont, colors.title,
+                textWidth, false, true)
+        end
         local shortDate = article.displayDate or
             article.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or
             article.date:sub(1, 16)
         if shortDate == "" then shortDate = article.link:sub(1, 42) end
-        draw.text(textX, y + itemHeight - smallFont - metrics.spacingSm,
+        draw.text(textX,
+            y + itemHeight - rowPadding - smallMetrics.height,
             shortDate,
             smallFont, colors.date, textWidth, false, true)
         draw.line(textX, y + itemHeight - unit, width - pad,
