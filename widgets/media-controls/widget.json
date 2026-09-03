@@ -230,6 +230,6 @@
   "optionalFeatures": [
     "draw.imageFit.roundedClip",
     "task.app.launch",
-    "ui.semanticMetrics"
+    "ui.semanticMetrics.rowUnit"
   ]
 }

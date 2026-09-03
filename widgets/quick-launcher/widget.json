@@ -278,7 +278,6 @@
     "schedule.visibility",
     "task.desktop.search",
     "task.start",
-    "ui.semanticMetrics",
     "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": [

@@ -755,28 +755,10 @@ void LintSemanticUiMetricsFeature(LintReport& report,
         return declares(manifest.requiredFeatures, feature) ||
             declares(manifest.optionalFeatures, feature);
     };
-    if (!hasFeature("ui.semanticMetrics"))
+    if (!hasFeature("ui.semanticMetrics.rowUnit"))
         AddIssue(report, LintSeverity::Error,
             "feature.undeclared", path, tokens[*callIndex].line,
-            "ui.metrics requires manifest feature ui.semanticMetrics");
-
-    std::optional<std::size_t> rowUnitFieldIndex;
-    for (std::size_t index = 1; index < tokens.size(); ++index)
-    {
-        if (tokens[index].kind == TokenKind::Identifier &&
-                tokens[index].text == "layoutRowHeight" &&
-                IsSymbol(tokens[index - 1], "."))
-        {
-            rowUnitFieldIndex = index;
-            break;
-        }
-    }
-    if (rowUnitFieldIndex &&
-            !hasFeature("ui.semanticMetrics.rowUnit"))
-        AddIssue(report, LintSeverity::Error,
-            "feature.undeclared", path,
-            tokens[*rowUnitFieldIndex].line,
-            "layoutRowHeight requires manifest feature "
+            "ui.metrics requires manifest feature "
             "ui.semanticMetrics.rowUnit");
 }
 

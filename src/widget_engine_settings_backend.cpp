@@ -445,6 +445,7 @@ struct WidgetEngineSettingsBackend::PreviewState
 {
     WidgetSettingsBackendDescriptor descriptor;
     std::unordered_map<std::string, std::optional<std::string>> originals;
+    std::unordered_set<std::string> affectedKeys;
 };
 
 WidgetEngineSettingsBackend::WidgetEngineSettingsBackend(
@@ -906,6 +907,7 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
         return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound,
             "widgetNotFound");
     const LuaWidget& widget = engine_.widgets_[index];
+    const std::wstring widgetId = widget.widgetId;
     if (!widget_settings_backend_detail::MutationIdentityMatches(
             descriptor, guard, widget.widgetId, widget.packageId,
             widget.runtimeToken))
@@ -1128,6 +1130,7 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "storageQuotaExceeded", std::move(error));
     if (!transaction.Changed()) return Success(false);
+    std::vector<std::string> affectedKeys(keys.begin(), keys.end());
     auto candidate = transaction.TakeCandidate();
     if (!persist)
     {
@@ -1151,8 +1154,10 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
                 continue;
             preview_->originals.try_emplace(key, std::nullopt);
         }
+        preview_->affectedKeys.insert(keys.begin(), keys.end());
         storage.swap(candidate);
-        engine_.RuntimeInvalidateHost(widget.widgetId);
+        engine_.RuntimeNotifySettingsChanged(widgetId, affectedKeys, true);
+        engine_.RuntimeInvalidateHost(widgetId);
         return Success();
     }
 
@@ -1164,7 +1169,9 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
             WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
     }
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    engine_.RuntimeNotifySettingsChanged(
+        widgetId, std::move(affectedKeys), false);
+    engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1218,7 +1225,11 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::RevertPreview(
         preview_->descriptor.generation != descriptor.generation)
         return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
             "stalePreview");
+    std::vector<std::string> affectedKeys(
+        preview_->affectedKeys.begin(), preview_->affectedKeys.end());
     RestorePreviewNoexcept();
+    engine_.RuntimeNotifySettingsChanged(
+        widget.widgetId, std::move(affectedKeys), false);
     return Success();
 }
 

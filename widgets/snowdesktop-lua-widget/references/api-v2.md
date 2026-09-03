@@ -139,7 +139,7 @@ reason)`。没有 `setup` 时 model 为
 VM。
 
 event 覆盖宿主 surface 级事件：`visibility`、`resize`、`timer`、
-`schedule`、`action`、`selection`、`environment`、`panel`、`dialog`、`popover`、
+`schedule`、`action`、`selection`、`environment`、`settings.changed`、`panel`、`dialog`、`popover`、
 `data.change` 和
 `task.complete`。
 使用 `render`/即时绘制的 surface 还会收到原始 `pointer` 生命周期事件，其中包含
@@ -154,6 +154,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 宿主滚动消费 wheel 时仍先更新滚动偏移并投递对应节点动作，动作不能取消滚动。
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
+声明 `settings.changeEvent` 后，宿主设置事务改变组件 storage 时会发送
+`settings.changed`。`keys` 是经过排序和去重的受影响键数组；`preview=true` 表示设置页
+正在应用尚未提交的实时预览。组件应在该事件中调整订阅和描述符级视觉参数，不要在
+`render` 或 `view` 热路径中创建订阅或修改描述符。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
 宿主在菜单打开时冻结该次 `ui.menu(...)` 描述；同一组件运行时内的普通重绘不会使已打开菜单的
@@ -178,10 +182,12 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   将设计坐标线性缩放到当前内容短边；
 - `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
   的标准内容宽、高缩放设计坐标；
-- `ui.semanticMetrics`：`ui.metrics()` 返回以页面 CU 解析的语义控件度量；
-- `ui.semanticMetrics.rowUnit`：新增 `layoutRowHeight`，表示输入框、普通按钮或单行条目的
-  可见内容高度，不包含外边距和行间距；字体、间距、图标和控件高度均由同一行高派生，
-  一至两行使用页面基准，更高组件只随纵向跨度缓慢增长，横向跨度不影响；
+- `ui.semanticMetrics.rowUnit`：`ui.metrics()` 仅返回
+  `layoutRowHeight`，表示输入框、普通按钮或单行条目的可见内容高度，不包含外边距和行间距；
+  组件按固定比例自行派生字体、间距、图标和描边，一至两行使用页面基准，更高组件只随
+  纵向跨度缓慢增长，横向跨度不影响；
+- `settings.changeEvent`：设置事务写入组件 storage 后发送结构化
+  `settings.changed` 生命周期事件；
 - `draw.imageFit.roundedClip`：允许即时绘制的 `draw.imageFit` 通过可选
   `cornerRadius` 对目标矩形执行抗锯齿圆角裁切；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
@@ -202,7 +208,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   backdrop、宿主材质色调、组件背景层、亚克力噪点/外轮廓、前景 `view`/`render` 和最终
   边缘高光。组件背景不会被主题色调再次覆盖；其透明像素仍会露出主题材质。`opacity` 默认为 1，
   范围为 0–1；`blurRadius` 显式范围为 0–48，省略时在玻璃开启时继承宿主半径，关闭玻璃时
-  为 0。
+  为 0。宿主在背景回调完成后读取这两个合成字段，因此 `settings.changed` 处理期间更新描述符
+  会作用于紧随其后的当前绘制帧。
   `panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`
@@ -1496,24 +1503,17 @@ end
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
 
-探测 `ui.semanticMetrics` 后，`ui.metrics()` 返回当前页面和辅助功能环境下的
-宿主语义度量。探测 `ui.semanticMetrics.rowUnit` 后还会返回 `layoutRowHeight`；它表示
-搜索框、普通输入、按钮或单行条目的可见内容高度，不包含组件外边距和行间距。
-`titleAreaHeight` 保留旧版外层带高度语义，仅用于源码兼容。其余字段包含
-`spacingXs/spacingSm/spacingMd/spacingLg`、
-`captionFontSize/bodyFontSize/titleFontSize/controlFontSize`、
-`compactControlHeight/controlHeight`、`compactRowHeight/rowHeight`、
-`smallIconSize/iconSize/largeIconSize`、`controlRadius/strokeWidth`。宿主在
-“外观 > 组件与布局”中以页面 `cu` 保存一个 Lua 组件行高；运行时按纵向跨度缓慢
-解析为 `layoutRowHeight`，并由它派生字体、间距、图标和控件高度。运行时用页面 CU
-缩放几何，字体及需要容纳字体的控件还会响应 Windows 文本缩放。一至两行组件使用
-页面基准，更高组件的行高缓慢增长。同一纵向跨度的组件获得相同行高，横向跨度不会
-改变这些纵向度量。搜索框、普通输入、导航按钮和单行条目使用
-`1x layoutRowHeight` 作为可见内容高度；组件再用 `spacingXs/spacingSm` 单独添加外边距和
-行间距。多行列表项使用行高的明确倍数或组合已经随行高解析的正文字号和间距；月历
-网格和空状态继续按剩余内容矩形排布。
-`compactRowHeight/rowHeight` 仅为源码兼容保留；新组件不应再对语义字段应用第二次
-`rpxY` 缩放，宽度也不得决定纵向控件或行高。组件字体设置应作为相应字号的百分比乘数。
+探测 `ui.semanticMetrics.rowUnit` 后，`ui.metrics()` 仅返回
+`layoutRowHeight`。它表示搜索框、普通输入、按钮或单行条目的可见内容高度，不包含组件
+外边距和行间距。宿主在“外观 > 组件与布局”中以页面 `cu` 保存 Lua 组件行高；运行时
+结合页面 CU、纵向跨度和 Windows 文本缩放解析该值。一至两行组件使用页面基准，更高
+组件的行高缓慢增长；同一纵向跨度的组件获得相同行高，横向跨度不会改变它。
+
+组件以 `layoutRowHeight / 28` 作为自己的统一比例，自行派生字体、间距、图标、圆角和
+描边。例如普通正文可用 `row * 12 / 28`，辅助文字可用 `row * 10 / 28`。搜索框、普通
+输入、导航按钮和单行条目使用 `1x layoutRowHeight`，外边距和行间距由组件另行添加；
+多行列表项使用行高的明确倍数，月历网格和空状态继续按剩余内容矩形排布。不要再对
+该值应用 `rpxY`，宽度也不得决定纵向控件或行高。组件字体设置作为派生字号的百分比乘数。
 
 - v2 不暴露旧 `widget.editText(...)`；文本编辑统一使用声明式输入节点或
   `control.textInput/textArea`。
@@ -2389,10 +2389,10 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 `layout.cu(value)` 和 `layout.fontCu(value)` 只应用于组件自己定义、且明确要和宿主
 网格指标对齐的内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、
 启动器和便签的桌面主表面中，搜索框、输入框、普通按钮和单行条目的可见内容高度使用
-`ui.metrics().layoutRowHeight`，外边距和行间距由组件通过 `spacingXs/spacingSm` 单独
-组合。多行列表项可使用 `layoutRowHeight` 的明确倍数，月历网格则按扣除顶部内容行与
-组件自定间距后的剩余矩形分配。语义字段已经随纵向跨度
-缓慢增长，不要再次乘 `rpxY`。组件特有几何仍可使用 `rpxX/rpxY` 或百分比单位，
+`ui.metrics().layoutRowHeight`，外边距和行间距由组件按该行高的固定比例自行组合。
+多行列表项可使用 `layoutRowHeight` 的明确倍数，月历网格则按扣除顶部内容行与组件自定
+间距后的剩余矩形分配。行高已经随纵向跨度缓慢增长，不要再次乘 `rpxY`。组件特有几何
+仍可使用 `rpxX/rpxY` 或百分比单位，
 但任何纵向控件或正文行高都不应由宽度决定。
 
 ### `storage`

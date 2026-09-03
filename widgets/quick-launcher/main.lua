@@ -3,6 +3,25 @@ local descriptor
 local desktopChanges
 local appIndexStatus
 
+local function componentMetrics()
+    local row = ui.metrics().layoutRowHeight
+    local scale = row / 28
+    return {
+        layoutRowHeight = row,
+        spacingXs = 4 * scale,
+        spacingSm = 8 * scale,
+        spacingMd = 12 * scale,
+        spacingLg = 16 * scale,
+        captionFontSize = 10 * scale,
+        bodyFontSize = 12 * scale,
+        titleFontSize = 14 * scale,
+        controlFontSize = 12 * scale,
+        iconSize = 16 * scale,
+        controlRadius = 8 * scale,
+        strokeWidth = scale,
+    }
+end
+
 local fluent = {
     edit = utf8.char(0xF3DD),
     open = utf8.char(0xF582),
@@ -237,7 +256,7 @@ local function render(context, model)
     local colors = palette(context)
     local width = layout.contentWidth()
     local height = layout.contentHeight()
-    local metrics = ui.metrics()
+    local metrics = componentMetrics()
     local unit = metrics.strokeWidth
     local scale = fontScale()
     local fontSize = metrics.bodyFontSize * scale

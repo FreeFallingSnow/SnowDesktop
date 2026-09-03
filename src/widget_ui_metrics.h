@@ -28,25 +28,6 @@ inline SemanticUiMetricTokens NormalizeSemanticUiMetricTokens(
 struct SemanticUiMetrics
 {
     float layoutRowHeight = 28.0f;
-    // Compatibility metric preserving the older outer-band height.
-    float titleAreaHeight = 40.0f;
-    float spacingXs = 4.0f;
-    float spacingSm = 8.0f;
-    float spacingMd = 12.0f;
-    float spacingLg = 16.0f;
-    float captionFontSize = 10.0f;
-    float bodyFontSize = 12.0f;
-    float titleFontSize = 14.0f;
-    float controlFontSize = 12.0f;
-    float compactControlHeight = 28.0f;
-    float controlHeight = 28.0f;
-    float compactRowHeight = 32.0f;
-    float rowHeight = 40.0f;
-    float smallIconSize = 12.0f;
-    float iconSize = 16.0f;
-    float largeIconSize = 20.0f;
-    float controlRadius = 8.0f;
-    float strokeWidth = 1.0f;
 };
 
 inline float ResolveSemanticRowScale(int gridRows) noexcept
@@ -68,39 +49,10 @@ inline SemanticUiMetrics ResolveSemanticUiMetrics(
     const float accessibilityScale = std::clamp(textScale, 0.5f, 5.0f);
     const float normalizedRowScale = std::isfinite(rowScale)
         ? std::max(1.0f, rowScale) : 1.0f;
-    const float resolvedRowHeight = tokens.rowHeight * normalizedRowScale;
-    const float metricScale = resolvedRowHeight / 28.0f;
-    const float semanticGeometryScale = geometryScale * metricScale;
-    const float typographyScale = semanticGeometryScale * accessibilityScale;
 
     SemanticUiMetrics result;
-    result.spacingXs = 4.0f * semanticGeometryScale;
-    result.spacingSm = 8.0f * semanticGeometryScale;
-    result.spacingMd = 12.0f * semanticGeometryScale;
-    result.spacingLg = 16.0f * semanticGeometryScale;
-    result.captionFontSize = 10.0f * typographyScale;
-    result.bodyFontSize = 12.0f * typographyScale;
-    result.titleFontSize = 14.0f * typographyScale;
-    result.controlFontSize = 12.0f * typographyScale;
-    result.layoutRowHeight = std::max(
-        resolvedRowHeight * geometryScale,
-        result.controlFontSize + result.spacingXs * 2.0f);
-    result.titleAreaHeight = result.layoutRowHeight + result.spacingMd;
-    result.compactControlHeight = result.layoutRowHeight;
-    result.controlHeight = result.layoutRowHeight;
-    // Retained for source compatibility. Content rows should normally derive
-    // their intrinsic size from text and their component-specific layout.
-    result.compactRowHeight = std::max(
-        32.0f * semanticGeometryScale,
-        result.bodyFontSize + 16.0f * semanticGeometryScale);
-    result.rowHeight = std::max(
-        40.0f * semanticGeometryScale,
-        result.bodyFontSize + 20.0f * semanticGeometryScale);
-    result.smallIconSize = 12.0f * semanticGeometryScale;
-    result.iconSize = 16.0f * semanticGeometryScale;
-    result.largeIconSize = 20.0f * semanticGeometryScale;
-    result.controlRadius = 8.0f * semanticGeometryScale;
-    result.strokeWidth = 1.0f * semanticGeometryScale;
+    result.layoutRowHeight = tokens.rowHeight * geometryScale *
+        normalizedRowScale * accessibilityScale;
     return result;
 }
 

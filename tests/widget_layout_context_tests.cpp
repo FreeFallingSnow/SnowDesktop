@@ -97,10 +97,15 @@ void TestReferencePixelsUseTheManifestDefaultShortEdge()
         "a 3 by 2 default span uses its 240 pixel reference short edge");
     Expect(ReferenceSpanShortEdge(2, 2) == 192.0f,
         "a 2 by 2 default span uses its 192 pixel reference short edge");
-    Expect(ScaleReferencePixel(16.0f, 584.0f, 480.0f, 3, 2) == 32.0f,
+    Expect(ScaleReferencePixel(16.0f, 584.0f, 480.0f,
+            292.0f, 240.0f) == 32.0f,
         "reference pixels scale linearly from the current short edge");
-    Expect(ScaleReferencePixel(16.0f, 292.0f, 240.0f, 3, 2) == 16.0f,
+    Expect(ScaleReferencePixel(16.0f, 292.0f, 240.0f,
+            292.0f, 240.0f) == 16.0f,
         "reference pixels are identity-sized at the canonical default span");
+    Expect(ScaleReferencePixel(16.0f, 192.0f, 92.0f,
+            192.0f, 92.0f) == 16.0f,
+        "reference pixels remain identity-sized after host chrome is removed");
     Expect(ScaleReferenceAxis(16.0f, 584.0f, 292.0f) == 32.0f &&
             ScaleReferenceAxis(16.0f, 360.0f, 240.0f) == 24.0f,
         "reference axes scale independently from width and height");
@@ -112,51 +117,29 @@ void TestSemanticUiMetricsUseRowHeightAndPageCu()
     using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
     using snowdesktop::widget_runtime::ResolveSemanticRowScale;
     const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
-    Expect(standard.layoutRowHeight == 28.0f &&
-            standard.titleAreaHeight == 40.0f &&
-            standard.bodyFontSize == 12.0f &&
-            standard.controlHeight == 28.0f &&
-            standard.compactControlHeight == 28.0f &&
-            standard.rowHeight == 40.0f,
-        "semantic UI metrics expose shared page-CU defaults");
+    Expect(standard.layoutRowHeight == 28.0f,
+        "semantic UI metrics expose the shared page-CU row height");
     const auto denserPage = ResolveSemanticUiMetrics(0.75f, 1.0f);
-    Expect(denserPage.layoutRowHeight == 21.0f &&
-            denserPage.titleAreaHeight == 30.0f &&
-            denserPage.bodyFontSize == 9.0f &&
-            denserPage.controlHeight == 21.0f &&
-            denserPage.spacingSm == 6.0f,
-        "semantic UI metrics follow the stable page CU scale");
+    Expect(denserPage.layoutRowHeight == 21.0f,
+        "the semantic row height follows the stable page CU scale");
     SemanticUiMetricTokens custom;
     custom.rowHeight = 35.0f;
     const auto customized = ResolveSemanticUiMetrics(custom, 1.0f, 1.0f);
-    Expect(customized.layoutRowHeight == 35.0f &&
-            customized.titleAreaHeight == 50.0f &&
-            customized.bodyFontSize == 15.0f &&
-            customized.spacingSm == 10.0f &&
-            customized.controlHeight == 35.0f &&
-            customized.rowHeight == 50.0f,
-        "row height drives all linked semantic metrics");
+    Expect(customized.layoutRowHeight == 35.0f,
+        "the configured row height is exposed without unrelated metrics");
     const float mediumScale = ResolveSemanticRowScale(3);
     const auto medium = ResolveSemanticUiMetrics(1.0f, 1.0f, mediumScale);
     const float tallScale = ResolveSemanticRowScale(8);
     const auto tall = ResolveSemanticUiMetrics(1.0f, 1.0f, tallScale);
     Expect(ResolveSemanticRowScale(1) == 1.0f &&
             ResolveSemanticRowScale(2) == 1.0f &&
-            std::abs(medium.layoutRowHeight -
-                28.0f * std::sqrt(1.5f)) < 0.001f &&
-            std::abs(medium.bodyFontSize -
-                12.0f * mediumScale) < 0.001f &&
-            tallScale == 2.0f && tall.layoutRowHeight == 56.0f &&
-            tall.titleAreaHeight == 80.0f &&
-            tall.bodyFontSize == 24.0f &&
-            tall.controlHeight == 56.0f,
-        "row units scale all semantic metrics without using width");
+             std::abs(medium.layoutRowHeight -
+                 28.0f * std::sqrt(1.5f)) < 0.001f &&
+             tallScale == 2.0f && tall.layoutRowHeight == 56.0f,
+        "row units scale from vertical span without using width");
     const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
-    Expect(largeText.bodyFontSize == 24.0f &&
-            largeText.layoutRowHeight == 32.0f &&
-            largeText.controlHeight == 32.0f &&
-            largeText.rowHeight == 44.0f,
-        "semantic controls expand only when accessibility text needs room");
+    Expect(largeText.layoutRowHeight == 56.0f,
+        "the single semantic scale includes accessibility text scaling");
 }
 
 void TestLegacyPointSizesMigrateToCuOnce()

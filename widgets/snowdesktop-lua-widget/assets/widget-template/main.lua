@@ -5,11 +5,12 @@ local function buildView(context, _model)
     local width = context.layoutSize.width
     local height = context.layoutSize.height
     local vertical = height > width * 1.05
-    local metrics = ui.metrics()
-    local padding = metrics.spacingMd
-    local gap = metrics.spacingSm
-    local labelFont = metrics.captionFontSize
-    local messageFont = metrics.bodyFontSize
+    local row = ui.metrics().layoutRowHeight
+    local scale = row / 28
+    local padding = 12 * scale
+    local gap = 8 * scale
+    local labelFont = 10 * scale
+    local messageFont = 12 * scale
     local contentWidth = width - padding * 2
     local labelWidth = vertical and "fill" or contentWidth * 0.30
 

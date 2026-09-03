@@ -8639,27 +8639,8 @@ static int lua_UiMetrics(lua_State* L)
             snowdesktop::widget_runtime::ResolveSemanticRowScale(
                 d2d ? d2d->gridRows : 2));
 
-    lua_createtable(L, 0, 19);
+    lua_createtable(L, 0, 1);
     SetNumberField(L, "layoutRowHeight", metrics.layoutRowHeight);
-    SetNumberField(L, "titleAreaHeight", metrics.titleAreaHeight);
-    SetNumberField(L, "spacingXs", metrics.spacingXs);
-    SetNumberField(L, "spacingSm", metrics.spacingSm);
-    SetNumberField(L, "spacingMd", metrics.spacingMd);
-    SetNumberField(L, "spacingLg", metrics.spacingLg);
-    SetNumberField(L, "captionFontSize", metrics.captionFontSize);
-    SetNumberField(L, "bodyFontSize", metrics.bodyFontSize);
-    SetNumberField(L, "titleFontSize", metrics.titleFontSize);
-    SetNumberField(L, "controlFontSize", metrics.controlFontSize);
-    SetNumberField(L, "compactControlHeight",
-        metrics.compactControlHeight);
-    SetNumberField(L, "controlHeight", metrics.controlHeight);
-    SetNumberField(L, "compactRowHeight", metrics.compactRowHeight);
-    SetNumberField(L, "rowHeight", metrics.rowHeight);
-    SetNumberField(L, "smallIconSize", metrics.smallIconSize);
-    SetNumberField(L, "iconSize", metrics.iconSize);
-    SetNumberField(L, "largeIconSize", metrics.largeIconSize);
-    SetNumberField(L, "controlRadius", metrics.controlRadius);
-    SetNumberField(L, "strokeWidth", metrics.strokeWidth);
     return 1;
 }
 
@@ -18820,9 +18801,9 @@ static std::vector<LuaWidget::HostControl> BuildViewHostControls(
     return result;
 }
 
-static bool WidgetDeclaresNativeMarquee(const LuaWidget& widget)
+static bool WidgetDeclaresFeature(
+    const LuaWidget& widget, std::string_view feature)
 {
-    constexpr std::string_view feature = "draw.marqueeText";
     const auto contains = [feature](const std::vector<std::string>& values) {
         return std::any_of(values.begin(), values.end(),
             [feature](const std::string& value) {
@@ -18831,6 +18812,11 @@ static bool WidgetDeclaresNativeMarquee(const LuaWidget& widget)
     };
     return contains(widget.manifest.requiredFeatures) ||
         contains(widget.manifest.optionalFeatures);
+}
+
+static bool WidgetDeclaresNativeMarquee(const LuaWidget& widget)
+{
+    return WidgetDeclaresFeature(widget, "draw.marqueeText");
 }
 
 static bool HasActiveNativeMarquee(
@@ -24053,6 +24039,35 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
     }
     if (invalidateCallback_)
         invalidateCallback_(widgetId, dirtyRect, surface);
+}
+
+void WidgetEngine::RuntimeNotifySettingsChanged(
+    const std::wstring& widgetId, std::vector<std::string> keys,
+    bool preview)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0 ||
+        !WidgetDeclaresFeature(widgets_[index], "settings.changeEvent"))
+        return;
+    keys.erase(std::remove_if(keys.begin(), keys.end(),
+        [](const std::string& key) { return key.empty(); }), keys.end());
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    if (keys.size() > 64) keys.resize(64);
+    (void)InvokeLifecycleEvent(widgets_[index], "settings.changed",
+        [keys = std::move(keys), preview](lua_State* eventState) {
+            lua_createtable(eventState, static_cast<int>(keys.size()), 0);
+            for (std::size_t index = 0; index < keys.size(); ++index)
+            {
+                lua_pushlstring(eventState,
+                    keys[index].data(), keys[index].size());
+                lua_rawseti(eventState, -2,
+                    static_cast<lua_Integer>(index + 1));
+            }
+            lua_setfield(eventState, -2, "keys");
+            lua_pushboolean(eventState, preview ? 1 : 0);
+            lua_setfield(eventState, -2, "preview");
+        });
 }
 
 bool WidgetEngine::RuntimeSubmitNativeMarquee(
@@ -32246,8 +32261,9 @@ static int lua_LayoutRpx(lua_State* L)
         static_cast<float>(value),
         CurrentLayoutContentWidth(state),
         CurrentLayoutContentHeight(state),
-        ReadPositiveRegistryInteger(L, "__widget_default_columns"),
-        ReadPositiveRegistryInteger(L, "__widget_default_rows"));
+        snowdesktop::widget_runtime::ReferenceSpanWidth(
+            ReadPositiveRegistryInteger(L, "__widget_default_columns")),
+        ReferenceAxisContentHeight(L, state));
     lua_pushnumber(L, scaled);
     return 1;
 }

@@ -35,12 +35,13 @@ inline float ReferenceSpanShortEdge(int columns, int rows) noexcept
 }
 
 inline float ScaleReferencePixel(float value, float contentWidth,
-    float contentHeight, int defaultColumns, int defaultRows) noexcept
+    float contentHeight, float referenceContentWidth,
+    float referenceContentHeight) noexcept
 {
     const float currentShortEdge = std::max(0.0f,
         std::min(contentWidth, contentHeight));
-    const float referenceShortEdge = ReferenceSpanShortEdge(
-        defaultColumns, defaultRows);
+    const float referenceShortEdge = std::max(1.0f,
+        std::min(referenceContentWidth, referenceContentHeight));
     return value * currentShortEdge / referenceShortEdge;
 }
 

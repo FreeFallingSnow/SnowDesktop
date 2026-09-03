@@ -153,12 +153,12 @@ different state:
    Center the complete group of currently visible parts. Agendas, calendars,
    lists, search and RSS should use `ui.metrics().layoutRowHeight` as a shared
    content-height unit. Search fields, inputs, ordinary buttons and single-line
-   items use `1x`; exterior insets and inter-row gaps are separate component
-   choices using the returned spacing metrics. Multi-line body items use
-   intentional multiples or the returned body-font and spacing metrics. Compare
+   items use `1x`; exterior insets, inter-row gaps, fonts, icons and strokes are
+   separate component choices derived as stable proportions of that row height.
+   Multi-line body items use intentional multiples. Compare
    components with the same row span to confirm equal row units, and verify
    that changing only width does not resize them. Taller spans grow the unit
-   and all derived semantic metrics slowly. Do not apply a second `rpxY` scale
+   slowly. Do not apply a second `rpxY` scale
    to those values, and never let width determine vertical controls or rows.
    Reserve grid-density
    checks for components that explicitly align

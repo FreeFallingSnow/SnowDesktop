@@ -212,7 +212,6 @@
     "lifecycle.model",
     "l10n.basic",
     "layout.relativeUnits",
-    "ui.semanticMetrics",
     "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": []

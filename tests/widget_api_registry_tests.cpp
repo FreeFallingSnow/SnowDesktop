@@ -383,9 +383,11 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "layout.relativeUnits") &&
             snowdesktop::widget_api::SupportsFeature(
+                "ui.semanticMetrics.rowUnit") &&
+            !snowdesktop::widget_api::SupportsFeature(
                 "ui.semanticMetrics") &&
             snowdesktop::widget_api::SupportsFeature(
-                "ui.semanticMetrics.rowUnit") &&
+                "settings.changeEvent") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
             snowdesktop::widget_api::SupportsFeature(

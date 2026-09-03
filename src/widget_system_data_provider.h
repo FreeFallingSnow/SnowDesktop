@@ -302,10 +302,25 @@ struct WidgetMediaArtworkDataSnapshot
     std::string error;
 };
 
+struct WidgetMediaArtworkTransitionState
+{
+    std::uint64_t pendingIdentity = 0;
+    std::string previousResourceToken;
+    std::int64_t startedAtMs = 0;
+
+    void Reset() noexcept
+    {
+        pendingIdentity = 0;
+        previousResourceToken.clear();
+        startedAtMs = 0;
+    }
+};
+
 WidgetMediaArtworkDataSnapshot StabilizeMediaArtworkDataEnvelope(
     WidgetMediaArtworkDataSnapshot snapshot,
     const std::optional<WidgetMediaArtworkDataSnapshot>& previous,
-    WidgetDataSemanticDebouncer& debouncer);
+    WidgetDataSemanticDebouncer& debouncer,
+    WidgetMediaArtworkTransitionState& transition);
 
 struct WidgetMediaSessionsDataSnapshot
 {
@@ -450,6 +465,7 @@ private:
     std::optional<WidgetMediaCurrentDataSnapshot> mediaCurrent_;
     std::optional<WidgetMediaTimelineDataSnapshot> mediaTimeline_;
     std::optional<WidgetMediaArtworkDataSnapshot> mediaArtwork_;
+    WidgetMediaArtworkTransitionState mediaArtworkTransition_;
     std::uint64_t configurationGeneration_ = 0;
     std::jthread worker_;
     std::atomic<bool> resetCpuBaseline_{ true };

@@ -2,6 +2,25 @@
 local descriptor
 local noteTheme = module.require("modules/theme.lua")
 
+local function componentMetrics()
+    local row = ui.metrics().layoutRowHeight
+    local scale = row / 28
+    return {
+        layoutRowHeight = row,
+        spacingXs = 4 * scale,
+        spacingSm = 8 * scale,
+        spacingMd = 12 * scale,
+        spacingLg = 16 * scale,
+        captionFontSize = 10 * scale,
+        bodyFontSize = 12 * scale,
+        titleFontSize = 14 * scale,
+        controlFontSize = 12 * scale,
+        iconSize = 16 * scale,
+        controlRadius = 8 * scale,
+        strokeWidth = scale,
+    }
+end
+
 local fluent = {
     clear = utf8.char(0xE5E4),
     style = utf8.char(0xF592),
@@ -159,7 +178,7 @@ local function render()
     loadStyle()
     local width = layout.contentWidth()
     local height = layout.contentHeight()
-    local metrics = ui.metrics()
+    local metrics = componentMetrics()
     local padding = metrics.spacingMd
     local shape = {
         type = "rect",

@@ -110,18 +110,17 @@ Choose the sizing model before writing geometry:
   tools.** Use `ui.metrics().layoutRowHeight` as the shared semantic row unit.
   It is the visible content height of a search field, input, ordinary button or
   single-line item; exterior insets and gaps are not included. Use `1x` for
-  those controls and items, then add `spacingXs` or `spacingSm` separately when
-  the component needs space between rows. Multi-line body items choose an
-  explicit multiple of the same row unit or combine the returned body font and
-  spacing values. The host keeps the row unit at the page baseline
+  those controls and items. Derive component-owned fonts, spacing, icons,
+  radii and strokes as stable proportions of that row height, then add the
+  derived gaps separately. Multi-line body items use an explicit multiple of
+  the same row unit. The host keeps the row unit at the page baseline
   for one- and two-row widgets, then grows it slowly with vertical span. All
-  derived semantic metrics grow with it. Horizontal span never changes them,
+  component-derived metrics grow with it. Horizontal span never changes them,
   so components with the same row span stay aligned. Use `layout.rpxX()` and
   `layout.rpxY()` only for component-specific axis geometry, and never derive
-  vertical controls or rows from width. `titleAreaHeight` preserves the older
-  outer-band metric for source compatibility; new packages should require
-  `ui.semanticMetrics.rowUnit` and use
-  `layoutRowHeight`. Use `layout.rpx()` or `vmin` for isotropic decoration.
+  vertical controls or rows from width. Require `ui.semanticMetrics.rowUnit`
+  and use `layoutRowHeight`. Use `layout.rpx()` or `vmin` for isotropic
+  decoration.
 - **Grid-density model — only for content that explicitly aligns to host grid
   metrics.** Use `layout.cu()` and `layout.fontCu()` for a system-status card
   matrix or another component whose information units intentionally track the
@@ -139,13 +138,13 @@ Constants used only as ratios are fine. Output clamps such as
 `math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
 make two equal-aspect surfaces render differently and should be avoided.
 
-Use `ui.metrics().bodyFontSize` and `captionFontSize` for ordinary information
-typography, and `titleFontSize/controlFontSize` within a heading row. A
-component font-size preference should be a percentage multiplier over those
-resolved values. These values already follow `layoutRowHeight`; do not apply a
-second span scale. Reserve span-relative text for primary visual data such as a
-clock, timer or single metric. `compactRowHeight` and `rowHeight` remain for
-source compatibility; use `layoutRowHeight` when defining new row multiples.
+Use `ui.metrics().layoutRowHeight` as the only host-owned visual scale. Derive
+ordinary body text, for example, as `row * 12 / 28`, captions as
+`row * 10 / 28`, and component spacing from the same ratio. A component font
+preference is a percentage multiplier over the derived font. The row already
+includes page and accessibility scaling; do not apply a second span scale.
+Reserve span-relative text for primary visual data such as a clock, timer or
+single metric.
 
 ## Create a package
 
@@ -179,6 +178,12 @@ source compatibility; use `layoutRowHeight` when defining new row multiples.
 8. Use `state` for VM-lifetime JSON-like values and `storage` for persistent
    values. Write persistent state only when it changes and never from a render
    or view callback.
+9. When a setting changes an active subscription or a descriptor-level visual
+   such as `backgroundLayer.blurRadius`, require `settings.changeEvent` and
+   reconcile it from `event.kind == "settings.changed"`. The event supplies
+   sorted affected `keys` and whether the value is an uncommitted live preview.
+   Keep render and view callbacks free of subscription creation or descriptor
+   mutation.
 
 ## Surface ownership and theme contract
 
@@ -284,6 +289,10 @@ queries, write storage or rebuild invariant data on every frame.
 - `id` is an immutable UUID; `version` is SemVer; `dataVersion` is positive.
 - `name` and `description` are English fallbacks. Localized metadata uses
   `nameKey`, `descriptionKey` and manifest `locales`.
+- `previewData.variants` may offer up to four user-visible starting sizes in
+  the add-component preview. Its `storage` remains isolated preview data and
+  is never copied into a new instance, so do not use it to imply a persistent
+  mode or setting that the added component will not receive.
 - Keep explicit default, preview and finite boundary dimensions from 1 through
   8. Omit `minSize` to use the host's 1 × 1 default. Omit `maxSize`, or use a
   schema-permitted maximum dimension of `0`, when the widget has no functional

@@ -1397,6 +1397,9 @@ public:
     void RuntimeInvalidateHost(const std::wstring& widgetId = {},
         std::optional<RECT> dirtyRect = std::nullopt,
         std::string_view surface = {});
+    /** Notify a component that host-owned settings storage has changed. */
+    void RuntimeNotifySettingsChanged(const std::wstring& widgetId,
+        std::vector<std::string> keys, bool preview);
     bool RuntimeSubmitNativeMarquee(const std::wstring& widgetId,
         LuaWidget::NativeMarqueeText marquee, std::string& error);
     bool RuntimeSubmitInteractionRegion(const std::wstring& widgetId,

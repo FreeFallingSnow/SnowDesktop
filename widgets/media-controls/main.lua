@@ -250,14 +250,16 @@ local function render(_context, model)
     })
 
     if not available then
-        local semanticMetrics = widget.hasFeature("ui.semanticMetrics") and
+        local semanticMetrics = widget.hasFeature("ui.semanticMetrics.rowUnit") and
             ui.metrics() or nil
+        local semanticScale = semanticMetrics and
+            semanticMetrics.layoutRowHeight / 28 or nil
         local emptyTitleFont = semanticMetrics and
-            semanticMetrics.titleFontSize or layout.fontCu(14)
+            14 * semanticScale or layout.fontCu(14)
         local emptyHintFont = semanticMetrics and
-            semanticMetrics.captionFontSize or layout.fontCu(10)
+            10 * semanticScale or layout.fontCu(10)
         local emptyGap = semanticMetrics and
-            semanticMetrics.spacingXs or layout.cu(4)
+            4 * semanticScale or layout.cu(4)
         local titleMetrics = draw.measureText(
             title, emptyTitleFont, 0, true)
         local subtitleMetrics = draw.measureText(

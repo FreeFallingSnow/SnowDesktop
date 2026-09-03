@@ -637,23 +637,62 @@ std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
 WidgetMediaArtworkDataSnapshot StabilizeMediaArtworkDataEnvelope(
     WidgetMediaArtworkDataSnapshot snapshot,
     const std::optional<WidgetMediaArtworkDataSnapshot>& previous,
-    WidgetDataSemanticDebouncer& debouncer)
+    WidgetDataSemanticDebouncer& debouncer,
+    WidgetMediaArtworkTransitionState& transition)
 {
+    constexpr std::int64_t SameArtworkConfirmationWindowMs = 1000;
     const bool mediaChanged = previous && previous->available &&
         previous->mediaIdentity != 0 && snapshot.mediaIdentity != 0 &&
         previous->mediaIdentity != snapshot.mediaIdentity;
     if (mediaChanged)
     {
-        // GSMTC can expose the new track metadata before its thumbnail catches
-        // up, especially when moving to the previous track. Do not bind that
-        // first image to the new identity and cache it indefinitely. Publishing
-        // an empty transition also makes consumers release the old handle; the
-        // next sample decodes the thumbnail again for the confirmed identity.
+        transition.pendingIdentity = snapshot.mediaIdentity;
+        transition.previousResourceToken = previous->resourceToken;
+        transition.startedAtMs = snapshot.timestampMs;
+    }
+    else if (transition.pendingIdentity != 0 &&
+        snapshot.mediaIdentity != 0 &&
+        transition.pendingIdentity != snapshot.mediaIdentity)
+    {
+        // The track changed again before its thumbnail settled. Keep comparing
+        // against the last confirmed image, but restart the bounded wait.
+        transition.pendingIdentity = snapshot.mediaIdentity;
+        transition.startedAtMs = snapshot.timestampMs;
+    }
+
+    bool rejectRepeatedPreviousArtwork = false;
+    if (transition.pendingIdentity != 0 &&
+        transition.pendingIdentity == snapshot.mediaIdentity &&
+        snapshot.available && !transition.previousResourceToken.empty() &&
+        snapshot.resourceToken == transition.previousResourceToken)
+    {
+        const std::int64_t elapsed = std::max<std::int64_t>(0,
+            snapshot.timestampMs - transition.startedAtMs);
+        rejectRepeatedPreviousArtwork =
+            elapsed < SameArtworkConfirmationWindowMs;
+    }
+
+    if (rejectRepeatedPreviousArtwork)
+    {
+        // GSMTC may expose new metadata for several samples before replacing
+        // the old thumbnail. Release the previous handle and keep sampling.
+        // The bounded window still permits consecutive tracks that genuinely
+        // share the same album artwork.
         snapshot.available = false;
         snapshot.resourceToken.clear();
         snapshot.pixels.reset();
         if (snapshot.error.empty()) snapshot.error = "notPresent";
         debouncer.Reset();
+    }
+    else if (transition.pendingIdentity != 0 &&
+        transition.pendingIdentity == snapshot.mediaIdentity &&
+        snapshot.available)
+    {
+        transition.Reset();
+    }
+    else if (!previous && snapshot.mediaIdentity == 0)
+    {
+        transition.Reset();
     }
     return StabilizeWidgetDataEnvelope(
         std::move(snapshot), previous, debouncer);
@@ -2487,7 +2526,8 @@ void WidgetSystemDataProvider::PublishMediaArtwork(
             ? "mediaSessionQueryFailed" : snapshot.error;
     artwork = StabilizeMediaArtworkDataEnvelope(
         std::move(artwork), mediaArtwork_,
-        semanticDebouncers_[std::string(MediaArtworkTopic)]);
+        semanticDebouncers_[std::string(MediaArtworkTopic)],
+        mediaArtworkTransition_);
     artwork.revision = mediaArtwork_ ? mediaArtwork_->revision + 1 : 1;
     mediaArtwork_ = std::move(artwork);
     changedTopics_.insert(std::string(MediaArtworkTopic));

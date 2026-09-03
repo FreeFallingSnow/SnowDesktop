@@ -255,6 +255,8 @@ int main(int argc, char* argv[])
                 source.find("acrylicEnabled") != std::string::npos &&
                 source.find("PersistWidgetSettingsStorageForBackend") !=
                     std::string::npos &&
+                source.find("RuntimeNotifySettingsChanged") !=
+                    std::string::npos &&
                 source.find("TypedStorageMetadataKey") !=
                     std::string::npos &&
                 source.find("ReadSearchQuery") != std::string::npos &&

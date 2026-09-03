@@ -1,6 +1,25 @@
 -- reminders/main.lua - API v2 transactional local ToDo list
 local descriptor
 
+local function componentMetrics()
+    local row = ui.metrics().layoutRowHeight
+    local scale = row / 28
+    return {
+        layoutRowHeight = row,
+        spacingXs = 4 * scale,
+        spacingSm = 8 * scale,
+        spacingMd = 12 * scale,
+        spacingLg = 16 * scale,
+        captionFontSize = 10 * scale,
+        bodyFontSize = 12 * scale,
+        titleFontSize = 14 * scale,
+        controlFontSize = 12 * scale,
+        iconSize = 16 * scale,
+        controlRadius = 8 * scale,
+        strokeWidth = scale,
+    }
+end
+
 local fluent = {
     addTask = utf8.char(0xF788),
     delete = utf8.char(0xF34C),
@@ -265,7 +284,7 @@ local function render(context, model)
     end
     local w = layout.contentWidth()
     local h = layout.contentHeight()
-    local metrics = ui.metrics()
+    local metrics = componentMetrics()
     local unit = metrics.strokeWidth
     local function px(value) return value * unit end
     local gap = metrics.spacingSm

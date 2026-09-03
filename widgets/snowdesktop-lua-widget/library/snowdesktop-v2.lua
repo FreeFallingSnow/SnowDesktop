@@ -672,7 +672,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent Lifecycle event. Raw pointer events are emitted only for immediate render surfaces; declarative views use explicit node pointer actions and host-owned visual state.
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -686,6 +686,8 @@
 ---@field reload? boolean True on the final entry when the timeline requested reload = 'atEnd'.
 ---@field visible? boolean
 ---@field selected? boolean
+---@field keys? string[] Sorted setting/storage keys affected by a settings.changed transaction.
+---@field preview? boolean True when settings.changed reflects a live settings preview that has not yet been committed.
 ---@field columns? integer
 ---@field rows? integer
 ---@field x? integer
@@ -2285,24 +2287,6 @@ function control.blur(key) end
 
 ---@class SnowUiMetrics
 ---@field layoutRowHeight number Visible content height for a search field, input, ordinary button or single-line item. Exterior insets and row gaps are excluded.
----@field titleAreaHeight number Compatibility metric preserving the older outer-band height.
----@field spacingXs number
----@field spacingSm number
----@field spacingMd number
----@field spacingLg number
----@field captionFontSize number
----@field bodyFontSize number
----@field titleFontSize number
----@field controlFontSize number
----@field compactControlHeight number
----@field controlHeight number
----@field compactRowHeight number
----@field rowHeight number
----@field smallIconSize number
----@field iconSize number
----@field largeIconSize number
----@field controlRadius number
----@field strokeWidth number
 
 ---@class snow.ui
 ui = {}
@@ -2312,7 +2296,7 @@ ui = {}
 ---@return SnowMenuModel
 function ui.menu(items) end
 
----Return page-CU semantic dimensions. layoutRowHeight is the visible content height for ordinary controls and single-line items; components add exterior insets and row gaps separately. titleAreaHeight preserves the older outer-band metric for compatibility. Fonts, spacing, icons and controls derive from the content row height, which stays at the page baseline for one or two rows and grows slowly for taller widgets. Horizontal span does not affect it.
+---Return the page-CU semantic content-row height. Components derive their own fonts, spacing, icons and strokes as proportions of this single scale. The row stays at the page baseline for one or two rows, grows slowly for taller widgets, includes accessibility text scaling, and never depends on horizontal span.
 ---@return SnowUiMetrics
 function ui.metrics() end
 

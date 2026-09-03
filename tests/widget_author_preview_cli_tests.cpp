@@ -470,7 +470,6 @@ std::filesystem::path CreateEnvironmentFixture(
     "layout.referencePixels",
     "layout.relativeUnits",
     "lifecycle.model",
-    "ui.semanticMetrics",
     "ui.semanticMetrics.rowUnit",
     "widget.context",
     "data.subscribe",
@@ -510,11 +509,10 @@ return widget.define({
             pcall(layout.rpxY, -1000001) == false,
             "reference axes must scale independently from manifest defaults")
         local metrics = ui.metrics()
-        assert(metrics.layoutRowHeight == 42 and
-            metrics.titleAreaHeight == 60 and
-            metrics.bodyFontSize == 18 and
-            metrics.controlHeight == 42 and metrics.spacingSm == 12,
-            "semantic UI metrics must follow page CU without using widget span")
+        local metricCount = 0
+        for _ in pairs(metrics) do metricCount = metricCount + 1 end
+        assert(metrics.layoutRowHeight == 42 and metricCount == 1,
+            "ui.metrics must expose only the shared row-height scale")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,
             "relative layout units must reject out-of-range percentages")
@@ -865,7 +863,6 @@ int wmain(int argc, wchar_t** argv)
             CountDifferingPixels(inheritedBlur, explicitZeroBlur,
                 backgroundBoundary) > 256,
         "omitted background blur inherits glass while explicit zero remains sharp");
-
     const auto roundedImageSource =
         CreateRoundedImageFixture(temporary.path);
     const auto roundedImageOutput =
