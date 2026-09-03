@@ -251,23 +251,30 @@ local function submitButton(id, label, shape, metrics)
     })
 end
 
-local function drawHeaderButton(id, label, fontSize, colors, shape,
-    metrics, iconOnly, iconYOffset)
+local function drawHeaderIconButton(id, glyph, label, colors, shape, metrics)
     local hovered = interaction.isHovered(id)
     local pressed = interaction.isPressed(id)
-    draw.strokeRect(shape.x, shape.y, shape.width, shape.height,
-        colors.text, metrics.controlRadius,
-        metrics.strokeWidth * (pressed and 2 or 1),
-        pressed and 0.72 or (hovered and 0.48 or 0.28))
-    if iconOnly then
-        draw.fa(label,
-            shape.x + (shape.width - fontSize) / 2,
-            shape.y + (shape.height - fontSize) / 2 + (iconYOffset or 0),
-            fontSize, colors.text)
-    else
-        centeredText(label, shape.x, shape.y, shape.width, shape.height,
-            fontSize, colors.text, true, 1.0)
+    if hovered then
+        draw.rect(shape.x, shape.y, shape.width, shape.height,
+            colors.text, metrics.controlRadius,
+            pressed and 0.16 or 0.10)
     end
+    draw.fluent(glyph,
+        shape.x + (shape.width - metrics.iconSize) / 2,
+        shape.y + (shape.height - metrics.iconSize) / 2,
+        metrics.iconSize, colors.text)
+    submitButton(id, label, shape, metrics)
+end
+
+local function drawHeaderTextButton(id, label, fontSize, colors, shape,
+    metrics)
+    local hovered = interaction.isHovered(id)
+    local pressed = interaction.isPressed(id)
+    draw.rect(shape.x, shape.y, shape.width, shape.height,
+        colors.text, metrics.controlRadius,
+        pressed and 0.16 or (hovered and 0.10 or 0.055))
+    centeredText(label, shape.x, shape.y, shape.width, shape.height,
+        fontSize, colors.text, true, 0.92)
     submitButton(id, label, shape, metrics)
 end
 
@@ -303,17 +310,22 @@ local function render(context, model)
     local bodyHeight = math.max(unit,
         contentHeight - bodyTop - metrics.spacingXs)
     local textScale = fontScale()
-    local fontSize = metrics.bodyFontSize * textScale
-    local smallFont = metrics.captionFontSize * textScale
+    local baseFont = metrics.bodyFontSize * textScale
+    local baseSmallFont = metrics.captionFontSize * textScale
     local titleFont = metrics.titleFontSize * textScale
-    local weekdayHeight = math.min(bodyHeight * 0.18,
-        math.max(smallFont + metrics.spacingXs, bodyHeight * 0.12))
+    local weekdayHeight = math.max(baseSmallFont + metrics.spacingXs,
+        math.min(bodyHeight * 0.12,
+            (width - padding * 2) / 7 * 0.75))
     local weekdayTop = bodyTop
     local gridTop = weekdayTop + weekdayHeight
     local gridHeight = math.max(unit,
         contentHeight - metrics.spacingXs - gridTop)
     local cellWidth = (width - padding * 2) / 7
     local cellHeight = gridHeight / 6
+    local fontSize = math.max(baseFont,
+        math.min(cellWidth, cellHeight) * 0.38 * textScale)
+    local smallFont = math.max(baseSmallFont,
+        math.min(cellWidth * 0.28, weekdayHeight * 0.48) * textScale)
     local selected = context.preview and model.selectedDate or
         (selectedDate() or model.selectedDate)
     local today = todayDate()
@@ -338,7 +350,6 @@ local function render(context, model)
     local buttonSize = math.min(metrics.compactControlHeight,
         math.max(unit, headerHeight - metrics.spacingSm))
     local buttonY = math.max(0, (headerHeight - buttonSize) / 2)
-    local iconFont = metrics.titleFontSize * textScale
     local narrowWidth = width < padding * 2 + buttonSize * 2 +
         metrics.spacingXs + metrics.spacingMd
     if narrowWidth then
@@ -432,20 +443,22 @@ local function render(context, model)
     }
     local todayText = l10n.tr("lua_widget.month_calendar.today")
     local todayMetrics = draw.measureText(todayText, smallFont, 0, true)
-    local todayWidth = math.max(metrics.controlHeight,
-        todayMetrics.width + metrics.spacingMd)
+    local todayWidth = math.max(buttonSize, math.min(width * 0.25,
+        todayMetrics.width + metrics.spacingMd))
     local todayShape = {
         x = width - padding - todayWidth,
         y = buttonY,
         width = todayWidth,
         height = buttonSize,
     }
-    drawHeaderButton("calendar.previous", "", iconFont, colors,
-        previousShape, metrics, true, px(1.4))
-    drawHeaderButton("calendar.next", "", iconFont, colors,
-        nextShape, metrics, true, px(1.4))
-    drawHeaderButton("calendar.today", todayText, smallFont, colors,
-        todayShape, metrics, false)
+    drawHeaderIconButton("calendar.previous", fluent.previous,
+        l10n.tr("lua_widget.month_calendar.previous_month"), colors,
+        previousShape, metrics)
+    drawHeaderIconButton("calendar.next", fluent.next,
+        l10n.tr("lua_widget.month_calendar.next_month"), colors,
+        nextShape, metrics)
+    drawHeaderTextButton("calendar.today", todayText, smallFont, colors,
+        todayShape, metrics)
 
     local titleX = nextShape.x + nextShape.width + metrics.spacingSm
     local titleWidth = math.max(unit,
@@ -477,8 +490,7 @@ local function render(context, model)
             local dayTop = weekTop + smallFont + metrics.spacingXs
             local dayHeight = math.max(unit,
                 weekHeight - smallFont - metrics.spacingXs)
-            local diameter = math.min(fontSize + metrics.spacingMd,
-                cellWidth * 0.78, dayHeight * 0.90)
+            local diameter = math.min(cellWidth * 0.82, dayHeight * 0.88)
             local centerX = x + cellWidth / 2
             local centerY = dayTop + dayHeight / 2
             if isSelected then
@@ -537,8 +549,7 @@ local function render(context, model)
             local key = "calendar.date." .. cell.date
             local isSelected = cell.date == selected
             local isToday = cell.date == today
-            local diameter = math.min(fontSize + metrics.spacingMd,
-                cellWidth * 0.78, cellHeight * 0.78)
+            local diameter = math.min(cellWidth, cellHeight) * 0.82
             local centerX = x + cellWidth / 2
             local centerY = y + cellHeight * 0.44
             if isSelected then

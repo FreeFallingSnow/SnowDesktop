@@ -245,7 +245,7 @@ local function render(context, model)
     local inputFont = metrics.controlFontSize * scale
     local smallFont = metrics.captionFontSize * scale
     local titleAreaHeight = math.min(height, metrics.titleAreaHeight)
-    local inputHeight = math.min(metrics.controlHeight,
+    local inputHeight = math.min(metrics.compactControlHeight,
         math.max(unit, titleAreaHeight - metrics.spacingSm))
     local inputTop = math.max(0, (titleAreaHeight - inputHeight) / 2)
 

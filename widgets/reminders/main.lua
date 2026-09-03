@@ -279,7 +279,7 @@ local function render(context, model)
     local total = taskCounts()
 
     local headerHeight = math.min(h, metrics.titleAreaHeight)
-    local inputH = math.min(metrics.controlHeight,
+    local inputH = math.min(metrics.compactControlHeight,
         math.max(unit, headerHeight - metrics.spacingSm))
     local inputY = math.max(0, (headerHeight - inputH) / 2)
     local addSize = inputH
