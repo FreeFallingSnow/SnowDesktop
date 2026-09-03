@@ -292,14 +292,8 @@ local function render(context, model)
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#model.articles,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
-    local numberMetrics = draw.measureText(tostring(#model.articles),
-        smallFont, 0, true)
-    local numberPadding = math.max(unit,
-        metrics.spacingXs * 0.5 * cfg.rowScale)
-    local numberWidth = numberMetrics.width + numberPadding * 2
-    local textX = pad + numberWidth +
-        math.max(unit, metrics.spacingXs * cfg.rowScale)
-    local textWidth = math.max(unit, width - textX - pad)
+    local textX = pad
+    local textWidth = math.max(unit, width - pad * 2)
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
     for index = first, last do
         local article = model.articles[index]
@@ -318,15 +312,6 @@ local function render(context, model)
             doubleClick = { id = "rss.open", value = article.link },
             contextMenu = { id = "rss.menu", value = article.link },
         }, article.title, article.link ~= "")
-        local number = tostring(index)
-        local currentNumberMetrics = draw.measureText(number,
-            smallFont, numberWidth, true)
-        draw.text(pad + math.max(0,
-                (numberWidth - currentNumberMetrics.width) / 2),
-            y + math.max(0,
-                (itemHeight - currentNumberMetrics.height) / 2),
-            number, smallFont, colors.number,
-            numberWidth, true, true)
         local titleY = y + rowPadding
         if hovered then
             draw.marqueeText({
@@ -351,10 +336,21 @@ local function render(context, model)
             article.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or
             article.date:sub(1, 16)
         if shortDate == "" then shortDate = article.link:sub(1, 42) end
+        local number = tostring(index)
+        local currentNumberMetrics = draw.measureText(number,
+            smallFont, 0, true)
+        local metadataGap = math.max(unit,
+            metrics.spacingSm * cfg.rowScale)
+        local dateWidth = math.max(unit,
+            textWidth - currentNumberMetrics.width - metadataGap)
+        local metadataY = y + itemHeight - rowPadding - smallMetrics.height
         draw.text(textX,
-            y + itemHeight - rowPadding - smallMetrics.height,
+            metadataY,
             shortDate,
-            smallFont, colors.date, textWidth, false, true)
+            smallFont, colors.date, dateWidth, false, true)
+        draw.text(textX + textWidth - currentNumberMetrics.width,
+            metadataY, number, smallFont, colors.number,
+            currentNumberMetrics.width, true, true)
         draw.line(textX, y + itemHeight - unit, width - pad,
             y + itemHeight - unit, metrics.strokeWidth,
             colors.divider, 0.07)
