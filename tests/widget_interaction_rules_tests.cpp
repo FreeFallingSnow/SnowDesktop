@@ -1071,16 +1071,16 @@ void TestBottomBarContentReservation()
             chromeRules::ShowsCompactMoveHandle(false, true) &&
             !chromeRules::ShowsCompactMoveHandle(true, true),
         "only hovered titleless widgets expose a compact move handle");
-    const auto lightForegroundTitle =
-        chromeRules::ResolveBottomTitleStyle(0);
-    const auto darkForegroundTitle =
-        chromeRules::ResolveBottomTitleStyle(1);
+    const auto lightForegroundChrome =
+        chromeRules::ResolveWidgetChromeForegroundStyle(0);
+    const auto darkForegroundChrome =
+        chromeRules::ResolveWidgetChromeForegroundStyle(1);
     Check(
-        !lightForegroundTitle.darkForeground &&
-            lightForegroundTitle.fontWeightAdjustment == 0 &&
-            darkForegroundTitle.darkForeground &&
-            darkForegroundTitle.fontWeightAdjustment == -200,
-        "bottom titles must resolve color and weight from the widget content theme");
+        !lightForegroundChrome.darkForeground &&
+            lightForegroundChrome.fontWeightAdjustment == 0 &&
+            darkForegroundChrome.darkForeground &&
+            darkForegroundChrome.fontWeightAdjustment == -200,
+        "widget titles and handles must resolve their foreground from the widget content theme");
     Check(
         chromeRules::CompactEdgeHandleWidth(120, 24) == 24 &&
             chromeRules::CompactEdgeHandleWidth(30, 24) == 15 &&

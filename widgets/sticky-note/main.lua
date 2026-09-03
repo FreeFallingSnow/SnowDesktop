@@ -21,6 +21,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -32,6 +33,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -43,6 +45,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -54,6 +57,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -65,6 +69,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -76,6 +81,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -87,6 +93,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.95,
                 gradientEndA = 0.0,
+                __contentTheme = 0,
             },
         },
     },

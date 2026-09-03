@@ -129,7 +129,7 @@
 ---@field id string
 ---@field label string
 ---@field default? boolean
----@field values table<string, string|number|boolean|string[]>
+---@field values table<string, string|number|boolean|string[]> May include host-owned __contentTheme=0|1 so a component appearance preset keeps host chrome aligned with its foreground.
 
 ---@class SnowWidgetSettings
 ---@field groups? SnowSettingGroup[]

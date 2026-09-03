@@ -224,8 +224,10 @@ By default:
   `draw.imageFit.roundedClip`, then pass `cornerRadius` after `originY`.
   Drawing a rounded border alone does not clip the bitmap corners.
 - If the widget offers a custom foreground setting, use it only when the widget
-  is not following personalization. Never read or persist the host-owned
-  `__contentTheme` preview override from component Lua.
+  is not following personalization. A component appearance preset may declare
+  `__contentTheme = 0` (light/white foreground) or `1` (dark/black foreground)
+  in its `values` so host titles and handles use the same foreground. Never
+  read or persist this host-owned key from component Lua.
 
 Read `references/visual-authoring.md` before implementing custom materials,
 foreground choices, internal surfaces or final preview images.

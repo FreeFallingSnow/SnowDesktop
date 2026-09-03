@@ -678,6 +678,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const bool showCompactMoveHandle =
         snowdesktop::widget_chrome_rules::ShowsCompactMoveHandle(
             data_->showTitle, hovered);
+    const auto chromeForeground =
+        snowdesktop::widget_chrome_rules::ResolveWidgetChromeForegroundStyle(
+            effectSettings.contentTheme);
 
     if (showBottomBar)
     {
@@ -723,9 +726,6 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         if (!data_->title.empty())
         {
             const float bh = GetBarHeight();
-            const auto titleStyle =
-                snowdesktop::widget_chrome_rules::ResolveBottomTitleStyle(
-                    effectSettings.contentTheme);
             RECT titleRect = {
                 handle.left + Cu(4.0f),
                 handle.top + Cu(bh * 0.083f),
@@ -735,11 +735,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
                 std::max<int>(100,
                     static_cast<int>(app_->GetItemFontWeight()) +
-                        titleStyle.fontWeightAdjustment));
+                        chromeForeground.fontWeightAdjustment));
             IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
             app_->DrawD2DText(context, data_->title, titleRect,
                 titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-                titleStyle.darkForeground
+                chromeForeground.darkForeground
                     ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
         }
@@ -754,12 +754,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
     if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 
-    const D2D1_COLOR_F handleFill = selected
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-        : (lightTheme
-            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f));
-    const D2D1_COLOR_F handleStroke = lightTheme
+    const float handleFillOpacity = selected ? 0.62f : 0.34f;
+    const D2D1_COLOR_F handleFill = chromeForeground.darkForeground
+        ? D2D1::ColorF(0.06f, 0.08f, 0.12f, handleFillOpacity)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, handleFillOpacity);
+    const D2D1_COLOR_F handleStroke = chromeForeground.darkForeground
         ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 

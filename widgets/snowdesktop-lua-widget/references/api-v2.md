@@ -2501,6 +2501,10 @@ string[]；后两项使用 `storage.typed` 持久化，首次读取默认值、�
 URL、日期或时间。对应 feature 分别为 `settings.url`、`settings.date`、`settings.time`、
 `settings.range`、`settings.multiSelect`。
 
+外观 preset 的 `values` 可声明宿主管理的 `__contentTheme=0|1`：`0` 表示浅色/白色前景，
+`1` 表示深色/黑色前景。宿主在应用该 preset 时同步组件语义前景、底部标题、拖拽点和缩放手柄；
+未声明时继续继承当前全局前景。组件 Lua 不得通过 `storage` 读写该键。
+
 设置字段可提供不超过 2048 字节的本地化 `description`，宿主在控件下方以辅助文本显示。
 `settings.groups` 按声明顺序定义最多 32 个分组，每组包含稳定 ASCII `id`、本地化 `label`、
 可选 `description`，以及 `collapsible/defaultExpanded`；字段用 `group=id` 加入分组。未分组字段

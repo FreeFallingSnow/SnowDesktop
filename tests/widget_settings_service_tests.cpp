@@ -1397,12 +1397,12 @@ int main()
             appearanceBackend.lastAppearancePatch.edgeHighlightStrength ==
                 kDefaultEdgeHighlightStrength &&
             !appearanceBackend.lastAppearancePatch.followPersonalization &&
-            !appearanceBackend.lastAppearancePatch.contentTheme &&
-            appearanceBackend.lastAppearancePatch.clearContentTheme &&
+            appearanceBackend.lastAppearancePatch.contentTheme == 1 &&
+            !appearanceBackend.lastAppearancePatch.clearContentTheme &&
             !appearanceBackend.ordinary.contains("token") &&
             appearanceSnapshot &&
             appearanceSnapshot->hostAppearance.presetId == "compact",
-        "legacy component themes migrate glass to an independent edge highlight while atomically persisting editable host appearance and ordinary values");
+        "component themes atomically persist their explicit foreground with editable host appearance and ordinary values");
     appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
         *appearanceSnapshot);
     const auto explicitBorderResult = appearanceService.ApplyPreset(
@@ -1417,10 +1417,13 @@ int main()
             appearanceBackend.lastAppearancePatch.edgeHighlightWidth ==
                 3.5f &&
             appearanceBackend.lastAppearancePatch.edgeHighlightStrength ==
-                0.25f && appearanceSnapshot &&
+                0.25f &&
+            !appearanceBackend.lastAppearancePatch.contentTheme &&
+            appearanceBackend.lastAppearancePatch.clearContentTheme &&
+            appearanceSnapshot &&
             !appearanceSnapshot->hostAppearance.glassEnabled &&
             appearanceSnapshot->hostAppearance.edgeHighlightEnabled,
-        "explicit component border and edge-highlight fields remain independent from the material toggle");
+        "component presets without a foreground keep inheriting the global theme while border and edge-highlight fields remain independent");
     appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
         *appearanceSnapshot);
     const std::size_t appearanceTransactionsBeforeInvalid =

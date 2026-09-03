@@ -1234,8 +1234,7 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
     {
         if (key == "__preset" ||
             (session.snapshot.customStyle &&
-                (key == "followPersonalization" ||
-                    key == "__contentTheme")))
+                key == "followPersonalization"))
             continue;
         if (!ApplyHostAppearancePresetValue(
                 appearance, key, value, appearanceError))
@@ -1267,10 +1266,11 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
             appearance.borderOpacity = 0.0f;
         }
     }
-    if (session.snapshot.customStyle)
+    if (session.snapshot.customStyle &&
+        !preset->hostAppearanceValues.contains("__contentTheme"))
     {
-        // A component preset inherits the current global content theme until
-        // the user explicitly chooses Light or Dark again.
+        // Presets without an explicit foreground keep inheriting the global
+        // content theme until the user chooses Light or Dark independently.
         appearance.contentTheme.reset();
         appearance.clearContentTheme = true;
     }

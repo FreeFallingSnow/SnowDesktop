@@ -107,9 +107,11 @@ foregrounds and `"light"` for dark foregrounds. These names describe the host
 color scheme, not the material brightness.
 
 If the widget exposes its own foreground setting, use it only while the widget
-is not following personalization. `__contentTheme` is a host-owned authoring
-preview override. Pass it to the preview CLI and never read or persist it from
-component Lua.
+is not following personalization. `__contentTheme` is a host-owned appearance
+value: an appearance preset may declare `__contentTheme = 0` for a light/white
+foreground or `1` for a dark/black foreground so host chrome follows that
+preset. Pass it directly to the preview CLI for authoring overrides, and never
+read or persist it from component Lua.
 
 ## Real preview contract
 
