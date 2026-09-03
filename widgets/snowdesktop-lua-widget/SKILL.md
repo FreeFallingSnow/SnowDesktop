@@ -215,6 +215,11 @@ By default:
   `light` and `acrylic-light` resolve to dark/black foregrounds. In particular,
   the default `glass-light` pairing still uses light text. Do not infer this
   mapping from the appearance name suffix; consume the resolved theme.
+- Keep ellipsis for ordinary labels. For a short timer, amount or counter that
+  must stay complete, set `overflowText="clip"`, use `width="auto"` with a
+  calculated `minWidth`, and set `flexShrink=0` on it and any shrinking parent
+  column. Reallocate the finite surface width from adjacent content; `minWidth`
+  cannot resize the widget window.
 - If the widget offers a custom foreground setting, use it only when the widget
   is not following personalization. Never read or persist the host-owned
   `__contentTheme` preview override from component Lua.

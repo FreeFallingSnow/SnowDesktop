@@ -385,7 +385,6 @@ local function buildView(context)
     local buttonGap = short * 0.03
     local statusHeight = short * 0.14
     local timeFont = short * 0.20
-    local timeHeight = timeFont * 1.18
     local progressHeight = short * 0.025
     local buttonHeight = short * 0.22
 
@@ -448,6 +447,9 @@ local function buildView(context)
             l10n.tr("lua_widget.pomodoro.skip") }
     end
 
+    local timeGlyphs = math.max(1, #timeText)
+    local timeWidthFactor = timeGlyphs * 0.55 +
+        math.max(0, timeGlyphs - 1) * 0.018
     local infoWidth
     local actionWidth
     if vertical then
@@ -455,12 +457,20 @@ local function buildView(context)
         actionWidth = availableWidth * 0.88
     else
         local sharedWidth = availableWidth - majorGap
-        infoWidth = sharedWidth * 0.56
-        actionWidth = sharedWidth * 0.44
+        local maximumTimeWidth = sharedWidth * 0.70
+        timeFont = math.min(timeFont, maximumTimeWidth / timeWidthFactor)
+        local requiredTimeWidth = timeFont * timeWidthFactor
+        infoWidth = math.max(sharedWidth * 0.56, requiredTimeWidth)
+        actionWidth = sharedWidth - infoWidth
     end
+    local timeLetterSpacing = timeFont * 0.018
+    local requiredTimeWidth = math.max(timeFont,
+        timeGlyphs * timeFont * 0.55 +
+            math.max(0, timeGlyphs - 1) * timeLetterSpacing)
+    infoWidth = math.max(infoWidth, requiredTimeWidth)
+    local timeHeight = timeFont * 1.18
     local statusFont = math.min(short * 0.055, infoWidth * 0.075)
     actionFont = math.min(short * 0.065, actionWidth * 0.105)
-    local timeLayoutWidth = infoWidth
     local progressWidth = infoWidth * 0.76
 
     local status = view.badge({
@@ -481,12 +491,16 @@ local function buildView(context)
     local timer = view.text({
         key = "pomodoro.time",
         text = timeText,
-        width = timeLayoutWidth,
+        width = "auto",
+        minWidth = requiredTimeWidth,
         height = timeHeight,
+        flexShrink = 0,
         fontSize = timeFont,
         bold = true,
         textAlign = "center",
-        letterSpacing = timeFont * 0.018,
+        textWrap = "noWrap",
+        overflowText = "clip",
+        letterSpacing = timeLetterSpacing,
         style = { foreground = palette.text },
     })
     local progressBar = view.progressBar({
@@ -512,7 +526,9 @@ local function buildView(context)
     local overview = view.column({
         key = "pomodoro.overview",
         width = infoWidth,
+        minWidth = infoWidth,
         height = overviewHeight,
+        flexShrink = 0,
         gap = infoGap,
         alignItems = "center",
         justifyContent = "center",

@@ -336,7 +336,10 @@
     "schedule.basic",
     "schedule.visibility",
     "time.basic",
+    "view.flex.sizing",
+    "view.layout.constraints",
     "view.statusVisuals",
+    "view.text.flow",
     "view.theme.tokens",
     "view.tree.core"
   ],

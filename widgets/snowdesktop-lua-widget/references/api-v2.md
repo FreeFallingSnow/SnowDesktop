@@ -516,6 +516,13 @@ region 声明过该作用域，其返回项就会注册到整个组件表面，�
 多段正文语义默认 wrap+clip；两者默认垂直居中。宿主在同一个 DirectWrite layout 中应用
 换行、行数高度门限、字符级省略和文本块偏移，最终绘制仍受节点 frame 裁剪。
 
+省略号是显式可选行为：短计时、金额或计数等必须完整显示的单行文本可设置
+`overflowText="clip"`，并以 `width="auto"`、足以容纳完整内容的 `minWidth` 和
+`flexShrink=0` 保留其布局宽度；直接父栏在会参与 flex 收缩时也应保留对应 `minWidth`。
+`minWidth` 扩展的是节点布局框，不会扩大桌面组件表面，因此组件仍需从相邻栏重新分配空间，
+并在极限尺寸下降低字号或切换布局。长标题和任意本地化正文不应强制扩宽，应继续使用换行或
+ellipsis。
+
 探测 `view.text.typography` 后，上述文本与 label 节点还可使用 100–900、步长 100 的
 `fontWeight`、`fontStyle="normal|italic"`、1–1024 的统一 `lineHeight` 和 -64–256 的
 `letterSpacing`。显式 fontWeight 优先于兼容属性 `bold`；lineHeight 同时参与固有高度和

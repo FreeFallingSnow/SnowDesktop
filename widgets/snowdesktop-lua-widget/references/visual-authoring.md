@@ -158,6 +158,13 @@ different state:
    Reserve grid-density
    checks for components that explicitly align
    information units to host grid metrics, such as a system-status card matrix.
+   For a short critical value such as a timer, price or counter, opt out of an
+   ellipsis with `overflowText="clip"` and reserve its complete single-line box
+   with `width="auto"`, `minWidth` and `flexShrink=0`. Preserve the same minimum
+   on a shrinking parent column, then take that width from adjacent flexible
+   content. A minimum width does not enlarge the widget surface; reduce the
+   value font or change the intentional aspect-ratio layout if the whole row no
+   longer fits. Keep ordinary localized labels on wrap or ellipsis behavior.
 7. Fix the smallest failing area, render again and repeat.
 
 Do not treat CLI success as visual acceptance. Preview time is deterministic;
