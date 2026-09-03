@@ -7,6 +7,8 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 
 namespace
 {
@@ -228,7 +230,11 @@ int main(int argc, char* argv[])
         const std::filesystem::path root(argv[1]);
         const std::string source = ReadFile(
             root / "src" / "widget_engine_settings_backend.cpp");
+        const std::string engineSource = ReadFile(
+            root / "src" / "widget_engine.cpp");
         Check(!source.empty(), "backend source is readable for contracts");
+        Check(!engineSource.empty(),
+            "widget engine source is readable for event contracts");
         Check(source.find("RuntimeSetStorageValue") == std::string::npos,
             "backend never routes settings through ordinary runtime writes");
         Check(source.find("WidgetStorageTransaction") != std::string::npos &&
@@ -294,6 +300,56 @@ int main(int argc, char* argv[])
                 source.find("previewCommitRequired") !=
                     std::string::npos,
             "transient previews touch live storage without saving, then commit or restore only guarded touched keys");
+
+        const auto functionSection = [&source](std::string_view begin,
+                                                std::string_view end) {
+            const std::size_t first = source.find(begin);
+            const std::size_t last = first == std::string::npos
+                ? std::string::npos : source.find(end, first + begin.size());
+            return first == std::string::npos || last == std::string::npos
+                ? std::string{} : source.substr(first, last - first);
+        };
+        for (const auto& [begin, end] : {
+                std::pair{ "ApplyHostAppearanceTransactionImpl(",
+                    "WidgetEngineSettingsBackend::CommitPreview(" },
+                std::pair{ "WidgetEngineSettingsBackend::CommitPreview(",
+                    "WidgetEngineSettingsBackend::RevertPreview(" },
+                std::pair{ "WidgetEngineSettingsBackend::RestorePreviewNoexcept(",
+                    "WidgetEngineSettingsBackend::SetSecret(" },
+                std::pair{ "WidgetEngineSettingsBackend::SetSecret(",
+                    "WidgetEngineSettingsBackend::ClearSecret(" },
+                std::pair{ "WidgetEngineSettingsBackend::ClearSecret(",
+                    "WidgetEngineSettingsBackend::ChooseFilesystemHandle(" },
+                std::pair{ "WidgetEngineSettingsBackend::ChooseFilesystemHandle(",
+                    "WidgetEngineSettingsBackend::ClearFilesystemHandle(" },
+                std::pair{ "WidgetEngineSettingsBackend::ClearFilesystemHandle(",
+                    "WidgetEngineSettingsBackend::OpenEntityReferencePicker(" },
+                std::pair{ "WidgetEngineSettingsBackend::OpenEntityReferencePicker(",
+                    "WidgetEngineSettingsBackend::ClearEntityReference(" },
+                std::pair{ "WidgetEngineSettingsBackend::ClearEntityReference(",
+                    "WidgetEngineSettingsBackend::StartSearch(" },
+            })
+        {
+            const std::string section = functionSection(begin, end);
+            Check(!section.empty() && section.find(
+                    "RuntimeNotifySettingsChanged") != std::string::npos,
+                "every host settings mutation path dispatches the public settings change event");
+        }
+        const std::size_t eventBegin = engineSource.find(
+            "bool WidgetEngine::RuntimeNotifySettingsChanged(");
+        const std::size_t eventEnd = engineSource.find(
+            "bool WidgetEngine::RuntimeSubmitNativeMarquee(", eventBegin);
+        const std::string eventSource = eventBegin == std::string::npos ||
+                eventEnd == std::string::npos
+            ? std::string{} : engineSource.substr(
+                eventBegin, eventEnd - eventBegin);
+        Check(!eventSource.empty() &&
+                eventSource.find("std::sort(keys.begin(), keys.end())") !=
+                    std::string::npos &&
+                eventSource.find("std::unique(keys.begin(), keys.end())") !=
+                    std::string::npos &&
+                eventSource.find("keys.resize") == std::string::npos,
+            "settings change events expose the complete sorted unique key set");
     }
 
     if (failures == 0)

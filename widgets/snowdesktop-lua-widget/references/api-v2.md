@@ -154,10 +154,11 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 宿主滚动消费 wheel 时仍先更新滚动偏移并投递对应节点动作，动作不能取消滚动。
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
-声明 `settings.changeEvent` 后，宿主设置事务改变组件 storage 时会发送
-`settings.changed`。`keys` 是经过排序和去重的受影响键数组；`preview=true` 表示设置页
-正在应用尚未提交的实时预览。组件应在该事件中调整订阅和描述符级视觉参数，不要在
-`render` 或 `view` 热路径中创建订阅或修改描述符。
+声明 `settings.changeEvent` 后，宿主设置界面改变普通值、宿主外观、密码、文件系统句柄或
+实体引用时会发送 `settings.changed`。`keys` 是经过排序和去重的完整受影响设置键数组；
+`preview=true` 表示设置页正在应用尚未提交的实时预览，直接写入以及预览提交或取消后的
+最终事件为 `preview=false`。组件自身调用 `storage.set` 不触发该事件。组件应在该事件中
+调整订阅和描述符级视觉参数，不要在 `render` 或 `view` 热路径中创建订阅或修改描述符。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
 宿主在菜单打开时冻结该次 `ui.menu(...)` 描述；同一组件运行时内的普通重绘不会使已打开菜单的
@@ -186,7 +187,7 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `layoutRowHeight`，表示输入框、普通按钮或单行条目的可见内容高度，不包含外边距和行间距；
   组件按固定比例自行派生字体、间距、图标和描边，一至两行使用页面基准，更高组件只随
   纵向跨度缓慢增长，横向跨度不影响；
-- `settings.changeEvent`：设置事务写入组件 storage 后发送结构化
+- `settings.changeEvent`：宿主设置界面改变已声明设置或宿主外观后发送结构化
   `settings.changed` 生命周期事件；
 - `draw.imageFit.roundedClip`：允许即时绘制的 `draw.imageFit` 通过可选
   `cornerRadius` 对目标矩形执行抗锯齿圆角裁切；
@@ -208,8 +209,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   backdrop、宿主材质色调、组件背景层、亚克力噪点/外轮廓、前景 `view`/`render` 和最终
   边缘高光。组件背景不会被主题色调再次覆盖；其透明像素仍会露出主题材质。`opacity` 默认为 1，
   范围为 0–1；`blurRadius` 显式范围为 0–48，省略时在玻璃开启时继承宿主半径，关闭玻璃时
-  为 0。宿主在背景回调完成后读取这两个合成字段，因此 `settings.changed` 处理期间更新描述符
-  会作用于紧随其后的当前绘制帧。
+  为 0。宿主在每次背景绘制前读取这两个合成字段，因此 `settings.changed` 处理期间更新描述符
+  会作用于紧随其后的绘制帧。
   `panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`

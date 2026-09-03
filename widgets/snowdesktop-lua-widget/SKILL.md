@@ -138,13 +138,17 @@ Constants used only as ratios are fine. Output clamps such as
 `math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
 make two equal-aspect surfaces render differently and should be avoided.
 
-Use `ui.metrics().layoutRowHeight` as the only host-owned visual scale. Derive
+In the proportional information model, use
+`ui.metrics().layoutRowHeight` as the only host-owned visual scale. Derive
 ordinary body text, for example, as `row * 12 / 28`, captions as
 `row * 10 / 28`, and component spacing from the same ratio. A component font
 preference is a percentage multiplier over the derived font. The row already
 includes page and accessibility scaling; do not apply a second span scale.
-Reserve span-relative text for primary visual data such as a clock, timer or
-single metric.
+In the proportional visual model, derive text and geometry from `rpx`, the
+surface axes or `vmin` so equal-aspect surfaces remain fully proportional.
+Read surface-dependent layout metrics in `view` or `render`; do not cache them
+in `setup`, because the selected starting span and later resizes can differ
+from the load-time surface.
 
 ## Create a package
 
@@ -178,12 +182,16 @@ single metric.
 8. Use `state` for VM-lifetime JSON-like values and `storage` for persistent
    values. Write persistent state only when it changes and never from a render
    or view callback.
-9. When a setting changes an active subscription or a descriptor-level visual
-   such as `backgroundLayer.blurRadius`, require `settings.changeEvent` and
-   reconcile it from `event.kind == "settings.changed"`. The event supplies
-   sorted affected `keys` and whether the value is an uncommitted live preview.
-   Committing or cancelling a live preview emits the restored final state with
-   `preview == false`.
+9. When a host settings change affects an active subscription or a
+   descriptor-level visual such as `backgroundLayer.blurRadius`, require
+   `settings.changeEvent` and reconcile it from
+   `event.kind == "settings.changed"`. The event covers ordinary values, host
+   appearance, passwords, filesystem handles and entity references, and
+   supplies sorted affected `keys`. `preview == true` identifies an
+   uncommitted live preview; immediate writes and preview commit or cancellation
+   emit the current persisted or restored state with `preview == false`.
+   Calls to `storage.set` from the component do not emit this host-settings
+   event.
    Keep render and view callbacks free of subscription creation or descriptor
    mutation.
 

@@ -686,8 +686,8 @@
 ---@field reload? boolean True on the final entry when the timeline requested reload = 'atEnd'.
 ---@field visible? boolean
 ---@field selected? boolean
----@field keys? string[] Sorted setting/storage keys affected by a settings.changed transaction.
----@field preview? boolean True for an uncommitted live settings preview; false after a direct write, preview commit, or preview revert.
+---@field keys? string[] Complete sorted setting keys affected by a host settings change.
+---@field preview? boolean True for an uncommitted live settings preview; false after a direct write, preview commit, or preview cancellation.
 ---@field columns? integer
 ---@field rows? integer
 ---@field x? integer

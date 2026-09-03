@@ -24041,20 +24041,19 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
         invalidateCallback_(widgetId, dirtyRect, surface);
 }
 
-void WidgetEngine::RuntimeNotifySettingsChanged(
+bool WidgetEngine::RuntimeNotifySettingsChanged(
     const std::wstring& widgetId, std::vector<std::string> keys,
     bool preview)
 {
     const int index = FindWidget(widgetId);
     if (index < 0 ||
         !WidgetDeclaresFeature(widgets_[index], "settings.changeEvent"))
-        return;
+        return false;
     keys.erase(std::remove_if(keys.begin(), keys.end(),
         [](const std::string& key) { return key.empty(); }), keys.end());
     std::sort(keys.begin(), keys.end());
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-    if (keys.size() > 64) keys.resize(64);
-    (void)InvokeLifecycleEvent(widgets_[index], "settings.changed",
+    return InvokeLifecycleEvent(widgets_[index], "settings.changed",
         [keys = std::move(keys), preview](lua_State* eventState) {
             lua_createtable(eventState, static_cast<int>(keys.size()), 0);
             for (std::size_t index = 0; index < keys.size(); ++index)

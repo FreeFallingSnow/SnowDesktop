@@ -1156,8 +1156,9 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
         }
         preview_->affectedKeys.insert(keys.begin(), keys.end());
         storage.swap(candidate);
-        engine_.RuntimeNotifySettingsChanged(widgetId, affectedKeys, true);
-        engine_.RuntimeInvalidateHost(widgetId);
+        if (!engine_.RuntimeNotifySettingsChanged(
+                widgetId, affectedKeys, true))
+            engine_.RuntimeInvalidateHost(widgetId);
         return Success();
     }
 
@@ -1169,9 +1170,9 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
             WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
     }
-    engine_.RuntimeNotifySettingsChanged(
-        widgetId, std::move(affectedKeys), false);
-    engine_.RuntimeInvalidateHost(widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widgetId, std::move(affectedKeys), false))
+        engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1201,10 +1202,11 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::CommitPreview(
             "storagePersistenceFailed");
     std::vector<std::string> affectedKeys(
         preview_->affectedKeys.begin(), preview_->affectedKeys.end());
+    const std::wstring widgetId = widget.widgetId;
     preview_.reset();
-    engine_.RuntimeNotifySettingsChanged(
-        widget.widgetId, std::move(affectedKeys), false);
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widgetId, std::move(affectedKeys), false))
+        engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1229,11 +1231,7 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::RevertPreview(
         preview_->descriptor.generation != descriptor.generation)
         return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot,
             "stalePreview");
-    std::vector<std::string> affectedKeys(
-        preview_->affectedKeys.begin(), preview_->affectedKeys.end());
     RestorePreviewNoexcept();
-    engine_.RuntimeNotifySettingsChanged(
-        widget.widgetId, std::move(affectedKeys), false);
     return Success();
 }
 
@@ -1251,8 +1249,12 @@ void WidgetEngineSettingsBackend::RestorePreviewNoexcept() noexcept
                 storage.erase(key);
         }
         const std::wstring widgetId = preview_->descriptor.widgetId;
+        std::vector<std::string> affectedKeys(
+            preview_->affectedKeys.begin(), preview_->affectedKeys.end());
         preview_.reset();
-        if (!widgetId.empty()) engine_.RuntimeInvalidateHost(widgetId);
+        if (!widgetId.empty() && !engine_.RuntimeNotifySettingsChanged(
+                widgetId, std::move(affectedKeys), false))
+            engine_.RuntimeInvalidateHost(widgetId);
     }
     catch (...)
     {
@@ -1298,7 +1300,9 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::SetSecret(
             reference, error))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "secretPersistenceFailed", std::move(error));
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success();
 }
 
@@ -1335,7 +1339,9 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::ClearSecret(
             WideToUtf8(widget.widgetId), field.key, removed, error))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "secretPersistenceFailed", std::move(error));
-    if (removed) engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (removed && !engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success(removed);
 }
 
@@ -1478,7 +1484,9 @@ WidgetEngineSettingsBackend::ChooseFilesystemHandle(
             engine_.RuntimeRecordError(widgetId,
                 "settings filesystem handle cleanup: " + revokeError);
     }
-    engine_.RuntimeInvalidateHost(widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1553,7 +1561,9 @@ WidgetEngineSettingsBackend::ClearFilesystemHandle(
         !revokeError.empty())
         engine_.RuntimeRecordError(widget.widgetId,
             "settings filesystem handle cleanup: " + revokeError);
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success();
 }
 
@@ -1604,6 +1614,8 @@ WidgetEngineSettingsBackend::OpenEntityReferencePicker(
     request.referenceType =
         std::string(EntityReferenceTypeFilter(setting->type));
     request.targetIndex = 0;
+    const std::uint64_t previousRevision = snapshot->revision;
+    const std::string binding = setting->binding;
     try
     {
         if (!engine_.logicalSlotPickerCallback_(request))
@@ -1618,7 +1630,13 @@ WidgetEngineSettingsBackend::OpenEntityReferencePicker(
             return BackendResult(
                 WidgetSettingsBackendStatus::StaleSnapshot,
                 "staleSnapshot");
-        return Success();
+        const auto* current =
+            engine_.widgets_[currentIndex].logicalSlots.Find(binding);
+        const bool changed = current && current->revision != previousRevision;
+        if (changed)
+            (void)engine_.RuntimeNotifySettingsChanged(
+                descriptor.widgetId, { field.key }, false);
+        return Success(changed);
     }
     catch (...)
     {
@@ -1669,7 +1687,11 @@ WidgetEngineSettingsBackend::ClearEntityReference(
             "host.settings.winui"))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "entityReferenceClearFailed", std::move(error));
-    return Success(change.operation != "unchanged");
+    const bool changed = change.operation != "unchanged";
+    if (changed)
+        (void)engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false);
+    return Success(changed);
 }
 
 WidgetSettingsBackendResult WidgetEngineSettingsBackend::StartSearch(
