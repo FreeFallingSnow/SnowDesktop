@@ -6,8 +6,9 @@
  * Collection 是桌面上的一类特殊容器控件，以网格形式展示其子项缩略图，
  * 提供紧凑模式（2x2 网格）和大文件夹模式；无字大文件夹会在
  * 图标缩放下限内解析容量最大的固定网格。
- * 当子项数量超过内联容量时，最后一个槽位变为"全部"拼贴按钮，
- * 以 2x2 缩略图形式展示剩余项目。
+ * 当子项数量超过物理网格容量时，最后一个槽位变为"全部"拼贴按钮，
+ * 以 2x2 缩略图形式展示剩余项目。恰好填满网格时静止态展示最后
+ * 一个普通项目；兼容的项目拖拽期间临时恢复"全部"按钮供悬停展开。
  */
 
 #include "widget.h"
@@ -190,15 +191,16 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * @brief 获取集合的内联容量（直接显示的缩略图数量）
+ * @brief 获取集合的物理网格容量
  *
  * 紧凑模式（单行单列）下返回 4（2x2 网格），
- * 非紧凑模式下使用当前解析网格的槽位数减一，预留最后一个位置给
- * "全部"按钮；无字模式的解析网格可能比组件跨度更密集。
+ * 非紧凑模式下返回当前解析网格的完整槽位数；无字模式的解析网格
+ * 可能比组件跨度更密集。
  * @param collection 集合组件
- * @return 内联可显示的缩略图数量
+ * @return 物理网格槽位数量
  */
-static size_t GetCollectionInlineCapacity(const Collection* collection)
+static size_t GetCollectionPhysicalCapacity(
+    const Collection* collection)
 {
     const DesktopWidget* widget = collection
         ? collection->GetWidgetData() : nullptr;
@@ -214,26 +216,25 @@ static size_t GetCollectionInlineCapacity(const Collection* collection)
         columns = dense.columns;
         rows = dense.rows;
     }
-    return static_cast<size_t>(columns * rows - 1);
+    return static_cast<size_t>(columns * rows);
 }
 
-/**
- * @brief 获取"全部"拼贴按钮的槽位索引
- *
- * 紧凑模式下无"全部"按钮，返回 (size_t)-1。
- * 非紧凑模式下返回当前解析网格的最后一个槽位索引。
- * @param collection 集合组件
- * @return 槽位索引，若不存在"全部"按钮则返回 (size_t)-1
- */
-static size_t GetCollectionAllButtonSlot(const Collection* collection)
+static snowdesktop::widget_item_layout::CollectionPresentation
+GetCollectionPresentation(
+    const Collection* collection, bool compatibleItemDrag)
 {
     const DesktopWidget* widget = collection
         ? collection->GetWidgetData() : nullptr;
-    if (!widget) return static_cast<size_t>(-1);
-    if (snowdesktop::widget_item_layout::IsCompactCollectionSpan(
-            widget->gridSpan.columns, widget->gridSpan.rows))
-        return static_cast<size_t>(-1);
-    return GetCollectionInlineCapacity(collection);
+    if (!widget) return {};
+    return snowdesktop::widget_item_layout::
+        ResolveCollectionPresentation(
+            widget->itemKeys.size(),
+            GetCollectionPhysicalCapacity(collection),
+            snowdesktop::widget_item_layout::
+                IsCompactCollectionSpan(
+                    widget->gridSpan.columns,
+                    widget->gridSpan.rows),
+            compatibleItemDrag);
 }
 
 static RECT GetCollectionCompactSlotRect(
@@ -562,8 +563,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         ? CollectionDenseLayout(this).iconSize : 0;
     auto& slots = GetSlots();
     const size_t displayItemCount = CollectionItemCount(this);
-    size_t inlineCapacity = std::min(
-        GetCollectionInlineCapacity(this), displayItemCount);
+    const auto presentation = GetCollectionPresentation(
+        this, app_->CanCurrentDragUseCollectionPopup());
+    const size_t inlineCapacity =
+        presentation.visibleItemCount;
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
     std::wstring hoveredTooltipTitle;
@@ -658,9 +661,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     }
 
     // "All" button: 2×2 mosaic of remaining items
-    size_t allSlot = GetCollectionAllButtonSlot(this);
-    if (allSlot != static_cast<size_t>(-1) && !compact &&
-        displayItemCount > inlineCapacity)
+    const size_t allSlot = presentation.allButtonSlot;
+    if (presentation.showAllButton && !compact)
     {
         RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
@@ -786,9 +788,10 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     }
 
     // ── Original: large folder mode ─────────────────────────
-    size_t inlineCap = GetCollectionInlineCapacity(this);
-    size_t visible = std::min(
-        inlineCap, CollectionItemCount(this));
+    const auto presentation =
+        GetCollectionPresentation(this, false);
+    const size_t visible =
+        presentation.materializedItemCount;
     RECT body = GetBodyRect();
     for (size_t idx = 0; idx < visible; ++idx)
     {
@@ -819,11 +822,8 @@ size_t Collection::GetSlotCount() const
         return CollectionItemCount(
             const_cast<Collection*>(this));
 
-    size_t inlineCap = GetCollectionInlineCapacity(this);
-    size_t visible = std::min(inlineCap,
-        CollectionItemCount(const_cast<Collection*>(this)));
-
-    return visible;
+    return GetCollectionPresentation(
+        this, false).materializedItemCount;
 }
 
 /**
@@ -840,7 +840,9 @@ Item* Collection::GetSlotItem(size_t idx) const
         idx >= CollectionItemCount(const_cast<Collection*>(this)))
         return nullptr;
     if (!data_->scrollContainerMode &&
-        idx >= GetCollectionInlineCapacity(this)) return nullptr;
+        idx >= GetCollectionPresentation(
+            this, false).materializedItemCount)
+        return nullptr;
     if (auto* scene = GetPreviewScene())
     {
         DesktopItem* sample = scene->FindDesktopItem(data_->itemKeys[idx]);
@@ -996,12 +998,11 @@ RECT Collection::GetAllButtonRect() const
         InflateRect(&body, -Cu(6.0f), -Cu(6.0f));
         return body;
     }
-    size_t allSlot = GetCollectionAllButtonSlot(this);
-    if (allSlot == static_cast<size_t>(-1)) return {};
-    if (CollectionItemCount(const_cast<Collection*>(this)) <=
-        GetCollectionInlineCapacity(this))
-        return {};
-    return GetCollectionSlotRect(this, allSlot, body);
+    const auto presentation = GetCollectionPresentation(
+        this, app_->CanCurrentDragUseCollectionPopup());
+    if (!presentation.showAllButton) return {};
+    return GetCollectionSlotRect(
+        this, presentation.allButtonSlot, body);
 }
 
 /**
@@ -1051,12 +1052,13 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
     if (compact)
         return base == WidgetHit::Content ? WidgetHit::CollectionOpenBtn : base;
 
-    size_t allSlot = GetCollectionAllButtonSlot(this);
-    if (allSlot != static_cast<size_t>(-1) &&
-        CollectionItemCount(const_cast<Collection*>(this)) >
-            GetCollectionInlineCapacity(this))
+    const auto presentation = GetCollectionPresentation(
+        this, app_->CanCurrentDragUseCollectionPopup());
+    if (presentation.showAllButton)
     {
-        RECT allRect = GetCollectionSlotRect(this, allSlot, GetBodyRect());
+        RECT allRect = GetCollectionSlotRect(
+            this, presentation.allButtonSlot,
+            GetBodyRect());
         if (PtInRect(&allRect, pt)) return WidgetHit::CollectionOpenBtn;
     }
     return base;
@@ -1072,6 +1074,21 @@ HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
             ? HitRegion::SortBefore
             : HitRegion::SortAfter;
     };
+
+    if (data_ && !data_->scrollContainerMode &&
+        !snowdesktop::widget_item_layout::IsCompactCollectionSpan(
+            data_->gridSpan.columns, data_->gridSpan.rows))
+    {
+        const RECT allButton = GetAllButtonRect();
+        if (!IsRectEmptyRect(allButton) &&
+            PtInRect(&allButton, pt))
+        {
+            outSlot = nullptr;
+            if (app_)
+                app_->ResetCompactCollectionHandoffDwell();
+            return HitRegion::SortAfter;
+        }
+    }
 
     // Dense icon-only cells do not share Slot::GetIconRect's ordinary
     // icon-and-title geometry. Resolve the physical cell and the actual icon

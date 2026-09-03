@@ -1348,6 +1348,61 @@ int main(int argc, char** argv)
             !localLayout::CollectionUsesFullFrame(true, 1, 4),
         "only a 1x1 Collection is compact; single-row and single-column large-folder layouts must remain valid");
 
+    const auto belowCollectionCapacity =
+        localLayout::ResolveCollectionPresentation(
+            3, 4, false, false);
+    const auto fullCollection =
+        localLayout::ResolveCollectionPresentation(
+            4, 4, false, false);
+    const auto fullCollectionDuringDrag =
+        localLayout::ResolveCollectionPresentation(
+            4, 4, false, true);
+    const auto overflowingCollection =
+        localLayout::ResolveCollectionPresentation(
+            5, 4, false, false);
+    Check(belowCollectionCapacity.materializedItemCount == 3 &&
+            belowCollectionCapacity.visibleItemCount == 3 &&
+            !belowCollectionCapacity.showAllButton &&
+            fullCollection.materializedItemCount == 4 &&
+            fullCollection.visibleItemCount == 4 &&
+            !fullCollection.showAllButton &&
+            fullCollectionDuringDrag.materializedItemCount == 4 &&
+            fullCollectionDuringDrag.visibleItemCount == 3 &&
+            fullCollectionDuringDrag.showAllButton &&
+            fullCollectionDuringDrag.allButtonSlot == 3 &&
+            overflowingCollection.materializedItemCount == 3 &&
+            overflowingCollection.visibleItemCount == 3 &&
+            overflowingCollection.showAllButton &&
+            overflowingCollection.allButtonSlot == 3,
+        "a fixed Collection must expose its last physical slot only when one item remains and temporarily restore the all-button during a compatible drag");
+    const auto denseFullCollection =
+        localLayout::ResolveCollectionPresentation(
+            9, 9, false, false);
+    const auto denseFullCollectionDuringDrag =
+        localLayout::ResolveCollectionPresentation(
+            9, 9, false, true);
+    Check(denseFullCollection.materializedItemCount == 9 &&
+            denseFullCollection.visibleItemCount == 9 &&
+            !denseFullCollection.showAllButton &&
+            denseFullCollectionDuringDrag.materializedItemCount == 9 &&
+            denseFullCollectionDuringDrag.visibleItemCount == 8 &&
+            denseFullCollectionDuringDrag.showAllButton &&
+            denseFullCollectionDuringDrag.allButtonSlot == 8,
+        "titleless dense Collections must apply the single-overflow rule to their resolved physical grid capacity without rebuilding slots");
+    const auto compactCollection =
+        localLayout::ResolveCollectionPresentation(
+            5, 4, true, false);
+    const auto compactCollectionDuringDrag =
+        localLayout::ResolveCollectionPresentation(
+            5, 4, true, true);
+    Check(compactCollection.materializedItemCount == 4 &&
+            compactCollection.visibleItemCount == 4 &&
+            !compactCollection.showAllButton &&
+            compactCollectionDuringDrag.materializedItemCount == 4 &&
+            compactCollectionDuringDrag.visibleItemCount == 4 &&
+            !compactCollectionDuringDrag.showAllButton,
+        "1x1 compact Collections must retain their four-thumbnail presentation across drag states");
+
     constexpr float standardLineHeight =
         14.0f * 7.0f / 6.0f;
     constexpr int standardTextHeight =
