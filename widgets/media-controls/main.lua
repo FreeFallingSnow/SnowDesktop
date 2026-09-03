@@ -7,6 +7,10 @@ local fluent = {
     settings = utf8.char(0xF6A9),
 }
 
+local fontAwesome = {
+    music = utf8.char(0xF001),
+}
+
 local palettes = {
     dark = {
         title = 0xFFFFFF,
@@ -180,6 +184,18 @@ local function drawButton(model, id, taskName, glyph, label,
     })
 end
 
+local function drawArtworkPlaceholder(x, y, size, palette)
+    local radius = size * 0.10
+    draw.rect(x, y, size, size, palette.btnBg, radius, 0.07)
+    draw.circle(x + size * 0.5, y + size * 0.5,
+        size * 0.30, palette.btnBg, 0.07)
+    draw.fa(fontAwesome.music,
+        x + size * 0.29, y + size * 0.29,
+        size * 0.42, palette.btnDisabled)
+    draw.strokeRect(x, y, size, size,
+        palette.btnText, radius, size * 0.012, 0.14)
+end
+
 local function render(_context, model)
     local width = layout.width()
     local height = layout.height()
@@ -188,7 +204,8 @@ local function render(_context, model)
     local available = session ~= nil
     local controls = available and session.controls or {}
     local canControl = widget.hasPermission("media.action")
-    local artwork = currentArtwork(session)
+    local showArtwork = storage.get("showArtwork") ~= "0"
+    local artwork = showArtwork and currentArtwork(session) or nil
     local launcher = currentLauncher()
 
     local isPlaying = available and session.playbackStatus == "playing"
@@ -264,7 +281,7 @@ local function render(_context, model)
     local contentHeight = height - padding * 2
     local artworkSize = 0
     local contentGap = 0
-    if artwork then
+    if showArtwork then
         if vertical then
             artworkSize = math.min(contentWidth * 0.62,
                 contentHeight * 0.45)
@@ -318,11 +335,17 @@ local function render(_context, model)
         detailsY = (height - detailsHeight) * 0.5
     end
 
-    if artwork then
-        draw.imageFit(artwork.image, artworkX, artworkY,
-            artworkSize, artworkSize, "cover", "center", 1.0, "linear")
-        draw.strokeRect(artworkX, artworkY, artworkSize, artworkSize,
-            palette.btnText, artworkSize * 0.10, artworkSize * 0.012, 0.16)
+    if artworkSize > 0 then
+        if artwork then
+            draw.imageFit(artwork.image, artworkX, artworkY,
+                artworkSize, artworkSize, "cover", "center", 1.0, "linear")
+            draw.strokeRect(artworkX, artworkY, artworkSize, artworkSize,
+                palette.btnText, artworkSize * 0.10,
+                artworkSize * 0.012, 0.16)
+        else
+            drawArtworkPlaceholder(artworkX, artworkY,
+                artworkSize, palette)
+        end
     end
 
     local function drawLabel(text, y, font, color, bold)
