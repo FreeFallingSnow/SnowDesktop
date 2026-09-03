@@ -178,9 +178,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   将设计坐标线性缩放到当前内容短边；
 - `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
   的标准内容宽、高缩放设计坐标；
-- `ui.semanticMetrics`：`ui.metrics()` 返回以页面 CU 解析的标题区与语义控件度量；
-  标题、输入框和标题栏按钮由同一个标题区设置联动，一至两行使用页面基准，更高组件
-  只随纵向跨度缓慢增长，横向跨度不影响高度；
+- `ui.semanticMetrics`：`ui.metrics()` 返回以页面 CU 解析的语义控件度量；
+- `ui.semanticMetrics.rowUnit`：新增 `layoutRowHeight`；字体、间距、图标和控件高度均由
+  同一行高派生，一至两行使用页面基准，更高组件只随纵向跨度缓慢增长，横向跨度不影响；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -1487,20 +1487,21 @@ end
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
 
 探测 `ui.semanticMetrics` 后，`ui.metrics()` 返回当前页面和辅助功能环境下的
-宿主语义度量。返回值包含 `titleAreaHeight`、
+宿主语义度量。探测 `ui.semanticMetrics.rowUnit` 后还会返回 `layoutRowHeight`；
+`titleAreaHeight` 是同值的兼容别名。其余字段包含
 `spacingXs/spacingSm/spacingMd/spacingLg`、
 `captionFontSize/bodyFontSize/titleFontSize/controlFontSize`、
 `compactControlHeight/controlHeight`、`compactRowHeight/rowHeight`、
 `smallIconSize/iconSize/largeIconSize`、`controlRadius/strokeWidth`。宿主在
-“外观 > 组件与布局”中以页面 `cu` 保存一个 `titleAreaHeight`；标题字号、控件字号、
-控件高度和标题栏图标从它派生并联动变化。运行时用页面 CU 缩放几何，字体及需要
-容纳字体的控件还会响应 Windows 文本缩放。一至两行组件使用页面标题区基准；更高
-组件的标题区按纵向跨度缓慢增长。同一纵向跨度的组件获得相同标题区高度，横向跨度
-不会改变标题区或控件高度。搜索框、普通输入、导航按钮和标题文字应放在
-`0..titleAreaHeight` 的标题区内，
-输入框无需单独的高度设置。标题区之后的列表、日历网格、空状态和其他正文应根据
-剩余矩形、内容和组件自身比例响应排布；`compactRowHeight/rowHeight` 仅为源码兼容
-保留，不应再用于固定正文行高。组件字体设置应作为相应字号的百分比乘数。
+“外观 > 组件与布局”中以页面 `cu` 保存一个 Lua 组件行高；运行时按纵向跨度缓慢
+解析为 `layoutRowHeight`，并由它派生字体、间距、图标和控件高度。运行时用页面 CU
+缩放几何，字体及需要容纳字体的控件还会响应 Windows 文本缩放。一至两行组件使用
+页面基准，更高组件的行高缓慢增长。同一纵向跨度的组件获得相同行高，横向跨度不会
+改变这些纵向度量。搜索框、普通输入、导航按钮和标题文字所在的顶部控件行通常占
+`1x layoutRowHeight`，正文从这一行的边界直接开始，不再额外添加“标题区间隔”。列表项、
+日历网格和空状态使用行高的明确倍数，或组合已经随行高解析的正文字号和间距。
+`compactRowHeight/rowHeight` 仅为源码兼容保留；新组件不应再对语义字段应用第二次
+`rpxY` 缩放，宽度也不得决定纵向控件或行高。组件字体设置应作为相应字号的百分比乘数。
 
 - v2 不暴露旧 `widget.editText(...)`；文本编辑统一使用声明式输入节点或
   `control.textInput/textArea`。
@@ -2371,11 +2372,12 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
 `layout.cu(value)` 和 `layout.fontCu(value)` 只应用于组件自己定义、且明确要和宿主
 网格指标对齐的内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、
-启动器和便签的桌面主表面中，标题区使用 `ui.metrics().titleAreaHeight`，并让其中的
-搜索框、输入框、按钮、标题文字和图标使用对应语义字段。标题区只随纵向跨度缓慢
-增长，不能由宽度或横向跨度重算。正文区域从标题区之后的剩余矩形自适应排布，
-不以兼容字段 `rowHeight` 固定月历网格或列表内容。组件特有几何使用
-`rpxX/rpxY` 或百分比单位。更大的空间可以显示更多行或更完整的文字。
+启动器和便签的桌面主表面中，顶部控件行使用
+`ui.metrics().layoutRowHeight`，其中的搜索框、输入框、按钮、标题文字和图标使用对应
+语义字段。正文区域从该行边界后的剩余矩形自适应排布；列表行可使用
+`layoutRowHeight` 的明确倍数，月历网格则按剩余矩形分配。语义字段已经随纵向跨度
+缓慢增长，不要再次乘 `rpxY`。组件特有几何仍可使用 `rpxX/rpxY` 或百分比单位，
+但任何纵向控件或正文行高都不应由宽度决定。
 
 ### `storage`
 

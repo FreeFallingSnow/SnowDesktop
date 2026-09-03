@@ -118,15 +118,15 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.category_show_count") ==
                 std::string::npos,
         "widget layout owns category tab height while category count behavior stays elsewhere");
-    Check(source.find("ContinuousControl luaWidgetTitleAreaHeight") !=
+    Check(source.find("ContinuousControl luaWidgetRowHeight") !=
                 std::string::npos &&
             source.find(
-              "&PersonalizationSettings::luaWidgetTitleAreaHeight") !=
+              "&PersonalizationSettings::luaWidgetRowHeight") !=
                 std::string::npos &&
-            source.find("SetContinuousText(luaWidgetTitleAreaHeight") !=
+            source.find("SetContinuousText(luaWidgetRowHeight") !=
                 std::string::npos &&
             source.find("SemanticUiMetricTokens::") == std::string::npos,
-        "widget layout exposes one title area control and derives its inner metrics");
+        "widget layout exposes one row-height control and derives semantic metrics");
     for (const char* control : {
              "muxc::Slider", "muxc::NumberBox",
              "muxc::ToggleSwitch", "muxc::ComboBox"})

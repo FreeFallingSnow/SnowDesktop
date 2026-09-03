@@ -274,7 +274,8 @@
     "schedule.visibility",
     "task.desktop.search",
     "task.start",
-    "ui.semanticMetrics"
+    "ui.semanticMetrics",
+    "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": [
     "data.app.indexStatus",

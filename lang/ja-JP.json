@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "要求されたバックアップは存在しません。",
   "settings.backup.error.restoreServiceUnavailable": "アプリケーション レイアウトの復元サービスを使用できません。",
   "settings.home.widgets.unknown": "状態を取得できません",
-  "app.settings.lua_widget_title_area_height": "Lua ウィジェットのタイトル領域の高さ"
+  "app.settings.lua_widget_row_height": "Lua ウィジェットの行の高さ"
 }

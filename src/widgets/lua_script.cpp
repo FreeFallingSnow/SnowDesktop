@@ -220,7 +220,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             preloadPage ? preloadPage->gapY : Cu(8.0f),
             static_cast<int>(GetBarHeight()), app_->GetItemFontWeight(),
             preloadPage ? GetGridPageCuScale(*preloadPage) : data_->cellScale,
-            { app_->CurrentPersonalization().luaWidgetTitleAreaHeight });
+            { app_->CurrentPersonalization().luaWidgetRowHeight });
     }
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
@@ -357,7 +357,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 static_cast<int>(GetBarHeight()),
                 app_->GetItemFontWeight(),
                 realPage ? GetGridPageCuScale(*realPage) : data_->cellScale,
-                { app_->CurrentPersonalization().luaWidgetTitleAreaHeight });
+                { app_->CurrentPersonalization().luaWidgetRowHeight });
         }
         else
         {
@@ -380,7 +380,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     static_cast<int>(GetBarHeight()),
                     app_->GetItemFontWeight(),
                     GetGridPageCuScale(*realPage),
-                    { app_->CurrentPersonalization().luaWidgetTitleAreaHeight });
+                    { app_->CurrentPersonalization().luaWidgetRowHeight });
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;

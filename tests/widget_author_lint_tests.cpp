@@ -238,11 +238,21 @@ void TestSemanticUiMetricsFeatureContract()
 {
     PackageManifest manifest;
     manifest.apiVersion = 2;
-    manifest.requiredFeatures = { "ui.semanticMetrics" };
+    manifest.requiredFeatures = {
+        "ui.semanticMetrics", "ui.semanticMetrics.rowUnit" };
     const auto declared = LintWidgetSource(manifest, "main.lua",
-        "local metrics = ui.metrics()\n");
+        "local metrics = ui.metrics()\n"
+        "local row = metrics.layoutRowHeight\n");
     Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
         "semantic UI metrics are valid when their capability is declared");
+
+    manifest.requiredFeatures = { "ui.semanticMetrics" };
+    const auto rowUnitMissing = LintWidgetSource(manifest, "main.lua",
+        "local metrics = ui.metrics()\n"
+        "local row = metrics.layoutRowHeight\n");
+    Check(!rowUnitMissing.Ok() &&
+            HasIssue(rowUnitMissing, "feature.undeclared"),
+        "layout row metrics must declare their narrower capability");
 
     manifest.requiredFeatures.clear();
     const auto missing = LintWidgetSource(manifest, "main.lua",

@@ -1348,5 +1348,5 @@
     "settings.backup.error.missing": "The requested backup no longer exists.",
     "settings.backup.error.restoreServiceUnavailable": "The application layout restore service is unavailable.",
     "settings.home.widgets.unknown": "Status unavailable",
-    "app.settings.lua_widget_title_area_height": "Lua Widget Title Area Height"
+    "app.settings.lua_widget_row_height": "Lua Widget Row Height"
 }

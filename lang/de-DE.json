@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "Die angeforderte Sicherung ist nicht mehr vorhanden.",
   "settings.backup.error.restoreServiceUnavailable": "Der Dienst zum Wiederherstellen des Anwendungslayouts ist nicht verfügbar.",
   "settings.home.widgets.unknown": "Status nicht verfügbar",
-  "app.settings.lua_widget_title_area_height": "Höhe des Lua-Widget-Titelbereichs"
+  "app.settings.lua_widget_row_height": "Zeilenhöhe der Lua-Widgets"
 }

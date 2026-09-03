@@ -304,9 +304,8 @@ local function render(context, model)
     local unit = metrics.strokeWidth
     local function px(value) return value * unit end
     local padding = metrics.spacingMd
-    local headerHeight = math.min(contentHeight, metrics.titleAreaHeight)
-    local calendarGap = metrics.spacingSm
-    local bodyTop = math.min(contentHeight, headerHeight + calendarGap)
+    local headerHeight = math.min(contentHeight, metrics.layoutRowHeight)
+    local bodyTop = headerHeight
     local bodyHeight = math.max(unit,
         contentHeight - bodyTop - metrics.spacingXs)
     local textScale = fontScale()

@@ -107,21 +107,20 @@ Choose the sizing model before writing geometry:
   this model. Recalculate and center the group of children that are actually
   visible when optional content disappears.
 - **Proportional information model — the default for desktop information
-  tools.** Use `ui.metrics().titleAreaHeight` for the shared title band and
-  place search fields, inputs, navigation buttons and title text inside it.
-  Their control height, font and icon metrics derive from the same host setting,
-  expressed in page `cu`. The returned title band stays at the page baseline for
-  one- and two-row widgets, then grows slowly with vertical span; horizontal
-  span never changes its height. Components with the same row span therefore
-  receive the same title height and must use the resolved value instead of
-  recalculating it from width. Lay out lists, calendars and empty states from
-  the rectangle left after the title band; derive their rows and internal
-  geometry from content, available space and component-specific proportions.
-  Use `layout.rpxX()` and `layout.rpxY()` only for component-specific axis
-  geometry. A larger span
-  should expose more rows, wider text or more composition space instead of
-  enlarging ordinary controls. Use `layout.rpx()` or `vmin` for an isotropic
-  decoration that must preserve its shape.
+  tools.** Use `ui.metrics().layoutRowHeight` as the shared semantic row unit.
+  A top row containing search fields, inputs, navigation buttons or headings
+  normally occupies `1x` this value; place its controls inside that row using
+  the returned control, font, icon and spacing metrics. Lists and other body
+  rows choose explicit multiples of the same row unit or combine the returned
+  body font and spacing values. The host keeps the row unit at the page baseline
+  for one- and two-row widgets, then grows it slowly with vertical span. All
+  derived semantic metrics grow with it. Horizontal span never changes them,
+  so components with the same row span stay aligned. Begin body layout at the
+  row boundary without adding another title-band gap. Use `layout.rpxX()` and
+  `layout.rpxY()` only for component-specific axis geometry, and never derive
+  vertical controls or rows from width. `titleAreaHeight` is a compatibility
+  alias; new packages should require `ui.semanticMetrics.rowUnit` and use
+  `layoutRowHeight`. Use `layout.rpx()` or `vmin` for isotropic decoration.
 - **Grid-density model — only for content that explicitly aligns to host grid
   metrics.** Use `layout.cu()` and `layout.fontCu()` for a system-status card
   matrix or another component whose information units intentionally track the
@@ -140,12 +139,12 @@ Constants used only as ratios are fine. Output clamps such as
 make two equal-aspect surfaces render differently and should be avoided.
 
 Use `ui.metrics().bodyFontSize` and `captionFontSize` for ordinary information
-typography, and `titleFontSize/controlFontSize` within the title band. A
+typography, and `titleFontSize/controlFontSize` within a heading row. A
 component font-size preference should be a percentage multiplier over those
-resolved values. Reserve span-relative text for primary visual data such as a
+resolved values. These values already follow `layoutRowHeight`; do not apply a
+second span scale. Reserve span-relative text for primary visual data such as a
 clock, timer or single metric. `compactRowHeight` and `rowHeight` remain for
-source compatibility; do not use them to impose a host-wide height on a
-component's content rows.
+source compatibility; use `layoutRowHeight` when defining new row multiples.
 
 ## Create a package
 

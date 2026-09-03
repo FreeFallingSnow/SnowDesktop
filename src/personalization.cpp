@@ -384,10 +384,12 @@ bool LoadPersonalization(
         if (categorizedTabHeightLoaded)
             *categorizedTabHeightLoaded = true;
     }
-    if (ReadDoubleField(text, "luaWidgetTitleAreaHeight", v) &&
-        std::isfinite(v))
+    const bool luaWidgetRowHeightLoaded =
+        ReadDoubleField(text, "luaWidgetRowHeight", v) ||
+        ReadDoubleField(text, "luaWidgetTitleAreaHeight", v);
+    if (luaWidgetRowHeightLoaded && std::isfinite(v))
     {
-        s.luaWidgetTitleAreaHeight = std::clamp(
+        s.luaWidgetRowHeight = std::clamp(
             static_cast<float>(v), 24.0f, 64.0f);
     }
     if (ReadDoubleField(text, "backgroundPreset", v))
@@ -439,8 +441,7 @@ bool LoadPersonalization(
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
-        const float luaWidgetTitleAreaHeight =
-            s.luaWidgetTitleAreaHeight;
+        const float luaWidgetRowHeight = s.luaWidgetRowHeight;
         const bool showCategoryTabCounts =
             s.showCategoryTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
@@ -449,7 +450,7 @@ bool LoadPersonalization(
         s.barHeight = barHeight;
         s.categorizedTabHeight =
             categorizedTabHeight;
-        s.luaWidgetTitleAreaHeight = luaWidgetTitleAreaHeight;
+        s.luaWidgetRowHeight = luaWidgetRowHeight;
         s.showCategoryTabCounts =
             showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
@@ -515,8 +516,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                 s.categorizedTabHeight,
                 24.0f, 48.0f)
          << ",\n";
-    file << "  \"luaWidgetTitleAreaHeight\": "
-         << std::clamp(s.luaWidgetTitleAreaHeight, 24.0f, 64.0f)
+    file << "  \"luaWidgetRowHeight\": "
+         << std::clamp(s.luaWidgetRowHeight, 24.0f, 64.0f)
          << ",\n";
     file << "  \"showCategoryTabCounts\": "
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";

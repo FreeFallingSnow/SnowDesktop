@@ -197,7 +197,7 @@ int main()
     savedAppearance.widgetEdgeHighlightEnabled = true;
     savedAppearance.widgetEdgeHighlightWidth = 2.5f;
     savedAppearance.widgetEdgeHighlightStrength = 0.42f;
-    savedAppearance.luaWidgetTitleAreaHeight = 44.0f;
+    savedAppearance.luaWidgetRowHeight = 44.0f;
     Check(SavePersonalization(
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
@@ -209,9 +209,9 @@ int main()
             loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
             std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
-            loadedAppearance.luaWidgetTitleAreaHeight == 44.0f &&
+            loadedAppearance.luaWidgetRowHeight == 44.0f &&
             !loadedAppearance.glassEnabled,
-        "appearance and Lua widget title area height round trip independently");
+        "appearance and Lua widget row height round trip independently");
 
     {
         std::ofstream legacyGlass(
@@ -268,8 +268,8 @@ int main()
             explicitAppearance.widgetEdgeHighlightWidth ==
                 kMaximumWidgetBorderWidth &&
             explicitAppearance.widgetEdgeHighlightStrength == 0.0f &&
-            explicitAppearance.luaWidgetTitleAreaHeight == 64.0f,
-        "explicit appearance and Lua title area height clamp to supported ranges");
+            explicitAppearance.luaWidgetRowHeight == 64.0f,
+        "legacy Lua title-area height migrates to the clamped row height");
     std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);

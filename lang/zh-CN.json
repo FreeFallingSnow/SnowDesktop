@@ -1348,5 +1348,5 @@
     "settings.backup.error.missing": "请求的备份已不存在。",
     "settings.backup.error.restoreServiceUnavailable": "应用布局恢复服务不可用。",
     "settings.home.widgets.unknown": "状态不可用",
-    "app.settings.lua_widget_title_area_height": "Lua 组件标题区高度"
+    "app.settings.lua_widget_row_height": "Lua 组件行高"
 }

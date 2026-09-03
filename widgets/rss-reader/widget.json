@@ -322,7 +322,8 @@
     "task.shell.openUri",
     "task.start",
     "time.basic",
-    "ui.semanticMetrics"
+    "ui.semanticMetrics",
+    "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": []
 }

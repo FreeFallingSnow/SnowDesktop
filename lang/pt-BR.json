@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "O backup solicitado não existe mais.",
   "settings.backup.error.restoreServiceUnavailable": "O serviço de restauração do layout do aplicativo não está disponível.",
   "settings.home.widgets.unknown": "Status indisponível",
-  "app.settings.lua_widget_title_area_height": "Altura da área de título dos widgets Lua"
+  "app.settings.lua_widget_row_height": "Altura da linha dos widgets Lua"
 }

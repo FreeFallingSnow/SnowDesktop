@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "La copia de seguridad solicitada ya no existe.",
   "settings.backup.error.restoreServiceUnavailable": "El servicio de restauración del diseño de la aplicación no está disponible.",
   "settings.home.widgets.unknown": "Estado no disponible",
-  "app.settings.lua_widget_title_area_height": "Altura del área de título de los componentes Lua"
+  "app.settings.lua_widget_row_height": "Altura de fila de los componentes Lua"
 }

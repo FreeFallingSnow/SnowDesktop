@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "要求的備份已不存在。",
   "settings.backup.error.restoreServiceUnavailable": "應用程式版面配置還原服務無法使用。",
   "settings.home.widgets.unknown": "狀態無法使用",
-  "app.settings.lua_widget_title_area_height": "Lua 元件標題區高度"
+  "app.settings.lua_widget_row_height": "Lua 元件列高"
 }

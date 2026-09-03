@@ -106,42 +106,51 @@ void TestReferencePixelsUseTheManifestDefaultShortEdge()
         "reference axes scale independently from width and height");
 }
 
-void TestSemanticUiMetricsUseTitleAreaAndPageCu()
+void TestSemanticUiMetricsUseRowHeightAndPageCu()
 {
     using snowdesktop::widget_runtime::SemanticUiMetricTokens;
     using snowdesktop::widget_runtime::ResolveSemanticUiMetrics;
-    using snowdesktop::widget_runtime::ResolveSemanticTitleAreaScale;
+    using snowdesktop::widget_runtime::ResolveSemanticRowScale;
     const auto standard = ResolveSemanticUiMetrics(1.0f, 1.0f);
-    Expect(standard.titleAreaHeight == 40.0f &&
+    Expect(standard.layoutRowHeight == 40.0f &&
+            standard.titleAreaHeight == standard.layoutRowHeight &&
             standard.bodyFontSize == 12.0f &&
             standard.controlHeight == 32.0f &&
             standard.compactControlHeight == 28.0f &&
             standard.rowHeight == 40.0f,
         "semantic UI metrics expose shared page-CU defaults");
     const auto denserPage = ResolveSemanticUiMetrics(0.75f, 1.0f);
-    Expect(denserPage.titleAreaHeight == 30.0f &&
+    Expect(denserPage.layoutRowHeight == 30.0f &&
+            denserPage.titleAreaHeight == denserPage.layoutRowHeight &&
             denserPage.bodyFontSize == 9.0f &&
             denserPage.controlHeight == 24.0f &&
             denserPage.spacingSm == 6.0f,
         "semantic UI metrics follow the stable page CU scale");
     SemanticUiMetricTokens custom;
-    custom.titleAreaHeight = 48.0f;
+    custom.rowHeight = 48.0f;
     const auto customized = ResolveSemanticUiMetrics(custom, 1.0f, 1.0f);
-    Expect(customized.titleAreaHeight == 48.0f &&
+    Expect(customized.layoutRowHeight == 48.0f &&
+            customized.titleAreaHeight == customized.layoutRowHeight &&
+            std::abs(customized.bodyFontSize - 14.4f) < 0.001f &&
+            std::abs(customized.spacingSm - 9.6f) < 0.001f &&
             std::abs(customized.controlHeight - 38.4f) < 0.001f &&
-            customized.spacingSm == 8.0f,
-        "title area height drives linked header controls without changing content spacing");
-    const float mediumScale = ResolveSemanticTitleAreaScale(3);
+            customized.rowHeight == 48.0f,
+        "row height drives all linked semantic metrics");
+    const float mediumScale = ResolveSemanticRowScale(3);
     const auto medium = ResolveSemanticUiMetrics(1.0f, 1.0f, mediumScale);
-    const float tallScale = ResolveSemanticTitleAreaScale(8);
+    const float tallScale = ResolveSemanticRowScale(8);
     const auto tall = ResolveSemanticUiMetrics(1.0f, 1.0f, tallScale);
-    Expect(ResolveSemanticTitleAreaScale(1) == 1.0f &&
-            ResolveSemanticTitleAreaScale(2) == 1.0f &&
-            std::abs(medium.titleAreaHeight -
+    Expect(ResolveSemanticRowScale(1) == 1.0f &&
+            ResolveSemanticRowScale(2) == 1.0f &&
+            std::abs(medium.layoutRowHeight -
                 40.0f * std::sqrt(1.5f)) < 0.001f &&
-            tallScale == 2.0f && tall.titleAreaHeight == 80.0f &&
+            std::abs(medium.bodyFontSize -
+                12.0f * mediumScale) < 0.001f &&
+            tallScale == 2.0f && tall.layoutRowHeight == 80.0f &&
+            tall.titleAreaHeight == tall.layoutRowHeight &&
+            tall.bodyFontSize == 24.0f &&
             tall.controlHeight == 64.0f,
-        "title areas grow from vertical widget scale without using width");
+        "row units scale all semantic metrics without using width");
     const auto largeText = ResolveSemanticUiMetrics(1.0f, 2.0f);
     Expect(largeText.bodyFontSize == 24.0f &&
             largeText.controlHeight == 40.0f &&
@@ -177,7 +186,7 @@ int main()
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
     TestReferencePixelsUseTheManifestDefaultShortEdge();
-    TestSemanticUiMetricsUseTitleAreaAndPageCu();
+    TestSemanticUiMetricsUseRowHeightAndPageCu();
     TestLegacyPointSizesMigrateToCuOnce();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";

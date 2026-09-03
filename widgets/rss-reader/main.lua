@@ -206,7 +206,7 @@ local function render(context, model)
     local countText = l10n.tr("lua_widget.rss_reader.article_count",
         tostring(#model.articles))
     local countMetrics = draw.measureText(countText, countFont, width, false)
-    local headerHeight = math.min(height, metrics.titleAreaHeight)
+    local headerHeight = math.min(height, metrics.layoutRowHeight)
     local titleMetrics = draw.measureText(title, headerFont, width, true)
     draw.text(pad, math.max(0,
             (headerHeight - titleMetrics.height) / 2),
@@ -222,7 +222,7 @@ local function render(context, model)
     draw.line(pad, headerBottom, width - pad, headerBottom,
         metrics.strokeWidth, colors.divider, 0.10)
 
-    local listTop = headerBottom + metrics.spacingSm
+    local listTop = headerBottom
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,

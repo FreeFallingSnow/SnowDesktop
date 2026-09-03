@@ -274,7 +274,8 @@
     "l10n.basic",
     "layout.relativeUnits",
     "storage.transaction",
-    "ui.semanticMetrics"
+    "ui.semanticMetrics",
+    "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": []
 }

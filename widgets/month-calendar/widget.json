@@ -370,7 +370,8 @@
     "layout.relativeUnits",
     "settings.select.localizedOptions",
     "time.basic",
-    "ui.semanticMetrics"
+    "ui.semanticMetrics",
+    "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": []
 }

@@ -569,6 +569,7 @@
     "task.start",
     "time.basic",
     "ui.semanticMetrics",
+    "ui.semanticMetrics.rowUnit",
     "widget.panel"
   ],
   "optionalFeatures": []

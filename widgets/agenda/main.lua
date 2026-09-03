@@ -391,22 +391,23 @@ local function render(context, model)
     local colors = palette(context)
     local scale = fontScale()
     local titleFont = metrics.titleFontSize * scale
+    local headerSmallFont = metrics.captionFontSize * scale
     local mainFont = metrics.bodyFontSize * scale
     local smallFont = metrics.captionFontSize * scale
     local selected = selectedDate(model)
     local canWrite = widget.hasPermission("calendar.write") and not context.preview
 
-    local headerHeight = math.min(height, metrics.titleAreaHeight)
+    local headerHeight = math.min(height, metrics.layoutRowHeight)
     local button = math.min(metrics.compactControlHeight,
         math.max(unit, headerHeight - metrics.spacingSm))
     local gap = metrics.spacingXs
     local headerY = math.max(0, (headerHeight - button) / 2)
-    local listTop = math.min(height, headerHeight + metrics.spacingSm)
+    local listTop = headerHeight
     local titleText = formatDate(selected, false)
     local titleMetrics = draw.measureText(titleText, titleFont, 0, true)
     local todayLabel = l10n.tr("lua_widget.agenda.today")
     local todayMetrics = draw.measureText(todayLabel,
-        smallFont, 0, true)
+        headerSmallFont, 0, true)
     local todayWidth = math.max(headerHeight,
         todayMetrics.width + headerHeight * 0.30)
     local wideHeaderWidth = pad * 2 + button * 3 + todayWidth +
@@ -443,7 +444,7 @@ local function render(context, model)
         drawHeaderTextButton("agenda.today", todayLabel,
             { x = todayX, y = headerY,
                 width = todayWidth, height = button }, colors, true,
-            metrics, smallFont)
+            metrics, headerSmallFont)
         local titleX = pad + button * 2 + gap * 2
         local titleRight = todayX - gap
         centeredText(titleText, titleX, 0,

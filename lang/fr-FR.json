@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "La sauvegarde demandée n’existe plus.",
   "settings.backup.error.restoreServiceUnavailable": "Le service de restauration de la disposition de l’application est indisponible.",
   "settings.home.widgets.unknown": "État indisponible",
-  "app.settings.lua_widget_title_area_height": "Hauteur de la zone de titre des widgets Lua"
+  "app.settings.lua_widget_row_height": "Hauteur de ligne des widgets Lua"
 }

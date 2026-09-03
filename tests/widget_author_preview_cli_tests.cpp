@@ -471,6 +471,7 @@ std::filesystem::path CreateEnvironmentFixture(
     "layout.relativeUnits",
     "lifecycle.model",
     "ui.semanticMetrics",
+    "ui.semanticMetrics.rowUnit",
     "widget.context",
     "data.subscribe",
     "data.system.cpu"
@@ -509,7 +510,8 @@ return widget.define({
             pcall(layout.rpxY, -1000001) == false,
             "reference axes must scale independently from manifest defaults")
         local metrics = ui.metrics()
-        assert(metrics.titleAreaHeight == 60 and
+        assert(metrics.layoutRowHeight == 60 and
+            metrics.titleAreaHeight == metrics.layoutRowHeight and
             metrics.bodyFontSize == 18 and
             metrics.controlHeight == 48 and metrics.spacingSm == 12,
             "semantic UI metrics must follow page CU without using widget span")

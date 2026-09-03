@@ -8636,10 +8636,11 @@ static int lua_UiMetrics(lua_State* L)
                 snowdesktop::widget_runtime::SemanticUiMetricTokens{},
             d2d ? d2d->semanticCuScale : 1.0f,
             static_cast<float>(system.textScale),
-            snowdesktop::widget_runtime::ResolveSemanticTitleAreaScale(
+            snowdesktop::widget_runtime::ResolveSemanticRowScale(
                 d2d ? d2d->gridRows : 2));
 
-    lua_createtable(L, 0, 18);
+    lua_createtable(L, 0, 19);
+    SetNumberField(L, "layoutRowHeight", metrics.layoutRowHeight);
     SetNumberField(L, "titleAreaHeight", metrics.titleAreaHeight);
     SetNumberField(L, "spacingXs", metrics.spacingXs);
     SetNumberField(L, "spacingSm", metrics.spacingSm);

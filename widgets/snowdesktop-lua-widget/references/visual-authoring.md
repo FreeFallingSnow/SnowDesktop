@@ -146,15 +146,14 @@ different state:
    scale uniformly. Check each intentional aspect-ratio branch, or verify that
    a single-structure composition remains centered across its supported range.
    Center the complete group of currently visible parts. Agendas, calendars,
-   lists, search and RSS should use `ui.metrics().titleAreaHeight` for a shared
-   title band. Search fields, inputs, navigation buttons and title typography
-   live inside that band and derive from the same page-CU setting. Compare
-   components with the same row span to confirm equal title heights, and verify
-   that changing only width does not resize the band. Taller spans may grow the
-   resolved band slowly. Lay out the content below it from the remaining
-   rectangle; do not use compatibility row metrics to fix calendar grids or
-   list rows. Use `layout.rpxX/rpxY()` only for component-specific axis
-   geometry. Larger spans should reveal more content.
+   lists, search and RSS should use `ui.metrics().layoutRowHeight` as a shared
+   row unit. A top control row normally occupies `1x` this value, and body rows
+   use intentional multiples or the returned body-font and spacing metrics.
+   Begin content at the row boundary without another title-area gap. Compare
+   components with the same row span to confirm equal row units, and verify
+   that changing only width does not resize them. Taller spans grow the unit
+   and all derived semantic metrics slowly. Do not apply a second `rpxY` scale
+   to those values, and never let width determine vertical controls or rows.
    Reserve grid-density
    checks for components that explicitly align
    information units to host grid metrics, such as a system-status card matrix.

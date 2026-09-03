@@ -1348,5 +1348,5 @@
   "settings.backup.error.missing": "요청한 백업이 더 이상 존재하지 않습니다.",
   "settings.backup.error.restoreServiceUnavailable": "애플리케이션 레이아웃 복원 서비스를 사용할 수 없습니다.",
   "settings.home.widgets.unknown": "상태를 확인할 수 없음",
-  "app.settings.lua_widget_title_area_height": "Lua 위젯 제목 영역 높이"
+  "app.settings.lua_widget_row_height": "Lua 위젯 행 높이"
 }

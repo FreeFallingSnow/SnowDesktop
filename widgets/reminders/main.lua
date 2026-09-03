@@ -268,7 +268,6 @@ local function render(context, model)
     local metrics = ui.metrics()
     local unit = metrics.strokeWidth
     local function px(value) return value * unit end
-    local pad = metrics.spacingMd
     local gap = metrics.spacingSm
     local palette = getPalette()
     local scale = fontScale()
@@ -278,9 +277,10 @@ local function render(context, model)
     local titleFont = metrics.titleFontSize * scale
     local total = taskCounts()
 
-    local headerHeight = math.min(h, metrics.titleAreaHeight)
-    local headerInset = math.min(metrics.spacingMd, headerHeight * 0.20)
-    local inputH = math.max(unit, headerHeight - headerInset * 2)
+    local headerHeight = math.min(h, metrics.layoutRowHeight)
+    local inputH = math.min(headerHeight, metrics.compactControlHeight)
+    local headerInset = math.max(0, (headerHeight - inputH) / 2)
+    local contentInset = headerInset
     local inputY = headerInset
     local addSize = inputH
     local inputW = math.max(unit,
@@ -333,11 +333,11 @@ local function render(context, model)
         role = "button", label = l10n.tr("lua_widget.reminders.add_task"),
     }, addEnabled)
 
-    local listTop = math.min(h, headerHeight + metrics.spacingSm)
+    local listTop = headerHeight
     local listBottom = h - metrics.spacingXs
     local viewportH = math.max(unit, listBottom - listTop)
-    local viewportShape = { type = "rect", x = pad, y = listTop,
-        width = w - pad * 2, height = viewportH }
+    local viewportShape = { type = "rect", x = contentInset, y = listTop,
+        width = w - contentInset * 2, height = viewportH }
     registerRegion("tasks.background", viewportShape, "default", {
         click = { id = "task.clearSelection" },
         contextMenu = { id = "task.menu", scope = "component" },
@@ -361,14 +361,14 @@ local function render(context, model)
             hintMetrics.height
         local emptyTop = listTop + math.max(0,
             (viewportH - emptyBlockH) / 2)
-        draw.text(math.max(pad, (w - titleMetrics.width) / 2),
+        draw.text(math.max(contentInset, (w - titleMetrics.width) / 2),
             emptyTop, emptyTitle, titleFont, palette.text,
-            math.min(w - pad * 2, titleMetrics.width + px(2)), true,
+            math.min(w - contentInset * 2, titleMetrics.width + px(2)), true,
             true, 0, 0.78)
-        draw.text(math.max(pad, (w - hintMetrics.width) / 2),
+        draw.text(math.max(contentInset, (w - hintMetrics.width) / 2),
             emptyTop + titleMetrics.height + emptyGap,
             hint, smallFont, palette.muted,
-            math.min(w - pad * 2, hintMetrics.width + px(2)), false,
+            math.min(w - contentInset * 2, hintMetrics.width + px(2)), false,
             true, 0, 0.62)
         return
     end
@@ -383,26 +383,27 @@ local function render(context, model)
         math.ceil((scroll.offset + viewportH) / rowH))
     local selectedId = model.selectedId
 
-    draw.pushClip(pad, listTop, w - pad * 2, viewportH)
+    draw.pushClip(contentInset, listTop,
+        w - contentInset * 2, viewportH)
     for index = first, last do
         local task = tasks[index]
         local cardY = listTop + (index - 1) * rowH - scroll.offset
-        local cardW = w - pad * 2
+        local cardW = w - contentInset * 2
         local rowKey = "task.row." .. task.id
         local selected = task.id == selectedId
         local rowHovered = interaction.isHovered(rowKey)
-        draw.rect(pad, cardY, cardW, cardH, palette.card,
+        draw.rect(contentInset, cardY, cardW, cardH, palette.card,
             metrics.controlRadius,
             selected and 0.105 or (rowHovered and 0.08 or 0.055))
         if selected then
             local inset = px(1.2)
-            draw.strokeRect(pad + inset, cardY + inset,
+            draw.strokeRect(contentInset + inset, cardY + inset,
                 cardW - inset * 2, cardH - inset * 2, palette.accent,
                 math.max(0, metrics.controlRadius - inset),
                 metrics.strokeWidth, 0.42)
         end
         registerRegion(rowKey, {
-            type = "roundedRect", x = pad, y = cardY,
+            type = "roundedRect", x = contentInset, y = cardY,
             width = cardW, height = cardH,
             radius = metrics.controlRadius,
         }, "hand", {
@@ -413,7 +414,7 @@ local function render(context, model)
 
         local checkboxSize = math.min(fontSize + metrics.spacingSm,
             cardH - metrics.spacingSm)
-        local checkboxX = pad + metrics.spacingSm
+        local checkboxX = contentInset + metrics.spacingSm
         local checkboxY = cardY + (cardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id
         local checkboxHovered = interaction.isHovered(checkboxKey)
@@ -439,7 +440,7 @@ local function render(context, model)
         })
 
         local deleteSize = metrics.iconSize
-        local deleteX = w - pad - deleteSize - metrics.spacingSm
+        local deleteX = w - contentInset - deleteSize - metrics.spacingSm
         local textX = checkboxX + checkboxSize + metrics.spacingSm
         local textW = math.max(unit,
             deleteX - textX - metrics.spacingSm)
