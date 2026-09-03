@@ -723,6 +723,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         if (!data_->title.empty())
         {
             const float bh = GetBarHeight();
+            const auto titleStyle =
+                snowdesktop::widget_chrome_rules::ResolveBottomTitleStyle(
+                    effectSettings.contentTheme);
             RECT titleRect = {
                 handle.left + Cu(4.0f),
                 handle.top + Cu(bh * 0.083f),
@@ -730,11 +733,13 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 handle.bottom - Cu(bh * 0.083f)
             };
             auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-                std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+                std::max<int>(100,
+                    static_cast<int>(app_->GetItemFontWeight()) +
+                        titleStyle.fontWeightAdjustment));
             IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
             app_->DrawD2DText(context, data_->title, titleRect,
                 titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-                lightTheme
+                titleStyle.darkForeground
                     ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
         }
