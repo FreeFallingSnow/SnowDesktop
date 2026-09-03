@@ -13,7 +13,7 @@
   "titleKeys": [
     "lua_widget.reminders.legacy_name"
   ],
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
@@ -239,6 +239,10 @@
     }
   },
   "defaultSize": {
+    "columns": 2,
+    "rows": 2
+  },
+  "minSize": {
     "columns": 2,
     "rows": 2
   },

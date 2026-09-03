@@ -194,6 +194,10 @@ local function drawArtworkPlaceholder(x, y, size, palette)
         palette.btnText, radius, size * 0.012, 0.14)
 end
 
+local function horizontalArtworkInset(width, height)
+    return math.min(width * 0.025, height * 0.055)
+end
+
 local function render(_context, model)
     local width = layout.width()
     local height = layout.height()
@@ -287,11 +291,12 @@ local function render(_context, model)
             else
                 artworkSize = math.min(contentHeight * 0.72,
                     contentWidth * 0.38)
-                artworkX = padding
+                local artworkInset = horizontalArtworkInset(width, height)
+                artworkX = padding + artworkInset
                 artworkY = (height - artworkSize) * 0.5
-                textX = padding + artworkSize + contentGap
+                textX = artworkX + artworkSize + contentGap
                 textWidth = math.max(1,
-                    contentWidth - artworkSize - contentGap)
+                    contentWidth - artworkInset - artworkSize - contentGap)
             end
 
             drawArtworkPlaceholder(artworkX, artworkY,
@@ -329,8 +334,10 @@ local function render(_context, model)
         contentGap = math.min(width * 0.035, height * 0.08)
     end
 
+    local artworkInset = showArtwork and not vertical and
+        horizontalArtworkInset(width, height) or 0
     local detailsWidth = vertical and contentWidth or
-        contentWidth - artworkSize - contentGap
+        contentWidth - artworkInset - artworkSize - contentGap
     local buttonSize
     local titleFont
     if vertical then
@@ -366,9 +373,9 @@ local function render(_context, model)
         textX = padding
         detailsY = groupY + artworkSize + contentGap
     else
-        artworkX = padding
+        artworkX = padding + artworkInset
         artworkY = (height - artworkSize) * 0.5
-        textX = padding + artworkSize + contentGap
+        textX = artworkX + artworkSize + contentGap
         detailsY = (height - detailsHeight) * 0.5
     end
 
