@@ -215,17 +215,9 @@ void TestStickyNotePresetTextColors(const fs::path& repository)
         repository / "widgets" / "sticky-note" / "main.lua");
     const std::string themeSource = ReadFile(repository / "widgets" /
         "sticky-note" / "modules" / "theme.lua");
-    const std::string_view colors = Section(themeSource,
-        "noteTheme.presetTextColors = {", "\n}\n\nfunction");
-    for (const std::string_view preset : {
-        "classic", "white", "pink", "blue", "green", "purple" })
-    {
-        Check(colors.find(std::string(preset) + " = 0x000000") !=
-                std::string_view::npos,
-            "every light sticky-note preset must use black text");
-    }
-    Check(colors.find("dark = 0xFFFFFF") != std::string_view::npos,
-        "the dark sticky-note preset must use white text");
+    Check(CountOccurrences(source, "__contentTheme = 1") == 6 &&
+            CountOccurrences(source, "__contentTheme = 0") == 1,
+        "sticky-note appearance presets must declare matching host foreground themes");
     Check(CountOccurrences(source,
             "textColor = presetTextColors.") == 0 &&
             source.find("storage.set(\"textColor\"") == std::string::npos,
@@ -234,24 +226,19 @@ void TestStickyNotePresetTextColors(const fs::path& repository)
     Check(source.find(
             "local noteTheme = module.require(\"modules/theme.lua\")") !=
             std::string::npos,
-        "sticky-note must load its tested theme color rules");
+        "sticky-note must load its tested foreground color rules");
     Check(source.find("noteTheme.resolveTextColor(") !=
             std::string::npos,
-        "sticky-note must resolve rendered text through its theme rules");
+        "sticky-note must resolve rendered text through the host foreground theme");
 
     const std::string_view resolveColor = Section(themeSource,
         "function noteTheme.resolveTextColor(", "\nend\n\nreturn noteTheme");
-    const std::size_t follow = resolveColor.find(
-        "not followsPersonalization");
-    const std::size_t preset = resolveColor.find(
-        "noteTheme.presetTextColors[preset]");
     const std::size_t contentTheme = resolveColor.find(
         "contentTheme == 1");
-    Check(follow != std::string_view::npos &&
-            preset != std::string_view::npos &&
-            contentTheme != std::string_view::npos &&
-            follow < preset && preset < contentTheme,
-        "sticky-note must resolve preset text before the global theme fallback");
+    Check(contentTheme != std::string_view::npos &&
+            resolveColor.find("preset") == std::string_view::npos &&
+            resolveColor.find("storage") == std::string_view::npos,
+        "sticky-note text must use the resolved host foreground as its single source of truth");
 }
 
 void TestSystemMonitorMarqueeCadence(const fs::path& repository)

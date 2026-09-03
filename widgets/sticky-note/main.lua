@@ -7,8 +7,6 @@ local fluent = {
     style = utf8.char(0xF592),
 }
 
-local presetTextColors = noteTheme.presetTextColors
-
 local settings = {
     presets = {
         {
@@ -131,9 +129,7 @@ end
 
 local function textColor()
     local theme = widget.theme()
-    return noteTheme.resolveTextColor(storage.get("__preset"),
-        storage.get("followPersonalization") == "1",
-        theme and theme.contentTheme or nil)
+    return noteTheme.resolveTextColor(theme and theme.contentTheme or nil)
 end
 
 local function fontScale()
