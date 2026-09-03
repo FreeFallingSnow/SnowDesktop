@@ -145,22 +145,27 @@ end
 
 local function centeredText(text, y, size, color, width, bold, alpha,
         centerX)
-    local metrics = draw.measureText(text, size, width, bold)
+    local metrics = draw.measureText(text, size, 0, bold)
+    if metrics.width > width then
+        size = size * width / metrics.width
+        metrics = draw.measureText(text, size, 0, bold)
+    end
     local x = (centerX or layout.contentWidth() / 2) - metrics.width / 2
     draw.text(x, y, text, size, color, width, bold, true,
         nil, alpha or 1.0)
 end
 
 local function compactTextPair(left, right, y, size, color, width)
-    local gap = layout.cu(6)
-    local leftMetrics = draw.measureText(left, size, width, true)
-    local rightMetrics = draw.measureText(right, size, width, true)
+    local gap = size * 0.35
+    local leftMetrics = draw.measureText(left, size, 0, true)
+    local rightMetrics = draw.measureText(right, size, 0, true)
     local pairWidth = leftMetrics.width + gap + rightMetrics.width
 
     if pairWidth > width then
-        size = math.max(layout.fontCu(12), size * width / pairWidth)
-        leftMetrics = draw.measureText(left, size, width, true)
-        rightMetrics = draw.measureText(right, size, width, true)
+        size = size * width / pairWidth
+        gap = size * 0.35
+        leftMetrics = draw.measureText(left, size, 0, true)
+        rightMetrics = draw.measureText(right, size, 0, true)
         pairWidth = leftMetrics.width + gap + rightMetrics.width
     end
 
@@ -182,12 +187,12 @@ local function malletRotation(model, pressed)
 end
 
 local function drawInstrument(cx, cy, size, pressed, model)
-    local bodyDrop = pressed and layout.cu(1.5) or 0
+    local bodyDrop = pressed and size * 0.012 or 0
     local bodyY = cy - size / 2 + bodyDrop
 
     draw.shadow(cx - size * 0.38, cy + size * 0.28 + bodyDrop,
-        size * 0.76, size * 0.18, 0x241006, layout.cu(9),
-        size * 0.09, 0, layout.cu(3), 0.19)
+        size * 0.76, size * 0.18, 0x241006, size * 0.07,
+        size * 0.09, 0, size * 0.024, 0.19)
     draw.imageFit(woodenFishImage, cx - size / 2, bodyY, size, size,
         "contain", "center", pressed and 0.97 or 1.0, "linear")
 
@@ -222,7 +227,8 @@ local function drawFeedback(model, y, baseSize, colors, width, centerX, term)
         model.feedbackElapsedMs / FEEDBACK_DURATION_MS))
     local popProgress = math.min(1, progress / 0.34)
     local popScale = 1 + math.sin(popProgress * math.pi) * 0.20
-    local rise = layout.cu(20) * (1 - (1 - progress) * (1 - progress))
+    local rise = baseSize * 1.18 *
+        (1 - (1 - progress) * (1 - progress))
     local alpha = math.max(0, 1 - progress * progress)
     centeredText(l10n.tr("lua_widget.wooden_fish.feedback", term),
         y - rise, baseSize * popScale, colors.feedback,
@@ -245,33 +251,37 @@ end
 
 local function render(_context, model)
     local colors = foregroundPalette()
-    local width = math.max(1, layout.contentWidth())
-    local height = math.max(1, layout.contentHeight())
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
     local pressed = interaction.isPressed(STRIKE_KEY)
-    local padding = layout.cu(10)
-    local textSize = math.max(layout.fontCu(16),
-        math.min(layout.fontCu(19), layout.vmin(7.0)))
+    local short = math.min(width, height)
+    local padding = short * 0.052
+    local textSize = short * 0.09
     local term, hint = resolvedCopy()
     local textWidth = width - padding * 2
     local todayText = l10n.tr("lua_widget.wooden_fish.today_counter",
         l10n.formatNumber(model.todayCount))
     local totalText = l10n.tr("lua_widget.wooden_fish.total_counter",
         l10n.formatNumber(model.count))
-    compactTextPair(todayText, totalText, padding, textSize,
+    local instrumentSize = math.min(width * 0.82, height * 0.53)
+    local instrumentCx = width * 0.50
+    local textCenterX = width * 0.50
+    local textHeight = textSize * 1.35
+    local groupGap = textSize * 0.62
+    local groupHeight = textHeight * 2 + groupGap * 2 + instrumentSize
+    local groupY = (height - groupHeight) * 0.5
+    local instrumentCy = groupY + textHeight + groupGap +
+        instrumentSize * 0.5
+    local hintY = instrumentCy + instrumentSize * 0.5 + groupGap
+    compactTextPair(todayText, totalText, groupY, textSize,
         colors.feedback, textWidth)
-
-    local instrumentSize = math.max(layout.cu(104),
-        math.min(width * 0.72, height * 0.53))
-    local instrumentCy = height * 0.56
-    local instrumentCx = width * 0.45
     drawInstrument(instrumentCx, instrumentCy, instrumentSize, pressed, model)
 
     drawFeedback(model, instrumentCy - instrumentSize * 0.62,
         textSize, colors, textWidth, instrumentCx, term)
 
-    centeredText(hint,
-        height - padding - textSize * 1.35, textSize,
-        colors.feedback, textWidth, true, 0.96)
+    centeredText(hint, hintY, textSize, colors.feedback,
+        textWidth, true, 0.96, textCenterX)
 
     interaction.region({
         key = STRIKE_KEY,
@@ -279,7 +289,7 @@ local function render(_context, model)
             type = "circle",
             x = instrumentCx,
             y = instrumentCy,
-            radius = math.max(layout.cu(44), instrumentSize * 0.49),
+            radius = instrumentSize * 0.49,
         },
         cursor = "hand",
         focusable = true,
