@@ -1199,7 +1199,11 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::CommitPreview(
     if (!engine_.PersistWidgetSettingsStorageForBackend())
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
+    std::vector<std::string> affectedKeys(
+        preview_->affectedKeys.begin(), preview_->affectedKeys.end());
     preview_.reset();
+    engine_.RuntimeNotifySettingsChanged(
+        widget.widgetId, std::move(affectedKeys), false);
     engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success();
 }

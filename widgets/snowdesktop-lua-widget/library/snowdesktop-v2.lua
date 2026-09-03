@@ -687,7 +687,7 @@
 ---@field visible? boolean
 ---@field selected? boolean
 ---@field keys? string[] Sorted setting/storage keys affected by a settings.changed transaction.
----@field preview? boolean True when settings.changed reflects a live settings preview that has not yet been committed.
+---@field preview? boolean True for an uncommitted live settings preview; false after a direct write, preview commit, or preview revert.
 ---@field columns? integer
 ---@field rows? integer
 ---@field x? integer

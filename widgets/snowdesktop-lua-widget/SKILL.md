@@ -182,6 +182,8 @@ single metric.
    such as `backgroundLayer.blurRadius`, require `settings.changeEvent` and
    reconcile it from `event.kind == "settings.changed"`. The event supplies
    sorted affected `keys` and whether the value is an uncommitted live preview.
+   Committing or cancelling a live preview emits the restored final state with
+   `preview == false`.
    Keep render and view callbacks free of subscription creation or descriptor
    mutation.
 
