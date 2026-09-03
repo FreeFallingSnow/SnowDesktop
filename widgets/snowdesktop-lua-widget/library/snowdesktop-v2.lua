@@ -2337,11 +2337,11 @@ function layout.cellHeight() end
 ---@return number
 function layout.cellScale() end
 
----@param value number
+---@param value number Grid-density unit for status, list, calendar, launcher, form, and similar UI. It does not scale linearly with the whole widget.
 ---@return integer
 function layout.cu(value) end
 
----@param value number
+---@param value number Grid-density font unit. It does not scale linearly with the whole widget.
 ---@return number
 function layout.fontCu(value) end
 

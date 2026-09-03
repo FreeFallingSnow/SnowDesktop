@@ -141,8 +141,12 @@ different state:
    contrast and clipping.
 5. Check that the host outer surface remains visible and is not duplicated by a
    widget-drawn full-size card.
-6. Check compact and expanded layouts for intentional density rather than
-   uniform scaling or unused space.
+6. For a proportional visual component, compare small and large previews with
+   the same aspect ratio: structure must stay the same and every part must
+   scale uniformly. Also check each aspect-ratio branch and center the complete
+   group of currently visible parts. For a grid-density information component,
+   check that extra space reveals or reflows useful information while text,
+   rows and hit targets retain a stable density.
 7. Fix the smallest failing area, render again and repeat.
 
 Do not treat CLI success as visual acceptance. Preview time is deterministic;

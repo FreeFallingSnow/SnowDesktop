@@ -74,7 +74,8 @@ source of truth:
 For a new widget, infer a compact internal brief before writing code:
 
 - the user's primary task and the information that must be visible first;
-- default, minimum and maximum grid spans;
+- recommended starting spans, and whether the content has a real functional
+  reason to restrict minimum or maximum spans;
 - ready, empty, loading, error and permission-denied states that are relevant;
 - the smallest useful interaction set and any trusted-gesture requirements;
 - data sources, permissions, persistent settings and supported locales;
@@ -88,6 +89,34 @@ Choose one rendering path:
   visuals whose main value depends on a canvas.
 - Do not mix the two desktop rendering paths. A descriptor must expose exactly
   one local `view` or `render` function.
+
+Choose the sizing model before writing geometry:
+
+- **Proportional visual model — the default for visually composed widgets.**
+  Use it for artwork, media players, clocks, instruments, custom controls and
+  other components whose parts form one visual composition. Read
+  `layout.contentWidth()` and `layout.contentHeight()`, choose structural
+  variants from the aspect ratio, and derive every visible length from width,
+  height, `vw`, `vh` or `vmin`. If two surfaces have the same aspect ratio and
+  one is scaled by `k`, every geometric metric should also scale by `k`.
+  Avoid `sizeClass`, grid-span breakpoints, absolute minima and scale caps in
+  this model. Recalculate and center the group of children that are actually
+  visible when optional content disappears.
+- **Grid-density model — for information tools that must align with the host
+  grid.** Use `layout.cu()` and `layout.fontCu()` for system status, calendars,
+  lists, launchers, forms and similar widgets where larger spans should reveal
+  or reflow more information while text, rows and hit targets retain a stable
+  density. Grid metrics and size classes may drive meaningful content-density
+  changes in this model.
+- Mix the models only for an intentional fixed-density overlay. `cu` and
+  `fontCu` do not grow linearly with the whole widget, so using them for a
+  proportional component's main geometry breaks same-ratio rendering.
+
+For a proportional plan, prefer homogeneous formulas such as
+`short * 0.08`, `width * 0.3` and `math.min(width * 0.4, height * 0.6)`.
+Constants used only as ratios are fine. Output clamps such as
+`math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
+make two equal-aspect surfaces render differently and should be avoided.
 
 ## Create a package
 
@@ -181,11 +210,15 @@ end
 
 local function render(_context, _model)
     local colors = foregroundPalette()
-    local padding = layout.cu(12)
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
+    local vertical = height > width * 1.05
+    local padding = math.min(width * 0.06, height * 0.10)
+    local fontSize = math.min(width * (vertical and 0.10 or 0.06),
+        height * (vertical and 0.06 or 0.12))
     draw.text(padding, padding,
         l10n.tr("lua_widget.my_widget.hello"),
-        layout.fontCu(15), colors.primary,
-        layout.contentWidth() - padding * 2)
+        fontSize, colors.primary, width - padding * 2)
 end
 
 return widget.define({
@@ -212,8 +245,10 @@ queries, write storage or rebuild invariant data on every frame.
 - `id` is an immutable UUID; `version` is SemVer; `dataVersion` is positive.
 - `name` and `description` are English fallbacks. Localized metadata uses
   `nameKey`, `descriptionKey` and manifest `locales`.
-- Keep size dimensions from 1 through 8. A maximum dimension of `0` means
-  unrestricted only where the schema permits it.
+- Keep explicit default, preview and finite boundary dimensions from 1 through
+  8. Omit `minSize` to use the host's 1 × 1 default. Omit `maxSize`, or use a
+  schema-permitted maximum dimension of `0`, when the widget has no functional
+  upper bound. Recommended preview variants do not need to restrict resizing.
 - Keep `permissions` empty unless a documented guarded API needs one. Reserved
   vocabulary does not make an API available.
 - Never include native binaries, executables, absolute paths, parent traversal,
@@ -231,7 +266,9 @@ Use the lowest-cost checks first:
    pure Lua tests. Tests are for behavior and logic, not formatting or copied
    implementation details.
 4. Run `snowwidget preview <directory> <output.png>` at the default span and at
-   every materially different compact or expanded span. Exercise relevant DPI,
+   every materially different aspect ratio or density state. For proportional
+   widgets, also preview two different sizes with the same aspect ratio and
+   verify that all geometry scales by the same factor. Exercise relevant DPI,
    locale, appearance, foreground theme, data state and storage values.
 5. Open and visually inspect every PNG. A JSON result with `ok=true` proves only
    that rendering completed. It does not prove readable contrast, correct

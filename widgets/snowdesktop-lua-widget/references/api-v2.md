@@ -2319,12 +2319,16 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 `layout.vmax(percent)` 接受 0–100 的有限百分比，分别返回根内容宽、高、短边和长边的
 对应比例。圆形、方形和跨宽高比保持一致的控件优先使用 `vmin`；横向或纵向结构分别
 使用 `vw`、`vh`。这些函数直接返回可用于声明式数值尺寸和即时绘制坐标的布局值，
-不要再与 DPI 归一化的 `context.logicalSize` 混用。
+不要再与 DPI 归一化的 `context.logicalSize` 混用。图像、媒体、时钟、乐器等视觉构图型
+组件应优先采用比例布局：只根据 `contentWidth/contentHeight` 的横纵比选择结构，并让
+全部可见尺寸随宽高线性变化。相同横纵比的不同尺寸应呈现同一构图的等比缩放结果。
 
 `columns/rows/sizeClass` 返回跨度与尺寸档位。
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
-`layout.cu(value)` 和 `layout.fontCu(value)` 用于保持最小点击尺寸、描边、局部间距和
-字体在不同网格密度下的视觉尺度；它们不会随组件跨度同比增长，不能代替总宽高比例单位。
+`layout.cu(value)` 和 `layout.fontCu(value)` 主要用于系统状态、日历、列表、启动器、
+表单等需要与宿主网格对齐的信息密度型组件，用来保持点击尺寸、描边、行高、局部间距和
+字体在不同网格密度下的稳定尺度。它们不会随组件跨度同比增长，不能代替视觉构图型组件的
+总宽高比例单位；将其用作主体图形、主控件或全局缩放下限会破坏相同横纵比的等比结果。
 
 ### `storage`
 
