@@ -146,20 +146,23 @@ different state:
    contrast and clipping.
 5. Check that the host outer surface remains visible and is not duplicated by a
    widget-drawn full-size card.
-6. For a proportional visual or information component, compare small and large previews with
-   the same aspect ratio: structure must stay the same and every part must
-   scale uniformly. Check each intentional aspect-ratio branch, or verify that
-   a single-structure composition remains centered across its supported range.
-   Center the complete group of currently visible parts. Agendas, calendars,
-   lists, search and RSS should use `ui.metrics().layoutRowHeight` as a shared
-   content-height unit. Search fields, inputs, ordinary buttons and single-line
-   items use `1x`; exterior insets, inter-row gaps, fonts, icons and strokes are
-   separate component choices derived as stable proportions of that row height.
-   Multi-line body items use intentional multiples. Compare
-   components with the same row span to confirm equal row units, and verify
-   that changing only width does not resize them. Taller spans grow the unit
-   slowly. Do not apply a second `rpxY` scale
-   to those values, and never let width determine vertical controls or rows.
+6. For a proportional visual component, compare small and large previews with
+   the same aspect ratio: structure must stay the same and every visible metric
+   must scale uniformly. Check each intentional aspect-ratio branch, or verify
+   that a single-structure composition remains centered across its supported
+   range. Center the complete group of currently visible parts.
+   For an information component, test a different invariant instead. Agendas,
+   calendars, lists, search and RSS should use
+   `ui.metrics().layoutRowHeight` as a shared content-height unit. Search fields,
+   inputs, ordinary buttons and single-line items use `1x`; exterior insets,
+   inter-row gaps, fonts, icons and strokes are separate component choices
+   derived as stable proportions of that row height. Multi-line body items use
+   intentional multiples. Compare components with the same row span to confirm
+   equal row units, and verify that changing only width does not resize them.
+   Taller spans grow the unit slowly and should normally expose more content
+   instead of scaling the whole composition linearly. Do not apply a second
+   `rpxY` scale to those values, and never let width determine vertical controls
+   or rows.
    Reserve grid-density
    checks for components that explicitly align
    information units to host grid metrics, such as a system-status card matrix.

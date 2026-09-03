@@ -216,6 +216,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             : std::max(1, static_cast<int>(frame.bottom - frame.top) /
                   std::max(1, data_->gridSpan.rows));
         engine->SetWidgetLayoutMetrics(data_->id,
+            data_->gridSpan.columns, data_->gridSpan.rows,
             preloadCellWidth, preloadCellHeight,
             preloadPage ? preloadPage->gapY : Cu(8.0f),
             static_cast<int>(GetBarHeight()), app_->GetItemFontWeight(),
@@ -353,6 +354,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 gapY = Cu(8.0f);
             }
             engine->SetWidgetLayoutMetrics(data_->id,
+                data_->gridSpan.columns, data_->gridSpan.rows,
                 cellWidth, cellHeight, gapY,
                 static_cast<int>(GetBarHeight()),
                 app_->GetItemFontWeight(),
@@ -375,6 +377,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             if (realPage)
             {
                 engine->SetWidgetLayoutMetrics(data_->id,
+                    data_->gridSpan.columns, data_->gridSpan.rows,
                     realPage->cellWidth, realPage->cellHeight,
                     realPage->gapY,
                     static_cast<int>(GetBarHeight()),

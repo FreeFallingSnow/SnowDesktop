@@ -108,6 +108,13 @@ void ApplyLayoutMetrics(State& state, const LayoutMetrics& metrics)
     state.semanticUiMetrics = metrics.semanticUiMetrics;
 }
 
+template<typename State>
+void ApplyLayoutSpan(State& state, int columns, int rows)
+{
+    state.gridColumns = std::max(1, columns);
+    state.gridRows = std::max(1, rows);
+}
+
 template<typename State, typename Activate>
 void RestoreLayoutMetrics(State& state, const LayoutMetrics& metrics,
     Activate&& activate)

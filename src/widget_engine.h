@@ -1476,12 +1476,13 @@ public:
      */
     void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
 
-    /** Store host layout metrics for one widget without mutating an active
-     * callback belonging to another widget. The metrics are applied when the
-     * target widget's execution context is entered.
+    /** Store host layout context for one widget without mutating an active
+     * callback belonging to another widget. The context is also applied to a
+     * pending package load so top-level code and setup() see the target span.
      */
     void SetWidgetLayoutMetrics(const std::wstring& widgetId,
-        int cellWidth, int cellHeight, int gapY, int barHeight,
+        int columns, int rows, int cellWidth, int cellHeight,
+        int gapY, int barHeight,
         DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale,
         const snowdesktop::widget_runtime::SemanticUiMetricTokens&
             semanticUiMetrics);

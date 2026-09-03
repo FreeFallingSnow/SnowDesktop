@@ -18,6 +18,8 @@ void Expect(bool condition, const char* message)
 
 struct TestRenderState
 {
+    int gridColumns = 1;
+    int gridRows = 1;
     int gridCellW = 0;
     int gridCellH = 0;
     int gridGapY = 0;
@@ -26,6 +28,23 @@ struct TestRenderState
     float semanticCuScale = 1.0f;
     snowdesktop::widget_runtime::SemanticUiMetricTokens semanticUiMetrics;
 };
+
+void TestLayoutSpanIsAppliedBeforeSemanticMetrics()
+{
+    using namespace snowdesktop::widget_runtime;
+    TestRenderState state;
+    ApplyLayoutSpan(state, 4, 6);
+    const auto initial = ResolveSemanticUiMetrics(
+        1.0f, 1.0f, ResolveSemanticRowScale(state.gridRows));
+    Expect(state.gridColumns == 4 && state.gridRows == 6 &&
+            std::abs(initial.layoutRowHeight -
+                28.0f * std::sqrt(3.0f)) < 0.001f,
+        "the pending widget span determines setup-time semantic metrics");
+
+    ApplyLayoutSpan(state, 0, -1);
+    Expect(state.gridColumns == 1 && state.gridRows == 1,
+        "invalid pending widget spans are clamped before package setup");
+}
 
 void TestNestedWidgetMetricsRestoreInOrder()
 {
@@ -167,6 +186,7 @@ void TestLegacyPointSizesMigrateToCuOnce()
 int main()
 {
     TestNestedWidgetMetricsRestoreInOrder();
+    TestLayoutSpanIsAppliedBeforeSemanticMetrics();
     TestMetricsAreNormalizedPerWidget();
     TestFontCuUsesOnlyTheLocalCellScale();
     TestReferencePixelsUseTheManifestDefaultShortEdge();

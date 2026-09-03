@@ -15000,6 +15000,8 @@ void WidgetEngine::ActivateWidgetState(const std::wstring& widgetId)
     const auto& widget = widgets_[index];
     if (d2dState_)
     {
+        snowdesktop::widget_runtime::ApplyLayoutSpan(
+            *d2dState_, widget.lastColumns, widget.lastRows);
         snowdesktop::widget_runtime::ApplyLayoutMetrics(
             *d2dState_, widget.layoutMetrics);
     }
@@ -29174,7 +29176,8 @@ void WidgetEngine::SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetT
 
 void WidgetEngine::SetWidgetLayoutMetrics(
     const std::wstring& widgetId,
-    int cellWidth, int cellHeight, int gapY, int barHeight,
+    int columns, int rows, int cellWidth, int cellHeight,
+    int gapY, int barHeight,
     DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale,
     const snowdesktop::widget_runtime::SemanticUiMetricTokens&
         semanticUiMetrics)
@@ -29187,9 +29190,13 @@ void WidgetEngine::SetWidgetLayoutMetrics(
         widgets_[index].layoutMetrics = metrics;
     // A package chunk and its setup callback may query ui.metrics() before the
     // LuaWidget has entered widgets_. Keep the pending execution state aligned
-    // with the instance that the host is about to load.
+    // with the instance and span that the host is about to load.
     if (d2dState_)
+    {
+        snowdesktop::widget_runtime::ApplyLayoutSpan(
+            *d2dState_, columns, rows);
         snowdesktop::widget_runtime::ApplyLayoutMetrics(*d2dState_, metrics);
+    }
 }
 
 void WidgetEngine::SetWidgetSurfaceContext(

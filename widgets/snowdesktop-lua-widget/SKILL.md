@@ -147,8 +147,8 @@ includes page and accessibility scaling; do not apply a second span scale.
 In the proportional visual model, derive text and geometry from `rpx`, the
 surface axes or `vmin` so equal-aspect surfaces remain fully proportional.
 Read surface-dependent layout metrics in `view` or `render`; do not cache them
-in `setup`, because the selected starting span and later resizes can differ
-from the load-time surface.
+in `setup`, because later resizes can differ from the initial load-time
+surface.
 
 ## Create a package
 
