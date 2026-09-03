@@ -598,6 +598,9 @@ std::filesystem::path CreateBackgroundLayerFixture(
     Write(source / L"main.lua", R"lua(
 local backgroundLayer = {
     render = function()
+        if storage.get("backgroundError") == "1" then
+            error("intentional background failure")
+        end
         assert(pcall(interaction.region, {}) == false,
             "background layer must reject interaction registration")
         local width = layout.width()
@@ -609,6 +612,8 @@ local backgroundLayer = {
 }
 if storage.get("explicitZeroBlur") == "1" then
     backgroundLayer.blurRadius = 0
+elseif storage.get("explicitBlur") == "1" then
+    backgroundLayer.blurRadius = 8
 end
 
 return widget.define({
@@ -863,6 +868,40 @@ int wmain(int argc, wchar_t** argv)
             CountDifferingPixels(inheritedBlur, explicitZeroBlur,
                 backgroundBoundary) > 256,
         "omitted background blur inherits glass while explicit zero remains sharp");
+
+    const auto explicitBlurOutput =
+        temporary.path / L"background-layer-explicit-blur.png";
+    const auto [explicitBlurExit, explicitBlurJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        explicitBlurOutput.wstring(), L"--storage", L"explicitBlur=1",
+        L"--host", host.wstring() });
+    const RgbaBitmap explicitBlur = ReadPng(explicitBlurOutput);
+    Check(explicitBlurExit == 0 &&
+            explicitBlurJson.find("\"ok\":true") != std::string::npos &&
+            CountDifferingPixels(backgroundLayer, explicitBlur,
+                backgroundBoundary) > 256,
+        "explicit background blur remains active while host glass is disabled");
+
+    const auto failedBackgroundOutput =
+        temporary.path / L"background-layer-error.png";
+    const auto [failedBackgroundExit, failedBackgroundJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        failedBackgroundOutput.wstring(),
+        L"--storage", L"backgroundError=1",
+        L"--host", host.wstring() });
+    const RgbaBitmap failedBackground = ReadPng(failedBackgroundOutput);
+    const auto failedMaterialPixel = PixelAt(failedBackground, 24, 58);
+    const auto failedForegroundPixel = PixelAt(failedBackground, 96, 58);
+    Check(failedBackgroundExit == 0 &&
+            failedBackgroundJson.find("\"ok\":true") !=
+                std::string::npos &&
+            !(failedMaterialPixel[0] > 240 &&
+                failedMaterialPixel[1] < 16 &&
+                failedMaterialPixel[2] < 16) &&
+            failedForegroundPixel[0] < 32 &&
+            failedForegroundPixel[1] > 220 &&
+            failedForegroundPixel[2] < 32,
+        "a failed background callback drops only that layer and preserves host material plus foreground rendering");
     const auto roundedImageSource =
         CreateRoundedImageFixture(temporary.path);
     const auto roundedImageOutput =

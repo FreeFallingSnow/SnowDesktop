@@ -19112,7 +19112,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     if (!lua_isnil(state, -1))
     {
         const double value = lua_tonumber(state, -1);
-        if (!lua_isnumber(state, -1) || !std::isfinite(value) ||
+        if (lua_type(state, -1) != LUA_TNUMBER || !std::isfinite(value) ||
             value < 0.0 || value > 1.0)
         {
             recordError(
@@ -19129,7 +19129,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     if (!lua_isnil(state, -1))
     {
         const double value = lua_tonumber(state, -1);
-        if (!lua_isnumber(state, -1) || !std::isfinite(value) ||
+        if (lua_type(state, -1) != LUA_TNUMBER || !std::isfinite(value) ||
             value < 0.0 || value > 48.0)
         {
             recordError(

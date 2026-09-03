@@ -989,7 +989,7 @@ int LuaDefineWidget(lua_State* state)
             lua_getfield(state, background, field);
             if (!lua_isnil(state, -1))
             {
-                if (!lua_isnumber(state, -1))
+                if (lua_type(state, -1) != LUA_TNUMBER)
                     return luaL_error(state,
                         "widget.define: 'backgroundLayer.%s' must be a number when present",
                         field);

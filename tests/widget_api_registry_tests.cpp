@@ -781,6 +781,69 @@ void TestV2Contract()
         "widget.define must reject an out-of-range background blur radius");
     lua_pop(state, 2);
 
+    luaL_requiref(state, "_G", luaopen_base, 1);
+    lua_pop(state, 1);
+    const auto checkDefinitionScript = [&](const char* script,
+                                            const char* message) {
+        const int status = luaL_dostring(state, script);
+        if (status != LUA_OK)
+            std::cerr << "Lua definition contract failed: " <<
+                (lua_tostring(state, -1) ? lua_tostring(state, -1) :
+                    "unknown Lua error") << '\n';
+        Check(status == LUA_OK, message);
+        lua_settop(state, 0);
+    };
+    checkDefinitionScript(R"lua(
+local function rejected(definition, field)
+    local ok = pcall(widget.define, definition)
+    assert(not ok, field)
+end
+
+assert(widget.define({
+    render = function() end,
+    backgroundLayer = {
+        render = function() end,
+        opacity = 0,
+        blurRadius = 48,
+    },
+}))
+rejected({
+    backgroundLayer = { render = function() end },
+}, "choose exactly one")
+rejected({
+    render = function() end,
+    view = function() end,
+    backgroundLayer = { render = function() end },
+}, "choose exactly one")
+rejected({
+    render = function() end,
+    backgroundLayer = {},
+}, "backgroundLayer.render")
+rejected({
+    render = function() end,
+    backgroundLayer = true,
+}, "backgroundLayer")
+
+for _, value in ipairs({-0.01, 1.01, 1 / 0, "1"}) do
+    rejected({
+        render = function() end,
+        backgroundLayer = {
+            render = function() end,
+            opacity = value,
+        },
+    }, "backgroundLayer.opacity")
+end
+for _, value in ipairs({-0.01, 48.01, 1 / 0, "1"}) do
+    rejected({
+        render = function() end,
+        backgroundLayer = {
+            render = function() end,
+            blurRadius = value,
+        },
+    }, "backgroundLayer.blurRadius")
+end
+)lua", "widget.define must enforce every background-layer shape and numeric boundary");
+
     constexpr FunctionDescriptor systemFunctions[] = {
         { "capabilities",
             snowdesktop::widget_api::LuaSystemCapabilities, 2 },
