@@ -354,30 +354,22 @@ local function render(context, model)
         local emptyTitle = total > 0 and
             l10n.tr("lua_widget.reminders.all_done") or
             l10n.tr("lua_widget.reminders.empty")
-        local emptyIconSize = math.max(fontSize * 3.2,
-            metrics.spacingLg * 2)
-        local emptyBlockH = px(88)
-        local emptyTop = listTop + math.max(0, (viewportH - emptyBlockH) / 2)
-        local emptyCy = emptyTop + emptyIconSize / 2
-        draw.circle(w / 2, emptyCy, emptyIconSize / 2, palette.accent, 0.13)
-        draw.line(w / 2 - emptyIconSize * 0.22, emptyCy,
-            w / 2 - emptyIconSize * 0.05, emptyCy + emptyIconSize * 0.17,
-            px(2.0), palette.accent, 0.82)
-        draw.line(w / 2 - emptyIconSize * 0.05,
-            emptyCy + emptyIconSize * 0.17,
-            w / 2 + emptyIconSize * 0.27,
-            emptyCy - emptyIconSize * 0.22,
-            px(2.0), palette.accent, 0.82)
         local titleMetrics = draw.measureText(emptyTitle, titleFont, 0, true)
         local hintMetrics = draw.measureText(hint, smallFont, 0, false)
+        local emptyGap = metrics.spacingXs
+        local emptyBlockH = titleMetrics.height + emptyGap +
+            hintMetrics.height
+        local emptyTop = listTop + math.max(0,
+            (viewportH - emptyBlockH) / 2)
         draw.text(math.max(pad, (w - titleMetrics.width) / 2),
-            emptyCy + px(29), emptyTitle, titleFont, palette.text,
+            emptyTop, emptyTitle, titleFont, palette.text,
             math.min(w - pad * 2, titleMetrics.width + px(2)), true,
-            true)
+            true, 0, 0.78)
         draw.text(math.max(pad, (w - hintMetrics.width) / 2),
-            emptyCy + px(53), hint, smallFont, palette.muted,
+            emptyTop + titleMetrics.height + emptyGap,
+            hint, smallFont, palette.muted,
             math.min(w - pad * 2, hintMetrics.width + px(2)), false,
-            true)
+            true, 0, 0.62)
         return
     end
 

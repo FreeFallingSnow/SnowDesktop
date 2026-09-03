@@ -593,9 +593,17 @@ local function render(_context, model)
     end
     draw.pushClip(0, 0, width, viewportHeight)
     if rows == 0 then
-        draw.text(layout.cu(10), layout.cu(10),
-            l10n.tr("lua_widget.system_monitor.no_visible_cards"),
-            layout.fontCu(12), palette.cardSub)
+        local emptyText = l10n.tr(
+            "lua_widget.system_monitor.no_visible_cards")
+        local emptyFont = layout.fontCu(14)
+        local emptyMetrics = draw.measureText(
+            emptyText, emptyFont, 0, true)
+        local emptyWidth = math.min(width, emptyMetrics.width)
+        draw.text(math.max(0, (width - emptyWidth) / 2),
+            math.max(0, (viewportHeight - emptyMetrics.height) / 2),
+            emptyText, emptyFont, palette.cardSub,
+            math.max(1, emptyWidth + layout.cu(1)), true, true,
+            0, 0.78)
     else
         for index, card in ipairs(cards) do
             local column = (index - 1) % columns

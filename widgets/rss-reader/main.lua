@@ -177,6 +177,16 @@ local function setup(context)
     return model
 end
 
+local function drawCenteredStatus(text, x, y, width, height, font, color,
+    unit, alpha)
+    local measured = draw.measureText(text, font, 0, true)
+    local measuredWidth = math.min(width, measured.width)
+    draw.text(x + math.max(0, (width - measuredWidth) / 2),
+        y + math.max(0, (height - measured.height) / 2),
+        text, font, color, math.max(unit, measuredWidth + unit),
+        true, true, 0, alpha or 1.0)
+end
+
 local function render(context, model)
     local cfg = config()
     local colors = palette(context)
@@ -246,10 +256,10 @@ local function render(context, model)
         return
     end
     if #model.articles == 0 then
-        draw.text(pad, listTop + metrics.spacingLg,
+        drawCenteredStatus(
             l10n.tr("lua_widget.rss_reader.no_articles"),
-            bodyFont, colors.status,
-            width - pad * 2, true, true)
+            pad, listTop, width - pad * 2, viewportHeight,
+            headerFont, colors.status, unit, 0.78)
         return
     end
 

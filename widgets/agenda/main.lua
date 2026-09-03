@@ -403,18 +403,53 @@ local function render(context, model)
     local headerY = math.max(0, (headerHeight - button) / 2)
     local listTop = math.min(height, headerHeight + metrics.spacingSm)
     local titleText = formatDate(selected, false)
-    drawHeaderButton("agenda.previous", fluent.previous,
-        l10n.tr("lua_widget.agenda.previous_day"),
-        { x = pad, y = headerY, width = button, height = button },
-        colors, true, metrics)
-    drawHeaderButton("agenda.next", fluent.next,
-        l10n.tr("lua_widget.agenda.next_day"),
-        { x = width - pad - button, y = headerY,
-            width = button, height = button }, colors, true, metrics)
-    centeredText(titleText,
-        pad + button + gap, 0,
-        math.max(unit, width - pad * 2 - button * 2 - gap * 2),
-        headerHeight, titleFont, colors.text, true)
+    local titleMetrics = draw.measureText(titleText, titleFont, 0, true)
+    local todayLabel = l10n.tr("lua_widget.agenda.today")
+    local todayMetrics = draw.measureText(todayLabel,
+        smallFont, 0, true)
+    local todayWidth = math.max(headerHeight,
+        todayMetrics.width + headerHeight * 0.30)
+    local wideHeaderWidth = pad * 2 + button * 3 + todayWidth +
+        gap * 5 + math.max(headerHeight, titleMetrics.width)
+    local narrowHeader = width < wideHeaderWidth
+    if narrowHeader then
+        drawHeaderButton("agenda.previous", fluent.previous,
+            l10n.tr("lua_widget.agenda.previous_day"),
+            { x = pad, y = headerY, width = button, height = button },
+            colors, true, metrics)
+        drawHeaderButton("agenda.next", fluent.next,
+            l10n.tr("lua_widget.agenda.next_day"),
+            { x = width - pad - button, y = headerY,
+                width = button, height = button }, colors, true, metrics)
+        centeredText(titleText,
+            pad + button + gap, 0,
+            math.max(unit, width - pad * 2 - button * 2 - gap * 2),
+            headerHeight, titleFont, colors.text, true)
+    else
+        drawHeaderButton("agenda.previous", fluent.previous,
+            l10n.tr("lua_widget.agenda.previous_day"),
+            { x = pad, y = headerY, width = button, height = button },
+            colors, true, metrics)
+        drawHeaderButton("agenda.next", fluent.next,
+            l10n.tr("lua_widget.agenda.next_day"),
+            { x = pad + button + gap, y = headerY,
+                width = button, height = button }, colors, true, metrics)
+        local addX = width - pad - button
+        drawHeaderButton("agenda.add", fluent.add,
+            l10n.tr("lua_widget.agenda.add"),
+            { x = addX, y = headerY,
+                width = button, height = button }, colors, canWrite, metrics)
+        local todayX = addX - gap - todayWidth
+        drawHeaderTextButton("agenda.today", todayLabel,
+            { x = todayX, y = headerY,
+                width = todayWidth, height = button }, colors, true,
+            metrics, smallFont)
+        local titleX = pad + button * 2 + gap * 2
+        local titleRight = todayX - gap
+        centeredText(titleText, titleX, 0,
+            math.max(unit, titleRight - titleX), headerHeight,
+            titleFont, colors.text, true)
+    end
 
     local listBottom = height - metrics.spacingXs
     local viewportHeight = math.max(unit, listBottom - listTop)
@@ -432,15 +467,26 @@ local function render(context, model)
 
     local items = events(model)
     if #items == 0 then
-        centeredText(l10n.tr("lua_widget.agenda.empty"),
-            pad, listTop + viewportHeight * 0.34,
-            width - pad * 2, titleFont + metrics.spacingSm, titleFont,
+        local emptyTitle = l10n.tr("lua_widget.agenda.empty")
+        local emptyHint = l10n.tr(narrowHeader and
+            "lua_widget.agenda.empty_hint_compact" or
+            "lua_widget.agenda.empty_hint")
+        local emptyTitleMetrics = draw.measureText(
+            emptyTitle, titleFont, 0, true)
+        local emptyHintMetrics = draw.measureText(
+            emptyHint, smallFont, 0, false)
+        local emptyGap = metrics.spacingXs
+        local emptyBlockHeight = emptyTitleMetrics.height + emptyGap +
+            emptyHintMetrics.height
+        local emptyTop = listTop + math.max(0,
+            (viewportHeight - emptyBlockHeight) / 2)
+        centeredText(emptyTitle, pad, emptyTop,
+            width - pad * 2, emptyTitleMetrics.height, titleFont,
             colors.text, true, 0.78)
-        centeredText(l10n.tr("lua_widget.agenda.empty_hint"),
-            pad, listTop + viewportHeight * 0.34 +
-                titleFont + metrics.spacingSm,
-            width - pad * 2, smallFont + metrics.spacingSm, smallFont,
-            colors.muted, false, canWrite and 0.72 or 0.38)
+        centeredText(emptyHint, pad,
+            emptyTop + emptyTitleMetrics.height + emptyGap,
+            width - pad * 2, emptyHintMetrics.height, smallFont,
+            colors.muted, false, canWrite and 0.62 or 0.38)
         return
     end
 

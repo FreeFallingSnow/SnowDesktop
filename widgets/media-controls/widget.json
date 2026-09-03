@@ -228,6 +228,7 @@
     "task.start"
   ],
   "optionalFeatures": [
-    "task.app.launch"
+    "task.app.launch",
+    "ui.semanticMetrics"
   ]
 }

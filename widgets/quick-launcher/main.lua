@@ -223,13 +223,13 @@ local function registerRegion(key, shape, events, label)
 end
 
 local function drawCenteredStatus(text, x, y, width, height, font, color,
-    unit)
-    local measured = draw.measureText(text, font, width, false)
+    unit, alpha)
+    local measured = draw.measureText(text, font, 0, false)
     local measuredWidth = math.min(width, measured.width)
     local drawY = y + math.max(0, (height - measured.height) / 2)
     draw.text(x + math.max(0, (width - measuredWidth) / 2), drawY,
         text, font, color, math.max(unit, measuredWidth + unit),
-        false, true)
+        false, true, 0, alpha or 1.0)
 end
 
 local function render(context, model)
@@ -244,6 +244,7 @@ local function render(context, model)
     local fontSize = metrics.bodyFontSize * scale
     local inputFont = metrics.controlFontSize * scale
     local smallFont = metrics.captionFontSize * scale
+    local titleFont = metrics.titleFontSize * scale
     local titleAreaHeight = math.min(height, metrics.titleAreaHeight)
     local headerInset = math.min(metrics.spacingMd,
         titleAreaHeight * 0.20)
@@ -283,18 +284,23 @@ local function render(context, model)
         drawCenteredStatus(
             l10n.tr("lua_widget.quick_launcher.empty_prompt"),
             pad, listTop, width - pad * 2, viewportHeight,
-            smallFont, colors.muted, unit)
+            titleFont, colors.text, unit, 0.78)
         return
     end
 
     if #model.rows == 0 then
         local searching = next(model.searchTasks) ~= nil
-        drawCenteredStatus(
-            searching and
-                l10n.tr("lua_widget.quick_launcher.searching") or
+        if searching then
+            drawCenteredStatus(
+                l10n.tr("lua_widget.quick_launcher.searching"),
+                pad, listTop, width - pad * 2, viewportHeight,
+                smallFont, colors.muted, unit, 0.62)
+        else
+            drawCenteredStatus(
                 l10n.tr("lua_widget.quick_launcher.no_matches"),
-            pad, listTop, width - pad * 2, viewportHeight,
-            smallFont, colors.muted, unit)
+                pad, listTop, width - pad * 2, viewportHeight,
+                titleFont, colors.text, unit, 0.78)
+        end
         return
     end
 

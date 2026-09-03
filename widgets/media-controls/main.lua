@@ -230,6 +230,34 @@ local function render(_context, model)
         },
     })
 
+    if not available then
+        local semanticMetrics = widget.hasFeature("ui.semanticMetrics") and
+            ui.metrics() or nil
+        local emptyTitleFont = semanticMetrics and
+            semanticMetrics.titleFontSize or layout.fontCu(14)
+        local emptyHintFont = semanticMetrics and
+            semanticMetrics.captionFontSize or layout.fontCu(10)
+        local emptyGap = semanticMetrics and
+            semanticMetrics.spacingXs or layout.cu(4)
+        local titleMetrics = draw.measureText(
+            title, emptyTitleFont, 0, true)
+        local subtitleMetrics = draw.measureText(
+            subtitle, emptyHintFont, 0, false)
+        local blockHeight = titleMetrics.height + emptyGap +
+            subtitleMetrics.height
+        local blockTop = math.max(0, (height - blockHeight) / 2)
+        local titleWidth = math.min(width, titleMetrics.width)
+        local subtitleWidth = math.min(width, subtitleMetrics.width)
+        draw.text(math.max(0, (width - titleWidth) / 2), blockTop,
+            title, emptyTitleFont, palette.title,
+            math.max(1, titleWidth + 1), true, true, 0, 0.78)
+        draw.text(math.max(0, (width - subtitleWidth) / 2),
+            blockTop + titleMetrics.height + emptyGap,
+            subtitle, emptyHintFont, palette.subtitle,
+            math.max(1, subtitleWidth + 1), false, true, 0, 0.62)
+        return
+    end
+
     local vertical = height > width * 1.05
     local padding = math.min(width * 0.045, height * 0.075)
     local contentWidth = width - padding * 2
