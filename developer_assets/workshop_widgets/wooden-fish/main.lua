@@ -256,26 +256,24 @@ local function render(_context, model)
     local pressed = interaction.isPressed(STRIKE_KEY)
     local short = math.min(width, height)
     local padding = short * 0.052
-    local textSize = short * 0.09
+    local textSize = short * 0.08
     local term, hint = resolvedCopy()
     local textWidth = width - padding * 2
     local todayText = l10n.tr("lua_widget.wooden_fish.today_counter",
         l10n.formatNumber(model.todayCount))
     local totalText = l10n.tr("lua_widget.wooden_fish.total_counter",
         l10n.formatNumber(model.count))
-    local instrumentSize = math.min(width * 0.82, height * 0.53)
+    local compositionHeight = math.min(height * 0.86, short * 2.20)
+    local compositionY = (height - compositionHeight) * 0.5
+    local instrumentSize = math.min(width * 0.74,
+        compositionHeight * 0.52)
     local instrumentCx = width * 0.50
     local textCenterX = width * 0.50
     local textHeight = textSize * 1.35
-    local instrumentGap = textSize * 0.62
-    local hintGap = textSize * 0.28
-    local groupHeight = textHeight * 2 + instrumentGap + hintGap +
-        instrumentSize
-    local groupY = (height - groupHeight) * 0.5
-    local instrumentCy = groupY + textHeight + instrumentGap +
-        instrumentSize * 0.5
-    local hintY = instrumentCy + instrumentSize * 0.5 + hintGap
-    compactTextPair(todayText, totalText, groupY, textSize,
+    local counterY = compositionY
+    local instrumentCy = compositionY + compositionHeight * 0.50
+    local hintY = compositionY + compositionHeight - textHeight
+    compactTextPair(todayText, totalText, counterY, textSize,
         colors.feedback, textWidth)
     drawInstrument(instrumentCx, instrumentCy, instrumentSize, pressed, model)
 
