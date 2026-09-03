@@ -51,7 +51,7 @@ local settings = {
             description = l10n.tr(
                 "workshop.aurora_player.visualizer_description"),
             type = "bool",
-            default = false,
+            default = true,
         },
     },
 }
@@ -110,11 +110,49 @@ local function currentTimeline(model, session)
     return session.timeline
 end
 
-local function setup(context)
-    if descriptor and descriptor.backgroundLayer then
-        descriptor.backgroundLayer.blurRadius = player.clamp(
-            storage.get("background_blur"), 0, 24, 8)
+local function currentBackgroundBlur()
+    return player.clamp(storage.get("background_blur"), 0, 24, 8)
+end
+
+local function syncBackgroundBlur()
+    if not descriptor or not descriptor.backgroundLayer then return false end
+    local blur = currentBackgroundBlur()
+    if descriptor.backgroundLayer.blurRadius == blur then return false end
+    descriptor.backgroundLayer.blurRadius = blur
+    return true
+end
+
+local function shouldAnalyze(context)
+    return player.shouldAnalyze(
+        settingEnabled("show_visualizer", true),
+        widget.hasFeature("data.audio.output.analysis") and
+            widget.hasFeature("view.dataSeries"),
+        widget.hasPermission("audio.output.analyze"),
+        context.accessibility.reducedMotion)
+end
+
+local function subscribeAudioAnalysis()
+    return data.subscribe("audio.output.analysis", {
+        features = { "spectrum" },
+        spectrumBins = 48,
+        updateHz = 30,
+        whenHidden = "pause",
+    })
+end
+
+local function syncAudioAnalysis(context, model)
+    local analyze = not model.preview and shouldAnalyze(context)
+    if analyze and not audioAnalysis then
+        audioAnalysis = subscribeAudioAnalysis()
+    elseif not analyze and audioAnalysis then
+        audioAnalysis:unsubscribe()
+        audioAnalysis = nil
     end
+    model.visualizer = analyze or model.preview
+end
+
+local function setup(context)
+    syncBackgroundBlur()
     mediaCurrent = data.subscribe("media.current", {
         maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
@@ -123,24 +161,9 @@ local function setup(context)
         maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
     })
-    local analyze = player.shouldAnalyze(
-        settingEnabled("show_visualizer"),
-        widget.hasFeature("data.audio.output.analysis") and
-            widget.hasFeature("view.dataSeries"),
-        widget.hasPermission("audio.output.analyze"),
-        context.accessibility.reducedMotion)
-    if analyze then
-        audioAnalysis = data.subscribe("audio.output.analysis", {
-            features = { "spectrum" },
-            spectrumBins = 48,
-            updateHz = 30,
-            whenHidden = "pause",
-        })
-    end
-
-    return {
+    local model = {
         preview = context.preview == true,
-        visualizer = analyze or context.preview == true,
+        visualizer = false,
         tasks = {},
         pendingPlayback = nil,
         seekPreview = nil,
@@ -159,6 +182,8 @@ local function setup(context)
         recordFramePending = false,
         progressTicking = false,
     }
+    syncAudioAnalysis(context, model)
+    return model
 end
 
 local function clearSeekPreview(model)
@@ -252,6 +277,7 @@ local function palette(context, artworkBackgroundActive)
 end
 
 local function backgroundLayer(context, model)
+    if syncBackgroundBlur() then widget.invalidate() end
     local width = layout.width()
     local height = layout.height()
     if context.accessibility.highContrast then
@@ -441,6 +467,7 @@ end
 
 local function viewTree(context, model)
     model.reducedMotion = context.accessibility.reducedMotion == true
+    syncAudioAnalysis(context, model)
     local session, timestamp = currentSession(model)
     syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)

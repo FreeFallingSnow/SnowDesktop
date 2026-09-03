@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Aurora Player",
   "nameKey": "workshop.aurora_player.name",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A glass music player with album-art ambience, precise seeking, advanced playback controls, and an optional live spectrum.",
   "descriptionKey": "workshop.aurora_player.description",
   "preview": "workshop-preview.png",
