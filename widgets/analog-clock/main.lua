@@ -93,8 +93,8 @@ local function render()
 
     local outerStroke = su(1.4)
     local innerStroke = su(0.8)
-    local hourTickLen = su(9)
-    local minuteTickLen = su(4)
+    local hourTickLen = su(7.5)
+    local minuteTickLen = su(3.5)
     local hourTickWidth = su(1.35)
     local quarterTickWidth = su(1.8)
     local minuteTickWidth = su(0.55)
@@ -137,14 +137,27 @@ local function render()
 
     if showNumbers then
         local numberFont = su(6.8)
-        local numberRadius = r - su(11.5)
+        local numberGap = su(1.4)
+        local numberRadius = r - su(12)
+        local labels = {}
+        local maxRadialExtent = 0
         for hour = 1, 12 do
             local a = hour * math.pi / 6 - math.pi / 2
             local label = tostring(hour)
             local metrics = draw.measureText(label, numberFont, 0, true)
-            local tx, ty = point(a, numberRadius)
+            local radialExtent = math.abs(math.cos(a)) * metrics.width / 2 +
+                math.abs(math.sin(a)) * metrics.height / 2
+            maxRadialExtent = math.max(maxRadialExtent, radialExtent)
+            labels[hour] = { angle = a, text = label, metrics = metrics }
+        end
+        numberRadius = math.min(numberRadius,
+            r - hourTickLen - maxRadialExtent - numberGap)
+        for hour = 1, 12 do
+            local item = labels[hour]
+            local metrics = item.metrics
+            local tx, ty = point(item.angle, numberRadius)
             draw.text(tx - metrics.width / 2, ty - metrics.height / 2,
-                label, numberFont, colors.number, 0, true, true)
+                item.text, numberFont, colors.number, 0, true, true)
         end
     end
 
