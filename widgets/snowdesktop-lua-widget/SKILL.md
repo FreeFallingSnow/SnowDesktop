@@ -220,6 +220,9 @@ By default:
   calculated `minWidth`, and set `flexShrink=0` on it and any shrinking parent
   column. Reallocate the finite surface width from adjacent content; `minWidth`
   cannot resize the widget window.
+- For rounded bitmap content in immediate mode, declare and probe
+  `draw.imageFit.roundedClip`, then pass `cornerRadius` after `originY`.
+  Drawing a rounded border alone does not clip the bitmap corners.
 - If the widget offers a custom foreground setting, use it only when the widget
   is not following personalization. Never read or persist the host-owned
   `__contentTheme` preview override from component Lua.

@@ -31,6 +31,9 @@ Keep content rendering inside that host surface:
 - Use internal surfaces only to group content, separate hierarchy or implement
   a control whose body is part of the widget's information design.
 - Avoid nested cards when spacing, a divider or typography hierarchy is enough.
+- For immediate-mode artwork that must have rounded corners, declare and probe
+  `draw.imageFit.roundedClip` and pass the radius to `draw.imageFit`; a rounded
+  stroke around an image does not clip its rectangular bitmap corners.
 - A canvas-led visual may cover the surface when the full canvas is the actual
   content, for example an analog clock face or deliberate artwork. It must still
   respect the host clip and resolved foreground theme. Add the exact source

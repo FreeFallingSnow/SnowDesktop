@@ -780,6 +780,40 @@ void LintSemanticUiMetricsFeature(LintReport& report,
             "ui.semanticMetrics.rowUnit");
 }
 
+void LintRoundedImageFeature(LintReport& report,
+    const snowdesktop::widget::PackageManifest& manifest,
+    const std::filesystem::path& path, const std::vector<Token>& tokens)
+{
+    std::optional<std::size_t> callIndex;
+    for (std::size_t index = 0; index + 3 < tokens.size(); ++index)
+    {
+        if (tokens[index].kind != TokenKind::Identifier ||
+                tokens[index].text != "draw" ||
+                !IsSymbol(tokens[index + 1], ".") ||
+                tokens[index + 2].kind != TokenKind::Identifier ||
+                tokens[index + 2].text != "imageFit" ||
+                !IsSymbol(tokens[index + 3], "("))
+            continue;
+        if (CallArguments(tokens, index + 3).size() >= 13)
+        {
+            callIndex = index;
+            break;
+        }
+    }
+    if (!callIndex) return;
+    const auto declares = [&](const auto& features) {
+        return std::find(features.begin(), features.end(),
+            "draw.imageFit.roundedClip") != features.end();
+    };
+    if (declares(manifest.requiredFeatures) ||
+        declares(manifest.optionalFeatures))
+        return;
+    AddIssue(report, LintSeverity::Error,
+        "feature.undeclared", path, tokens[*callIndex].line,
+        "draw.imageFit cornerRadius requires manifest feature "
+        "draw.imageFit.roundedClip");
+}
+
 void LintImmediateDrawing(LintReport& report,
     const std::filesystem::path& path, const std::vector<Token>& tokens,
     bool allowFullSurfaceContent,
@@ -915,6 +949,7 @@ LintReport LintWidgetSource(
     LintReferenceAxisFeature(report, manifest, relativePath, tokens);
     LintSemanticUiMetricsFeature(
         report, manifest, relativePath, tokens);
+    LintRoundedImageFeature(report, manifest, relativePath, tokens);
     LintViewConstructors(report, relativePath, tokens);
     LintImmediateDrawing(report, relativePath, tokens,
         source.find("-- snowwidget: allow-full-surface-content") !=

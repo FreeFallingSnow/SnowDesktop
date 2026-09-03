@@ -182,6 +182,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `ui.semanticMetrics.rowUnit`：新增 `layoutRowHeight`，表示输入框、普通按钮或单行条目的
   可见内容高度，不包含外边距和行间距；字体、间距、图标和控件高度均由同一行高派生，
   一至两行使用页面基准，更高组件只随纵向跨度缓慢增长，横向跨度不影响；
+- `draw.imageFit.roundedClip`：允许即时绘制的 `draw.imageFit` 通过可选
+  `cornerRadius` 对目标矩形执行抗锯齿圆角裁切；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -2294,7 +2296,7 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.pushClip(x, y, width, height)`、`draw.popClip()`
 - `draw.fa(...)`、`draw.fluent(...)`
 - `draw.image(imageHandle, x, y, width, height, alpha?)`
-- `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?, rotationDegrees?, originX?, originY?)`
+- `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?, rotationDegrees?, originX?, originY?, cornerRadius?)`
 - `draw.icon(ref, x, y, size?, alpha?)`：要求 `desktop.read`，只接受当前实例由
   `app.search`、`desktop.search` 或 `everything.search` 返回且仍有效的不透明 ref；
   不接受路径、v1 项目表或其他实例的引用。
@@ -2335,7 +2337,9 @@ reduced-motion 或宿主没有动画调度器时从起点静态显示，但返�
   `alignment` 为 `start/center/end` 并同时作用于两轴，采样为 `linear/nearest`；
   `cover` 由宿主计算源图裁切，不向 Lua 暴露资源路径或像素。可选旋转角限制为
   `-360–360` 度，正角度顺时针；`originX/originY` 是绘制后图片边界内的归一化支点，
-  范围均为 `0–1`，默认以中心 `(0.5, 0.5)` 旋转。
+  范围均为 `0–1`，默认以中心 `(0.5, 0.5)` 旋转。探测并声明
+  `draw.imageFit.roundedClip` 后，可传入非负 `cornerRadius`；宿主将它裁到目标短边的一半，
+  用抗锯齿圆角几何裁切最终图片，省略或传入 0 时保持原有矩形绘制。
 - `shadow` 的 blur 为 `0–64`，最多产生 16 层宿主受控的柔和衰减；它不是任意
   shader 或无界高斯效果。圆角不能超过短边一半，偏移和扩散后的区域仍受坐标预算约束。
 - `sparkline` 接受 1–512 个有限数值。`min/max` 必须成对提供且严格递增；省略时宿主

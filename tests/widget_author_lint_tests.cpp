@@ -261,6 +261,27 @@ void TestSemanticUiMetricsFeatureContract()
         "semantic UI metrics must declare their host capability");
 }
 
+void TestRoundedImageFeatureContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.optionalFeatures = { "draw.imageFit.roundedClip" };
+    const auto declared = LintWidgetSource(manifest, "main.lua", R"lua(
+draw.imageFit(image, 0, 0, 80, 80, "cover", "center", 1, "linear",
+    0, 0.5, 0.5, 12)
+)lua");
+    Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
+        "rounded immediate images are valid when their capability is declared");
+
+    manifest.optionalFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua", R"lua(
+draw.imageFit(image, 0, 0, 80, 80, "cover", "center", 1, "linear",
+    0, 0.5, 0.5, 12)
+)lua");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "draw.imageFit cornerRadius must declare its host capability");
+}
+
 void TestLocaleAndPreviewQuality()
 {
     TemporaryDirectory temporary;
@@ -298,6 +319,7 @@ int main()
     TestBackgroundLayerContract();
     TestReferencePixelFeatureContract();
     TestSemanticUiMetricsFeatureContract();
+    TestRoundedImageFeatureContract();
     TestLocaleAndPreviewQuality();
     std::cout << "widget author lint tests passed\n";
     return 0;

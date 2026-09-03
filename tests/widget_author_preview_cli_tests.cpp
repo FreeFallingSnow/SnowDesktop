@@ -694,6 +694,60 @@ return widget.define({
 )lua");
     return source;
 }
+
+std::filesystem::path CreateImmediateRoundedImageFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"immediate-rounded-image-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview immediate rounded image fixture directory is created");
+    WriteSolidBmp(source / L"cover.bmp", 255, 0, 0);
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "4da4497b-2508-4b74-bc73-c82e34e18145",
+  "slug": "preview-immediate-rounded-image-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "name": "Preview immediate rounded image fixture",
+  "description": "Validates immediate rounded image content clipping.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "requiredFeatures": [
+    "draw.advanced",
+    "draw.imageFit.roundedClip",
+    "draw.immediate",
+    "resource.package"
+  ],
+  "resources": {
+    "cover": {"type": "image", "path": "cover.bmp"}
+  }
+})json");
+    Write(source / L"main.lua", R"lua(
+local cover = resource.image("cover")
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x0000FF,
+    alpha = 1,
+    borderAlpha = 0,
+    glassEnabled = false,
+    render = function()
+        assert(pcall(draw.imageFit, cover, 18, 18, 80, 80,
+            "cover", "center", 1, "linear", 0, 0.5, 0.5, -1) == false,
+            "negative image corner radius must be rejected")
+        draw.imageFit(cover, 18, 18, 80, 80,
+            "cover", "center", 1, "linear", 0, 0.5, 0.5, 40)
+    end,
+})
+)lua");
+    return source;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -829,6 +883,32 @@ int wmain(int argc, wchar_t** argv)
             roundedCorner[2] > 240 && roundedCorner[0] < 16 &&
             roundedCorner[1] < 16,
         "view.image cornerRadius clips bitmap content to the rounded shape");
+
+    const auto immediateRoundedImageSource =
+        CreateImmediateRoundedImageFixture(temporary.path);
+    const auto immediateRoundedImageOutput =
+        temporary.path / L"immediate-rounded-image.png";
+    const auto [immediateRoundedImageExit, immediateRoundedImageJson] =
+        Run(snowwidget, {
+            L"preview", immediateRoundedImageSource.wstring(),
+            immediateRoundedImageOutput.wstring(),
+            L"--host", host.wstring() });
+    const RgbaBitmap immediateRoundedImage =
+        ReadPng(immediateRoundedImageOutput);
+    const auto immediateRoundedCenter =
+        PixelAt(immediateRoundedImage, 58, 58);
+    const auto immediateRoundedCorner =
+        PixelAt(immediateRoundedImage, 20, 20);
+    Check(immediateRoundedImageExit == 0 &&
+            immediateRoundedImageJson.find("\"ok\":true") !=
+                std::string::npos &&
+            immediateRoundedCenter[0] > 240 &&
+            immediateRoundedCenter[1] < 16 &&
+            immediateRoundedCenter[2] < 16 &&
+            immediateRoundedCorner[2] > 240 &&
+            immediateRoundedCorner[0] < 16 &&
+            immediateRoundedCorner[1] < 16,
+        "draw.imageFit cornerRadius clips bitmap content to the rounded shape");
 
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";

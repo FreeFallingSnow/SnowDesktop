@@ -11108,6 +11108,12 @@ static int lua_DrawImageFit(lua_State* state)
         luaL_optnumber(state, 11, 0.5));
     const float originY = static_cast<float>(
         luaL_optnumber(state, 12, 0.5));
+    const double cornerRadiusValue = luaL_optnumber(state, 13, 0.0);
+    if (!std::isfinite(cornerRadiusValue) || cornerRadiusValue < 0.0 ||
+        cornerRadiusValue > 100000.0)
+        return luaL_error(state,
+            "draw.imageFit: cornerRadius must be finite and between 0 and 100000");
+    const float cornerRadius = static_cast<float>(cornerRadiusValue);
     using Fit = snowdesktop::widget_runtime::DrawImageFit;
     using Alignment = snowdesktop::widget_runtime::DrawImageAlignment;
     Fit fit = Fit::Contain;
@@ -11156,6 +11162,24 @@ static int lua_DrawImageFit(lua_State* state)
         placement.source.x, placement.source.y,
         placement.source.x + placement.source.width,
         placement.source.y + placement.source.height);
+    ComPtr<ID2D1RoundedRectangleGeometry> roundedClip;
+    if (cornerRadius > 0.0f)
+    {
+        ComPtr<ID2D1Factory> factory;
+        d2d->ctx->GetFactory(&factory);
+        const float clipRadius = std::min(cornerRadius,
+            std::min(placement.destination.width,
+                placement.destination.height) * 0.5f);
+        if (!factory || FAILED(factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(destination, clipRadius, clipRadius),
+                &roundedClip)) || !roundedClip)
+            return luaL_error(state,
+                "draw.imageFit: cannot create the rounded clip");
+    }
+    if (roundedClip)
+        d2d->ctx->PushLayer(D2D1::LayerParameters(
+            destination, roundedClip.Get(),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
     D2D1_MATRIX_3X2_F previousTransform{};
     const bool rotated = std::abs(rotationDegrees) > 0.0001f;
     if (rotated)
@@ -11176,6 +11200,8 @@ static int lua_DrawImageFit(lua_State* state)
             : D2D1_INTERPOLATION_MODE_LINEAR, source);
     if (rotated)
         d2d->ctx->SetTransform(previousTransform);
+    if (roundedClip)
+        d2d->ctx->PopLayer();
     return 0;
 }
 

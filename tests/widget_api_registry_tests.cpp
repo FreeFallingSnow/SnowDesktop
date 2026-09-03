@@ -345,6 +345,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.storage.io") &&
             snowdesktop::widget_api::SupportsFeature("draw.advanced") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "draw.imageFit.roundedClip") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("draw.marqueeText") &&
             snowdesktop::widget_api::SupportsFeature(
