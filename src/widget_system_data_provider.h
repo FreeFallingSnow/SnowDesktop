@@ -302,6 +302,11 @@ struct WidgetMediaArtworkDataSnapshot
     std::string error;
 };
 
+WidgetMediaArtworkDataSnapshot StabilizeMediaArtworkDataEnvelope(
+    WidgetMediaArtworkDataSnapshot snapshot,
+    const std::optional<WidgetMediaArtworkDataSnapshot>& previous,
+    WidgetDataSemanticDebouncer& debouncer);
+
 struct WidgetMediaSessionsDataSnapshot
 {
     bool available = false;

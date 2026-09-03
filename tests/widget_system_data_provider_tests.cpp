@@ -12,6 +12,7 @@ using namespace std::chrono_literals;
 using snowdesktop::widget_runtime::WidgetSystemDataProvider;
 using snowdesktop::widget_runtime::WidgetDataSemanticDebouncer;
 using snowdesktop::widget_runtime::WidgetMemoryDataSnapshot;
+using snowdesktop::widget_runtime::WidgetMediaArtworkDataSnapshot;
 using snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot;
 using snowdesktop::widget_runtime::WidgetNetworkStatusDebouncer;
 using snowdesktop::widget_runtime::WidgetDisplayDataSnapshot;
@@ -19,6 +20,7 @@ using snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot;
 using snowdesktop::widget_runtime::WidgetDisplayPixelRectDataSnapshot;
 using snowdesktop::widget_runtime::MatchDisplayByPixelBounds;
 using snowdesktop::widget_runtime::StabilizeWidgetDataEnvelope;
+using snowdesktop::widget_runtime::StabilizeMediaArtworkDataEnvelope;
 
 void Check(bool condition, const char* message)
 {
@@ -457,6 +459,59 @@ void TestSampledDataEnvelopeDebounce()
         "recovery to an available sample must publish immediately");
 }
 
+void TestMediaArtworkTransitionDropsUnconfirmedImage()
+{
+    WidgetDataSemanticDebouncer debouncer;
+    WidgetMediaArtworkDataSnapshot previous;
+    previous.available = true;
+    previous.sessionId = "media-session-player";
+    previous.resourceToken = "@media:old";
+    previous.pixels = std::make_shared<
+        snowdesktop::widget_runtime::WidgetRuntimeImagePixels>();
+    previous.mediaIdentity = 100;
+    previous.timestampMs = 100;
+
+    std::optional<WidgetMediaArtworkDataSnapshot> stable;
+    auto published = StabilizeMediaArtworkDataEnvelope(
+        previous, stable, debouncer);
+    stable = published;
+
+    WidgetMediaArtworkDataSnapshot firstNew = previous;
+    firstNew.mediaIdentity = 200;
+    firstNew.timestampMs = 200;
+    published = StabilizeMediaArtworkDataEnvelope(
+        firstNew, stable, debouncer);
+    Check(!published.available && published.mediaIdentity == 200 &&
+            published.resourceToken.empty() && !published.pixels &&
+            published.error == "notPresent",
+        "a changed media identity must clear the first unconfirmed artwork");
+    stable = published;
+
+    WidgetMediaArtworkDataSnapshot confirmed = firstNew;
+    confirmed.resourceToken = "@media:new";
+    confirmed.pixels = std::make_shared<
+        snowdesktop::widget_runtime::WidgetRuntimeImagePixels>();
+    confirmed.timestampMs = 300;
+    published = StabilizeMediaArtworkDataEnvelope(
+        confirmed, stable, debouncer);
+    Check(published.available && published.mediaIdentity == 200 &&
+            published.resourceToken == "@media:new" && published.pixels,
+        "a repeated media identity must publish freshly decoded artwork");
+
+    stable = published;
+    WidgetMediaArtworkDataSnapshot transientFailure;
+    transientFailure.sessionId = confirmed.sessionId;
+    transientFailure.mediaIdentity = confirmed.mediaIdentity;
+    transientFailure.timestampMs = 400;
+    transientFailure.error = "artworkReadFailed";
+    published = StabilizeMediaArtworkDataEnvelope(
+        transientFailure, stable, debouncer);
+    Check(published.available &&
+            published.resourceToken == "@media:new" &&
+            published.timestampMs == 400,
+        "a same-track transient failure may retain confirmed artwork once");
+}
+
 void TestCurrentDisplayMatching()
 {
     WidgetDisplayTopologyDataSnapshot topology;
@@ -495,6 +550,7 @@ int main()
 {
     TestCurrentDisplayMatching();
     TestSampledDataEnvelopeDebounce();
+    TestMediaArtworkTransitionDropsUnconfirmedImage();
     TestNetworkStatusDebounce();
     TestTopicLifecycleAndSampling();
     TestStopAll();

@@ -1762,7 +1762,9 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 512×512 的 `width/height`。宿主在工作线程读取最多 4 MiB 的编码数据，拒绝边长超过
 16384 的源图，并解码为有界 PBGRA 像素；Lua 不取得编码原图、缓存路径或像素字节。
 该句柄可直接传给 `draw.image` 或 `view.image.source`，最后一个订阅取消后对应 CPU/GPU
-缓存立即清除，因此不应持久化句柄。无封面使用 `notPresent`；读取、查询、解码、尺寸等
+缓存立即清除，因此不应持久化句柄。媒体身份改变时，宿主先发布一次
+`available=false,error="notPresent"` 并重新读取封面，避免把仍在更新的旧缩略图绑定到新媒体；
+组件应在这个短暂过渡中显示占位内容。无封面使用 `notPresent`；读取、查询、解码、尺寸等
 失败分别使用稳定错误码。预览返回固定 64×64 模拟封面，不读取开发机媒体状态。
 
 三个桌面 topic 受 `desktop.read` 保护且由宿主变更事件驱动，不启动轮询线程。

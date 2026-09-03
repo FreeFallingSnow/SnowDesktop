@@ -634,6 +634,31 @@ std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
         : std::optional<WidgetDisplayDataSnapshot>(*display);
 }
 
+WidgetMediaArtworkDataSnapshot StabilizeMediaArtworkDataEnvelope(
+    WidgetMediaArtworkDataSnapshot snapshot,
+    const std::optional<WidgetMediaArtworkDataSnapshot>& previous,
+    WidgetDataSemanticDebouncer& debouncer)
+{
+    const bool mediaChanged = previous && previous->available &&
+        previous->mediaIdentity != 0 && snapshot.mediaIdentity != 0 &&
+        previous->mediaIdentity != snapshot.mediaIdentity;
+    if (mediaChanged)
+    {
+        // GSMTC can expose the new track metadata before its thumbnail catches
+        // up, especially when moving to the previous track. Do not bind that
+        // first image to the new identity and cache it indefinitely. Publishing
+        // an empty transition also makes consumers release the old handle; the
+        // next sample decodes the thumbnail again for the confirmed identity.
+        snapshot.available = false;
+        snapshot.resourceToken.clear();
+        snapshot.pixels.reset();
+        if (snapshot.error.empty()) snapshot.error = "notPresent";
+        debouncer.Reset();
+    }
+    return StabilizeWidgetDataEnvelope(
+        std::move(snapshot), previous, debouncer);
+}
+
 bool WidgetNetworkStatusDebouncer::SemanticallyEqual(
     const WidgetNetworkStatusDataSnapshot& left,
     const WidgetNetworkStatusDataSnapshot& right) noexcept
@@ -2460,7 +2485,8 @@ void WidgetSystemDataProvider::PublishMediaArtwork(
     if (!snapshot.available && artwork.error.empty())
         artwork.error = snapshot.error.empty()
             ? "mediaSessionQueryFailed" : snapshot.error;
-    artwork = StabilizeWidgetDataEnvelope(std::move(artwork), mediaArtwork_,
+    artwork = StabilizeMediaArtworkDataEnvelope(
+        std::move(artwork), mediaArtwork_,
         semanticDebouncers_[std::string(MediaArtworkTopic)]);
     artwork.revision = mediaArtwork_ ? mediaArtwork_->revision + 1 : 1;
     mediaArtwork_ = std::move(artwork);

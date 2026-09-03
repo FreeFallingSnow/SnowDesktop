@@ -1493,6 +1493,8 @@ function animation.cancelFrame(id) end
 ---@class SnowMediaTimelineDataValue
 ---@field timeline SnowMediaTimelineValue
 
+---A media identity change briefly publishes an unavailable snapshot before
+---fresh artwork is exposed; render a placeholder during that transition.
 ---@class SnowMediaArtworkDataValue
 ---@field sessionId string Opaque current media session identifier.
 ---@field image SnowImageResource Temporary host-decoded image resource handle.
