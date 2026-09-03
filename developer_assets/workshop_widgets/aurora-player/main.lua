@@ -277,7 +277,6 @@ local function palette(context, artworkBackgroundActive)
 end
 
 local function backgroundLayer(context, model)
-    if syncBackgroundBlur() then widget.invalidate() end
     local width = layout.width()
     local height = layout.height()
     if context.accessibility.highContrast then
@@ -467,7 +466,6 @@ end
 
 local function viewTree(context, model)
     model.reducedMotion = context.accessibility.reducedMotion == true
-    syncAudioAnalysis(context, model)
     local session, timestamp = currentSession(model)
     syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)
@@ -783,7 +781,23 @@ local function commitSeek(model, session, timeline, fraction)
     widget.invalidate()
 end
 
-local function event(_context, model, value)
+local function event(context, model, value)
+    if value.kind == "settings.changed" then
+        local refreshBlur = false
+        local refreshSpectrum = false
+        for _, key in ipairs(value.keys or {}) do
+            if key == "background_blur" then refreshBlur = true end
+            if key == "show_visualizer" then refreshSpectrum = true end
+        end
+        if refreshBlur then syncBackgroundBlur() end
+        if refreshSpectrum then syncAudioAnalysis(context, model) end
+        return
+    end
+    if value.kind == "environment" then
+        model.reducedMotion = context.accessibility.reducedMotion == true
+        syncAudioAnalysis(context, model)
+        return
+    end
     if value.kind == "visibility" then
         model.visible = value.visible == true
         if not model.visible then

@@ -402,6 +402,7 @@
     "module.package",
     "schedule.basic",
     "schedule.visibility",
+    "settings.changeEvent",
     "settings.description",
     "task.media.control",
     "task.start",
