@@ -1420,6 +1420,49 @@ WidgetSettingMutationResult WidgetSettingsService::Reset(
     return ReloadAfterMutation(*this, session, backendResult);
 }
 
+WidgetSettingMutationResult WidgetSettingsService::ResetField(
+    const WidgetSettingMutationGuard& guard, std::string_view key)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    const auto* field = FindField(session.snapshot, key);
+    if (!field)
+        return { WidgetSettingMutationStatus::SettingNotFound,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingNotFound", {} };
+    if (field->schema.Channel() != WidgetSettingValueChannel::Ordinary)
+        return { WidgetSettingMutationStatus::WrongValueChannel,
+            session.snapshot.generation, session.snapshot.revision,
+            "wrongValueChannel", {} };
+    if (!field->enabled)
+        return { WidgetSettingMutationStatus::Disabled,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingDisabled", {} };
+
+    const bool resetSearchQuery =
+        field->schema.Kind() == WidgetSettingKind::AppSearch;
+    if (field->currentValue == field->defaultValue &&
+        (!resetSearchQuery || field->searchQuery.empty()))
+    {
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+    }
+
+    WidgetSettingOrdinaryWrite write{ field->schema.key,
+        field->defaultValue,
+        WidgetSettingUsesTypedStorage(field->schema.Kind()) };
+    if (resetSearchQuery) write.searchQuery = std::string{};
+    WidgetSettingsBackendResult backendResult =
+        state_->backend.ApplyOrdinaryTransaction(
+            session.descriptor, guard, { std::move(write) });
+    if (backendResult.Succeeded() && resetSearchQuery)
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            { field->schema.key });
+    return ReloadAfterMutation(*this, session, backendResult);
+}
+
 WidgetSettingMutationResult WidgetSettingsService::StartSearch(
     const WidgetSettingMutationGuard& guard, std::string_view key,
     std::string query, std::size_t maximumResults)

@@ -340,6 +340,8 @@ public:
         const WidgetSettingMutationGuard& guard);
     WidgetSettingMutationResult RevertPreview(
         const WidgetSettingMutationGuard& guard);
+    WidgetSettingMutationResult ResetField(
+        const WidgetSettingMutationGuard& guard, std::string_view key);
     WidgetSettingMutationResult Reset(
         const WidgetSettingMutationGuard& guard);
 

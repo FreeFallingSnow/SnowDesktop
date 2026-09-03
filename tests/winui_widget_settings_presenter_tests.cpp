@@ -107,7 +107,7 @@ void TestResponsiveFieldRows(
     Check(ContainsAll(source, {
               "#include \"settings_presenter_controls.h\"",
               "presenter_controls::SettingRow row",
-              "field.row.Initialize(field.editorHost)",
+              "field.row.Initialize(field.editorRow)",
               "field.row.SetText(",
               "field.editorHost.Children().Append(",
               "field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right)",
@@ -170,6 +170,22 @@ void TestResponsiveFieldRows(
               "if (field.colorEditor) return field.colorEditor->button",
               "return field.root;"}),
         "responsive widget rows keep editor automation context, disabled-state semantics, and concrete keyboard focus targets");
+}
+
+void TestPerFieldRestore(const std::string& source)
+{
+    Check(ContainsAll(source, {
+              "muxc::Button restoreDefault",
+              "WidgetSettingValueChannel::Ordinary",
+              "ConfigureRestoreDefaultButton(",
+              "RestoreFieldDefault(field)",
+              "service.ResetField(guard, key)",
+              "state.currentValue != state.defaultValue",
+              "state.schema.Kind() == wr::WidgetSettingKind::AppSearch",
+              "!state.searchQuery.empty()",
+              "field.restoreDefault.IsEnabled(",
+              "field.restoreDefault.Click(field.restoreDefaultClicked)"}),
+        "ordinary widget fields expose a localized trailing restore action that disables at the effective default and includes app-search query state");
 }
 
 void TestPopupColorEditing(
@@ -520,6 +536,7 @@ int main(int argc, char** argv)
     TestPublicContract(header);
     TestNativeControlMapping(source, sharedControls);
     TestResponsiveFieldRows(source, sharedControls);
+    TestPerFieldRestore(source);
     TestPopupColorEditing(source, sharedControls);
     TestOpaqueChannels(source);
     TestSnapshotAndAsyncSafety(source);

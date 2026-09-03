@@ -813,6 +813,47 @@ int main()
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t transactionsBeforeFieldReset =
+        backend.transactions.size();
+    WidgetSettingMutationResult fieldReset =
+        service.ResetField(guard, "scale");
+    snapshot = service.Snapshot(L"widget-1");
+    Check(fieldReset.status == WidgetSettingMutationStatus::Applied &&
+            backend.transactions.size() ==
+                transactionsBeforeFieldReset + 1 &&
+            backend.lastWrites.size() == 1 &&
+            backend.lastWrites[0].key == "scale" &&
+            backend.lastWrites[0].typedStorage &&
+            backend.lastWrites[0].value.number == 1.0 && snapshot &&
+            Find(*snapshot, "scale")->currentValue.number == 1.0 &&
+            Find(*snapshot, "feeds")->currentValue.array.front().string ==
+                "news",
+        "per-field reset writes only the selected ordinary default and preserves sibling settings");
+
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t transactionsBeforeUnchangedFieldReset =
+        backend.transactions.size();
+    Check(service.ResetField(guard, "scale").status ==
+                WidgetSettingMutationStatus::Unchanged &&
+            backend.transactions.size() ==
+                transactionsBeforeUnchangedFieldReset &&
+            service.ResetField(guard, "token").status ==
+                WidgetSettingMutationStatus::WrongValueChannel,
+        "per-field reset skips unchanged values and never routes opaque fields through ordinary storage");
+
+    WidgetSettingMutationResult searchFieldReset =
+        service.ResetField(guard, "appSearch");
+    snapshot = service.Snapshot(L"widget-1");
+    Check(searchFieldReset.status == WidgetSettingMutationStatus::Applied &&
+            backend.lastWrites.size() == 1 &&
+            backend.lastWrites[0].key == "appSearch" &&
+            backend.lastWrites[0].searchQuery &&
+            backend.lastWrites[0].searchQuery->empty() && snapshot &&
+            Find(*snapshot, "appSearch")->currentValue.string.empty() &&
+            Find(*snapshot, "appSearch")->searchQuery.empty(),
+        "per-field appSearch reset restores its value and clears the separate query in one transaction");
+
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
     WidgetSettingMutationResult reset = service.Reset(guard);
     bool resetHasOpaque = false;
     bool resetTypedRange = false;

@@ -215,7 +215,9 @@ struct WidgetFieldControl
     muxc::Border root{nullptr};
     muxc::StackPanel content{nullptr};
     presenter_controls::SettingRow row;
+    muxc::Grid editorRow{nullptr};
     muxc::StackPanel editorHost{nullptr};
+    muxc::Button restoreDefault{nullptr};
     muxc::TextBlock validation{nullptr};
     muxc::TextBlock diagnostic{nullptr};
 
@@ -262,6 +264,7 @@ struct WidgetFieldControl
     winrt::event_token searchSelectionChanged{};
     winrt::event_token chooseClicked{};
     winrt::event_token clearClicked{};
+    winrt::event_token restoreDefaultClicked{};
     winrt::event_token idleCommitTick{};
 
     bool visible = true;
@@ -1070,11 +1073,37 @@ struct WidgetSettingsPresenter::Impl
         if (cardStyle) field.root.Style(cardStyle);
         field.content = muxc::StackPanel{};
         field.content.Spacing(7.0);
+        field.editorRow = muxc::Grid{};
+        field.editorRow.ColumnSpacing(8.0);
+        field.editorRow.HorizontalAlignment(
+            mux::HorizontalAlignment::Stretch);
+        muxc::ColumnDefinition editorColumn{};
+        editorColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        field.editorRow.ColumnDefinitions().Append(editorColumn);
         field.editorHost = muxc::StackPanel{};
         field.editorHost.Spacing(7.0);
         field.editorHost.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        field.row.Initialize(field.editorHost);
+        field.editorRow.Children().Append(field.editorHost);
+        if (field.schema.Channel() ==
+            wr::WidgetSettingValueChannel::Ordinary)
+        {
+            muxc::ColumnDefinition restoreColumn{};
+            restoreColumn.Width(mux::GridLengthHelper::Auto());
+            field.editorRow.ColumnDefinitions().Append(restoreColumn);
+            field.restoreDefault = muxc::Button{};
+            presenter_controls::ConfigureRestoreDefaultButton(
+                field.restoreDefault,
+                L("app.settings.restore_default", L"Restore Default"));
+            muxc::Grid::SetColumn(field.restoreDefault, 1);
+            field.editorRow.Children().Append(field.restoreDefault);
+            field.restoreDefaultClicked = field.restoreDefault.Click(
+                [this, &field](const auto&, const auto&) {
+                    RestoreFieldDefault(field);
+                });
+        }
+        field.row.Initialize(field.editorRow);
         field.row.SetText(
             ToWide(field.schema.label),
             ToWide(field.schema.description));
@@ -1991,6 +2020,15 @@ struct WidgetSettingsPresenter::Impl
             field.choose.IsEnabled(state.enabled && state.opaque.canChoose);
         if (field.clear)
             field.clear.IsEnabled(state.enabled && state.opaque.canClear);
+        if (field.restoreDefault)
+        {
+            const bool differsFromDefault =
+                state.currentValue != state.defaultValue ||
+                (state.schema.Kind() == wr::WidgetSettingKind::AppSearch &&
+                    !state.searchQuery.empty());
+            field.restoreDefault.IsEnabled(
+                state.enabled && differsFromDefault);
+        }
 
         field.diagnostic.Text(state.diagnosticCode.empty()
             ? winrt::hstring{}
@@ -2070,6 +2108,7 @@ struct WidgetSettingsPresenter::Impl
         if (field.time) field.time.IsEnabled(enabled);
         if (field.search) field.search.IsEnabled(enabled);
         if (field.searchResults) field.searchResults.IsEnabled(enabled);
+        if (field.restoreDefault) field.restoreDefault.IsEnabled(enabled);
     }
 
     [[nodiscard]] bool CanMutateField(
@@ -2466,6 +2505,15 @@ struct WidgetSettingsPresenter::Impl
             });
     }
 
+    void RestoreFieldDefault(WidgetFieldControl& field)
+    {
+        if (!field.restoreDefault || !CanMutateField(field)) return;
+        const std::string key = field.schema.key;
+        RunMutation(key, [this, key](const auto& guard) {
+            return service.ResetField(guard, key);
+        });
+    }
+
     void BeginSearch(WidgetFieldControl& field, std::string query)
     {
         if (!CanMutateField(field)) return;
@@ -2671,6 +2719,18 @@ struct WidgetSettingsPresenter::Impl
                 L("app.settings.widget.clear", L"Clear"));
         }
         const auto name = ToText(field.schema.label);
+        if (field.restoreDefault)
+        {
+            std::wstring restoreText =
+                L("app.settings.restore_default", L"Restore Default");
+            if (!name.empty())
+            {
+                restoreText += L": ";
+                restoreText.append(name.c_str(), name.size());
+            }
+            presenter_controls::ConfigureRestoreDefaultButton(
+                field.restoreDefault, restoreText);
+        }
         if (field.text) muxa::AutomationProperties::SetName(field.text, name);
         if (field.password)
             muxa::AutomationProperties::SetName(field.password, name);
@@ -3003,6 +3063,9 @@ struct WidgetSettingsPresenter::Impl
                 field.choose.Click(field.chooseClicked);
             if (field.clear && HasToken(field.clearClicked))
                 field.clear.Click(field.clearClicked);
+            if (field.restoreDefault &&
+                HasToken(field.restoreDefaultClicked))
+                field.restoreDefault.Click(field.restoreDefaultClicked);
         }
         catch (...)
         {
