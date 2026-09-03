@@ -1,26 +1,43 @@
 local responsive = module.require("modules/responsive.lua")
 
+local function close(left, right)
+    return math.abs(left - right) < 0.0001
+end
+
+local function assertScaled(base, scaled, factor)
+    for key, value in pairs(base) do
+        if type(value) == "number" then
+            assert(close(scaled[key], value * factor), key)
+        else
+            assert(scaled[key] == value, key)
+        end
+    end
+end
+
 return {
-    ["landscape and portrait spans choose different content axes"] =
-        function()
-            local landscape = responsive.plan(392, 240)
-            assert(not landscape.vertical and not landscape.compact)
+    ["aspect ratio alone selects the content axis"] = function()
+        assert(not responsive.plan(392, 240).vertical)
+        assert(not responsive.plan(540, 520).vertical)
+        assert(responsive.plan(292, 364).vertical)
+    end,
 
-            local portrait = responsive.plan(192, 480)
-            assert(portrait.vertical and not portrait.compact)
+    ["same landscape ratio scales every control metric linearly"] =
+        function()
+            local base = responsive.plan(392, 240)
+            local doubled = responsive.plan(784, 480)
+            assertScaled(base, doubled, 2)
         end,
 
-    ["small spans use compact controls without changing their axis"] =
+    ["same portrait ratio scales every control metric linearly"] =
         function()
-            local square = responsive.plan(192, 240)
-            assert(square.vertical and square.compact)
-
-            local shortLandscape = responsive.plan(290, 240)
-            assert(not shortLandscape.vertical and shortLandscape.compact)
+            local base = responsive.plan(292, 364)
+            local half = responsive.plan(146, 182)
+            assertScaled(base, half, 0.5)
         end,
 
-    ["invalid dimensions still produce a stable compact plan"] = function()
+    ["invalid dimensions still produce finite positive metrics"] = function()
         local plan = responsive.plan(0, math.huge)
-        assert(not plan.vertical and plan.compact)
+        assert(not plan.vertical)
+        assert(plan.coverSize > 0 and plan.primaryButton > 0)
     end,
 }
