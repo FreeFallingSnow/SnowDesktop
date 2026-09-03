@@ -36,8 +36,6 @@ local palettes = {
         shadow = 0x000000,
         outer = 0x334155,
         face = 0x111827,
-        innerStroke = 0x1F2937,
-        innerFace = 0x0F172A,
         majorTick = 0xF8FAFC,
         minorTick = 0x64748B,
         number = 0xF8FAFC,
@@ -51,8 +49,6 @@ local palettes = {
         shadow = 0x000000,
         outer = 0xD7DEE8,
         face = 0xFFFFFF,
-        innerStroke = 0xF6F8FB,
-        innerFace = 0xFFFFFF,
         majorTick = 0x1F2937,
         minorTick = 0xAEB7C5,
         number = 0x1F2937,
@@ -92,9 +88,8 @@ local function render()
     end
 
     local outerStroke = su(1.4)
-    local innerStroke = su(0.8)
-    local hourTickLen = su(7.5)
-    local minuteTickLen = su(3.5)
+    local hourTickLen = su(7)
+    local minuteTickLen = su(3.2)
     local hourTickWidth = su(1.35)
     local quarterTickWidth = su(1.8)
     local minuteTickWidth = su(0.55)
@@ -117,9 +112,6 @@ local function render()
         colors.shadow, 0.10)
     draw.circle(cx, cy, r + outerStroke, colors.outer, 0.95)
     draw.circle(cx, cy, r, colors.face, 1.0)
-    local innerR = r - su(5) - innerStroke
-    draw.circle(cx, cy, innerR + innerStroke, colors.innerStroke, 0.72)
-    draw.circle(cx, cy, innerR, colors.innerFace, 1.0)
 
     -- 刻度：主刻度更稳，副刻度更轻。
     for i = 0, 59 do
@@ -137,27 +129,19 @@ local function render()
 
     if showNumbers then
         local numberFont = su(6.8)
-        local numberGap = su(1.4)
-        local numberRadius = r - su(12)
-        local labels = {}
-        local maxRadialExtent = 0
+        local numberGap = su(0.65)
+        local preferredRadius = r - su(10.5)
         for hour = 1, 12 do
             local a = hour * math.pi / 6 - math.pi / 2
             local label = tostring(hour)
             local metrics = draw.measureText(label, numberFont, 0, true)
             local radialExtent = math.abs(math.cos(a)) * metrics.width / 2 +
                 math.abs(math.sin(a)) * metrics.height / 2
-            maxRadialExtent = math.max(maxRadialExtent, radialExtent)
-            labels[hour] = { angle = a, text = label, metrics = metrics }
-        end
-        numberRadius = math.min(numberRadius,
-            r - hourTickLen - maxRadialExtent - numberGap)
-        for hour = 1, 12 do
-            local item = labels[hour]
-            local metrics = item.metrics
-            local tx, ty = point(item.angle, numberRadius)
+            local safeRadius = r - hourTickLen - radialExtent - numberGap
+            local numberRadius = math.min(preferredRadius, safeRadius)
+            local tx, ty = point(a, numberRadius)
             draw.text(tx - metrics.width / 2, ty - metrics.height / 2,
-                item.text, numberFont, colors.number, 0, true, true)
+                label, numberFont, colors.number, 0, true, true)
         end
     end
 
