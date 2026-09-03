@@ -92,12 +92,12 @@ local settings = {
     },
     fields = {
         {
-            key = "fontSize",
-            label = l10n.tr("lua_widget.common.font_size"),
+            key = "fontScale",
+            label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
-            default = 15,
-            min = 10,
-            max = 24,
+            default = 100,
+            min = 70,
+            max = 160,
         },
     },
 }
@@ -129,9 +129,16 @@ local function textColor()
         theme and theme.contentTheme or nil)
 end
 
-local function fontSize()
-    return math.max(10, math.min(24,
+local function fontScale()
+    local value = tonumber(storage.get("fontScale"))
+    if value then return math.max(70, math.min(160, value)) / 100 end
+    local legacy = math.max(10, math.min(24,
         tonumber(storage.get("fontSize")) or 15))
+    return legacy / 15
+end
+
+local function scaled(value)
+    return layout.rpx(value)
 end
 
 local function resetDefaults()
@@ -140,7 +147,7 @@ local function resetDefaults()
     storage.set("alpha", "1")
     storage.set("borderAlpha", "0.85")
     storage.set("gradientEndA", "0")
-    storage.set("fontSize", "15")
+    storage.set("fontScale", "100")
     storage.set("followPersonalization", "1")
     storage.set("__preset", "classic")
 end
@@ -151,16 +158,15 @@ end
 
 local function render()
     loadStyle()
-    local width = layout.width()
-    local height = layout.height()
-    local padding = layout.cu(14)
-    local bottomBarHeight = layout.cu(layout.barHeight())
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
+    local padding = scaled(14)
     local shape = {
         type = "rect",
         x = padding,
         y = padding,
-        width = math.max(1, width - padding * 2),
-        height = math.max(1, height - padding - bottomBarHeight),
+        width = math.max(scaled(1), width - padding * 2),
+        height = math.max(scaled(1), height - padding * 2),
     }
     local color = textColor()
     control.textArea({
@@ -169,7 +175,7 @@ local function render()
         shape = shape,
         placeholder = l10n.tr("lua_widget.sticky_note.empty_hint"),
         placeholderWhenWhitespace = true,
-        fontSize = layout.fontCu(fontSize()),
+        fontSize = scaled(15) * fontScale(),
         textColor = color,
         placeholderColor = color,
         backgroundColor = color,
@@ -179,9 +185,9 @@ local function render()
         focusedBackgroundAlpha = 0.0,
         borderAlpha = 0.0,
         focusedBorderAlpha = 0.0,
-        radius = layout.cu(7),
-        padding = layout.cu(2),
-        borderThickness = layout.cu(1),
+        radius = scaled(7),
+        padding = scaled(2),
+        borderThickness = scaled(1),
         selectAll = false,
         liveUpdate = true,
         maxBytes = 65536,

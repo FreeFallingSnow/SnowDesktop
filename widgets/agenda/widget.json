@@ -5,7 +5,7 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.4.0",
+  "minHostVersion": "1.0.5.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Schedule",
@@ -63,7 +63,7 @@
       "lua_widget.agenda.reminder_30": "提前 30 分钟",
       "lua_widget.agenda.reminder_60": "提前 1 小时",
       "lua_widget.agenda.reminder_1440": "提前 1 天",
-      "lua_widget.common.font_size": "字号"
+      "lua_widget.common.font_scale": "字体缩放"
     },
     "en-US": {
       "lua_widget.agenda.name": "Schedule",
@@ -114,7 +114,7 @@
       "lua_widget.agenda.reminder_30": "30 Minutes Before",
       "lua_widget.agenda.reminder_60": "1 Hour Before",
       "lua_widget.agenda.reminder_1440": "1 Day Before",
-      "lua_widget.common.font_size": "Font Size"
+      "lua_widget.common.font_scale": "Font Scale"
     },
     "zh-TW": {
       "lua_widget.agenda.name": "行程",
@@ -165,7 +165,7 @@
       "lua_widget.agenda.reminder_30": "提早 30 分鐘",
       "lua_widget.agenda.reminder_60": "提前 1 小時",
       "lua_widget.agenda.reminder_1440": "提前 1 天",
-      "lua_widget.common.font_size": "字型大小"
+      "lua_widget.common.font_scale": "字型縮放"
     },
     "ja-JP": {
       "lua_widget.agenda.name": "スケジュール",
@@ -216,7 +216,7 @@
       "lua_widget.agenda.reminder_30": "30 分前",
       "lua_widget.agenda.reminder_60": "1 時間前",
       "lua_widget.agenda.reminder_1440": "1 日前",
-      "lua_widget.common.font_size": "フォント サイズ"
+      "lua_widget.common.font_scale": "フォント倍率"
     },
     "ko-KR": {
       "lua_widget.agenda.name": "일정",
@@ -267,7 +267,7 @@
       "lua_widget.agenda.reminder_30": "30분 전",
       "lua_widget.agenda.reminder_60": "1시간 전",
       "lua_widget.agenda.reminder_1440": "1일 전",
-      "lua_widget.common.font_size": "글꼴 크기"
+      "lua_widget.common.font_scale": "글꼴 배율"
     },
     "de-DE": {
       "lua_widget.agenda.name": "Termine",
@@ -318,7 +318,7 @@
       "lua_widget.agenda.reminder_30": "30 Minuten vorher",
       "lua_widget.agenda.reminder_60": "1 Stunde vorher",
       "lua_widget.agenda.reminder_1440": "1 Tag vorher",
-      "lua_widget.common.font_size": "Schriftgröße"
+      "lua_widget.common.font_scale": "Schrift-Skalierung"
     },
     "fr-FR": {
       "lua_widget.agenda.name": "Agenda",
@@ -369,7 +369,7 @@
       "lua_widget.agenda.reminder_30": "30 minutes avant",
       "lua_widget.agenda.reminder_60": "1 heure avant",
       "lua_widget.agenda.reminder_1440": "1 jour avant",
-      "lua_widget.common.font_size": "Taille de la police"
+      "lua_widget.common.font_scale": "Échelle de police"
     },
     "es-ES": {
       "lua_widget.agenda.name": "Agenda",
@@ -420,7 +420,7 @@
       "lua_widget.agenda.reminder_30": "30 minutos antes",
       "lua_widget.agenda.reminder_60": "1 hora antes",
       "lua_widget.agenda.reminder_1440": "1 día antes",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "es-419": {
       "lua_widget.agenda.name": "Horario",
@@ -471,7 +471,7 @@
       "lua_widget.agenda.reminder_30": "30 minutos antes de",
       "lua_widget.agenda.reminder_60": "1 hora antes de",
       "lua_widget.agenda.reminder_1440": "1 día antes de",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "pt-BR": {
     "lua_widget.agenda.name": "Agenda",
@@ -522,20 +522,12 @@
     "lua_widget.agenda.reminder_30": "30 minutos antes",
     "lua_widget.agenda.reminder_60": "1 hora antes",
     "lua_widget.agenda.reminder_1440": "1 dia antes",
-      "lua_widget.common.font_size": "Tamanho da fonte"
+      "lua_widget.common.font_scale": "Escala da fonte"
     }
   },
   "defaultSize": {
     "columns": 3,
     "rows": 2
-  },
-  "minSize": {
-    "columns": 2,
-    "rows": 2
-  },
-  "maxSize": {
-    "columns": 4,
-    "rows": 4
   },
   "resources": {},
   "permissions": [
@@ -560,6 +552,8 @@
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
+    "layout.referencePixels",
+    "layout.relativeUnits",
     "settings.select.localizedOptions",
     "storage.transaction",
     "task.calendar.write",

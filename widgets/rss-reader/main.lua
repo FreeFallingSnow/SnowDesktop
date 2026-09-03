@@ -19,22 +19,33 @@ local settings = {
         { key = "maxItems",
             label = l10n.tr("lua_widget.rss_reader.max_items"),
             type = "int", default = 30, min = 10, max = 100 },
-        { key = "fontSize",
-            label = l10n.tr("lua_widget.rss_reader.article_font_size"),
-            type = "int", default = 15, min = 10, max = 24 },
+        { key = "fontScale",
+            label = l10n.tr("lua_widget.rss_reader.article_font_scale"),
+            type = "int", default = 100, min = 70, max = 160 },
     },
 }
 
 local function config()
+    local fontScale = tonumber(storage.get("fontScale"))
+    if fontScale then
+        fontScale = math.max(70, math.min(160, fontScale)) / 100
+    else
+        local legacy = math.max(10, math.min(24,
+            tonumber(storage.get("fontSize")) or 15))
+        fontScale = legacy / 15
+    end
     return {
         url = storage.get("url") or DEFAULT_URL,
         interval = math.max(60, math.min(3600,
             tonumber(storage.get("interval")) or 1800)),
         maxItems = math.max(10, math.min(100,
             tonumber(storage.get("maxItems")) or 30)),
-        fontSize = math.max(10, math.min(24,
-            tonumber(storage.get("fontSize")) or 15)),
+        fontScale = fontScale,
     }
+end
+
+local function scaled(value)
+    return layout.rpx(value)
 end
 
 local function palette(context)
@@ -173,12 +184,12 @@ end
 local function render(context, model)
     local cfg = config()
     local colors = palette(context)
-    local width = layout.width()
-    local height = layout.height()
-    local pad = layout.cu(14)
-    local headerTop = layout.cu(10)
-    local headerFont = layout.fontCu(math.min(28, cfg.fontSize + 2))
-    local smallFont = layout.fontCu(math.max(9, cfg.fontSize - 2))
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
+    local pad = scaled(14)
+    local headerTop = scaled(10)
+    local headerFont = scaled(17) * cfg.fontScale
+    local smallFont = scaled(13) * cfg.fontScale
     local title = model.feedTitle ~= "" and model.feedTitle or "RSS"
     widget.setTitle(model.feedTitle ~= "" and model.feedTitle or
         l10n.tr("lua_widget.rss_reader.name"))
@@ -187,18 +198,18 @@ local function render(context, model)
         tostring(#model.articles))
     local countMetrics = draw.measureText(countText, smallFont, width, false)
     draw.text(pad, headerTop, title, headerFont, colors.header,
-        math.max(1, width - pad * 2 - countMetrics.width - layout.cu(10)),
+        math.max(scaled(1), width - pad * 2 - countMetrics.width - scaled(10)),
         false, true)
-    draw.text(width - pad - countMetrics.width, headerTop + layout.cu(4),
-        countText, smallFont, colors.count, countMetrics.width + 1,
+    draw.text(width - pad - countMetrics.width, headerTop + scaled(4),
+        countText, smallFont, colors.count, countMetrics.width + scaled(1),
         false, true)
-    local headerBottom = headerTop + layout.cu(cfg.fontSize + 14)
+    local headerBottom = headerTop + scaled(29) * math.max(1, cfg.fontScale)
     draw.line(pad, headerBottom, width - pad, headerBottom,
-        layout.cu(1), colors.divider, 0.10)
+        scaled(1), colors.divider, 0.10)
 
-    local listTop = headerBottom + layout.cu(7)
-    local listBottom = height - layout.cu(2)
-    local viewportHeight = math.max(1, listBottom - listTop)
+    local listTop = headerBottom + scaled(7)
+    local listBottom = height - scaled(2)
+    local viewportHeight = math.max(scaled(1), listBottom - listTop)
     local viewport = { type = "rect", x = pad, y = listTop,
         width = width - pad * 2, height = viewportHeight }
     local scrollViewport = { type = "rect", x = pad, y = listTop,
@@ -213,26 +224,30 @@ local function render(context, model)
     if model.loading and #model.articles == 0 then
         draw.text(pad, listTop + viewportHeight * 0.34,
             l10n.tr("lua_widget.rss_reader.loading"),
-            layout.fontCu(13), colors.status, width - pad * 2, true, true)
+            scaled(13) * cfg.fontScale, colors.status,
+            width - pad * 2, true, true)
         return
     end
     if model.error and #model.articles == 0 then
         draw.text(pad, listTop + viewportHeight * 0.27,
             l10n.tr("lua_widget.rss_reader.request_failed"),
-            layout.fontCu(12), colors.error, width - pad * 2, false, false)
-        draw.text(pad, listTop + viewportHeight * 0.27 + layout.cu(36),
+            scaled(12) * cfg.fontScale, colors.error,
+            width - pad * 2, false, false)
+        draw.text(pad, listTop + viewportHeight * 0.27 + scaled(36),
             l10n.tr("lua_widget.rss_reader.settings_hint"),
-            layout.fontCu(11), colors.status, width - pad * 2, false, true)
+            scaled(11) * cfg.fontScale, colors.status,
+            width - pad * 2, false, true)
         return
     end
     if #model.articles == 0 then
-        draw.text(pad, listTop + layout.cu(22),
+        draw.text(pad, listTop + scaled(22),
             l10n.tr("lua_widget.rss_reader.no_articles"),
-            layout.fontCu(12), colors.status, width - pad * 2, true, true)
+            scaled(12) * cfg.fontScale, colors.status,
+            width - pad * 2, true, true)
         return
     end
 
-    local rowHeight = layout.cu(math.max(48, cfg.fontSize * 2 + 22))
+    local rowHeight = scaled(52) * math.max(1, cfg.fontScale)
     local scroll = interaction.scroll({
         key = "rss.scroll", shape = scrollViewport,
         contentHeight = math.ceil(#model.articles * rowHeight),
@@ -240,40 +255,41 @@ local function render(context, model)
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#model.articles,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
-    local numberWidth = layout.cu(22)
-    local textX = pad + numberWidth + layout.cu(6)
-    local textWidth = math.max(1, width - textX - pad)
+    local numberWidth = scaled(22)
+    local textX = pad + numberWidth + scaled(6)
+    local textWidth = math.max(scaled(1), width - textX - pad)
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
     for index = first, last do
         local article = model.articles[index]
         local y = listTop + (index - 1) * rowHeight - scroll.offset
         local key = "rss.article." .. tostring(index)
         if interaction.isHovered(key) then
-            draw.rect(pad, y, width - pad * 2, rowHeight - layout.cu(2),
-                colors.card, layout.cu(7), 0.07)
+            draw.rect(pad, y, width - pad * 2, rowHeight - scaled(2),
+                colors.card, scaled(7), 0.07)
         end
         registerRegion(key, { type = "roundedRect", x = pad, y = y,
-            width = width - pad * 2, height = rowHeight - layout.cu(2),
-            radius = layout.cu(7) }, {
+            width = width - pad * 2, height = rowHeight - scaled(2),
+            radius = scaled(7) }, {
             doubleClick = { id = "rss.open", value = article.link },
             contextMenu = { id = "rss.menu", value = article.link },
         }, article.title, article.link ~= "")
         local number = tostring(index)
         local numberMetrics = draw.measureText(number,
-            layout.fontCu(13), numberWidth, true)
+            scaled(13) * cfg.fontScale, numberWidth, true)
         draw.text(pad + math.max(0, (numberWidth - numberMetrics.width) / 2),
-            y + layout.cu(14), number, layout.fontCu(13), colors.number,
+            y + scaled(14), number, scaled(13) * cfg.fontScale, colors.number,
             numberWidth, true, true)
-        draw.text(textX, y + layout.cu(4), article.title,
-            layout.fontCu(cfg.fontSize), colors.title, textWidth, false, true)
+        draw.text(textX, y + scaled(4), article.title,
+            scaled(15) * cfg.fontScale, colors.title,
+            textWidth, false, true)
         local shortDate = article.displayDate or
             article.date:match("(%d%d? .%l%l%l? %d%d%d%d)") or
             article.date:sub(1, 16)
         if shortDate == "" then shortDate = article.link:sub(1, 42) end
-        draw.text(textX, y + rowHeight - layout.cu(22), shortDate,
+        draw.text(textX, y + rowHeight - scaled(22), shortDate,
             smallFont, colors.date, textWidth, false, true)
-        draw.line(textX, y + rowHeight - layout.cu(1), width - pad,
-            y + rowHeight - layout.cu(1), layout.cu(1),
+        draw.line(textX, y + rowHeight - scaled(1), width - pad,
+            y + rowHeight - scaled(1), scaled(1),
             colors.divider, 0.07)
     end
     draw.popClip()

@@ -30,12 +30,12 @@ local settings = {
             default = true,
         },
         {
-            key = "fontSize",
-            label = l10n.tr("lua_widget.common.font_size"),
+            key = "fontScale",
+            label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
-            default = 15,
-            min = 11,
-            max = 20,
+            default = 100,
+            min = 70,
+            max = 135,
         },
     },
 }
@@ -180,19 +180,24 @@ local function monthName(month)
     return l10n.tr("lua_widget.month_calendar.month_12")
 end
 
-local function currentFontSize()
-    return math.max(11, math.min(20,
+local function fontScale()
+    local value = tonumber(storage.get("fontScale"))
+    if value then return math.max(70, math.min(135, value)) / 100 end
+    local legacy = math.max(11, math.min(20,
         tonumber(storage.get("fontSize")) or 15))
+    return legacy / 15
 end
 
 local function showAdjacent()
     return storage.get("showAdjacent") ~= "0"
 end
 
-local function layoutGrowth()
-    local columns = math.max(0, layout.columns() - 3)
-    local rows = math.max(0, layout.rows() - 2)
-    return math.min(4, columns + rows * 1.5)
+local function scaled(value)
+    return layout.rpx(value)
+end
+
+local function scaledFont(value)
+    return scaled(value) * fontScale()
 end
 
 local function monthCells(model)
@@ -243,7 +248,7 @@ local function submitButton(id, label, shape)
             y = shape.y,
             width = shape.width,
             height = shape.height,
-            radius = layout.cu(7),
+            radius = scaled(7),
         },
         cursor = "hand",
         events = {
@@ -259,7 +264,7 @@ local function drawHeaderButton(id, label, fontSize, colors, shape,
     local hovered = interaction.isHovered(id)
     local pressed = interaction.isPressed(id)
     draw.strokeRect(shape.x, shape.y, shape.width, shape.height,
-        colors.text, layout.cu(7), layout.cu(pressed and 2 or 1),
+        colors.text, scaled(7), scaled(pressed and 2 or 1),
         pressed and 0.72 or (hovered and 0.48 or 0.28))
     if iconOnly then
         draw.fa(label,
@@ -293,23 +298,21 @@ end
 local function render(context, model)
     loadStyle()
     local colors = palette()
-    local width = layout.width()
-    local height = layout.height()
-    local contentHeight = math.max(1, height)
-    local padding = layout.cu(11)
-    local growth = layoutGrowth()
-    local headerHeight = layout.cu(30 + growth * 1.8)
-    local calendarGap = layout.cu(7 + growth)
-    local weekdayHeight = layout.cu(22 + growth)
+    local width = layout.contentWidth()
+    local contentHeight = layout.contentHeight()
+    local padding = scaled(11)
+    local headerHeight = scaled(30)
+    local calendarGap = scaled(7)
+    local weekdayHeight = scaled(22)
     local weekdayTop = padding + headerHeight + calendarGap
     local gridTop = weekdayTop + weekdayHeight
-    local gridHeight = math.max(layout.cu(90),
-        contentHeight - layout.cu(5) - gridTop)
+    local gridHeight = math.max(scaled(90),
+        contentHeight - scaled(5) - gridTop)
     local cellWidth = (width - padding * 2) / 7
     local cellHeight = gridHeight / 6
-    local fontSize = layout.fontCu(currentFontSize() + growth)
-    local smallFont = layout.fontCu(math.max(10,
-        currentFontSize() - 3 + growth * 0.75))
+    local textScale = fontScale()
+    local fontSize = scaled(15) * textScale
+    local smallFont = scaled(12) * textScale
 
     interaction.region({
         key = "calendar.surface",
@@ -325,9 +328,9 @@ local function render(context, model)
         },
     })
 
-    local buttonSize = layout.cu(26 + growth * 1.6)
+    local buttonSize = scaled(26)
     local buttonY = padding + (headerHeight - buttonSize) / 2
-    local iconFont = layout.fontCu(14 + growth)
+    local iconFont = scaledFont(14)
     local previousShape = {
         x = padding,
         y = buttonY,
@@ -335,15 +338,15 @@ local function render(context, model)
         height = buttonSize,
     }
     local nextShape = {
-        x = padding + buttonSize + layout.cu(4),
+        x = padding + buttonSize + scaled(4),
         y = buttonY,
         width = buttonSize,
         height = buttonSize,
     }
     local todayText = l10n.tr("lua_widget.month_calendar.today")
     local todayMetrics = draw.measureText(todayText, smallFont, 0, true)
-    local todayWidth = math.max(layout.cu(40),
-        todayMetrics.width + layout.cu(12))
+    local todayWidth = math.max(scaled(40),
+        todayMetrics.width + scaled(12))
     local todayShape = {
         x = width - padding - todayWidth,
         y = buttonY,
@@ -351,17 +354,17 @@ local function render(context, model)
         height = buttonSize,
     }
     drawHeaderButton("calendar.previous", "", iconFont, colors,
-        previousShape, true, layout.cu(1.4))
+        previousShape, true, scaled(1.4))
     drawHeaderButton("calendar.next", "", iconFont, colors,
-        nextShape, true, layout.cu(1.4))
+        nextShape, true, scaled(1.4))
     drawHeaderButton("calendar.today", todayText, smallFont, colors,
         todayShape, false)
 
     local title = l10n.tr("lua_widget.month_calendar.month_format",
         tostring(model.viewYear), monthName(model.viewMonth))
-    local titleX = nextShape.x + nextShape.width + layout.cu(8)
-    local titleWidth = math.max(1,
-        todayShape.x - titleX - layout.cu(5))
+    local titleX = nextShape.x + nextShape.width + scaled(8)
+    local titleWidth = math.max(scaled(1),
+        todayShape.x - titleX - scaled(5))
     centeredText(title, titleX, padding, titleWidth, headerHeight,
         fontSize, colors.text, true, 1.0)
 
@@ -388,7 +391,8 @@ local function render(context, model)
             local key = "calendar.date." .. cell.date
             local isSelected = cell.date == selected
             local isToday = cell.date == today
-            local circleRatio = 0.72 + math.min(0.06, growth * 0.015)
+            local circleRatio = math.min(0.90,
+                0.72 * math.max(1, textScale))
             local diameter = math.min(cellWidth * circleRatio,
                 cellHeight * circleRatio)
             local centerX = x + cellWidth / 2
@@ -399,21 +403,21 @@ local function render(context, model)
             elseif isToday then
                 draw.strokeRect(centerX - diameter / 2,
                     centerY - diameter / 2, diameter, diameter,
-                    colors.text, diameter / 2, layout.cu(1.3), 0.82)
+                    colors.text, diameter / 2, scaled(1.3), 0.82)
             elseif interaction.isHovered(key) then
                 draw.circle(centerX, centerY, diameter / 2,
                     colors.text, 0.12)
             end
             centeredText(tostring(cell.info.day),
-                centerX - diameter / 2, centerY - diameter / 2,
-                diameter, diameter, fontSize,
+                centerX - cellWidth / 2, centerY - cellHeight / 2,
+                cellWidth, cellHeight, fontSize,
                 isSelected and colors.inverse or colors.text,
                 isToday or isSelected,
                 cell.currentMonth and 1.0 or 0.38)
             if counts[cell.date] then
                 draw.circle(centerX,
-                    y + cellHeight - layout.cu(4 + growth * 0.3),
-                    math.max(layout.cu(1.4 + growth * 0.18),
+                    y + cellHeight - scaled(4),
+                    math.max(scaled(1.4),
                         cellWidth * 0.035),
                     isSelected and colors.inverse or colors.text,
                     cell.currentMonth and 0.86 or 0.34)

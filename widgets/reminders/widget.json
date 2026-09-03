@@ -5,7 +5,7 @@
   "apiVersion": 2,
   "dataVersion": 3,
   "entry": "main.lua",
-  "minHostVersion": "1.0.4.0",
+  "minHostVersion": "1.0.5.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "ToDo List",
@@ -37,7 +37,7 @@
       "lua_widget.reminders.preview_task_1": "买一束花",
       "lua_widget.reminders.preview_task_2": "预订周五晚餐",
       "lua_widget.reminders.preview_task_3": "收拾周末行李",
-      "lua_widget.common.font_size": "字号"
+      "lua_widget.common.font_scale": "字体缩放"
     },
     "en-US": {
       "lua_widget.reminders.name": "ToDo List",
@@ -59,7 +59,7 @@
       "lua_widget.reminders.preview_task_1": "Pick up flowers",
       "lua_widget.reminders.preview_task_2": "Book dinner for Friday",
       "lua_widget.reminders.preview_task_3": "Pack for the weekend",
-      "lua_widget.common.font_size": "Font Size"
+      "lua_widget.common.font_scale": "Font Scale"
     },
     "zh-TW": {
       "lua_widget.reminders.name": "ToDo列表",
@@ -81,7 +81,7 @@
       "lua_widget.reminders.preview_task_1": "買一束花",
       "lua_widget.reminders.preview_task_2": "預訂週五晚餐",
       "lua_widget.reminders.preview_task_3": "收拾週末行李",
-      "lua_widget.common.font_size": "字型大小"
+      "lua_widget.common.font_scale": "字型縮放"
     },
     "ja-JP": {
       "lua_widget.reminders.name": "ToDo リスト",
@@ -103,7 +103,7 @@
       "lua_widget.reminders.preview_task_1": "花を買う",
       "lua_widget.reminders.preview_task_2": "金曜日のディナーを予約する",
       "lua_widget.reminders.preview_task_3": "週末の荷造りをする",
-      "lua_widget.common.font_size": "フォント サイズ"
+      "lua_widget.common.font_scale": "フォント倍率"
     },
     "ko-KR": {
       "lua_widget.reminders.name": "할 일 목록",
@@ -125,7 +125,7 @@
       "lua_widget.reminders.preview_task_1": "꽃 사기",
       "lua_widget.reminders.preview_task_2": "금요일 저녁 예약하기",
       "lua_widget.reminders.preview_task_3": "주말 짐 싸기",
-      "lua_widget.common.font_size": "글꼴 크기"
+      "lua_widget.common.font_scale": "글꼴 배율"
     },
     "de-DE": {
       "lua_widget.reminders.name": "Aufgabenliste",
@@ -147,7 +147,7 @@
       "lua_widget.reminders.preview_task_1": "Blumen kaufen",
       "lua_widget.reminders.preview_task_2": "Tisch für Freitagabend reservieren",
       "lua_widget.reminders.preview_task_3": "Fürs Wochenende packen",
-      "lua_widget.common.font_size": "Schriftgröße"
+      "lua_widget.common.font_scale": "Schrift-Skalierung"
     },
     "fr-FR": {
       "lua_widget.reminders.name": "Liste de tâches",
@@ -169,7 +169,7 @@
       "lua_widget.reminders.preview_task_1": "Acheter des fleurs",
       "lua_widget.reminders.preview_task_2": "Réserver une table pour vendredi",
       "lua_widget.reminders.preview_task_3": "Faire sa valise pour le week-end",
-      "lua_widget.common.font_size": "Taille de la police"
+      "lua_widget.common.font_scale": "Échelle de police"
     },
     "es-ES": {
       "lua_widget.reminders.name": "Tareas",
@@ -191,7 +191,7 @@
       "lua_widget.reminders.preview_task_1": "Comprar flores",
       "lua_widget.reminders.preview_task_2": "Reservar mesa para el viernes",
       "lua_widget.reminders.preview_task_3": "Hacer la maleta para el fin de semana",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "es-419": {
       "lua_widget.reminders.name": "Lista de tareas",
@@ -213,7 +213,7 @@
       "lua_widget.reminders.preview_task_1": "Comprar flores",
       "lua_widget.reminders.preview_task_2": "Reservar mesa para el viernes",
       "lua_widget.reminders.preview_task_3": "Hacer la maleta para el fin de semana",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "pt-BR": {
       "lua_widget.reminders.name": "Lista de tarefas",
@@ -235,20 +235,12 @@
       "lua_widget.reminders.preview_task_1": "Comprar flores",
       "lua_widget.reminders.preview_task_2": "Reservar uma mesa para sexta-feira",
       "lua_widget.reminders.preview_task_3": "Fazer as malas para o fim de semana",
-      "lua_widget.common.font_size": "Tamanho da fonte"
+      "lua_widget.common.font_scale": "Escala da fonte"
     }
   },
   "defaultSize": {
     "columns": 2,
     "rows": 2
-  },
-  "minSize": {
-    "columns": 2,
-    "rows": 2
-  },
-  "maxSize": {
-    "columns": 4,
-    "rows": 4
   },
   "previewData": {
     "storage": {
@@ -280,6 +272,8 @@
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
+    "layout.referencePixels",
+    "layout.relativeUnits",
     "storage.transaction"
   ],
   "optionalFeatures": []

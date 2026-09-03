@@ -5,7 +5,7 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.4.0",
+  "minHostVersion": "1.0.5.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Sticky Note",
@@ -29,7 +29,7 @@
       "lua_widget.sticky_note.reset_style": "恢复便签默认样式",
       "lua_widget.sticky_note.content": "便签内容",
       "lua_widget.sticky_note.preview_text": "周末计划\n\n11 点吃早午餐\n去湖边散步\n给妈妈打电话",
-      "lua_widget.common.font_size": "字号"
+      "lua_widget.common.font_scale": "字体缩放"
     },
     "en-US": {
       "lua_widget.sticky_note.name": "Sticky Note",
@@ -46,7 +46,7 @@
       "lua_widget.sticky_note.reset_style": "Restore Default Note Style",
       "lua_widget.sticky_note.content": "Note Content",
       "lua_widget.sticky_note.preview_text": "Weekend Plans\n\nBrunch at 11\nWalk by the Lake\nCall Mom",
-      "lua_widget.common.font_size": "Font Size"
+      "lua_widget.common.font_scale": "Font Scale"
     },
     "zh-TW": {
       "lua_widget.sticky_note.name": "便籤",
@@ -63,7 +63,7 @@
       "lua_widget.sticky_note.reset_style": "還原便籤預設樣式",
       "lua_widget.sticky_note.content": "便籤內容",
       "lua_widget.sticky_note.preview_text": "週末計畫\n\n上午 11 點吃早午餐\n去湖邊散步\n打電話給媽媽",
-      "lua_widget.common.font_size": "字型大小"
+      "lua_widget.common.font_scale": "字型縮放"
     },
     "ja-JP": {
       "lua_widget.sticky_note.name": "付箋",
@@ -80,7 +80,7 @@
       "lua_widget.sticky_note.reset_style": "デフォルトの付箋スタイルに戻す",
       "lua_widget.sticky_note.content": "メモの内容",
       "lua_widget.sticky_note.preview_text": "週末プラン\n\n11時にブランチ\n湖畔を散歩する\nお母さんに電話する",
-      "lua_widget.common.font_size": "フォント サイズ"
+      "lua_widget.common.font_scale": "フォント倍率"
     },
     "ko-KR": {
       "lua_widget.sticky_note.name": "스티커 메모",
@@ -97,7 +97,7 @@
       "lua_widget.sticky_note.reset_style": "기본 메모 스타일 복원",
       "lua_widget.sticky_note.content": "참고 내용",
       "lua_widget.sticky_note.preview_text": "주말 계획\n\n오전 11시 브런치\n호숫가 산책\n엄마에게 전화하기",
-      "lua_widget.common.font_size": "글꼴 크기"
+      "lua_widget.common.font_scale": "글꼴 배율"
     },
     "de-DE": {
       "lua_widget.sticky_note.name": "Haftnotiz",
@@ -114,7 +114,7 @@
       "lua_widget.sticky_note.reset_style": "Standard-Notizstil wiederherstellen",
       "lua_widget.sticky_note.content": "Notizinhalt",
       "lua_widget.sticky_note.preview_text": "Wochenendpläne\n\nBrunch um 11 Uhr\nAm See spazieren gehen\nMama anrufen",
-      "lua_widget.common.font_size": "Schriftgröße"
+      "lua_widget.common.font_scale": "Schrift-Skalierung"
     },
     "fr-FR": {
       "lua_widget.sticky_note.name": "Note autocollante",
@@ -131,7 +131,7 @@
       "lua_widget.sticky_note.reset_style": "Restaurer le style de note par défaut",
       "lua_widget.sticky_note.content": "Contenu de la note",
       "lua_widget.sticky_note.preview_text": "Plans du week-end\n\nBrunch à 11 heures\nSe promener au bord du lac\nAppeler maman",
-      "lua_widget.common.font_size": "Taille de la police"
+      "lua_widget.common.font_scale": "Échelle de police"
     },
     "es-ES": {
       "lua_widget.sticky_note.name": "Nota adhesiva",
@@ -148,7 +148,7 @@
       "lua_widget.sticky_note.reset_style": "Restaurar el estilo de nota predeterminado",
       "lua_widget.sticky_note.content": "Contenido de la nota",
       "lua_widget.sticky_note.preview_text": "Planes de fin de semana\n\nBrunch a las 11\nPasear junto al lago\nLlamar a mamá",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "es-419": {
       "lua_widget.sticky_note.name": "Nota adhesiva",
@@ -165,7 +165,7 @@
       "lua_widget.sticky_note.reset_style": "Restaurar el estilo de nota predeterminado",
       "lua_widget.sticky_note.content": "Contenido de la nota",
       "lua_widget.sticky_note.preview_text": "Planes de fin de semana\n\nBrunch a las 11\nPasear junto al lago\nLlamar a mamá",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "pt-BR": {
       "lua_widget.sticky_note.name": "Nota adesiva",
@@ -182,7 +182,7 @@
       "lua_widget.sticky_note.reset_style": "Restaurar estilo de nota padrão",
     "lua_widget.sticky_note.content": "Conteúdo da nota",
       "lua_widget.sticky_note.preview_text": "Planos para o fim de semana\n\nBrunch às 11h\nCaminhar à beira do lago\nLigar para a mamãe",
-      "lua_widget.common.font_size": "Tamanho da fonte"
+      "lua_widget.common.font_scale": "Escala da fonte"
     }
   },
   "defaultSize": {
@@ -210,7 +210,9 @@
     "interaction.region",
     "lifecycle.event",
     "lifecycle.model",
-    "l10n.basic"
+    "l10n.basic",
+    "layout.referencePixels",
+    "layout.relativeUnits"
   ],
   "optionalFeatures": []
 }

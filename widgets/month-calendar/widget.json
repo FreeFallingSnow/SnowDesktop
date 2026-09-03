@@ -5,7 +5,7 @@
   "apiVersion": 2,
   "dataVersion": 2,
   "entry": "main.lua",
-  "minHostVersion": "1.0.4.0",
+  "minHostVersion": "1.0.5.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Month Calendar",
@@ -45,7 +45,7 @@
       "lua_widget.month_calendar.thu": "四",
       "lua_widget.month_calendar.fri": "五",
       "lua_widget.month_calendar.sat": "六",
-      "lua_widget.common.font_size": "字号"
+      "lua_widget.common.font_scale": "字体缩放"
     },
     "en-US": {
       "lua_widget.month_calendar.name": "Month Calendar",
@@ -78,7 +78,7 @@
       "lua_widget.month_calendar.thu": "T",
       "lua_widget.month_calendar.fri": "F",
       "lua_widget.month_calendar.sat": "S",
-      "lua_widget.common.font_size": "Font Size"
+      "lua_widget.common.font_scale": "Font Scale"
     },
     "zh-TW": {
       "lua_widget.month_calendar.name": "月曆",
@@ -111,7 +111,7 @@
       "lua_widget.month_calendar.thu": "四",
       "lua_widget.month_calendar.fri": "五",
       "lua_widget.month_calendar.sat": "六",
-      "lua_widget.common.font_size": "字型大小"
+      "lua_widget.common.font_scale": "字型縮放"
     },
     "ja-JP": {
       "lua_widget.month_calendar.name": "月間カレンダー",
@@ -144,7 +144,7 @@
       "lua_widget.month_calendar.thu": "木",
       "lua_widget.month_calendar.fri": "金",
       "lua_widget.month_calendar.sat": "土",
-      "lua_widget.common.font_size": "フォント サイズ"
+      "lua_widget.common.font_scale": "フォント倍率"
     },
     "ko-KR": {
       "lua_widget.month_calendar.name": "월간 달력",
@@ -177,7 +177,7 @@
       "lua_widget.month_calendar.thu": "목",
       "lua_widget.month_calendar.fri": "금",
       "lua_widget.month_calendar.sat": "토",
-      "lua_widget.common.font_size": "글꼴 크기"
+      "lua_widget.common.font_scale": "글꼴 배율"
     },
     "de-DE": {
       "lua_widget.month_calendar.name": "Monatskalender",
@@ -210,7 +210,7 @@
       "lua_widget.month_calendar.thu": "Do",
       "lua_widget.month_calendar.fri": "Fr",
       "lua_widget.month_calendar.sat": "Sa",
-      "lua_widget.common.font_size": "Schriftgröße"
+      "lua_widget.common.font_scale": "Schrift-Skalierung"
     },
     "fr-FR": {
       "lua_widget.month_calendar.name": "Calendrier mensuel",
@@ -243,7 +243,7 @@
       "lua_widget.month_calendar.thu": "J",
       "lua_widget.month_calendar.fri": "V",
       "lua_widget.month_calendar.sat": "S",
-      "lua_widget.common.font_size": "Taille de la police"
+      "lua_widget.common.font_scale": "Échelle de police"
     },
     "es-ES": {
       "lua_widget.month_calendar.name": "Calendario mensual",
@@ -276,7 +276,7 @@
       "lua_widget.month_calendar.thu": "J",
       "lua_widget.month_calendar.fri": "V",
       "lua_widget.month_calendar.sat": "S",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "es-419": {
       "lua_widget.month_calendar.name": "Calendario mensual",
@@ -309,7 +309,7 @@
       "lua_widget.month_calendar.thu": "J",
       "lua_widget.month_calendar.fri": "V",
       "lua_widget.month_calendar.sat": "S",
-      "lua_widget.common.font_size": "Tamaño de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente"
     },
     "pt-BR": {
       "lua_widget.month_calendar.name": "Calendário do mês",
@@ -342,20 +342,12 @@
     "lua_widget.month_calendar.thu": "Qui",
     "lua_widget.month_calendar.fri": "Sex",
     "lua_widget.month_calendar.sat": "Sáb",
-      "lua_widget.common.font_size": "Tamanho da fonte"
+      "lua_widget.common.font_scale": "Escala da fonte"
     }
   },
   "defaultSize": {
     "columns": 3,
     "rows": 2
-  },
-  "minSize": {
-    "columns": 2,
-    "rows": 2
-  },
-  "maxSize": {
-    "columns": 4,
-    "rows": 3
   },
   "resources": {},
   "permissions": [],
@@ -375,6 +367,8 @@
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
+    "layout.referencePixels",
+    "layout.relativeUnits",
     "settings.select.localizedOptions",
     "time.basic"
   ],
