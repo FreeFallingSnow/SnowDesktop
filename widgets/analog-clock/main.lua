@@ -95,12 +95,12 @@ local function render()
     local innerStroke = su(0.8)
     local hourTickLen = su(9)
     local minuteTickLen = su(4)
-    local hourTickWidth = su(1.6)
-    local quarterTickWidth = su(2.2)
-    local minuteTickWidth = su(0.75)
-    local hourHandWidth = su(4.0)
-    local minuteHandWidth = su(2.8)
-    local secondHandWidth = su(1.1)
+    local hourTickWidth = su(1.35)
+    local quarterTickWidth = su(1.8)
+    local minuteTickWidth = su(0.55)
+    local hourHandWidth = su(2.0)
+    local minuteHandWidth = su(1.25)
+    local secondHandWidth = su(0.45)
 
     local function point(angle, radius)
         return cx + math.cos(angle) * radius, cy + math.sin(angle) * radius
@@ -136,8 +136,8 @@ local function render()
     end
 
     if showNumbers then
-        local numberFont = su(10.5)
-        local numberRadius = r - su(16)
+        local numberFont = su(6.8)
+        local numberRadius = r - su(11.5)
         for hour = 1, 12 do
             local a = hour * math.pi / 6 - math.pi / 2
             local label = tostring(hour)
@@ -152,9 +152,9 @@ local function render()
     local ma = (t.min + t.sec / 60) * math.pi / 30 - math.pi / 2
 
     -- 指针和中心帽随表盘短边线性缩放。
-    hand(ha, r * 0.45, su(7), hourHandWidth + su(1.0),
+    hand(ha, r * 0.45, su(7), hourHandWidth + su(0.5),
         colors.handShadow, 0.45)
-    hand(ma, r * 0.65, su(8), minuteHandWidth + su(0.8),
+    hand(ma, r * 0.65, su(8), minuteHandWidth + su(0.4),
         colors.handShadow, 0.35)
     hand(ha, r * 0.43, su(6), hourHandWidth, colors.hourHand, 0.96)
     hand(ma, r * 0.63, su(7), minuteHandWidth, colors.minuteHand, 0.96)
@@ -163,10 +163,10 @@ local function render()
         hand(sa, r * 0.76, su(13), secondHandWidth, 0xEF4444, 0.96)
     end
 
-    draw.circle(cx, cy, su(6.4), colors.capOuter, 1.0)
-    draw.circle(cx, cy, su(4.8), colors.capInner, 0.98)
+    draw.circle(cx, cy, su(4.6), colors.capOuter, 1.0)
+    draw.circle(cx, cy, su(3.3), colors.capInner, 0.98)
     if showSecondHand then
-        draw.circle(cx, cy, su(2.1), 0xEF4444, 1.0)
+        draw.circle(cx, cy, su(1.4), 0xEF4444, 1.0)
     end
 end
 

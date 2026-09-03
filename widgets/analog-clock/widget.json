@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Analog Clock",
   "nameKey": "lua_widget.analog_clock.name",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Displays a responsive analog clock.",
   "descriptionKey": "lua_widget.analog_clock.description",
   "locales": {
