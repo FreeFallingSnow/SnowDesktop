@@ -187,8 +187,6 @@ end
 local function drawArtworkPlaceholder(x, y, size, palette)
     local radius = size * 0.10
     draw.rect(x, y, size, size, palette.btnBg, radius, 0.07)
-    draw.circle(x + size * 0.5, y + size * 0.5,
-        size * 0.30, palette.btnBg, 0.07)
     draw.fa(fontAwesome.music,
         x + size * 0.29, y + size * 0.29,
         size * 0.42, palette.btnDisabled)
@@ -262,16 +260,55 @@ local function render(_context, model)
             subtitle, emptyHintFont, 0, false)
         local blockHeight = titleMetrics.height + emptyGap +
             subtitleMetrics.height
+        local textX = 0
+        local textWidth = width
         local blockTop = math.max(0, (height - blockHeight) / 2)
-        local titleWidth = math.min(width, titleMetrics.width)
-        local subtitleWidth = math.min(width, subtitleMetrics.width)
-        draw.text(math.max(0, (width - titleWidth) / 2), blockTop,
+
+        if showArtwork then
+            local vertical = height > width * 1.05
+            local padding = math.min(width * 0.045, height * 0.075)
+            local contentWidth = width - padding * 2
+            local contentHeight = height - padding * 2
+            local artworkSize
+            local contentGap = math.min(width * 0.035, height * 0.08)
+            local artworkX
+            local artworkY
+
+            if vertical then
+                artworkSize = math.min(contentWidth * 0.62,
+                    contentHeight * 0.45)
+                local groupHeight = artworkSize + contentGap + blockHeight
+                local groupY = math.max(0, (height - groupHeight) * 0.5)
+                artworkX = (width - artworkSize) * 0.5
+                artworkY = groupY
+                textX = padding
+                textWidth = contentWidth
+                blockTop = groupY + artworkSize + contentGap
+            else
+                artworkSize = math.min(contentHeight * 0.72,
+                    contentWidth * 0.38)
+                artworkX = padding
+                artworkY = (height - artworkSize) * 0.5
+                textX = padding + artworkSize + contentGap
+                textWidth = math.max(1,
+                    contentWidth - artworkSize - contentGap)
+            end
+
+            drawArtworkPlaceholder(artworkX, artworkY,
+                artworkSize, palette)
+        end
+
+        local titleWidth = math.min(textWidth, titleMetrics.width)
+        local subtitleWidth = math.min(textWidth, subtitleMetrics.width)
+        draw.text(textX + math.max(0, (textWidth - titleWidth) / 2), blockTop,
             title, emptyTitleFont, palette.title,
-            math.max(1, titleWidth + 1), true, true, 0, 0.78)
-        draw.text(math.max(0, (width - subtitleWidth) / 2),
+            math.min(textWidth, math.max(1, titleWidth + 1)),
+            true, true, 0, 0.78)
+        draw.text(textX + math.max(0, (textWidth - subtitleWidth) / 2),
             blockTop + titleMetrics.height + emptyGap,
             subtitle, emptyHintFont, palette.subtitle,
-            math.max(1, subtitleWidth + 1), false, true, 0, 0.62)
+            math.min(textWidth, math.max(1, subtitleWidth + 1)),
+            false, true, 0, 0.62)
         return
     end
 
@@ -337,8 +374,15 @@ local function render(_context, model)
 
     if artworkSize > 0 then
         if artwork then
-            draw.imageFit(artwork.image, artworkX, artworkY,
-                artworkSize, artworkSize, "cover", "center", 1.0, "linear")
+            if widget.hasFeature("draw.imageFit.roundedClip") then
+                draw.imageFit(artwork.image, artworkX, artworkY,
+                    artworkSize, artworkSize, "cover", "center",
+                    1.0, "linear", 0, 0.5, 0.5, artworkSize * 0.10)
+            else
+                draw.imageFit(artwork.image, artworkX, artworkY,
+                    artworkSize, artworkSize, "cover", "center",
+                    1.0, "linear")
+            end
             draw.strokeRect(artworkX, artworkY, artworkSize, artworkSize,
                 palette.btnText, artworkSize * 0.10,
                 artworkSize * 0.012, 0.16)

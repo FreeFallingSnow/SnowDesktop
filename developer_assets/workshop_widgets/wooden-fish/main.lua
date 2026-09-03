@@ -267,12 +267,14 @@ local function render(_context, model)
     local instrumentCx = width * 0.50
     local textCenterX = width * 0.50
     local textHeight = textSize * 1.35
-    local groupGap = textSize * 0.62
-    local groupHeight = textHeight * 2 + groupGap * 2 + instrumentSize
+    local instrumentGap = textSize * 0.62
+    local hintGap = textSize * 0.28
+    local groupHeight = textHeight * 2 + instrumentGap + hintGap +
+        instrumentSize
     local groupY = (height - groupHeight) * 0.5
-    local instrumentCy = groupY + textHeight + groupGap +
+    local instrumentCy = groupY + textHeight + instrumentGap +
         instrumentSize * 0.5
-    local hintY = instrumentCy + instrumentSize * 0.5 + groupGap
+    local hintY = instrumentCy + instrumentSize * 0.5 + hintGap
     compactTextPair(todayText, totalText, groupY, textSize,
         colors.feedback, textWidth)
     drawInstrument(instrumentCx, instrumentCy, instrumentSize, pressed, model)
