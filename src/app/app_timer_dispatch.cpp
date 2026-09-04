@@ -499,6 +499,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
+        UpdateSystemShowDesktopDockLayerGuard();
         UpdateSystemTaskbarRevealGuard();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();

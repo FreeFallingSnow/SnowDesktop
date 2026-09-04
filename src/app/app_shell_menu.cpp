@@ -448,8 +448,11 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         return;
     const bool promoted =
         IsPersistentDockHostEffectivelyFloating(host);
+    const bool systemShowDesktopGuard =
+        systemShowDesktopDockLayerGuardStartTick_ != 0 &&
+        ShouldShowPersistentDockHost(host);
 
-    if (!promoted)
+    if (!promoted && !systemShowDesktopGuard)
     {
         // A desktop-band Dock is still a top-level no-activate window. Place
         // it immediately above Explorer's desktop host and therefore below
@@ -489,7 +492,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     const bool shouldBeTopmost =
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(
-                true,
+                promoted || systemShowDesktopGuard,
                 shellPopupMenuLayerDepth_);
     host.backdrop.SetPopupWindowPairZOrder(
         host.hwnd,

@@ -2790,6 +2790,24 @@ int main(int argc, char** argv)
             floatingDock::ShouldShowPersistentDockHost(
               true, true, true, false, true, false),
         "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
+    Check(floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 1000, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              false, true, 1000, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, false, 1000, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 1000, 1501) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 1000, 999),
+        "Show Desktop protection requires an active DockHost, desktop foreground, and recent system minimize evidence");
+    Check(floatingDock::IsSystemShowDesktopLayerGuardActive(
+              1000, 2199) &&
+            !floatingDock::IsSystemShowDesktopLayerGuardActive(
+              1000, 2200) &&
+            !floatingDock::IsSystemShowDesktopLayerGuardActive(
+              0, 1000),
+        "the Show Desktop TOPMOST guard must expire at its bounded transition deadline");
     Check(!floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
               true, false, false) &&
             floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
@@ -6515,7 +6533,7 @@ int main(int argc, char** argv)
 
         const std::size_t desktopBandPolicyBegin =
             shellMenuSource.find(
-                "if (!promoted)");
+                "if (!promoted && !systemShowDesktopGuard)");
         const std::size_t floatingBandPolicyBegin =
             shellMenuSource.find(
                 "const bool shouldBeTopmost =",
@@ -6527,7 +6545,13 @@ int main(int argc, char** argv)
                     desktopBandPolicyBegin,
                     floatingBandPolicyBegin - desktopBandPolicyBegin)
                 : std::string{};
-        Check(!desktopBandPolicySource.empty() &&
+        Check(shellMenuSource.find(
+                  "systemShowDesktopDockLayerGuardStartTick_") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                  "ShouldShowPersistentDockHost(host)") !=
+                    std::string::npos &&
+                !desktopBandPolicySource.empty() &&
                 desktopBandPolicySource.find(
                   "desktopWindows_.host") != std::string::npos &&
                 desktopBandPolicySource.find(

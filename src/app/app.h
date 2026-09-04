@@ -1279,6 +1279,9 @@ private:
             snowdesktop::desktop_hover_rules::ReconcileMode::DeactivateOnly);
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
+    void HandleDockForegroundInteractionChanged();
+    void UpdateSystemShowDesktopDockLayerGuard();
+    bool IsShellDesktopForegroundWindow(HWND window) const;
     void UpdateSystemTaskbarRevealGuard();
     bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
     PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
@@ -3298,6 +3301,8 @@ private:
     inline static std::atomic<HWND> dockForegroundWindow_{ nullptr };
     inline static std::atomic<HWND> dockPreviousForegroundWindow_{ nullptr };
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
+    inline static std::atomic<ULONGLONG>
+        dockSystemMinimizeStartedTick_{ 0 };
     inline static std::atomic<HWND>
         dockForegroundNotificationWindow_{ nullptr };
     inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
@@ -3316,6 +3321,7 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
+    ULONGLONG systemShowDesktopDockLayerGuardStartTick_ = 0;
     struct SystemTaskbarMonitorWindowState
     {
         bool visible = false;

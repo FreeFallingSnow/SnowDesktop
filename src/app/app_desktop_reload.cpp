@@ -457,7 +457,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     switch (msg)
     {
     case kForegroundInteractionChangedMessage:
-        ReconcileDesktopHoverState();
+        HandleDockForegroundInteractionChanged();
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);

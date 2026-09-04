@@ -24,6 +24,11 @@ inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 // 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
 // WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
 inline constexpr ULONGLONG kPointerFrameIntervalMs = 8;
+// Explorer raises Progman while the system Show Desktop animation is still
+// rearranging the ordinary Z-order band. Keep the desktop Dock in TOPMOST
+// only across that bounded transition, then return it above WorkerW.
+inline constexpr ULONGLONG kSystemShowDesktopEvidenceWindowMs = 500;
+inline constexpr ULONGLONG kSystemShowDesktopLayerGuardDurationMs = 1200;
 
 inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
@@ -116,6 +121,33 @@ inline bool ShouldSummonForDockSurface(
     bool floatingDockVisible)
 {
     return sourceBelongsToDock && !floatingDockVisible;
+}
+
+inline bool ShouldStartSystemShowDesktopLayerGuard(
+    bool persistentDockHostActive,
+    bool shellDesktopForeground,
+    ULONGLONG lastSystemMinimizeStartTick,
+    ULONGLONG currentTick,
+    ULONGLONG evidenceWindowMs =
+        kSystemShowDesktopEvidenceWindowMs)
+{
+    return persistentDockHostActive &&
+        shellDesktopForeground &&
+        lastSystemMinimizeStartTick != 0 &&
+        currentTick >= lastSystemMinimizeStartTick &&
+        currentTick - lastSystemMinimizeStartTick <=
+            evidenceWindowMs;
+}
+
+inline bool IsSystemShowDesktopLayerGuardActive(
+    ULONGLONG guardStartTick,
+    ULONGLONG currentTick,
+    ULONGLONG guardDurationMs =
+        kSystemShowDesktopLayerGuardDurationMs)
+{
+    return guardStartTick != 0 &&
+        currentTick >= guardStartTick &&
+        currentTick - guardStartTick < guardDurationMs;
 }
 
 inline bool ShouldDispatchDockContextMenu(

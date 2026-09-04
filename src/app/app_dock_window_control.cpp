@@ -478,6 +478,9 @@ std::wstring DockItemWindowKey(const DesktopItem& item)
 void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
 {
+    if (event == EVENT_SYSTEM_MINIMIZESTART)
+        dockSystemMinimizeStartedTick_.store(GetTickCount64());
+
     if (event == EVENT_SYSTEM_FOREGROUND && window)
     {
         const HWND previous = dockForegroundWindow_.exchange(window);

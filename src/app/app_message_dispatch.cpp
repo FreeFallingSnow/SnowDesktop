@@ -1078,7 +1078,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnUrlDropDownloadCompleted(lp);
         return 0;
     case kForegroundInteractionChangedMessage:
-        ReconcileDesktopHoverState();
+        HandleDockForegroundInteractionChanged();
         return 0;
     case kSteamWorkshopSubscriptionReadyMessage:
         PollSteamWorkshopSubscriptions();
