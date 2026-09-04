@@ -743,6 +743,7 @@
   "app.menu.rename": "名前の変更",
   "app.menu.cut": "カット",
   "app.menu.copy": "コピー",
+  "app.menu.hide_desktop_icon": "デスクトップ アイコンを非表示",
   "app.menu.page_pin_first": "最初のページをこのモニターに固定する",
   "app.menu.page_pin_last": "最後のページをこのモニターに固定する",
   "app.menu.page_pin_both": "最初／最後のページを固定",

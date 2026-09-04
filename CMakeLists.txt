@@ -135,6 +135,8 @@ set(SNOWDESKTOP_SOURCES
     src/auto_start_manager.h
     src/auto_start_rules.h
     src/application_crash_watchdog.cpp
+    src/desktop_namespace_registry.cpp
+    src/desktop_namespace_registry.h
     src/icon_beautify.cpp
     src/app/app_bitmap_cache.cpp
     src/app/app_background_menu.cpp
@@ -1831,6 +1833,16 @@ if (BUILD_TESTING)
         SOURCES tests/folder_mapping_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS rules folder widget)
+
+    snowdesktop_add_test(
+        SnowDesktopDesktopNamespaceRegistryTests
+        desktop_namespace_registry
+        SOURCES
+            tests/desktop_namespace_registry_tests.cpp
+            src/desktop_namespace_registry.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES advapi32 ole32 shell32 shlwapi
+        LABELS core rules shell)
 
     snowdesktop_add_test(
         SnowDesktopRightClickContractTests

@@ -743,6 +743,7 @@
   "app.menu.rename": "Renommer",
   "app.menu.cut": "Couper",
   "app.menu.copy": "Copier",
+  "app.menu.hide_desktop_icon": "Masquer l’icône du Bureau",
   "app.menu.page_pin_first": "Épingler la première page sur ce moniteur",
   "app.menu.page_pin_last": "Épingler la dernière page sur ce moniteur",
   "app.menu.page_pin_both": "Épingler la première et la dernière page",

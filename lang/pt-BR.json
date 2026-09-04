@@ -743,6 +743,7 @@
   "app.menu.rename": "Renomear",
   "app.menu.cut": "Recortar",
   "app.menu.copy": "Copiar",
+  "app.menu.hide_desktop_icon": "Ocultar ícone da área de trabalho",
   "app.menu.page_pin_first": "Fixar a primeira página neste monitor",
   "app.menu.page_pin_last": "Fixar a última página neste monitor",
   "app.menu.page_pin_both": "Fixar a primeira e a última página",

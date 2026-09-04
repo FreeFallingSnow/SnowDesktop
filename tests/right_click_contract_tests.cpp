@@ -242,6 +242,22 @@ void TestShellItemActionContract()
         !actions::IsAdministratorRunnableExtension(L".txt") &&
         !actions::IsAdministratorRunnableExtension(L""),
         "ordinary documents must not expose the administrator action");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, false) ==
+            actions::RemovalAction::HideDesktopNamespace,
+        "a single third-party desktop namespace must expose an explicit hide action");
+    Check(
+        actions::ResolveRemovalAction(2, 1, 1, false) ==
+            actions::RemovalAction::Disabled,
+        "mixed file and namespace selections must not partially delete their file items");
+    Check(
+        actions::ResolveRemovalAction(2, 2, 0, false) ==
+            actions::RemovalAction::DeleteFiles,
+        "a path-backed file selection must retain its delete action");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, true) ==
+            actions::RemovalAction::RemoveDockMapping,
+        "removing a Dock mapping must take precedence over hiding its source namespace");
 }
 
 } // namespace

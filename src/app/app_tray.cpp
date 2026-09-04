@@ -1,5 +1,7 @@
 #include "app.h"
 
+#include "../desktop_namespace_registry.h"
+
 // ── Tray ────────────────────────────────────────────────────
 
 namespace
@@ -94,6 +96,9 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         return label;
     };
 
+    std::vector<snowdesktop::DesktopNamespaceRegistration>
+        namespaceRegistrations;
+    std::vector<size_t> dynamicNamespaceIndexes;
     HMENU iconMenu = CreatePopupMenu();
     if (iconMenu)
     {
@@ -126,6 +131,44 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                 visible ? _LW("app.interact.shown")
                         : _LW("app.interact.hidden"));
             AppendMenuW(iconMenu, MF_STRING, s.cmd, label.c_str());
+        }
+
+        namespaceRegistrations =
+            snowdesktop::LoadDesktopNamespaceRegistrations();
+        for (size_t index = 0;
+             index < namespaceRegistrations.size() &&
+             dynamicNamespaceIndexes.size() <=
+                kTrayDesktopNamespaceLast -
+                    kTrayDesktopNamespaceFirst;
+             ++index)
+        {
+            const auto& registration =
+                namespaceRegistrations[index];
+            if (snowdesktop::IsStandardDesktopIconClsid(
+                    registration.clsid))
+            {
+                continue;
+            }
+
+            DWORD value = 0;
+            if (!TryReadDesktopIconRegistryValueAnyRoot(
+                    registration.clsid, value))
+            {
+                continue;
+            }
+            const UINT command =
+                kTrayDesktopNamespaceFirst +
+                static_cast<UINT>(
+                    dynamicNamespaceIndexes.size());
+            const std::wstring label = statusLabel(
+                registration.displayName.c_str(),
+                value == 0
+                    ? _LW("app.interact.shown")
+                    : _LW("app.interact.hidden"));
+            AppendMenuW(
+                iconMenu, MF_STRING,
+                command, label.c_str());
+            dynamicNamespaceIndexes.push_back(index);
         }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("app.interact.desktop_icon_settings"));
     }
@@ -216,6 +259,34 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         break;
     }
     default:
+        if (command >= kTrayDesktopNamespaceFirst &&
+            command <= kTrayDesktopNamespaceLast)
+        {
+            const size_t commandIndex =
+                command - kTrayDesktopNamespaceFirst;
+            if (commandIndex <
+                dynamicNamespaceIndexes.size())
+            {
+                const auto& registration =
+                    namespaceRegistrations[
+                        dynamicNamespaceIndexes[
+                            commandIndex]];
+                DWORD value = 0;
+                const bool visible =
+                    !TryReadDesktopIconRegistryValueAnyRoot(
+                        registration.clsid, value) ||
+                    value == 0;
+                if (WriteDesktopIconRegistryValue(
+                        registration.clsid, !visible))
+                {
+                    settingsIconVisibility_[
+                        ToUpperInvariant(
+                            registration.clsid)] =
+                        !visible;
+                    ReloadItems();
+                }
+            }
+        }
         break;
     }
 }

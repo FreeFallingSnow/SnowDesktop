@@ -131,7 +131,16 @@ void DesktopApp::ShowItemContextMenu(
         : nullptr;
 
     int selectedCount = 0;
-    for (const auto& item : items_) if (item.selected) ++selectedCount;
+    size_t selectedFileCount = 0;
+    size_t selectedNamespaceCount = 0;
+    for (const auto& item : items_)
+    {
+        if (!item.selected)
+            continue;
+        ++selectedCount;
+        if (!item.desktopIconClsid.empty())
+            ++selectedNamespaceCount;
+    }
 
     std::vector<std::wstring> selectedFilePaths;
     for (const auto& item : items_)
@@ -140,7 +149,11 @@ void DesktopApp::ShowItemContextMenu(
             continue;
         wchar_t path[MAX_PATH]{};
         if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+        {
             selectedFilePaths.emplace_back(path);
+            if (item.desktopIconClsid.empty())
+                ++selectedFileCount;
+        }
     }
 
     bool canFile = !items_[itemIndex].desktopIconClsid.empty() ? false : true;
@@ -163,6 +176,19 @@ void DesktopApp::ShowItemContextMenu(
         IsAdministratorRunnablePath(itemPath);
     const bool canShowProperties =
         selectedCount == 1 && canFile && !itemPath.empty();
+    const auto removalAction =
+        snowdesktop::shell_item_action_rules::
+            ResolveRemovalAction(
+                static_cast<size_t>(selectedCount),
+                selectedFileCount,
+                selectedNamespaceCount,
+                dockMapping);
+    const bool canRemove = removalAction !=
+        snowdesktop::shell_item_action_rules::
+            RemovalAction::Disabled;
+    const bool hidesDesktopNamespace = removalAction ==
+        snowdesktop::shell_item_action_rules::
+            RemovalAction::HideDesktopNamespace;
     const bool canCloseDockApplication =
         dockApplicationItem &&
         GetDockWindowVisualState(
@@ -197,12 +223,12 @@ void DesktopApp::ShowItemContextMenu(
         canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextCopyCommand, _LW("app.menu.copy"));
     AppendMenuW(menu,
-        (canFile || dockMapping)
-            ? MF_STRING
-            : MF_STRING | MF_GRAYED,
+        canRemove ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextDeleteCommand,
         dockMapping
             ? _LW("app.dock.remove_mapping")
+            : hidesDesktopNamespace
+            ? _LW("app.menu.hide_desktop_icon")
             : _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
@@ -530,9 +556,33 @@ void DesktopApp::ShowItemContextMenu(
     }
     case kContextDeleteCommand:
     {
-        if (dockMapping &&
+        if (removalAction ==
+                snowdesktop::shell_item_action_rules::
+                    RemovalAction::RemoveDockMapping &&
             RemoveDockMappingAt(
                 *dockMappingEntryIndex))
+        {
+            break;
+        }
+        if (removalAction ==
+            snowdesktop::shell_item_action_rules::
+                RemovalAction::HideDesktopNamespace)
+        {
+            const std::wstring clsid = ToUpperInvariant(
+                items_[static_cast<size_t>(itemIndex)].
+                    desktopIconClsid);
+            if (!clsid.empty() &&
+                WriteDesktopIconRegistryValue(
+                    clsid, false))
+            {
+                settingsIconVisibility_[clsid] = false;
+                ReloadItems();
+            }
+            break;
+        }
+        if (removalAction !=
+            snowdesktop::shell_item_action_rules::
+                RemovalAction::DeleteFiles)
         {
             break;
         }

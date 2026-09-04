@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_namespace_registry.h"
 
 // Shell desktop enumeration and display-topology refresh.
 
@@ -58,6 +59,8 @@ items_.clear();
     SHGetSpecialFolderPathW(nullptr, userProfilePath, CSIDL_PROFILE, FALSE);
     size_t userDesktopLen = wcslen(userDesktopPath);
     size_t commonDesktopLen = wcslen(commonDesktopPath);
+    const auto namespaceRegistrations =
+        snowdesktop::LoadDesktopNamespaceRegistrations();
 
     const bool showHiddenItems = AreExplorerHiddenItemsVisible();
     SHCONTF enumFlags = SHCONTF_FOLDERS | SHCONTF_NONFOLDERS;
@@ -100,12 +103,23 @@ items_.clear();
             continue;
         }
 
-        std::wstring clsid = ResolveDesktopIconClsid(parsingName, itemPathStr, userProfilePath);
+        bool registeredNamespaceVisibleByDefault = false;
+        std::wstring clsid = ResolveDesktopIconClsid(
+            parsingName, itemPathStr, userProfilePath);
+        if (clsid.empty())
+        {
+            clsid = snowdesktop::
+                ResolveRegisteredDesktopNamespaceClsid(
+                    absolute, itemPathStr,
+                    namespaceRegistrations,
+                    &registeredNamespaceVisibleByDefault);
+        }
         bool isDesktopIcon = !clsid.empty();
 
-        // Non-desktop-icon: always skip non-enumerated shell items, and follow
-        // Explorer's "Hidden items" setting for ordinary hidden entries.
-        if (!isDesktopIcon)
+        // Standard desktop icons use the Explorer visibility registry. Other
+        // entries, including third-party namespace aliases, still obey their
+        // Shell hidden/non-enumerated attributes.
+        if (!snowdesktop::IsStandardDesktopIconClsid(clsid))
         {
             SFGAOF attrs = SFGAO_HIDDEN | SFGAO_NONENUMERATED;
             LPCITEMIDLIST childConst = child;
@@ -123,7 +137,9 @@ items_.clear();
             SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
 
         // Check visibility (applies to all items)
-        if (!IsVisibleByDesktopIconSettings(clsid, settingsIconVisibility_))
+        if (!IsVisibleByDesktopIconSettings(
+                clsid, settingsIconVisibility_,
+                registeredNamespaceVisibleByDefault))
         { ILFree(absolute); ILFree(child); continue; }
 
         // Non-desktop-icon: must be physically on desktop

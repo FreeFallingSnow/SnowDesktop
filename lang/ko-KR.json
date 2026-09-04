@@ -743,6 +743,7 @@
   "app.menu.rename": "이름 바꾸기",
   "app.menu.cut": "잘라내기",
   "app.menu.copy": "복사",
+  "app.menu.hide_desktop_icon": "바탕 화면 아이콘 숨기기",
   "app.menu.page_pin_first": "첫 페이지를 이 모니터에 고정",
   "app.menu.page_pin_last": "이 모니터에 마지막 페이지 고정",
   "app.menu.page_pin_both": "첫 화면/마지막 화면 고정",

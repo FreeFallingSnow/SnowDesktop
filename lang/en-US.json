@@ -743,6 +743,7 @@
     "app.menu.rename": "Rename",
     "app.menu.cut": "Cut",
     "app.menu.copy": "Copy",
+    "app.menu.hide_desktop_icon": "Hide desktop icon",
     "app.menu.page_pin_first": "Pin First Page to this Monitor",
     "app.menu.page_pin_last": "Pin Last Page to this Monitor",
     "app.menu.page_pin_both": "Pin First & Last Page",

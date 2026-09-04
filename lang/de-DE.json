@@ -743,6 +743,7 @@
   "app.menu.rename": "Umbenennen",
   "app.menu.cut": "Ausschneiden",
   "app.menu.copy": "Kopieren",
+  "app.menu.hide_desktop_icon": "Desktop-Symbol ausblenden",
   "app.menu.page_pin_first": "Erste Seite an diesen Monitor anpinnen",
   "app.menu.page_pin_last": "Letzte Seite an diesen Monitor anpinnen",
   "app.menu.page_pin_both": "Erste und letzte Seite anheften",

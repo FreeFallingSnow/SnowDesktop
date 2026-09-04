@@ -743,6 +743,7 @@
   "app.menu.rename": "重新命名",
   "app.menu.cut": "剪下",
   "app.menu.copy": "複製",
+  "app.menu.hide_desktop_icon": "隱藏桌面圖示",
   "app.menu.page_pin_first": "將此顯示器設為起始螢幕",
   "app.menu.page_pin_last": "將此顯示器設為末端螢幕",
   "app.menu.page_pin_both": "設定起始／末端螢幕",

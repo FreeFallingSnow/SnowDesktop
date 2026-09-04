@@ -743,6 +743,7 @@
     "app.menu.rename": "重命名",
     "app.menu.cut": "剪切",
     "app.menu.copy": "复制",
+    "app.menu.hide_desktop_icon": "隐藏桌面图标",
     "app.menu.page_pin_first": "固定此显示器显示首屏",
     "app.menu.page_pin_last": "固定此显示器显示末屏",
     "app.menu.page_pin_both": "固定首屏/末屏显示器",
