@@ -21760,15 +21760,55 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     WidgetExecutionContextGuard reloadContext(d2dState_, widgetId);
+    const std::string packageId = widgets_[idx].packageId;
+    if (!snowdesktop::widget_runtime::HasStorageOverlay())
+    {
+        auto& manager = GetWidgetPackageManager();
+        bool permissionScopeChanged = false;
+        std::string permissionRefreshError;
+        if (!manager.RefreshChangedPermissionScope(packageId,
+                permissionScopeChanged, permissionRefreshError))
+        {
+            RuntimeRecordError(widgetId,
+                "Widget permission scope refresh failed: " +
+                    permissionRefreshError);
+            return false;
+        }
+        if (permissionScopeChanged)
+        {
+            const auto package = manager.Resolve(packageId);
+            if (!package)
+            {
+                UnloadWidget(widgetId);
+                return false;
+            }
+            const auto grant =
+                snowdesktop::widget::WidgetPermissionBroker::Evaluate(
+                    package->permissionState,
+                    package->manifest.permissions,
+                    package->manifest.optionalPermissions,
+                    package->manifest.networkDomains,
+                    package->grantedPermissions,
+                    package->grantedNetworkDomains);
+            if (grant.runtimeBlock !=
+                snowdesktop::widget::PermissionRuntimeBlock::None)
+            {
+                // Retire the VM that still owns the previous grant. The host
+                // placeholder now exposes the normal reauthorization action.
+                UnloadWidget(widgetId);
+                return false;
+            }
+        }
+    }
     const auto layoutMetrics = widgets_[idx].layoutMetrics;
     std::wstring path = ResolveWidgetPath(
-        Utf8ToWideLocal(widgets_[idx].packageId));
+        Utf8ToWideLocal(packageId));
     if (path.empty())
         path = widgets_[idx].filePath;
     const size_t oldIndex = static_cast<size_t>(idx);
     if (!LoadWidget(path, widgetId))
     {
-        RecoverWidgetPackage(widgets_[idx].packageId,
+        RecoverWidgetPackage(packageId,
             widgets_[idx].manifest.version);
         return false;
     }

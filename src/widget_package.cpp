@@ -2718,6 +2718,45 @@ std::optional<InstalledPackage> WidgetPackageManager::ResolveEntryPath(
     return std::nullopt;
 }
 
+bool WidgetPackageManager::RefreshChangedPermissionScope(
+    const std::string& packageId, bool& changed, std::string& error)
+{
+    changed = false;
+    const auto package = Resolve(packageId);
+    if (!package)
+    {
+        error = "package is unavailable";
+        return false;
+    }
+
+    PackageManifest diskManifest;
+    const ValidationReport report = validator_.ValidateDirectory(
+        package->root, &diskManifest);
+    if (!report.Ok() || diskManifest.id != packageId)
+    {
+        error = "active package failed validation while refreshing permissions";
+        return false;
+    }
+
+    const std::string knownScope = WidgetPermissionBroker::ScopeFingerprint(
+        package->manifest.permissions,
+        package->manifest.optionalPermissions,
+        package->manifest.networkDomains);
+    const std::string diskScope = WidgetPermissionBroker::ScopeFingerprint(
+        diskManifest.permissions,
+        diskManifest.optionalPermissions,
+        diskManifest.networkDomains);
+    if (knownScope == diskScope)
+    {
+        error.clear();
+        return true;
+    }
+
+    if (!Refresh(error)) return false;
+    changed = true;
+    return true;
+}
+
 ValidationReport WidgetPackageManager::ValidateDirectory(
     const std::filesystem::path& root, PackageManifest* manifest) const
 {

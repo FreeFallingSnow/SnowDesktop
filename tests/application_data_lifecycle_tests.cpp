@@ -1273,6 +1273,44 @@ int main()
             PermissionDecisionState::Granted &&
             permissionFreeBuiltin->grantedPermissions.empty(),
         "removing every permission clears a stale built-in consent block");
+
+    const auto hotReloadPaths =
+        TestPaths(root / L"development-hot-reload-permissions");
+    const auto hotReloadRoot =
+        hotReloadPaths.development / L"hot-reload-permissions";
+    const std::string hotReloadId =
+        "3c215a89-a294-44c3-a2bb-6b4c6c13a776";
+    MakePackage(hotReloadRoot, "1.0.0", hotReloadId,
+        "\"desktop.read\"");
+    WidgetPackageManager hotReloadManager(hotReloadPaths);
+    bool permissionScopeChanged = false;
+    error.clear();
+    Expect(hotReloadManager.Initialize(error) &&
+            hotReloadManager.SetDevelopmentOverride(
+                hotReloadId, true, error) &&
+            hotReloadManager.SetPermissionDecision(hotReloadId,
+                PermissionDecisionState::Granted,
+                { "desktop.read" }, {}, error),
+        "a development package is granted before an in-place hot update");
+    MakePackage(hotReloadRoot, "1.0.1", hotReloadId,
+        "\"desktop.read\"", "", "main.lua", "\"app.launch\"");
+    Expect(hotReloadManager.RefreshChangedPermissionScope(
+                hotReloadId, permissionScopeChanged, error) &&
+            permissionScopeChanged,
+        "a development hot update detects an in-place permission change");
+    const auto hotReloadPackage = hotReloadManager.Resolve(hotReloadId);
+    Expect(hotReloadPackage && hotReloadPackage->development &&
+            hotReloadPackage->manifest.version == "1.0.1" &&
+            hotReloadPackage->permissionState ==
+                PermissionDecisionState::Pending &&
+            hotReloadPackage->grantedPermissions.empty(),
+        "a development hot update requires fresh consent for its new scope");
+    permissionScopeChanged = true;
+    Expect(hotReloadManager.RefreshChangedPermissionScope(
+                hotReloadId, permissionScopeChanged, error) &&
+            !permissionScopeChanged,
+        "an unchanged development permission scope avoids redundant refresh");
+
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),
