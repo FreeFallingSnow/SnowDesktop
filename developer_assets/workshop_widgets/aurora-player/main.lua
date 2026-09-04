@@ -4,6 +4,7 @@ local responsive = module.require("modules/responsive.lua")
 local mediaCurrent
 local mediaArtwork
 local audioAnalysis
+local launcherBinding
 local descriptor
 local RECORD_FRAME = "aurora.record.spin"
 local PROGRESS_TICK = "aurora.timeline.tick"
@@ -26,6 +27,15 @@ end
 
 local settings = {
     fields = {
+        {
+            key = "launcherReference",
+            label = l10n.tr("workshop.aurora_player.select_launcher"),
+            type = "appReference",
+            binding = "idlePlayer",
+            emptyLabel = l10n.tr("workshop.aurora_player.not_set"),
+            noResultsLabel =
+                l10n.tr("workshop.aurora_player.no_search_results"),
+        },
         {
             key = "cover_background",
             label = l10n.tr("workshop.aurora_player.cover_background"),
@@ -94,6 +104,19 @@ local function currentSession(model)
         snapshot.timestamp) or 0
 end
 
+local function currentLauncher()
+    if not launcherBinding then return nil end
+    return launcherBinding:item()
+end
+
+local function chooseLauncher()
+    if launcherBinding then
+        launcherBinding:pick()
+    else
+        widget.openSettings()
+    end
+end
+
 local function currentArtwork(model, session)
     if not session or (model and model.preview) then return nil end
     local artwork = player.artwork(
@@ -153,6 +176,7 @@ end
 
 local function setup(context)
     syncBackgroundBlur()
+    launcherBinding = slots.binding("idlePlayer")
     mediaCurrent = data.subscribe("media.current", {
         maxAgeMs = MEDIA_REFRESH_MS,
         whenHidden = "throttle",
@@ -308,6 +332,32 @@ local function startTask(model, name, arguments, pendingPlayback)
     model.tasks[tostring(taskId)] = name
     if pendingPlayback then model.pendingPlayback = pendingPlayback end
     return taskId
+end
+
+local function startLauncher(model)
+    if model.preview then return end
+    local launcher = currentLauncher()
+    if not launcher then
+        chooseLauncher()
+        return
+    end
+    if launcher.availability ~= "available" then
+        widget.log("warn", "bound launcher is unavailable")
+        return
+    end
+    if not widget.hasFeature("task.app.launch") or
+        not widget.hasPermission("app.launch") then
+        widget.openSettings()
+        return
+    end
+    local taskId, err = task.start("app.launch", {
+        ref = launcher.reference,
+    })
+    if taskId then
+        model.tasks[tostring(taskId)] = "app.launch"
+    else
+        widget.log("warn", "app.launch rejected: " .. tostring(err))
+    end
 end
 
 local function startSessionTask(model, name, capability, extra)
@@ -467,6 +517,7 @@ end
 local function viewTree(context, model)
     model.reducedMotion = context.accessibility.reducedMotion == true
     local session, timestamp = currentSession(model)
+    local launcher = currentLauncher()
     syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)
     local artworkBackgroundActive = player.shouldUseArtworkBackground(
@@ -493,8 +544,8 @@ local function viewTree(context, model)
     local title = session and session.title ~= "" and session.title or
         l10n.tr("workshop.aurora_player.empty")
     local artist = session and session.artist ~= "" and session.artist or
-        (session and session.sourceName or
-            l10n.tr("workshop.aurora_player.empty_hint"))
+        (session and session.sourceName or (launcher and launcher.title or
+            l10n.tr("workshop.aurora_player.configure_launcher")))
     local album = session and session.album or ""
     local width = layout.width()
     local height = layout.height()
@@ -727,6 +778,7 @@ local function viewTree(context, model)
         width = "fill",
         height = "fill",
         events = {
+            doubleClick = { id = "launcher.open" },
             contextMenu = { id = "media.menu", scope = "component" },
         },
         accessibility = {
@@ -834,7 +886,7 @@ local function event(context, model, value)
     if value.kind == "task.complete" then
         local name, failed = player.finishTask(
             model.tasks, value.taskId, value.ok)
-        if name then model.pendingPlayback = nil end
+        if name and name ~= "app.launch" then model.pendingPlayback = nil end
         if name == "media.seek" then
             local currentSeek = model.seekTaskId == tostring(value.taskId)
             if currentSeek then
@@ -916,6 +968,12 @@ local function event(context, model, value)
             sessionId = session.id,
             mode = value.id:sub(14),
         })
+    elseif value.id == "launcher.open" then
+        if not currentSession(model) then startLauncher(model) end
+    elseif value.id == "launcher.configure" then
+        chooseLauncher()
+    elseif value.id == "launcher.clear" then
+        if currentLauncher() then launcherBinding:clear() end
     end
 end
 
@@ -929,6 +987,7 @@ local function menu(_context, model, request)
             not player.hasTimeline(timeline) then return false end
         return player.canControl(session, permission, capability)
     end
+    local launcher = currentLauncher()
     local rateItems = {}
     for _, rate in ipairs({ "0_5", "0_75", "1", "1_25", "1_5", "2" }) do
         rateItems[#rateItems + 1] = {
@@ -937,7 +996,29 @@ local function menu(_context, model, request)
             enabled = allowed("canChangePlaybackRate"),
         }
     end
-    return ui.menu({
+    local items = {
+        {
+            id = "launcher.configure",
+            label = l10n.tr("workshop.aurora_player.configure_launcher"),
+        },
+        { type = "separator" },
+        {
+            id = "launcher.current",
+            label = launcher and launcher.title or
+                l10n.tr("workshop.aurora_player.not_set"),
+            checked = true,
+            enabled = false,
+        },
+    }
+    if launcher then
+        items[#items + 1] = { type = "separator" }
+        items[#items + 1] = {
+            id = "launcher.clear",
+            label = l10n.tr("workshop.aurora_player.clear_launcher"),
+        }
+    end
+    items[#items + 1] = { type = "separator" }
+    local mediaItems = {
         {
             id = "media.stop",
             label = l10n.tr("workshop.aurora_player.stop"),
@@ -999,7 +1080,9 @@ local function menu(_context, model, request)
                 },
             },
         },
-    })
+    }
+    for _, item in ipairs(mediaItems) do items[#items + 1] = item end
+    return ui.menu(items)
 end
 
 local function dispose()
@@ -1011,6 +1094,7 @@ local function dispose()
     mediaCurrent = nil
     mediaArtwork = nil
     audioAnalysis = nil
+    launcherBinding = nil
 end
 
 descriptor = {
