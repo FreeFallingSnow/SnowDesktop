@@ -878,10 +878,11 @@ DesktopApp::BuildAddWidgetMenuPreview(
                            snowdesktop::WidgetPreviewScene>& scene,
                        DesktopWidget root,
                        std::unordered_map<std::string, std::string>
-                           storage = {}) {
+                           storage = {},
+                       bool showTitle = true) {
         root.id = L"__component_preview_" + modeKey;
         root.selected = false;
-        root.showTitle = true;
+        root.showTitle = showTitle;
         if (previewPage)
         {
             root.gridSpan.columns = std::clamp(root.gridSpan.columns,
@@ -1015,7 +1016,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         fillItemKeys(compact, *compactScene, 5);
         addCard("app.widget_preview.collection_compact",
             "app.widget_preview.collection_compact_hint", L"collection:compact",
-            compactScene, std::move(compact));
+            compactScene, std::move(compact), {}, false);
 
         auto scrollGridScene = makeScene(true);
         DesktopWidget scrollGrid;
@@ -1029,6 +1030,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             std::move(scrollGrid));
         model.cards.back().options = {
             collectionModeOption(), layoutOption() };
+        model.initialCard = 1;
         return model;
     }
     case kContextAddFileCategoryWidget:

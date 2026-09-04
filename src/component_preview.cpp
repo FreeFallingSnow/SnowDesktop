@@ -612,7 +612,8 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     const std::wstring identity = ModelIdentity(model);
     if (identity != modelIdentity_)
     {
-        currentCard_ = 0;
+        currentCard_ = std::min(
+            model.initialCard, model.cards.size() - 1);
         modelIdentity_ = identity;
     }
     model_ = model;
@@ -769,7 +770,8 @@ RECT Window::OptionBoundsForTesting(
 std::wstring Window::ModelIdentity(const Model& model) const
 {
     std::wstring result = model.title + L"|" +
-        std::to_wstring(model.cards.size());
+        std::to_wstring(model.cards.size()) + L"|initial:" +
+        std::to_wstring(model.initialCard);
     for (const Card& card : model.cards)
     {
         result += L"|" + card.cacheKey +

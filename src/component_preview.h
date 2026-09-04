@@ -132,6 +132,8 @@ struct Model
     std::wstring resizeHint;
     std::wstring applyLabel;
     std::vector<Card> cards;
+    /// Page selected when a newly identified preview model is first shown.
+    std::size_t initialCard = 0;
 
     bool Empty() const { return title.empty() || cards.empty(); }
 };

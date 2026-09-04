@@ -341,6 +341,17 @@ int wmain()
     Expect(IsWindowVisible(window.Handle()) == FALSE,
         "the title-bar close button hides only the preview window");
 
+    firstPageRenders = 0;
+    secondPageRenders = 0;
+    pagedModel.title = L"Paged preview with initial selection";
+    pagedModel.initialCard = 1;
+    pagedModel.cards[1].cacheKey = L"paged:list-initial";
+    Expect(window.Show(pagedModel, menuBounds, nullptr, 96, false),
+        "paged preview accepts an explicit initial page");
+    Expect(firstPageRenders == 0 && secondPageRenders == 1,
+        "a newly identified preview opens on its requested initial page");
+    window.Hide();
+
     Model optionModel;
     optionModel.title = L"Same-size options";
     optionModel.applyLabel = L"Add to Desktop";
