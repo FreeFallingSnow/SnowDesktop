@@ -166,6 +166,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.advancedFeatures.description", L"Unlock Steam-only advanced features."},
     LocalizedFallback{"settings.general.advancedFeatures.unlockStatus", L"Unlock status"},
     LocalizedFallback{"settings.general.advancedFeatures.registered", L"Unlocked"},
+    LocalizedFallback{"settings.general.advancedFeatures.registeredUntil", L"Unlocked · Connect to Steam by {0} to renew"},
     LocalizedFallback{"settings.general.advancedFeatures.unregistered", L"Not unlocked"},
     LocalizedFallback{"settings.general.advancedFeatures.checking", L"Checking Steam..."},
     LocalizedFallback{"settings.general.advancedFeatures.unavailable", L"Steam Bridge unavailable"},

@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "Déverrouillez les fonctionnalités avancées réservées aux utilisateurs Steam.",
     "settings.general.advancedFeatures.unlockStatus": "État du déverrouillage",
     "settings.general.advancedFeatures.registered": "Déverrouillées",
+    "settings.general.advancedFeatures.registeredUntil": "Déverrouillées · Connectez-vous à Steam avant le {0} pour renouveler",
     "settings.general.advancedFeatures.unregistered": "Non déverrouillées",
     "settings.general.advancedFeatures.checking": "Vérification de Steam…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge indisponible",

@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "Desbloqueie recursos avançados exclusivos para usuários da Steam.",
     "settings.general.advancedFeatures.unlockStatus": "Status do desbloqueio",
     "settings.general.advancedFeatures.registered": "Desbloqueado",
+    "settings.general.advancedFeatures.registeredUntil": "Desbloqueado · Conecte-se à Steam até {0} para renovar",
     "settings.general.advancedFeatures.unregistered": "Não desbloqueado",
     "settings.general.advancedFeatures.checking": "Verificando a Steam…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge indisponível",

@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "Steam ユーザー限定の高度な機能をアンロックします。",
     "settings.general.advancedFeatures.unlockStatus": "アンロック状態",
     "settings.general.advancedFeatures.registered": "アンロック済み",
+    "settings.general.advancedFeatures.registeredUntil": "アンロック済み · {0} までに Steam に接続して更新",
     "settings.general.advancedFeatures.unregistered": "未アンロック",
     "settings.general.advancedFeatures.checking": "Steam を確認しています…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge を利用できません",

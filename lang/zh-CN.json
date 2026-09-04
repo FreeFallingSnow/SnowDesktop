@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "解锁仅向 Steam 用户提供的高级功能。",
     "settings.general.advancedFeatures.unlockStatus": "解锁状态",
     "settings.general.advancedFeatures.registered": "已解锁",
+    "settings.general.advancedFeatures.registeredUntil": "已解锁 · 请在 {0} 前连接 Steam 续期",
     "settings.general.advancedFeatures.unregistered": "未解锁",
     "settings.general.advancedFeatures.checking": "正在检查 Steam…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge 不可用",

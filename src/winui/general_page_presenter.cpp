@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <ctime>
 #include <utility>
 
 namespace snowdesktop::winui
@@ -26,6 +27,21 @@ struct SettingsCard
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
 };
+
+[[nodiscard]] std::wstring FormatEntitlementExpiryDate(
+    std::int64_t unixSeconds) noexcept
+{
+    if (unixSeconds <= 0) return {};
+    const std::time_t timestamp = static_cast<std::time_t>(unixSeconds);
+    if (static_cast<std::int64_t>(timestamp) != unixSeconds) return {};
+    std::tm localTime{};
+    if (localtime_s(&localTime, &timestamp) != 0) return {};
+    std::array<wchar_t, 11> buffer{};
+    if (std::wcsftime(buffer.data(), buffer.size(), L"%Y-%m-%d",
+            &localTime) == 0)
+        return {};
+    return buffer.data();
+}
 
 void InitializeCard(
     SettingsCard& card,
@@ -804,52 +820,73 @@ struct GeneralPagePresenter::Impl
             "settings.general.advancedFeatures.reminder";
         auto severity = muxc::InfoBarSeverity::Informational;
 
-        switch (status.state)
+        if (status.registered)
         {
-        case GeneralAdvancedFeatureState::Registered:
             statusKey = "settings.general.advancedFeatures.registered";
-            break;
-        case GeneralAdvancedFeatureState::Checking:
-            statusKey = "settings.general.advancedFeatures.checking";
-            showButton = true;
-            break;
-        case GeneralAdvancedFeatureState::Unregistered:
-            statusKey = "settings.general.advancedFeatures.unregistered";
-            showButton = status.bridgeAvailable;
-            buttonEnabled = showButton;
-            showNotice = status.bridgeAvailable;
-            break;
-        case GeneralAdvancedFeatureState::RegistrationFailed:
-            statusKey = status.registered
-                ? "settings.general.advancedFeatures.registered"
-                : "settings.general.advancedFeatures.unregistered";
-            showButton = status.bridgeAvailable;
-            buttonEnabled = showButton;
-            showNotice = status.bridgeAvailable;
-            severity = muxc::InfoBarSeverity::Warning;
-            if (status.failure == GeneralAdvancedFeatureFailure::NotOwned)
-                noticeKey = "settings.general.advancedFeatures.notOwned";
-            else if (status.failure ==
-                GeneralAdvancedFeatureFailure::StorageError)
-                noticeKey = "settings.general.advancedFeatures.storageFailed";
-            else
-                noticeKey = "settings.general.advancedFeatures.failed";
-            break;
-        case GeneralAdvancedFeatureState::BridgeUnavailable:
-            if (status.offerSteamStore)
+        }
+        else
+        {
+            switch (status.state)
             {
-                statusKey =
-                    "settings.general.advancedFeatures.portable";
-                buttonKey =
-                    "settings.general.advancedFeatures.viewOnSteam";
+            case GeneralAdvancedFeatureState::Registered:
+                statusKey = "settings.general.advancedFeatures.registered";
+                break;
+            case GeneralAdvancedFeatureState::Checking:
+                statusKey = "settings.general.advancedFeatures.checking";
                 showButton = true;
-                buttonEnabled = true;
+                break;
+            case GeneralAdvancedFeatureState::Unregistered:
+                statusKey = "settings.general.advancedFeatures.unregistered";
+                showButton = status.bridgeAvailable;
+                buttonEnabled = showButton;
+                showNotice = status.bridgeAvailable;
+                break;
+            case GeneralAdvancedFeatureState::RegistrationFailed:
+                statusKey = "settings.general.advancedFeatures.unregistered";
+                showButton = status.bridgeAvailable;
+                buttonEnabled = showButton;
+                showNotice = status.bridgeAvailable;
+                severity = muxc::InfoBarSeverity::Warning;
+                if (status.failure == GeneralAdvancedFeatureFailure::NotOwned)
+                    noticeKey = "settings.general.advancedFeatures.notOwned";
+                else if (status.failure ==
+                    GeneralAdvancedFeatureFailure::StorageError)
+                    noticeKey =
+                        "settings.general.advancedFeatures.storageFailed";
+                else
+                    noticeKey = "settings.general.advancedFeatures.failed";
+                break;
+            case GeneralAdvancedFeatureState::BridgeUnavailable:
+                if (status.offerSteamStore)
+                {
+                    statusKey =
+                        "settings.general.advancedFeatures.portable";
+                    buttonKey =
+                        "settings.general.advancedFeatures.viewOnSteam";
+                    showButton = true;
+                    buttonEnabled = true;
+                }
+                break;
             }
-            break;
         }
 
         advancedFeatureStoreAction = status.offerSteamStore;
-        advancedFeatureStatus.Text(L(statusKey));
+        std::wstring statusText = L(statusKey);
+        if (status.registered)
+        {
+            const std::wstring expiryDate =
+                FormatEntitlementExpiryDate(status.validUntil);
+            if (!expiryDate.empty())
+            {
+                statusText = L(
+                    "settings.general.advancedFeatures.registeredUntil");
+                const std::wstring_view marker = L"{0}";
+                const auto position = statusText.find(marker);
+                if (position != std::wstring::npos)
+                    statusText.replace(position, marker.size(), expiryDate);
+            }
+        }
+        advancedFeatureStatus.Text(statusText);
         registerAdvancedFeaturesButton.Content(
             winrt::box_value(L(buttonKey)));
         muxa::AutomationProperties::SetName(

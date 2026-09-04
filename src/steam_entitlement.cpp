@@ -413,6 +413,7 @@ struct Service::Impl
         {
             snapshot.state = State::Registered;
             snapshot.registered = true;
+            snapshot.validUntil = cached->validUntil;
         }
     }
 
@@ -429,9 +430,11 @@ struct Service::Impl
         Failure failure = Failure::BridgeError;
         State state = State::RegistrationFailed;
         bool registered = false;
+        std::int64_t validUntil = 0;
         {
             std::lock_guard lock(mutex);
             registered = snapshot.registered;
+            validUntil = snapshot.validUntil;
         }
         if (response.outcome == BridgeOutcome::Owned)
         {
@@ -446,6 +449,7 @@ struct Service::Impl
                 state = State::Registered;
                 failure = Failure::None;
                 registered = true;
+                validUntil = record.validUntil;
             }
             else
                 failure = Failure::StorageError;
@@ -454,6 +458,7 @@ struct Service::Impl
         {
             failure = Failure::NotOwned;
             registered = false;
+            validUntil = 0;
             std::error_code ignored;
             std::filesystem::remove(protectedCache, ignored);
         }
@@ -468,6 +473,7 @@ struct Service::Impl
                 snapshot.state = state;
                 snapshot.failure = failure;
                 snapshot.registered = registered;
+                snapshot.validUntil = validUntil;
                 ++snapshot.revision;
                 notify = true;
             }

@@ -348,11 +348,17 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
             presenter.find(
               "GeneralAdvancedFeatureState::RegistrationFailed") !=
                 std::string::npos &&
+            presenter.find("if (status.registered)") !=
+                std::string::npos &&
+            presenter.find(
+              "settings.general.advancedFeatures.registeredUntil") !=
+                std::string::npos &&
             presenterHeader.find("queryAdvancedFeatureStatus") !=
                 std::string::npos &&
+            presenterHeader.find("validUntil") != std::string::npos &&
             presenterHeader.find("offerSteamStore") !=
                 std::string::npos,
-        "General conditionally presents Steam unlock status, a portable Steam Store action, an inline reminder, and manual registration");
+        "General keeps valid registrations quiet with a renewal deadline while conditionally presenting the portable Steam Store action and unregistered reminders");
     Check(presenter.find(
               "startupCard.content.Children().Append(startupOwnershipNotice)") !=
                 std::string::npos &&

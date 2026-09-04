@@ -62,6 +62,7 @@ struct GeneralAdvancedFeatureStatus
         GeneralAdvancedFeatureFailure::None;
     bool bridgeAvailable = false;
     bool registered = false;
+    std::int64_t validUntil = 0;
     bool cardVisible = false;
     bool offerSteamStore = false;
 };

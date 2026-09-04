@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "Erweiterte Funktionen freischalten, die nur Steam-Nutzern zur Verfügung stehen.",
     "settings.general.advancedFeatures.unlockStatus": "Freischaltungsstatus",
     "settings.general.advancedFeatures.registered": "Freigeschaltet",
+    "settings.general.advancedFeatures.registeredUntil": "Freigeschaltet · Bis {0} mit Steam verbinden, um zu verlängern",
     "settings.general.advancedFeatures.unregistered": "Nicht freigeschaltet",
     "settings.general.advancedFeatures.checking": "Steam wird überprüft…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge ist nicht verfügbar",

@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "Unlock Steam-only advanced features.",
     "settings.general.advancedFeatures.unlockStatus": "Unlock status",
     "settings.general.advancedFeatures.registered": "Unlocked",
+    "settings.general.advancedFeatures.registeredUntil": "Unlocked · Connect to Steam by {0} to renew",
     "settings.general.advancedFeatures.unregistered": "Not unlocked",
     "settings.general.advancedFeatures.checking": "Checking Steam…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge unavailable",

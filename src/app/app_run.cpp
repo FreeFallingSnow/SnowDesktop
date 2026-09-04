@@ -217,6 +217,7 @@ ToGeneralAdvancedFeatureStatus(
     snowdesktop::winui::GeneralAdvancedFeatureStatus target;
     target.bridgeAvailable = source.bridgeAvailable;
     target.registered = source.registered;
+    target.validUntil = source.validUntil;
     target.cardVisible = source.bridgeAvailable || deploymentKind ==
         snowdesktop::deployment::RuntimeDeploymentKind::Portable;
     target.offerSteamStore = !source.bridgeAvailable && deploymentKind ==

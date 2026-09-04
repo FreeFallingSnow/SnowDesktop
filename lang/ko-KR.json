@@ -1174,6 +1174,7 @@
     "settings.general.advancedFeatures.description": "Steam 사용자 전용 고급 기능을 잠금 해제합니다.",
     "settings.general.advancedFeatures.unlockStatus": "잠금 해제 상태",
     "settings.general.advancedFeatures.registered": "잠금 해제됨",
+    "settings.general.advancedFeatures.registeredUntil": "잠금 해제됨 · 갱신하려면 {0}까지 Steam에 연결하세요",
     "settings.general.advancedFeatures.unregistered": "잠금 해제되지 않음",
     "settings.general.advancedFeatures.checking": "Steam 확인 중…",
     "settings.general.advancedFeatures.unavailable": "Steam Bridge를 사용할 수 없음",

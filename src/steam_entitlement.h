@@ -39,6 +39,8 @@ struct Snapshot
     bool bridgeAvailable = false;
     /** An unexpired last-known ownership result remains usable while offline. */
     bool registered = false;
+    /** Unix timestamp when the cached ownership result stops being usable. */
+    std::int64_t validUntil = 0;
     std::uint64_t revision = 0;
 };
 

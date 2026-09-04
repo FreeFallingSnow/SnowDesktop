@@ -292,6 +292,8 @@ int main(int argc, char** argv)
         "the General WinUI presenter owns auto-start changes and receives runtime startup and Steam entitlement state");
     Check(run.find("target.cardVisible = source.bridgeAvailable") !=
                 std::string::npos &&
+            run.find("target.validUntil = source.validUntil") !=
+                std::string::npos &&
             run.find("RuntimeDeploymentKind::Portable") !=
                 std::string::npos &&
             run.find("target.offerSteamStore = !source.bridgeAvailable") !=

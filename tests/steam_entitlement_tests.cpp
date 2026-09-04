@@ -67,6 +67,7 @@ int wmain(int argc, wchar_t** argv)
     std::filesystem::create_directories(root, error);
     Check(!error, "the isolated entitlement test directory is created");
     const std::filesystem::path cache = root / L"entitlement.bin";
+    std::int64_t registeredUntil = 0;
 
     {
         Service service(fixture, fixture, cache);
@@ -90,7 +91,11 @@ int wmain(int argc, wchar_t** argv)
         while (service.Current().state == State::Checking &&
             std::chrono::steady_clock::now() < renewalDeadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        Check(service.IsRegistered(),
+        const Snapshot renewed = service.Current();
+        registeredUntil = renewed.validUntil;
+        const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        Check(renewed.registered && registeredUntil > now,
             "successful startup revalidation renews registration");
     }
 
@@ -102,7 +107,8 @@ int wmain(int argc, wchar_t** argv)
         "the cache does not store ownership or Steam ID as plaintext");
     {
         Service restored(fixture, fixture, cache);
-        Check(restored.IsRegistered(),
+        Check(restored.IsRegistered() &&
+                restored.Current().validUntil == registeredUntil,
             "the current Windows user can restore an unexpired DPAPI cache");
     }
     const auto offlineFixture = root / L"offline-bridge.exe";
@@ -126,6 +132,7 @@ int wmain(int argc, wchar_t** argv)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         const Snapshot snapshot = offline.Current();
         Check(snapshot.registered &&
+                snapshot.validUntil == registeredUntil &&
                 snapshot.state == State::RegistrationFailed &&
                 snapshot.failure == Failure::SteamUnavailable &&
                 std::filesystem::is_regular_file(cache),
@@ -143,6 +150,7 @@ int wmain(int argc, wchar_t** argv)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         const Snapshot snapshot = refunded.Current();
         Check(!snapshot.registered &&
+                snapshot.validUntil == 0 &&
                 snapshot.failure == Failure::NotOwned &&
                 !std::filesystem::exists(cache),
             "an authoritative owned=false response immediately revokes the cache");
