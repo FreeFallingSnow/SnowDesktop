@@ -339,6 +339,8 @@ set(SNOWDESKTOP_SOURCES
     src/general_settings.cpp
     src/category_settings.cpp
     src/component_preview.cpp
+    src/native_component_preview_export.cpp
+    src/preview_png_writer.cpp
     src/widget_author_preview.cpp
     src/widget_preview_stage.cpp
     src/widget_preview_scene.cpp

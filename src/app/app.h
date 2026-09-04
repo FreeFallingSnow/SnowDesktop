@@ -67,6 +67,7 @@
 #include "../menu_quick_icon.h"
 #include "../modern_menu.h"
 #include "../component_preview.h"
+#include "../native_component_preview_export.h"
 #include "../widget_preview_scene.h"
 #include "../shell_file_operation_worker.h"
 #include "everything_search.h"
@@ -466,6 +467,11 @@ public:
      * @return 退出码
      */
     int Run(HINSTANCE instance, int showCommand);
+
+    /** Render deterministic native component presets without starting desktop UI. */
+    snowdesktop::native_component_preview::Result
+        ExportNativeComponentPreviews(
+            const snowdesktop::native_component_preview::Request& request);
 
     // ── Friends（面向对象渲染分发）──────────────────────────
     friend class DesktopIcon;

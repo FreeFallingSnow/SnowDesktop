@@ -770,6 +770,44 @@ int wmain(int argc, wchar_t** argv)
     TemporaryDirectory temporary;
     const auto background = temporary.path / L"author-background.bmp";
     WriteSolidBmp(background, 18, 126, 214);
+
+    const auto nativeOutputDirectory =
+        temporary.path / L"native-collection-previews";
+    const auto [nativeExit, nativeJson] = Run(snowwidget, {
+        L"preview-native", L"collection", nativeOutputDirectory.wstring(),
+        L"--dpi", L"96", L"--locale", L"en-US",
+        L"--appearance", L"light",
+        L"--background", background.wstring(),
+        L"--canvas-width", L"640", L"--canvas-height", L"480",
+        L"--padding", L"48", L"--host", host.wstring() });
+    Check(nativeExit == 0 &&
+            nativeJson.find("\"ok\":true") != std::string::npos &&
+            nativeJson.find("\"preset\":\"compact\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"large-folder\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"scroll-grid\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"scroll-list\"") !=
+                std::string::npos,
+        "native preview exports every collection presentation preset");
+    const auto compactCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-compact.png", 640, 480);
+    const auto largeFolderCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-large-folder.png", 640, 480);
+    const auto scrollGridCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-scroll-grid.png", 640, 480);
+    const auto scrollListCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-scroll-list.png", 640, 480);
+    constexpr RECT nativeCanvasBounds{ 0, 0, 640, 480 };
+    Check(CountDifferingPixels(compactCollection, largeFolderCollection,
+              nativeCanvasBounds) > 1000 &&
+            CountDifferingPixels(largeFolderCollection,
+                scrollGridCollection, nativeCanvasBounds) > 1000 &&
+            CountDifferingPixels(scrollGridCollection,
+                scrollListCollection, nativeCanvasBounds) > 1000,
+        "native collection exports retain visibly distinct configurations");
+
     const auto backgroundOutput = temporary.path / L"custom-background.png";
     const auto backgroundSource = repository / L"widgets" / L"analog-clock";
     const auto [backgroundExit, backgroundJson] = Run(snowwidget, {

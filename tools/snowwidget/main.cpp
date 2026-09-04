@@ -46,6 +46,12 @@ void PrintUsage()
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--background image-file]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
+        << "  snowwidget preview-native collection <output-directory>"
+           " [--dpi N] [--locale CODE]"
+           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--background image-file]"
+           " [--canvas-width N] [--canvas-height N] [--padding N]"
+           " [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
@@ -361,6 +367,78 @@ int RunPreviewHost(const std::filesystem::path& host,
     return wait == WAIT_OBJECT_0 && exitCode == 0 && !json.empty()
         ? 0 : 1;
 }
+
+int RunNativePreviewHost(const std::filesystem::path& host,
+    std::wstring_view component,
+    const std::filesystem::path& outputDirectory,
+    int dpi, std::wstring_view locale, std::wstring_view appearance,
+    const std::filesystem::path& backgroundImage,
+    int canvasWidth, int canvasHeight, int padding)
+{
+    const auto resultPath = CreateResultPath();
+    if (!resultPath)
+    {
+        std::cerr << "{\"ok\":false,\"stage\":\"host.result\","
+            "\"error\":\"cannot create the native preview result file\"}\n";
+        return 1;
+    }
+    std::wstring commandLine = QuoteWindowsArgument(host.wstring());
+    const auto append = [&](std::wstring_view value) {
+        commandLine.push_back(L' ');
+        commandLine += QuoteWindowsArgument(value);
+    };
+    append(L"--native-component-preview");
+    append(component);
+    append(outputDirectory.wstring());
+    append(std::to_wstring(dpi));
+    append(locale);
+    append(appearance);
+    append(backgroundImage.wstring());
+    append(std::to_wstring(canvasWidth));
+    append(std::to_wstring(canvasHeight));
+    append(std::to_wstring(padding));
+    append(resultPath->wstring());
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    std::vector<wchar_t> mutableCommand(
+        commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+    const BOOL launched = CreateProcessW(host.c_str(),
+        mutableCommand.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+    if (!launched)
+    {
+        std::error_code removeError;
+        std::filesystem::remove(*resultPath, removeError);
+        std::cerr << "{\"ok\":false,\"stage\":\"host.launch\","
+            "\"error\":\"cannot launch SnowDesktop native preview host "
+            "(Windows error " << GetLastError() << ")\"}\n";
+        return 1;
+    }
+    CloseHandle(process.hThread);
+    const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
+    if (wait == WAIT_TIMEOUT)
+    {
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 5000);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    const std::string json = ReadUtf8File(*resultPath);
+    std::error_code removeError;
+    std::filesystem::remove(*resultPath, removeError);
+    if (!json.empty())
+        std::cout << json << (json.back() == '\n' ? "" : "\n");
+    else
+        std::cerr << "{\"ok\":false,\"stage\":\"host.result\","
+            "\"error\":\"native preview host exited without a result\","
+            "\"exitCode\":" << exitCode << "}\n";
+    return wait == WAIT_OBJECT_0 && exitCode == 0 && !json.empty()
+        ? 0 : 1;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -386,7 +464,7 @@ int wmain(int argc, wchar_t** argv)
                "\"executableApiVersions\":[2],\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
                "\"lint\",\"quality\",\"test\",\"preview\",\"permissions\","
-               "\"validate\",\"pack\",\"publish-local\"]}"
+               "\"preview-native\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -425,6 +503,117 @@ int wmain(int argc, wchar_t** argv)
     snowdesktop::widget::ValidationReport report;
     snowdesktop::widget::PackageArtifact artifact;
     std::string error;
+
+    if (command == L"preview-native")
+    {
+        if (argc < 4 || std::wstring_view(argv[2]) != L"collection")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"preview-native requires collection and an output directory\"}\n";
+            return 2;
+        }
+        const std::filesystem::path outputDirectory = argv[3];
+        int dpi = 144;
+        int canvasWidth = 1280;
+        int canvasHeight = 720;
+        int padding = 72;
+        std::wstring locale = L"en-US";
+        std::wstring appearance = L"dark";
+        std::filesystem::path backgroundImage;
+        std::filesystem::path explicitHost;
+        for (int index = 4; index < argc; ++index)
+        {
+            const std::wstring_view option(argv[index]);
+            if ((option == L"--dpi" || option == L"--locale" ||
+                    option == L"--appearance" ||
+                    option == L"--background" ||
+                    option == L"--canvas-width" ||
+                    option == L"--canvas-height" ||
+                    option == L"--padding" || option == L"--host") &&
+                index + 1 >= argc)
+            {
+                std::cerr << "{\"ok\":false,\"error\":\"preview-native option is missing its value\"}\n";
+                return 2;
+            }
+            if (option == L"--dpi")
+            {
+                if (!ParseInteger(argv[++index], 96, 480, dpi))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"DPI must be an integer from 96 to 480\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--locale")
+            {
+                locale = argv[++index];
+                if (locale.empty() || locale.size() > 35)
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"locale must contain 1 to 35 characters\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--appearance")
+            {
+                appearance = argv[++index];
+                if (appearance != L"dark" && appearance != L"light" &&
+                    appearance != L"glass-dark" &&
+                    appearance != L"glass-light" &&
+                    appearance != L"acrylic-dark" &&
+                    appearance != L"acrylic-light")
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--background")
+                backgroundImage = argv[++index];
+            else if (option == L"--canvas-width")
+            {
+                if (!ParseInteger(argv[++index], 320, 8192, canvasWidth))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"canvas width must be an integer from 320 to 8192\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--canvas-height")
+            {
+                if (!ParseInteger(argv[++index], 240, 8192, canvasHeight))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"canvas height must be an integer from 240 to 8192\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--padding")
+            {
+                if (!ParseInteger(argv[++index], 0, 4096, padding))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"padding must be an integer from 0 to 4096\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--host")
+                explicitHost = argv[++index];
+            else
+            {
+                std::cerr << "{\"ok\":false,\"error\":\"unknown preview-native option\"}\n";
+                return 2;
+            }
+        }
+        if (padding * 2 >= canvasWidth || padding * 2 >= canvasHeight)
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
+            return 2;
+        }
+        const auto host = FindPreviewHost(explicitHost);
+        if (!host)
+        {
+            std::cerr << "{\"ok\":false,\"stage\":\"host.locate\","
+                "\"error\":\"SnowDesktop.exe was not found; pass --host or set SNOWDESKTOP_HOST\"}\n";
+            return 1;
+        }
+        return RunNativePreviewHost(*host, argv[2], outputDirectory,
+            dpi, locale, appearance, backgroundImage,
+            canvasWidth, canvasHeight, padding);
+    }
 
     if (command == L"inspect")
     {

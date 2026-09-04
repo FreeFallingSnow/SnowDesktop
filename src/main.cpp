@@ -21,6 +21,7 @@
 #include "l10n.h"
 #include "single_instance.h"
 #include "widget_author_preview.h"
+#include "native_component_preview_export.h"
 
 #include <commctrl.h>
 
@@ -377,6 +378,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         TryRunWidgetAuthorPreviewHostCommand(previewCommandHandled);
     if (previewCommandHandled)
         return previewCommandResult;
+
+    bool nativePreviewCommandHandled = false;
+    const int nativePreviewCommandResult =
+        snowdesktop::native_component_preview::TryRunHostCommand(
+            instance, nativePreviewCommandHandled);
+    if (nativePreviewCommandHandled)
+        return nativePreviewCommandResult;
 
     const std::uintptr_t watchedProcessHandle =
         snowdesktop::application_restart_policy::
