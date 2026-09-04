@@ -11,7 +11,7 @@ namespace
 
 HBITMAP CreateSymbolBitmap(
     const std::wstring& glyph, int requestedSize, bool lightTheme,
-    size_t colorIndex)
+    std::uint32_t backgroundRgb)
 {
     (void)lightTheme;
     const int size = std::clamp(requestedSize, 32, 256);
@@ -37,9 +37,6 @@ HBITMAP CreateSymbolBitmap(
     std::fill_n(pixels, static_cast<size_t>(size) * size, 0x00000000u);
     HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
     SetBkMode(dc, TRANSPARENT);
-    const std::uint32_t backgroundRgb = demo_mode_rules::
-        kVisualIdentities[colorIndex %
-            demo_mode_rules::kVisualIdentities.size()].backgroundRgb;
     const COLORREF background = RGB(
         (backgroundRgb >> 16U) & 0xFFU,
         (backgroundRgb >> 8U) & 0xFFU,
@@ -52,7 +49,7 @@ HBITMAP CreateSymbolBitmap(
     HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
     HGDIOBJ oldBrush = brush ? SelectObject(dc, brush) : nullptr;
     RoundRect(dc, margin, margin, size - margin, size - margin,
-        std::max(4, size / 3), std::max(4, size / 3));
+        std::max(4, size / 4), std::max(4, size / 4));
 
     SetTextColor(dc, RGB(255, 255, 255));
     HFONT font = CreateFontW(-std::max(12, size * 12 / 24), 0, 0, 0,
@@ -100,8 +97,12 @@ void WidgetPreviewScene::PreparePlaceholderModels(
         desktop.name = sample.title;
         desktop.parsingName = sample.key;
         desktop.layoutKey = sample.key;
+        const std::uint32_t backgroundRgb = sample.backgroundRgb != 0
+            ? sample.backgroundRgb
+            : demo_mode_rules::kVisualIdentities[index %
+                demo_mode_rules::kVisualIdentities.size()].backgroundRgb;
         desktop.iconBitmap = CreateSymbolBitmap(
-            sample.glyph, bitmapSize, lightTheme, index);
+            sample.glyph, bitmapSize, lightTheme, backgroundRgb);
         desktop.iconBitmapSize = { bitmapSize, bitmapSize };
         desktop.selected = false;
         desktop.iconState = desktop.iconBitmap
@@ -113,7 +114,7 @@ void WidgetPreviewScene::PreparePlaceholderModels(
         folder.fullPath = sample.key;
         folder.isDirectory = sample.directory;
         folder.iconBitmap = CreateSymbolBitmap(
-            sample.glyph, bitmapSize, lightTheme, index);
+            sample.glyph, bitmapSize, lightTheme, backgroundRgb);
         folder.iconBitmapSize = { bitmapSize, bitmapSize };
         folder.selected = false;
         folder.iconState = folder.iconBitmap

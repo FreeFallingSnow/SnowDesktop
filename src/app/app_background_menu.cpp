@@ -1,5 +1,4 @@
 #include "app.h"
-#include "../demo_mode_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../modern_menu.h"
 #include "../search_match.h"
@@ -778,6 +777,40 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.contentTheme);
     auto makeScene = [&](bool applications = false) {
         auto scene = std::make_shared<snowdesktop::WidgetPreviewScene>();
+        struct PreviewItemVisual
+        {
+            const wchar_t* glyph;
+            std::uint32_t backgroundRgb;
+        };
+        static constexpr std::array<PreviewItemVisual, 12>
+            applicationVisuals{
+                PreviewItemVisual{ L"\uE855", 0x7A6B9B }, // music
+                PreviewItemVisual{ L"\uF4F9", 0x4F7F7C }, // location
+                PreviewItemVisual{ L"\uF489", 0x9A6B69 }, // image
+                PreviewItemVisual{ L"\uF507", 0x5A74A8 }, // mail
+                PreviewItemVisual{ L"\uE24F", 0x7A6B9B }, // calendar
+                PreviewItemVisual{ L"\uF86F", 0x607B91 }, // weather
+                PreviewItemVisual{ L"\uF56C", 0x9A784F }, // note
+                PreviewItemVisual{ L"\uF472", 0x7A6B9B }, // headphones
+                PreviewItemVisual{ L"\uE179", 0x5A74A8 }, // book
+                PreviewItemVisual{ L"\uE233", 0x697986 }, // calculator
+                PreviewItemVisual{ L"\uF255", 0x9A6B69 }, // camera
+                PreviewItemVisual{ L"\uE6B2", 0x4F7F7C }, // globe
+            };
+        static constexpr std::array<PreviewItemVisual, 12> fileVisuals{
+            PreviewItemVisual{ L"\uF379", 0x5A74A8 }, // document
+            PreviewItemVisual{ L"\uF489", 0x9A6B69 }, // image
+            PreviewItemVisual{ L"\uF3AD", 0x98645E }, // PDF
+            PreviewItemVisual{ L"\uE644", 0x9A784F }, // folder
+            PreviewItemVisual{ L"\uE54C", 0x5F7D6E }, // table
+            PreviewItemVisual{ L"\uF489", 0x9A6B69 }, // image
+            PreviewItemVisual{ L"\uE558", 0x697986 }, // text document
+            PreviewItemVisual{ L"\uE644", 0x9A784F }, // folder
+            PreviewItemVisual{ L"\uF56C", 0x697986 }, // note
+            PreviewItemVisual{ L"\uF489", 0x9A6B69 }, // image
+            PreviewItemVisual{ L"\uF444", 0x9A784F }, // food
+            PreviewItemVisual{ L"\uF2C3", 0x4F7F7C }, // city
+        };
         const std::wstring fileTitles[] = {
             _LW("app.widget_preview.item_travel_plans"),
             _LW("app.widget_preview.item_seaside_sunset"),
@@ -808,12 +841,12 @@ DesktopApp::BuildAddWidgetMenuPreview(
         };
         for (int i = 0; i < 12; ++i)
         {
-            const std::wstring glyph(
-                snowdesktop::demo_mode_rules::
-                    kVisualIdentities[static_cast<size_t>(i)].glyph);
+            const PreviewItemVisual& visual = applications
+                ? applicationVisuals[static_cast<size_t>(i)]
+                : fileVisuals[static_cast<size_t>(i)];
             snowdesktop::WidgetPreviewItem item;
-            item.key = L"__preview_item_" + glyph;
-            item.glyph = glyph;
+            item.key = L"__preview_item_" + std::to_wstring(i);
+            item.glyph = visual.glyph;
             item.title = applications
                 ? applicationTitles[i] : fileTitles[i];
             item.categoryId = applications
@@ -821,6 +854,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 : (i % 2 == 0 ? L"documents" : L"images");
             item.dateGroup = i < 3 ? L"today" : L"earlier";
             item.directory = !applications && (i == 3 || i == 7);
+            item.backgroundRgb = visual.backgroundRgb;
             scene->AddItem(std::move(item));
         }
         const int bitmapSize = previewPage

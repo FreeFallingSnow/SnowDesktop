@@ -90,7 +90,7 @@ int wmain()
 
     snowdesktop::WidgetPreviewScene scene;
     scene.AddItem({ L"sample-a", L"Sample A", L"A",
-        L"documents", L"today", false });
+        L"documents", L"today", false, 0x425D79 });
     scene.PreparePlaceholderModels(96, false);
     DesktopWidget child;
     child.id = L"child";
@@ -113,8 +113,13 @@ int wmain()
     BITMAP previewIcon{};
     Expect(GetObjectW(scene.FindDesktopItem(L"sample-a")->iconBitmap,
                sizeof(previewIcon), &previewIcon) != 0 &&
-            previewIcon.bmBitsPixel == 32,
-        "preview placeholder uses a 32-bit icon bitmap");
+            previewIcon.bmBitsPixel == 32 && previewIcon.bmBits != nullptr,
+        "preview placeholder uses an inspectable 32-bit icon bitmap");
+    const auto* previewPixels =
+        static_cast<const std::uint32_t*>(previewIcon.bmBits);
+    Expect((previewPixels[16 * previewIcon.bmWidth + 16] & 0x00ffffffu) ==
+            0x425D79u,
+        "preview placeholder honors its semantic background color");
     Expect(scene.FindWidget(L"child") != nullptr,
         "preview scene resolves temporary child widgets");
     Expect(scene.FindWidget(L"missing") == nullptr,
