@@ -21,6 +21,7 @@ struct PreviewRenderRequest
     std::filesystem::path backgroundImage;
     int canvasSize = 0;
     int padding = 0;
+    bool contentOnly = false;
     std::unordered_map<std::string, std::string> storage;
 };
 
@@ -40,6 +41,7 @@ struct PreviewRenderResult
     int placementY = 0;
     int placementWidth = 0;
     int placementHeight = 0;
+    int cornerRadius = 0;
     int columns = 0;
     int rows = 0;
     unsigned dpi = 0;
@@ -50,6 +52,7 @@ struct PreviewRenderResult
     std::string foregroundTheme;
     std::string dataState;
     std::filesystem::path backgroundImage;
+    bool contentOnly = false;
 
     std::string ToJson() const;
 };

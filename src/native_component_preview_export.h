@@ -21,6 +21,7 @@ struct Request
     int canvasHeight = 720;
     int padding = 72;
     bool transparent = false;
+    bool contentOnly = false;
 };
 
 struct Output
@@ -28,6 +29,12 @@ struct Output
     std::string component;
     std::string preset;
     std::filesystem::path path;
+    bool listMode = false;
+    bool scrollContainerMode = false;
+    bool dateHeaders = false;
+    bool showFileCategories = false;
+    bool showSearchBox = false;
+    int cornerRadius = 0;
     int componentWidth = 0;
     int componentHeight = 0;
     int placementX = 0;

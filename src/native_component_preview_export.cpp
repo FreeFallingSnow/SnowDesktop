@@ -189,6 +189,7 @@ std::string Result::ToJson() const
         << ",\"background\":"
         << JsonString(WideToUtf8(request.backgroundImage.wstring()))
         << ",\"transparent\":" << (request.transparent ? "true" : "false")
+        << ",\"contentOnly\":" << (request.contentOnly ? "true" : "false")
         << ",\"canvasWidth\":" << request.canvasWidth
         << ",\"canvasHeight\":" << request.canvasHeight
         << ",\"padding\":" << request.padding
@@ -200,6 +201,17 @@ std::string Result::ToJson() const
         output << "{\"component\":" << JsonString(item.component)
             << ",\"preset\":" << JsonString(item.preset)
             << ",\"path\":" << JsonString(WideToUtf8(item.path.wstring()))
+            << ",\"settings\":{\"listMode\":"
+            << (item.listMode ? "true" : "false")
+            << ",\"scrollContainerMode\":"
+            << (item.scrollContainerMode ? "true" : "false")
+            << ",\"dateHeaders\":"
+            << (item.dateHeaders ? "true" : "false")
+            << ",\"showFileCategories\":"
+            << (item.showFileCategories ? "true" : "false")
+            << ",\"showSearchBox\":"
+            << (item.showSearchBox ? "true" : "false") << '}'
+            << ",\"cornerRadius\":" << item.cornerRadius
             << ",\"componentWidth\":" << item.componentWidth
             << ",\"componentHeight\":" << item.componentHeight
             << ",\"placementX\":" << item.placementX
@@ -225,10 +237,11 @@ DesktopApp::ExportNativeComponentPreviews(
         result.error = "unsupported native component preview type";
         return result;
     }
-    if (request.transparent && !request.backgroundImage.empty())
+    if ((request.transparent || request.contentOnly) &&
+        !request.backgroundImage.empty())
     {
         result.stage = "request.background";
-        result.error = "transparent previews cannot use a background image";
+        result.error = "transparent and content-only previews cannot use a background image";
         return result;
     }
 
@@ -239,6 +252,15 @@ DesktopApp::ExportNativeComponentPreviews(
         result.stage = "request.appearance";
         result.error = "unsupported component preview appearance";
         return result;
+    }
+    if (request.contentOnly)
+    {
+        appearance.widgetAlpha = 0.0f;
+        appearance.widgetBorderAlpha = 0.0f;
+        appearance.gradientEndA = 0.0f;
+        appearance.widgetEdgeHighlightEnabled = false;
+        appearance.glassEnabled = false;
+        appearance.acrylicEnabled = false;
     }
 
     std::wstring languageDirectory = GetExecutableDirectoryPath();
@@ -317,7 +339,7 @@ DesktopApp::ExportNativeComponentPreviews(
         }
     }
     widget_preview::Wallpaper stage;
-    if (request.transparent)
+    if (request.transparent || request.contentOnly)
     {
         stage.width = request.canvasWidth;
         stage.height = request.canvasHeight;
@@ -339,57 +361,121 @@ DesktopApp::ExportNativeComponentPreviews(
         return result;
     }
 
-    struct Preset
+    struct Variant
     {
-        const char* id;
-        const wchar_t* filename;
+        std::string id;
+        std::filesystem::path filename;
         std::size_t cardIndex;
-        bool scrollContainerMode;
-        bool listMode;
-    };
-    constexpr std::array collectionPresets{
-        Preset{ "compact", L"collection-compact.png", 0, false, false },
-        Preset{ "large-folder", L"collection-large-folder.png", 1,
-            false, false },
-        Preset{ "scroll-grid", L"collection-scroll-grid.png", 1,
-            true, false },
-        Preset{ "scroll-list", L"collection-scroll-list.png", 1,
-            true, true },
-    };
-    constexpr std::array collectionGroupPresets{
-        Preset{ "grid", L"collection-group-grid.png", 0, false, false },
-        Preset{ "list", L"collection-group-list.png", 0, false, true },
-    };
-    constexpr std::array fileGroupPresets{
-        Preset{ "grid", L"file-group-grid.png", 0, false, false },
-        Preset{ "list", L"file-group-list.png", 0, false, true },
-    };
-    constexpr std::array fileCategoryPresets{
-        Preset{ "grid", L"file-categories-grid.png", 0, false, false },
-        Preset{ "list", L"file-categories-list.png", 0, false, true },
-    };
-    constexpr std::array folderMappingPresets{
-        Preset{ "grid", L"folder-mapping-grid.png", 0, false, false },
-        Preset{ "list", L"folder-mapping-list.png", 0, false, true },
+        std::optional<bool> scrollContainerMode;
+        std::optional<bool> listMode;
+        std::optional<bool> dateHeaders;
+        std::optional<bool> showFileCategories;
+        std::optional<bool> showSearchBox;
     };
     struct ComponentDefinition
     {
         std::string_view id;
         UINT command;
-        std::span<const Preset> presets;
         std::size_t requiredCards;
     };
     const std::array definitions{
         ComponentDefinition{ "collection", kContextAddCollectionWidget,
-            collectionPresets, 2 },
+            2 },
         ComponentDefinition{ "collection-group",
-            kContextAddCollectionGroupWidget, collectionGroupPresets, 1 },
-        ComponentDefinition{ "file-group", kContextAddFileGroupWidget,
-            fileGroupPresets, 1 },
+            kContextAddCollectionGroupWidget, 1 },
+        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 1 },
         ComponentDefinition{ "file-categories",
-            kContextAddFileCategoryWidget, fileCategoryPresets, 1 },
+            kContextAddFileCategoryWidget, 1 },
         ComponentDefinition{ "folder-mapping",
-            kContextAddFolderMappingWidget, folderMappingPresets, 1 },
+            kContextAddFolderMappingWidget, 1 },
+    };
+    const auto filename = [](std::string_view prefix,
+                              std::string_view id) {
+        const std::string value = std::string(prefix) + "-" +
+            std::string(id) + ".png";
+        return std::filesystem::path(
+            std::wstring(value.begin(), value.end()));
+    };
+    const auto buildVariants = [&](std::string_view component) {
+        std::vector<Variant> variants;
+        if (component == "collection")
+        {
+            variants.push_back({ "compact", L"collection-compact.png", 0 });
+            variants.push_back({ "large-folder",
+                L"collection-large-folder.png", 1, false, false });
+            variants.push_back({ "large-folder-list",
+                L"collection-large-folder-list.png", 1, false, true });
+            variants.push_back({ "scroll-grid",
+                L"collection-scroll-grid.png", 1, true, false });
+            variants.push_back({ "scroll-list",
+                L"collection-scroll-list.png", 1, true, true });
+            return variants;
+        }
+        if (component == "collection-group")
+        {
+            for (const bool listMode : { false, true })
+            {
+                for (const bool showSearchBox : { false, true })
+                {
+                    std::string id = listMode ? "list" : "grid";
+                    if (showSearchBox) id += "-search";
+                    variants.push_back({ id,
+                        filename("collection-group", id), 0,
+                        std::nullopt, listMode, std::nullopt,
+                        std::nullopt, showSearchBox });
+                }
+            }
+            return variants;
+        }
+
+        bool defaultDateHeaders = false;
+        bool defaultShowFileCategories = false;
+        bool defaultShowSearchBox = false;
+        std::string_view prefix;
+        if (component == "file-group")
+        {
+            prefix = "file-group";
+            defaultShowFileCategories = true;
+        }
+        else if (component == "file-categories")
+        {
+            prefix = "file-categories";
+            defaultShowFileCategories = true;
+            defaultShowSearchBox = true;
+        }
+        else
+        {
+            prefix = "folder-mapping";
+        }
+        for (const bool listMode : { false, true })
+        {
+            for (const bool dateHeaders : { false, true })
+            {
+                for (const bool showFileCategories : { false, true })
+                {
+                    for (const bool showSearchBox : { false, true })
+                    {
+                        std::string id = listMode ? "list" : "grid";
+                        const bool defaultProperties =
+                            dateHeaders == defaultDateHeaders &&
+                            showFileCategories == defaultShowFileCategories &&
+                            showSearchBox == defaultShowSearchBox;
+                        if (!defaultProperties)
+                        {
+                            id += dateHeaders ? "-date" : "-no-date";
+                            id += showFileCategories
+                                ? "-categories" : "-no-categories";
+                            id += showSearchBox
+                                ? "-search" : "-no-search";
+                        }
+                        variants.push_back({ id, filename(prefix, id), 0,
+                            std::nullopt, listMode, dateHeaders,
+                            showFileCategories, showSearchBox });
+                    }
+                }
+            }
+        }
+        return variants;
     };
     for (const ComponentDefinition& definition : definitions)
     {
@@ -403,9 +489,9 @@ DesktopApp::ExportNativeComponentPreviews(
             result.error = "native component preview presets are unavailable";
             return result;
         }
-        for (const Preset& preset : definition.presets)
+        for (const Variant& variant : buildVariants(definition.id))
         {
-            component_preview::Card& card = model.cards[preset.cardIndex];
+            component_preview::Card& card = model.cards[variant.cardIndex];
             const int width = card.previewWidth;
             const int height = card.previewHeight;
             if (width <= 0 || height <= 0 ||
@@ -419,13 +505,20 @@ DesktopApp::ExportNativeComponentPreviews(
             const int placementX = (request.canvasWidth - width) / 2;
             const int placementY = (request.canvasHeight - height) / 2;
             component_preview::ApplySettings settings = card.applySettings;
-            settings.scrollContainerMode = preset.scrollContainerMode;
-            settings.listMode = preset.listMode;
+            if (variant.scrollContainerMode)
+                settings.scrollContainerMode = *variant.scrollContainerMode;
+            if (variant.listMode) settings.listMode = *variant.listMode;
+            if (variant.dateHeaders)
+                settings.dateHeaders = *variant.dateHeaders;
+            if (variant.showFileCategories)
+                settings.showFileCategories = *variant.showFileCategories;
+            if (variant.showSearchBox)
+                settings.showSearchBox = *variant.showSearchBox;
             const component_preview::StagePlacement placement{
                 request.canvasWidth, request.canvasHeight,
                 placementX, placementY, lightStage,
                 sourceWallpaper ? &*sourceWallpaper : nullptr,
-                request.transparent };
+                request.transparent || request.contentOnly };
             component_preview::Bitmap rendered = card.render(
                 width, height, request.dpi, placement, settings, false);
             if (rendered.width != width || rendered.height != height ||
@@ -433,7 +526,7 @@ DesktopApp::ExportNativeComponentPreviews(
                     static_cast<std::size_t>(width) * height)
             {
                 result.stage = "render." + std::string(definition.id) +
-                    "." + preset.id;
+                    "." + variant.id;
                 result.error = "native component renderer returned an empty bitmap";
                 return result;
             }
@@ -441,16 +534,21 @@ DesktopApp::ExportNativeComponentPreviews(
             widget_preview::Wallpaper canvas = stage;
             CopyBitmap(std::move(rendered), placementX, placementY, canvas);
             const std::filesystem::path outputPath =
-                request.outputDirectory / preset.filename;
+                request.outputDirectory / variant.filename;
             if (!preview_png::Save(outputPath, canvas.width, canvas.height,
                     canvas.pixels, result.error))
             {
                 result.stage = "png." + std::string(definition.id) +
-                    "." + preset.id;
+                    "." + variant.id;
                 return result;
             }
-            result.outputs.push_back({ std::string(definition.id), preset.id,
-                outputPath, width, height, placementX, placementY });
+            result.outputs.push_back({ std::string(definition.id), variant.id,
+                outputPath, settings.listMode,
+                settings.scrollContainerMode, settings.dateHeaders,
+                settings.showFileCategories, settings.showSearchBox,
+                ScaleWidgetCu(appearance.cornerRadius,
+                    GetGridPageCuScale(page)),
+                width, height, placementX, placementY });
         }
     }
 
@@ -480,7 +578,7 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     handled = true;
     Result result;
     std::filesystem::path resultPath;
-    if (argumentCount != 13)
+    if (argumentCount != 14)
     {
         result.stage = "request.arguments";
         result.error = "invalid native component preview host arguments";
@@ -494,14 +592,16 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     request.locale = WideToUtf8(arguments[5]);
     request.appearance = WideToUtf8(arguments[6]);
     request.backgroundImage = arguments[7];
-    resultPath = arguments[12];
+    resultPath = arguments[13];
     int dpi = 0;
     if (!ParseInteger(arguments[4], 96, 480, dpi) ||
         !ParseInteger(arguments[8], 320, 8192, request.canvasWidth) ||
         !ParseInteger(arguments[9], 240, 8192, request.canvasHeight) ||
         !ParseInteger(arguments[10], 0, 4096, request.padding) ||
         (std::wstring_view(arguments[11]) != L"0" &&
-         std::wstring_view(arguments[11]) != L"1"))
+         std::wstring_view(arguments[11]) != L"1") ||
+        (std::wstring_view(arguments[12]) != L"0" &&
+         std::wstring_view(arguments[12]) != L"1"))
     {
         result.request = request;
         result.stage = "request.arguments";
@@ -512,10 +612,12 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     }
     request.dpi = static_cast<unsigned>(dpi);
     request.transparent = std::wstring_view(arguments[11]) == L"1";
+    request.contentOnly = std::wstring_view(arguments[12]) == L"1";
     result.request = request;
     if (!IsSupportedComponent(request.component) || request.locale.empty() ||
         request.locale.size() > 35 ||
-        (request.transparent && !request.backgroundImage.empty()) ||
+        ((request.transparent || request.contentOnly) &&
+            !request.backgroundImage.empty()) ||
         request.padding * 2 >= request.canvasWidth ||
         request.padding * 2 >= request.canvasHeight)
     {

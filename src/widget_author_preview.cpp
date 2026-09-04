@@ -530,6 +530,7 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"placementY\":" << placementY
         << ",\"placementWidth\":" << placementWidth
         << ",\"placementHeight\":" << placementHeight
+        << ",\"cornerRadius\":" << cornerRadius
         << ",\"columns\":" << columns
         << ",\"rows\":" << rows
         << ",\"dpi\":" << dpi
@@ -540,7 +541,9 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"foregroundTheme\":" << JsonString(foregroundTheme)
         << ",\"dataState\":" << JsonString(dataState)
         << ",\"background\":"
-        << JsonString(WideToUtf8(backgroundImage.wstring())) << '}';
+        << JsonString(WideToUtf8(backgroundImage.wstring()))
+        << ",\"contentOnly\":" << (contentOnly ? "true" : "false")
+        << '}';
     return output.str();
 }
 
@@ -559,6 +562,14 @@ PreviewRenderResult RenderWidgetPreview(
     result.backgroundImage = request.backgroundImage;
     result.canvasSize = request.canvasSize;
     result.padding = request.padding;
+    result.contentOnly = request.contentOnly;
+
+    if (request.contentOnly && !request.backgroundImage.empty())
+    {
+        result.stage = "request.background";
+        result.error = "content-only previews cannot use a background image";
+        return result;
+    }
 
     const auto appearance = ParseAppearance(request.appearance);
     if (!appearance)
@@ -788,6 +799,15 @@ PreviewRenderResult RenderWidgetPreview(
         0, 0, result.componentWidth, result.componentHeight };
     const ResolvedPreviewStyle resolvedStyle =
         ResolvePreviewStyle(engine, *appearance);
+    const float outputScale = request.canvasSize > 0
+        ? std::min(
+            static_cast<float>(result.placementWidth) /
+                result.componentWidth,
+            static_cast<float>(result.placementHeight) /
+                result.componentHeight)
+        : 1.0f;
+    result.cornerRadius = std::max(0, static_cast<int>(std::lround(
+        resolvedStyle.theme.cornerRadius * dpiScale * outputScale)));
     result.contentTheme = resolvedStyle.theme.contentTheme;
     result.foregroundTheme = result.contentTheme == 1 ? "dark" : "light";
     // Keep component theme APIs and declarative semantic tokens in sync with
@@ -795,7 +815,7 @@ PreviewRenderResult RenderWidgetPreview(
     engine.SetWidgetTheme(kPreviewWidgetId, resolvedStyle.theme);
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    if (request.canvasSize == 0)
+    if (request.canvasSize == 0 && !request.contentOnly)
     {
         snowdesktop::widget_preview::DrawStage(context.Get(), componentBounds,
             { resolvedStyle.lightStage,
@@ -807,7 +827,18 @@ PreviewRenderResult RenderWidgetPreview(
     }
     const bool hasBackgroundLayer =
         engine.HasBackgroundLayer(kPreviewWidgetId);
-    if (hasBackgroundLayer)
+    if (request.contentOnly)
+    {
+        if (hasBackgroundLayer)
+        {
+            (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
+                context.Get(), componentBounds, request.columns,
+                request.rows, 0.0f,
+                std::max(0.0f,
+                    resolvedStyle.theme.cornerRadius * dpiScale));
+        }
+    }
+    else if (hasBackgroundLayer)
     {
         DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
             dpiScale, true, false);
@@ -827,8 +858,11 @@ PreviewRenderResult RenderWidgetPreview(
     }
     engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
         request.columns, request.rows);
-    DrawHostEdgeHighlight(
-        context.Get(), resolvedStyle, componentBounds, dpiScale);
+    if (!request.contentOnly)
+    {
+        DrawHostEdgeHighlight(
+            context.Get(), resolvedStyle, componentBounds, dpiScale);
+    }
     graphicsResult = context->EndDraw();
     if (FAILED(graphicsResult))
     {
@@ -864,20 +898,26 @@ PreviewRenderResult RenderWidgetPreview(
                 result.componentHeight);
         context->BeginDraw();
         context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-        snowdesktop::widget_preview::DrawStage(context.Get(), canvasBounds,
-            { resolvedStyle.lightStage, false, 0.0f, 0.0f }, {},
-            background.pixels.empty() ? nullptr : &background);
-        if (resolvedStyle.material.glassEnabled)
+        if (!request.contentOnly)
         {
             snowdesktop::widget_preview::DrawStage(context.Get(),
-                placementBounds,
-                { resolvedStyle.lightStage, true,
-                    resolvedStyle.material.glassBlurRadius * placementScale,
-                    std::max(0.0f, resolvedStyle.theme.cornerRadius *
-                        dpiScale * placementScale) },
-                { result.width, result.height,
-                    result.placementX, result.placementY },
+                canvasBounds,
+                { resolvedStyle.lightStage, false, 0.0f, 0.0f }, {},
                 background.pixels.empty() ? nullptr : &background);
+            if (resolvedStyle.material.glassEnabled)
+            {
+                snowdesktop::widget_preview::DrawStage(context.Get(),
+                    placementBounds,
+                    { resolvedStyle.lightStage, true,
+                        resolvedStyle.material.glassBlurRadius *
+                            placementScale,
+                        std::max(0.0f,
+                            resolvedStyle.theme.cornerRadius * dpiScale *
+                                placementScale) },
+                    { result.width, result.height,
+                        result.placementX, result.placementY },
+                    background.pixels.empty() ? nullptr : &background);
+            }
         }
         context->DrawBitmap(componentTarget.Get(),
             D2D1::RectF(static_cast<float>(placementBounds.left),
@@ -1032,6 +1072,20 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
                 return 2;
             }
             request.padding = padding;
+            continue;
+        }
+        if (pair.substr(0, equals) == L"@preview.contentOnly")
+        {
+            if (pair.substr(equals + 1) != L"1")
+            {
+                result.stage = "request.contentOnly";
+                result.error = "preview content-only flag is invalid";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            request.contentOnly = true;
             continue;
         }
         request.storage[WideToUtf8(pair.substr(0, equals))] =

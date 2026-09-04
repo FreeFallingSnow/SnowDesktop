@@ -357,6 +357,30 @@ RgbaBitmap CheckTransparentPreview(const std::filesystem::path& path,
     return bitmap;
 }
 
+RgbaBitmap CheckContentLayerPreview(const std::filesystem::path& path,
+    UINT expectedWidth, UINT expectedHeight)
+{
+    CheckPng(path);
+    const RgbaBitmap bitmap = ReadPng(path);
+    Check(bitmap.width == expectedWidth && bitmap.height == expectedHeight,
+        "content-layer preview preserves the expected pixel dimensions");
+    std::size_t transparentPixels = 0;
+    std::size_t visiblePixels = 0;
+    for (std::size_t offset = 0; offset < bitmap.pixels.size(); offset += 4)
+    {
+        const std::uint8_t alpha = bitmap.pixels[offset + 3];
+        transparentPixels += alpha == 0;
+        visiblePixels += alpha > 0;
+    }
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(expectedWidth) * expectedHeight;
+    Check(transparentPixels > pixelCount / 2,
+        "content-layer preview omits the host background material");
+    Check(visiblePixels > 500,
+        "content-layer preview retains nontrivial component content");
+    return bitmap;
+}
+
 void CheckPomodoroPrimaryActionCentered(const std::filesystem::path& path)
 {
     const RgbaBitmap bitmap = ReadPng(path);
@@ -819,8 +843,14 @@ int wmain(int argc, wchar_t** argv)
             nativeJson.find("\"preset\":\"scroll-grid\"") !=
                 std::string::npos &&
             nativeJson.find("\"preset\":\"scroll-list\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"large-folder-list\"") !=
+                std::string::npos &&
+            nativeJson.find("\"cornerRadius\":12") !=
+                std::string::npos &&
+            nativeJson.find("\"settings\":{\"listMode\":true,") !=
                 std::string::npos,
-        "native preview exports every collection presentation preset");
+        "native preview exports collection property combinations and settings");
     const auto compactCollection = CheckOpaquePreview(
         nativeOutputDirectory / L"collection-compact.png", 640, 480);
     const auto largeFolderCollection = CheckOpaquePreview(
@@ -837,6 +867,7 @@ int wmain(int argc, wchar_t** argv)
             CountDifferingPixels(scrollGridCollection,
                 scrollListCollection, nativeCanvasBounds) > 1000,
         "native collection exports retain visibly distinct configurations");
+    CheckPng(nativeOutputDirectory / L"collection-large-folder-list.png");
 
     const auto transparentOutputDirectory =
         temporary.path / L"native-transparent-previews";
@@ -875,6 +906,18 @@ int wmain(int argc, wchar_t** argv)
     };
     for (const wchar_t* filename : transparentFilenames)
         CheckPng(transparentOutputDirectory / filename);
+    Check(std::distance(
+              std::filesystem::directory_iterator(transparentOutputDirectory),
+              std::filesystem::directory_iterator{}) == 57,
+        "native all export covers every supported property combination");
+    CheckPng(transparentOutputDirectory /
+        L"collection-group-grid-search.png");
+    CheckPng(transparentOutputDirectory /
+        L"file-group-list-date-no-categories-search.png");
+    CheckPng(transparentOutputDirectory /
+        L"file-categories-grid-no-date-no-categories-no-search.png");
+    CheckPng(transparentOutputDirectory /
+        L"folder-mapping-list-date-categories-search.png");
     CheckTransparentPreview(
         transparentOutputDirectory / L"collection-compact.png", 640, 480);
     CheckTransparentPreview(
@@ -885,6 +928,22 @@ int wmain(int argc, wchar_t** argv)
         transparentOutputDirectory / L"file-categories-grid.png", 640, 480);
     CheckTransparentPreview(
         transparentOutputDirectory / L"folder-mapping-list.png", 640, 480);
+
+    const auto nativeContentDirectory =
+        temporary.path / L"native-content-layer-previews";
+    const auto [nativeContentExit, nativeContentJson] = Run(snowwidget, {
+        L"preview-native", L"collection-group",
+        nativeContentDirectory.wstring(), L"--dpi", L"96",
+        L"--locale", L"en-US", L"--appearance", L"light",
+        L"--content-only", L"--canvas-width", L"640",
+        L"--canvas-height", L"480", L"--padding", L"48",
+        L"--host", host.wstring() });
+    Check(nativeContentExit == 0 &&
+            nativeContentJson.find("\"contentOnly\":true") !=
+                std::string::npos,
+        "native content-only export reports the requested layer mode");
+    CheckContentLayerPreview(nativeContentDirectory /
+        L"collection-group-grid-search.png", 640, 480);
 
     const auto backgroundOutput = temporary.path / L"custom-background.png";
     const auto backgroundSource = repository / L"widgets" / L"analog-clock";
@@ -926,6 +985,8 @@ int wmain(int argc, wchar_t** argv)
             squareJson.find("\"placementWidth\":333") !=
                 std::string::npos &&
             squareJson.find("\"placementHeight\":416") !=
+                std::string::npos &&
+            squareJson.find("\"cornerRadius\":21") !=
                 std::string::npos,
         "preview reports the native component layer and square canvas placement");
     const RgbaBitmap square =
@@ -935,6 +996,21 @@ int wmain(int argc, wchar_t** argv)
             PixelAt(square, 511, 511) ==
                 std::array<std::uint8_t, 4>{ 18, 126, 214, 255 },
         "square composition preserves the background outside component padding");
+
+    const auto contentLayerOutput =
+        temporary.path / L"widget-content-layer.png";
+    const auto [contentLayerExit, contentLayerJson] = Run(snowwidget, {
+        L"preview", backgroundSource.wstring(),
+        contentLayerOutput.wstring(), L"--appearance", L"light",
+        L"--canvas-size", L"512", L"--padding", L"48",
+        L"--content-only", L"--host", host.wstring() });
+    Check(contentLayerExit == 0 &&
+            contentLayerJson.find("\"contentOnly\":true") !=
+                std::string::npos &&
+            contentLayerJson.find("\"foregroundTheme\":\"dark\"") !=
+                std::string::npos,
+        "component content-only export reports its layer and foreground theme");
+    CheckContentLayerPreview(contentLayerOutput, 512, 512);
 
     const auto backgroundLayerSource =
         CreateBackgroundLayerFixture(temporary.path);

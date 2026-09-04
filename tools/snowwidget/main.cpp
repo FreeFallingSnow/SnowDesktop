@@ -45,12 +45,13 @@ void PrintUsage()
            " [--theme dark|light]"
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--background image-file]"
+           " [--content-only]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
         << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|all> <output-directory>"
            " [--dpi N] [--locale CODE]"
            " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
            " [--background image-file]"
-           " [--transparent]"
+           " [--transparent] [--content-only]"
            " [--canvas-width N] [--canvas-height N] [--padding N]"
            " [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
@@ -296,6 +297,7 @@ int RunPreviewHost(const std::filesystem::path& host,
     std::wstring_view dataState,
     const std::filesystem::path& backgroundImage,
     int canvasSize, int padding,
+    bool contentOnly,
     const std::vector<std::wstring>& storage)
 {
     const auto resultPath = CreateResultPath();
@@ -326,6 +328,7 @@ int RunPreviewHost(const std::filesystem::path& host,
         append(L"@preview.canvasSize=" + std::to_wstring(canvasSize));
     if (padding > 0)
         append(L"@preview.padding=" + std::to_wstring(padding));
+    if (contentOnly) append(L"@preview.contentOnly=1");
     for (const auto& pair : storage) append(pair);
 
     STARTUPINFOW startup{};
@@ -374,7 +377,8 @@ int RunNativePreviewHost(const std::filesystem::path& host,
     const std::filesystem::path& outputDirectory,
     int dpi, std::wstring_view locale, std::wstring_view appearance,
     const std::filesystem::path& backgroundImage,
-    int canvasWidth, int canvasHeight, int padding, bool transparent)
+    int canvasWidth, int canvasHeight, int padding, bool transparent,
+    bool contentOnly)
 {
     const auto resultPath = CreateResultPath();
     if (!resultPath)
@@ -399,6 +403,7 @@ int RunNativePreviewHost(const std::filesystem::path& host,
     append(std::to_wstring(canvasHeight));
     append(std::to_wstring(padding));
     append(transparent ? L"1" : L"0");
+    append(contentOnly ? L"1" : L"0");
     append(resultPath->wstring());
 
     STARTUPINFOW startup{};
@@ -463,7 +468,13 @@ int wmain(int argc, wchar_t** argv)
             << "},\"recommendedSchemaVersion\":2,"
                "\"recommendedApiVersion\":2,"
                "\"executableSchemaVersions\":[2],"
-               "\"executableApiVersions\":[2],\"commands\":["
+               "\"executableApiVersions\":[2],"
+               "\"preview\":{\"contentOnly\":true},"
+               "\"nativePreview\":{\"resultVersion\":2,"
+               "\"contentOnly\":true,"
+               "\"settings\":[\"listMode\",\"scrollContainerMode\","
+               "\"dateHeaders\",\"showFileCategories\","
+               "\"showSearchBox\"]},\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
                "\"lint\",\"quality\",\"test\",\"preview\",\"permissions\","
                "\"preview-native\",\"validate\",\"pack\",\"publish-local\"]}"
@@ -530,6 +541,7 @@ int wmain(int argc, wchar_t** argv)
         std::filesystem::path backgroundImage;
         std::filesystem::path explicitHost;
         bool transparent = false;
+        bool contentOnly = false;
         for (int index = 4; index < argc; ++index)
         {
             const std::wstring_view option(argv[index]);
@@ -578,6 +590,8 @@ int wmain(int argc, wchar_t** argv)
                 backgroundImage = argv[++index];
             else if (option == L"--transparent")
                 transparent = true;
+            else if (option == L"--content-only")
+                contentOnly = true;
             else if (option == L"--canvas-width")
             {
                 if (!ParseInteger(argv[++index], 320, 8192, canvasWidth))
@@ -615,9 +629,9 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
             return 2;
         }
-        if (transparent && !backgroundImage.empty())
+        if ((transparent || contentOnly) && !backgroundImage.empty())
         {
-            std::cerr << "{\"ok\":false,\"error\":\"--transparent cannot be combined with --background\"}\n";
+            std::cerr << "{\"ok\":false,\"error\":\"--transparent and --content-only cannot be combined with --background\"}\n";
             return 2;
         }
         const auto host = FindPreviewHost(explicitHost);
@@ -629,7 +643,7 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunNativePreviewHost(*host, argv[2], outputDirectory,
             dpi, locale, appearance, backgroundImage,
-            canvasWidth, canvasHeight, padding, transparent);
+            canvasWidth, canvasHeight, padding, transparent, contentOnly);
     }
 
     if (command == L"inspect")
@@ -812,6 +826,7 @@ int wmain(int argc, wchar_t** argv)
         std::filesystem::path backgroundImage;
         bool themeSpecified = false;
         bool appearanceSpecified = false;
+        bool contentOnly = false;
         std::filesystem::path explicitHost;
         std::vector<std::wstring> storage;
         for (int index = 4; index < argc; ++index)
@@ -942,6 +957,8 @@ int wmain(int argc, wchar_t** argv)
                 explicitHost = argv[++index];
             else if (option == L"--background")
                 backgroundImage = argv[++index];
+            else if (option == L"--content-only")
+                contentOnly = true;
             else
             {
                 std::cerr << "{\"ok\":false,\"error\":\"unknown preview option\"}\n";
@@ -965,6 +982,11 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
             return 2;
         }
+        if (contentOnly && !backgroundImage.empty())
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"--content-only cannot be combined with --background\"}\n";
+            return 2;
+        }
         const auto host = FindPreviewHost(explicitHost);
         if (!host)
         {
@@ -974,7 +996,8 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunPreviewHost(*host, source, output,
             columns, rows, dpi, locale, theme, appearance,
-            dataState, backgroundImage, canvasSize, padding, storage);
+            dataState, backgroundImage, canvasSize, padding,
+            contentOnly, storage);
     }
     if (command == L"pack")
     {
