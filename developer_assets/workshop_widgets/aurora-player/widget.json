@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Music Controls",
   "nameKey": "workshop.aurora_player.name",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Glass-style system media controls with album-art ambience, precise seeking, advanced playback actions, and an optional live spectrum.",
   "descriptionKey": "workshop.aurora_player.description",
   "preview": "workshop-preview.png",
