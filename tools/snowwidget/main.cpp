@@ -46,10 +46,11 @@ void PrintUsage()
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--background image-file]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
-        << "  snowwidget preview-native collection <output-directory>"
+        << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|all> <output-directory>"
            " [--dpi N] [--locale CODE]"
            " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
            " [--background image-file]"
+           " [--transparent]"
            " [--canvas-width N] [--canvas-height N] [--padding N]"
            " [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
@@ -373,7 +374,7 @@ int RunNativePreviewHost(const std::filesystem::path& host,
     const std::filesystem::path& outputDirectory,
     int dpi, std::wstring_view locale, std::wstring_view appearance,
     const std::filesystem::path& backgroundImage,
-    int canvasWidth, int canvasHeight, int padding)
+    int canvasWidth, int canvasHeight, int padding, bool transparent)
 {
     const auto resultPath = CreateResultPath();
     if (!resultPath)
@@ -397,6 +398,7 @@ int RunNativePreviewHost(const std::filesystem::path& host,
     append(std::to_wstring(canvasWidth));
     append(std::to_wstring(canvasHeight));
     append(std::to_wstring(padding));
+    append(transparent ? L"1" : L"0");
     append(resultPath->wstring());
 
     STARTUPINFOW startup{};
@@ -506,9 +508,16 @@ int wmain(int argc, wchar_t** argv)
 
     if (command == L"preview-native")
     {
-        if (argc < 4 || std::wstring_view(argv[2]) != L"collection")
+        const std::wstring_view component = argc >= 3
+            ? std::wstring_view(argv[2]) : std::wstring_view{};
+        if (argc < 4 ||
+            (component != L"collection" &&
+             component != L"collection-group" &&
+             component != L"file-group" &&
+             component != L"file-categories" &&
+             component != L"folder-mapping" && component != L"all"))
         {
-            std::cerr << "{\"ok\":false,\"error\":\"preview-native requires collection and an output directory\"}\n";
+            std::cerr << "{\"ok\":false,\"error\":\"preview-native requires a supported component or all and an output directory\"}\n";
             return 2;
         }
         const std::filesystem::path outputDirectory = argv[3];
@@ -520,6 +529,7 @@ int wmain(int argc, wchar_t** argv)
         std::wstring appearance = L"dark";
         std::filesystem::path backgroundImage;
         std::filesystem::path explicitHost;
+        bool transparent = false;
         for (int index = 4; index < argc; ++index)
         {
             const std::wstring_view option(argv[index]);
@@ -566,6 +576,8 @@ int wmain(int argc, wchar_t** argv)
             }
             else if (option == L"--background")
                 backgroundImage = argv[++index];
+            else if (option == L"--transparent")
+                transparent = true;
             else if (option == L"--canvas-width")
             {
                 if (!ParseInteger(argv[++index], 320, 8192, canvasWidth))
@@ -603,6 +615,11 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
             return 2;
         }
+        if (transparent && !backgroundImage.empty())
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"--transparent cannot be combined with --background\"}\n";
+            return 2;
+        }
         const auto host = FindPreviewHost(explicitHost);
         if (!host)
         {
@@ -612,7 +629,7 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunNativePreviewHost(*host, argv[2], outputDirectory,
             dpi, locale, appearance, backgroundImage,
-            canvasWidth, canvasHeight, padding);
+            canvasWidth, canvasHeight, padding, transparent);
     }
 
     if (command == L"inspect")

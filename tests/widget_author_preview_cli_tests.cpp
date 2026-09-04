@@ -327,6 +327,36 @@ RgbaBitmap CheckOpaquePreview(const std::filesystem::path& path,
     return bitmap;
 }
 
+RgbaBitmap CheckTransparentPreview(const std::filesystem::path& path,
+    UINT expectedWidth, UINT expectedHeight)
+{
+    CheckPng(path);
+    const RgbaBitmap bitmap = ReadPng(path);
+    Check(bitmap.width == expectedWidth && bitmap.height == expectedHeight,
+        "transparent preview preserves the expected pixel dimensions");
+    Check(PixelAt(bitmap, 0, 0)[3] == 0 &&
+            PixelAt(bitmap, expectedWidth - 1, expectedHeight - 1)[3] == 0,
+        "transparent preview leaves canvas corners transparent");
+    std::size_t transparentPixels = 0;
+    std::size_t translucentPixels = 0;
+    std::size_t visiblePixels = 0;
+    for (std::size_t offset = 0; offset < bitmap.pixels.size(); offset += 4)
+    {
+        const std::uint8_t alpha = bitmap.pixels[offset + 3];
+        transparentPixels += alpha == 0;
+        translucentPixels += alpha > 0 && alpha < 0xff;
+        visiblePixels += alpha > 0;
+    }
+    Check(transparentPixels >
+            static_cast<std::size_t>(expectedWidth) * expectedHeight / 4,
+        "transparent preview retains a substantial empty canvas area");
+    Check(translucentPixels > 1000,
+        "transparent preview retains semi-transparent component material");
+    Check(visiblePixels > 5000,
+        "transparent preview contains nontrivial native component pixels");
+    return bitmap;
+}
+
 void CheckPomodoroPrimaryActionCentered(const std::filesystem::path& path)
 {
     const RgbaBitmap bitmap = ReadPng(path);
@@ -807,6 +837,54 @@ int wmain(int argc, wchar_t** argv)
             CountDifferingPixels(scrollGridCollection,
                 scrollListCollection, nativeCanvasBounds) > 1000,
         "native collection exports retain visibly distinct configurations");
+
+    const auto transparentOutputDirectory =
+        temporary.path / L"native-transparent-previews";
+    const auto [transparentNativeExit, transparentNativeJson] = Run(snowwidget, {
+        L"preview-native", L"all", transparentOutputDirectory.wstring(),
+        L"--dpi", L"96", L"--locale", L"en-US",
+        L"--appearance", L"dark", L"--transparent",
+        L"--canvas-width", L"640", L"--canvas-height", L"480",
+        L"--padding", L"48", L"--host", host.wstring() });
+    Check(transparentNativeExit == 0 &&
+            transparentNativeJson.find("\"ok\":true") != std::string::npos &&
+            transparentNativeJson.find("\"transparent\":true") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"collection-group\"") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"file-group\"") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"file-categories\"") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"folder-mapping\"") !=
+                std::string::npos,
+        "native preview exports all component families with transparency");
+    constexpr std::array transparentFilenames{
+        L"collection-compact.png",
+        L"collection-large-folder.png",
+        L"collection-scroll-grid.png",
+        L"collection-scroll-list.png",
+        L"collection-group-grid.png",
+        L"collection-group-list.png",
+        L"file-group-grid.png",
+        L"file-group-list.png",
+        L"file-categories-grid.png",
+        L"file-categories-list.png",
+        L"folder-mapping-grid.png",
+        L"folder-mapping-list.png",
+    };
+    for (const wchar_t* filename : transparentFilenames)
+        CheckPng(transparentOutputDirectory / filename);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"collection-compact.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"collection-group-grid.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"file-group-list.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"file-categories-grid.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"folder-mapping-list.png", 640, 480);
 
     const auto backgroundOutput = temporary.path / L"custom-background.png";
     const auto backgroundSource = repository / L"widgets" / L"analog-clock";

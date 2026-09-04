@@ -650,13 +650,16 @@ DesktopApp::RenderWidgetMenuPreview(
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
     const RECT stageBounds{ 0, 0, width, height };
-    snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
-        { stage.lightTheme, stageAppearance.glassEnabled,
-            stageAppearance.glassBlurRadius,
-            static_cast<float>(ScaleWidgetCu(
-                globalAppearance.cornerRadius, data->cellScale)) },
-        { stage.canvasWidth, stage.canvasHeight,
-            stage.offsetX, stage.offsetY }, stage.wallpaper);
+    if (!stage.transparent)
+    {
+        snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
+            { stage.lightTheme, stageAppearance.glassEnabled,
+                stageAppearance.glassBlurRadius,
+                static_cast<float>(ScaleWidgetCu(
+                    globalAppearance.cornerRadius, data->cellScale)) },
+            { stage.canvasWidth, stage.canvasHeight,
+                stage.offsetX, stage.offsetY }, stage.wallpaper);
+    }
     context->SetTransform(D2D1::Matrix3x2F::Translation(
         static_cast<float>(-desktopFrame.left),
         static_cast<float>(-desktopFrame.top)));

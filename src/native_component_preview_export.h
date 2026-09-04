@@ -20,10 +20,12 @@ struct Request
     int canvasWidth = 1280;
     int canvasHeight = 720;
     int padding = 72;
+    bool transparent = false;
 };
 
 struct Output
 {
+    std::string component;
     std::string preset;
     std::filesystem::path path;
     int componentWidth = 0;

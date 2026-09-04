@@ -97,6 +97,7 @@ struct StagePlacement
     int offsetY = 0;
     bool lightTheme = false;
     const widget_preview::Wallpaper* wallpaper = nullptr;
+    bool transparent = false;
 };
 
 struct Card
