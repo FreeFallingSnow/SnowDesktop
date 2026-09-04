@@ -59,8 +59,8 @@ local settings = {
 local function previewSession()
     return {
         id = "aurora-preview",
-        sourceName = "Aurora Player",
-        title = "Aurora Nights",
+        sourceName = "Music Controls Preview",
+        title = "Night Drive",
         artist = "Mira Vale",
         album = "Glass Horizons",
         playbackStatus = "playing",

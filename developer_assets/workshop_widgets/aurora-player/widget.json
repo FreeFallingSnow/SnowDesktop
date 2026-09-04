@@ -8,16 +8,16 @@
   "minHostVersion": "1.0.5.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "name": "Aurora Player",
+  "name": "Music Controls",
   "nameKey": "workshop.aurora_player.name",
-  "version": "1.0.1",
-  "description": "A glass music player with album-art ambience, precise seeking, advanced playback controls, and an optional live spectrum.",
+  "version": "1.0.2",
+  "description": "Glass-style system media controls with album-art ambience, precise seeking, advanced playback actions, and an optional live spectrum.",
   "descriptionKey": "workshop.aurora_player.description",
   "preview": "workshop-preview.png",
   "locales": {
     "en-US": {
-      "workshop.aurora_player.name": "Aurora Player",
-      "workshop.aurora_player.description": "A glass music player with album-art ambience, precise seeking, advanced playback controls, and an optional live spectrum.",
+      "workshop.aurora_player.name": "Music Controls",
+      "workshop.aurora_player.description": "Glass-style system media controls with album-art ambience, precise seeking, advanced playback actions, and an optional live spectrum.",
       "workshop.aurora_player.visualizer": "Show live spectrum",
       "workshop.aurora_player.visualizer_description": "Uses optional audio analysis permission at 30 Hz while the widget is visible. Disabled when reduced motion is enabled.",
       "workshop.aurora_player.cover_background": "Use album art as background",
@@ -49,8 +49,8 @@
       "workshop.aurora_player.repeat_list": "Repeat list"
     },
     "zh-CN": {
-      "workshop.aurora_player.name": "极光播放器",
-      "workshop.aurora_player.description": "一款玻璃质感音乐播放器，提供封面氛围背景、精确进度控制、高级播放操作和可选实时频谱。",
+      "workshop.aurora_player.name": "音乐控制",
+      "workshop.aurora_player.description": "一款玻璃质感的系统媒体控制组件，提供封面氛围背景、精确进度控制、高级播放操作和可选实时频谱。",
       "workshop.aurora_player.visualizer": "显示实时频谱",
       "workshop.aurora_player.visualizer_description": "获得可选音频分析权限后，在组件可见时以 30 Hz 更新；启用减少动态效果时自动关闭。",
       "workshop.aurora_player.cover_background": "使用封面作为背景",
@@ -82,8 +82,8 @@
       "workshop.aurora_player.repeat_list": "列表循环"
     },
     "zh-TW": {
-      "workshop.aurora_player.name": "極光播放器",
-      "workshop.aurora_player.description": "具備玻璃質感的音樂播放器，提供封面氛圍背景、精確進度控制、進階播放操作與選用的即時頻譜。",
+      "workshop.aurora_player.name": "音樂控制",
+      "workshop.aurora_player.description": "具備玻璃質感的系統媒體控制元件，提供封面氛圍背景、精確進度控制、進階播放操作與選用的即時頻譜。",
       "workshop.aurora_player.visualizer": "顯示即時頻譜",
       "workshop.aurora_player.visualizer_description": "取得選用的音訊分析權限後，在元件可見時以 30 Hz 更新；啟用減少動態效果時會關閉。",
       "workshop.aurora_player.cover_background": "使用封面作為背景",
@@ -115,8 +115,8 @@
       "workshop.aurora_player.repeat_list": "清單循環"
     },
     "ja-JP": {
-      "workshop.aurora_player.name": "Aurora Player",
-      "workshop.aurora_player.description": "アルバムアートの背景、正確なシーク、高度な再生操作、任意のリアルタイムスペクトラムを備えたガラス調の音楽プレーヤーです。",
+      "workshop.aurora_player.name": "音楽コントロール",
+      "workshop.aurora_player.description": "アルバムアートの背景、正確なシーク、高度な再生操作、任意のリアルタイムスペクトラムを備えたガラス調のシステムメディアコントロールです。",
       "workshop.aurora_player.visualizer": "リアルタイムスペクトラムを表示",
       "workshop.aurora_player.visualizer_description": "任意のオーディオ解析権限を使用し、ウィジェットの表示中に 30 Hz で更新します。視覚効果を減らす設定では無効になります。",
       "workshop.aurora_player.cover_background": "アルバムアートを背景に使用",
@@ -148,8 +148,8 @@
       "workshop.aurora_player.repeat_list": "リストをリピート"
     },
     "ko-KR": {
-      "workshop.aurora_player.name": "오로라 플레이어",
-      "workshop.aurora_player.description": "앨범 아트 배경, 정밀 탐색, 고급 재생 제어 및 선택적 실시간 스펙트럼을 제공하는 유리 느낌의 음악 플레이어입니다.",
+      "workshop.aurora_player.name": "음악 제어",
+      "workshop.aurora_player.description": "앨범 아트 배경, 정밀 탐색, 고급 재생 제어 및 선택적 실시간 스펙트럼을 제공하는 유리 느낌의 시스템 미디어 제어 위젯입니다.",
       "workshop.aurora_player.visualizer": "실시간 스펙트럼 표시",
       "workshop.aurora_player.visualizer_description": "선택적 오디오 분석 권한을 사용하여 위젯이 보일 때 30 Hz로 업데이트합니다. 동작 줄이기가 켜져 있으면 비활성화됩니다.",
       "workshop.aurora_player.cover_background": "앨범 아트를 배경으로 사용",
@@ -181,8 +181,8 @@
       "workshop.aurora_player.repeat_list": "목록 반복"
     },
     "de-DE": {
-      "workshop.aurora_player.name": "Aurora Player",
-      "workshop.aurora_player.description": "Ein Musikplayer in Glasoptik mit Albumcover-Ambiente, präziser Suche, erweiterten Wiedergabesteuerungen und optionalem Live-Spektrum.",
+      "workshop.aurora_player.name": "Musiksteuerung",
+      "workshop.aurora_player.description": "Eine System-Mediensteuerung in Glasoptik mit Albumcover-Ambiente, präzisem Spulen, erweiterten Wiedergabeaktionen und optionalem Live-Spektrum.",
       "workshop.aurora_player.visualizer": "Live-Spektrum anzeigen",
       "workshop.aurora_player.visualizer_description": "Verwendet die optionale Audioanalyseberechtigung und aktualisiert mit 30 Hz, solange das Widget sichtbar ist. Bei reduzierter Bewegung deaktiviert.",
       "workshop.aurora_player.cover_background": "Albumcover als Hintergrund verwenden",
@@ -214,8 +214,8 @@
       "workshop.aurora_player.repeat_list": "Liste wiederholen"
     },
     "fr-FR": {
-      "workshop.aurora_player.name": "Lecteur Aurora",
-      "workshop.aurora_player.description": "Un lecteur de musique à l’aspect verre avec ambiance de pochette, positionnement précis, commandes avancées et spectre en direct facultatif.",
+      "workshop.aurora_player.name": "Commandes musicales",
+      "workshop.aurora_player.description": "Des commandes multimédias système à l’aspect verre avec ambiance de pochette, positionnement précis, actions avancées et spectre en direct facultatif.",
       "workshop.aurora_player.visualizer": "Afficher le spectre en direct",
       "workshop.aurora_player.visualizer_description": "Utilise l’autorisation facultative d’analyse audio à 30 Hz lorsque le widget est visible. Désactivé si les animations sont réduites.",
       "workshop.aurora_player.cover_background": "Utiliser la pochette en arrière-plan",
@@ -247,8 +247,8 @@
       "workshop.aurora_player.repeat_list": "Répéter la liste"
     },
     "es-ES": {
-      "workshop.aurora_player.name": "Reproductor Aurora",
-      "workshop.aurora_player.description": "Un reproductor de música con aspecto de cristal, ambiente de portada, búsqueda precisa, controles avanzados y espectro en directo opcional.",
+      "workshop.aurora_player.name": "Controles de música",
+      "workshop.aurora_player.description": "Controles multimedia del sistema con aspecto de cristal, ambiente de portada, ajuste preciso de la posición, acciones avanzadas y espectro en directo opcional.",
       "workshop.aurora_player.visualizer": "Mostrar espectro en directo",
       "workshop.aurora_player.visualizer_description": "Usa el permiso opcional de análisis de audio a 30 Hz mientras el componente está visible. Se desactiva al reducir el movimiento.",
       "workshop.aurora_player.cover_background": "Usar la carátula como fondo",
@@ -280,8 +280,8 @@
       "workshop.aurora_player.repeat_list": "Repetir lista"
     },
     "es-419": {
-      "workshop.aurora_player.name": "Reproductor Aurora",
-      "workshop.aurora_player.description": "Un reproductor de música con estilo de cristal, ambiente de carátula, búsqueda precisa, controles avanzados y espectro en vivo opcional.",
+      "workshop.aurora_player.name": "Controles de música",
+      "workshop.aurora_player.description": "Controles multimedia del sistema con estilo de cristal, ambiente de carátula, ajuste preciso de la posición, acciones avanzadas y espectro en vivo opcional.",
       "workshop.aurora_player.visualizer": "Mostrar espectro en vivo",
       "workshop.aurora_player.visualizer_description": "Usa el permiso opcional de análisis de audio a 30 Hz mientras el widget está visible. Se desactiva al reducir el movimiento.",
       "workshop.aurora_player.cover_background": "Usar la portada como fondo",
@@ -313,8 +313,8 @@
       "workshop.aurora_player.repeat_list": "Repetir lista"
     },
     "pt-BR": {
-      "workshop.aurora_player.name": "Aurora Player",
-      "workshop.aurora_player.description": "Um player de música com visual de vidro, ambiente da capa, busca precisa, controles avançados e espectro ao vivo opcional.",
+      "workshop.aurora_player.name": "Controles de música",
+      "workshop.aurora_player.description": "Controles de mídia do sistema com visual de vidro, ambiente da capa, controle preciso da posição, ações avançadas e espectro ao vivo opcional.",
       "workshop.aurora_player.visualizer": "Mostrar espectro ao vivo",
       "workshop.aurora_player.visualizer_description": "Usa a permissão opcional de análise de áudio a 30 Hz enquanto o widget está visível. É desativado quando a redução de movimento está ligada.",
       "workshop.aurora_player.cover_background": "Usar a capa como plano de fundo",
