@@ -217,9 +217,18 @@ void TestSteamIdentity()
     Check(SteamWorkshopClientUrl() ==
         "steam://openurl/https://steamcommunity.com/app/5080330/workshop/",
         "Workshop home links prefer the Steam client");
+    Check(SteamClientHomeUrl() == "steam://open/main",
+        "Workshop Manager can launch the Steam client home window");
     Check(SteamCommunityItemClientUrl(1234567890) ==
         "steam://url/CommunityFilePage/1234567890",
         "Workshop item links use Valve's Steam client protocol");
+    Check(SuggestOpeningSteamClient({ kSteamInitializationFailed,
+              "steam_initialization_failed", "IPC unavailable" }) &&
+            !SuggestOpeningSteamClient({ kSteamInitializationFailed,
+              "steam_app_id_mismatch", "wrong app" }) &&
+            !SuggestOpeningSteamClient({ kSteamOperationFailed,
+              "query_failed", "request failed" }),
+        "only a missing Steam client initialization exposes launch recovery");
     const std::string mismatch = SteamAppIdMismatchMessage(480u);
     Check(mismatch.find("5080330") != std::string::npos &&
         mismatch.find("480") != std::string::npos,

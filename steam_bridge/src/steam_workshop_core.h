@@ -27,6 +27,12 @@ struct CoreError
     std::string message;
 };
 
+inline bool SuggestOpeningSteamClient(const CoreError& error) noexcept
+{
+    return error.exitCode == kSteamInitializationFailed &&
+        error.code == "steam_initialization_failed";
+}
+
 struct SteamStatus
 {
     bool compiled = false;

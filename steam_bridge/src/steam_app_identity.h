@@ -57,6 +57,11 @@ inline std::string SteamWorkshopClientUrl()
     return "steam://openurl/" + SteamWorkshopHomeUrl();
 }
 
+inline std::string SteamClientHomeUrl()
+{
+    return "steam://open/main";
+}
+
 inline std::string SteamCommunityItemClientUrl(
     std::uint64_t publishedFileId)
 {
