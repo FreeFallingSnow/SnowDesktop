@@ -104,6 +104,7 @@ App Admin. Workshop visibility is configured and published separately there.
 ```powershell
 SnowDesktopSteamBridge.exe configuration
 SnowDesktopSteamBridge.exe status
+SnowDesktopSteamBridge.exe entitlement status
 SnowDesktopSteamBridge.exe workshop list-subscribed --details
 SnowDesktopSteamBridge.exe workshop item-details --item 1234567890
 SnowDesktopSteamBridge.exe workshop item-state --item 1234567890

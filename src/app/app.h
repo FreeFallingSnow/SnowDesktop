@@ -96,6 +96,7 @@
 #include "../crashlog.h"
 #include "../auto_start_rules.h"
 #include "../deployment_context.h"
+#include "../steam_entitlement.h"
 #include "../page_layout_settings.h"
 
 #include <windowsx.h>
@@ -789,6 +790,8 @@ private:
     HWND ShellDialogOwnerHwnd() const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
+    /** Start one Steam ownership registration attempt when it is needed. */
+    void StartSteamEntitlementRegistration();
     /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
     [[nodiscard]] bool RequestRestart();
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */
@@ -3166,6 +3169,8 @@ private:
     std::unique_ptr<snowdesktop::widget_runtime::WidgetSettingsService>
         widgetSettingsService_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
+    std::unique_ptr<snowdesktop::steam_entitlement::Service>
+        steamEntitlementService_;
     std::unique_ptr<AsyncHttpService> settingsUpdateHttpService_;
     int settingsUpdateRequestId_ = 0;
     std::uint64_t settingsUpdateRequestGeneration_ = 0;

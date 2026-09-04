@@ -9,6 +9,11 @@ the compiled version, expected App ID (`5080330`), Windows depot ID (`5080331`),
 protocol version, and whether the binary was built with Steamworks. Packaging
 and local-development scripts use it to reject stale or placeholder binaries.
 
+`entitlement status` initializes Steam for App ID `5080330`, requires an
+online signed-in user, and returns `owned` from `ISteamApps::BIsSubscribed()`
+for that current account and App ID. It does not treat installation as proof of
+ownership and does not relaunch the process through Steam.
+
 ## Transport
 
 - Arguments use the native Windows Unicode command line.
@@ -21,6 +26,9 @@ and local-development scripts use it to reject stale or placeholder binaries.
 - `status` reports both expected and runtime App IDs. Every runtime command
   rejects a Steam context whose actual App ID differs before accessing
   Workshop content.
+- `entitlement status` returns `loggedOn`, `owned`, and the current `steamId`.
+  `owned: false` is an authoritative successful query, while initialization or
+  sign-in failures are errors and must not be interpreted as ownership.
 
 Exit codes:
 

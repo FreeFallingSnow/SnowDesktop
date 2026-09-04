@@ -238,7 +238,8 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
         return true;
     if (_wcsicmp(first.c_str(), L"SnowDesktop.log") == 0 ||
         _wcsicmp(first.c_str(), L"SnowDesktop.log.1") == 0 ||
-        _wcsicmp(first.c_str(), L"SnowDesktop_crash.log") == 0)
+        _wcsicmp(first.c_str(), L"SnowDesktop_crash.log") == 0 ||
+        _wcsicmp(first.c_str(), L"SnowDesktop.entitlement.bin") == 0)
         return true;
     if (_wcsicmp(first.c_str(), L"widgets") == 0)
     {

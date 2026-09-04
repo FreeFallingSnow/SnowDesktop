@@ -192,6 +192,12 @@ void SettingsWindow::RefreshWidgetsPage()
         impl_->host->RefreshWidgetsPage();
 }
 
+void SettingsWindow::RefreshGeneralRuntimeState()
+{
+    if (impl_->host)
+        impl_->host->RefreshGeneralRuntimeState();
+}
+
 bool SettingsWindow::PrepareLanguageChange()
 {
     return !impl_->host || impl_->host->PrepareLanguageChange();

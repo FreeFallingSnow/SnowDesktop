@@ -202,9 +202,75 @@ bool LaunchSteamWorkshopPublisher(
     CloseHandle(process.hProcess);
     return true;
 }
+
+snowdesktop::winui::GeneralAdvancedFeatureStatus
+ToGeneralAdvancedFeatureStatus(
+    const snowdesktop::steam_entitlement::Snapshot& source)
+{
+    using SourceFailure = snowdesktop::steam_entitlement::Failure;
+    using SourceState = snowdesktop::steam_entitlement::State;
+    using TargetFailure =
+        snowdesktop::winui::GeneralAdvancedFeatureFailure;
+    using TargetState = snowdesktop::winui::GeneralAdvancedFeatureState;
+
+    snowdesktop::winui::GeneralAdvancedFeatureStatus target;
+    target.bridgeAvailable = source.bridgeAvailable;
+    switch (source.state)
+    {
+    case SourceState::BridgeUnavailable:
+        target.state = TargetState::BridgeUnavailable;
+        break;
+    case SourceState::Unregistered:
+        target.state = TargetState::Unregistered;
+        break;
+    case SourceState::Checking:
+        target.state = TargetState::Checking;
+        break;
+    case SourceState::Registered:
+        target.state = TargetState::Registered;
+        break;
+    case SourceState::RegistrationFailed:
+        target.state = TargetState::RegistrationFailed;
+        break;
+    }
+    switch (source.failure)
+    {
+    case SourceFailure::None:
+        target.failure = TargetFailure::None;
+        break;
+    case SourceFailure::SteamUnavailable:
+        target.failure = TargetFailure::SteamUnavailable;
+        break;
+    case SourceFailure::NotOwned:
+        target.failure = TargetFailure::NotOwned;
+        break;
+    case SourceFailure::BridgeError:
+        target.failure = TargetFailure::BridgeError;
+        break;
+    case SourceFailure::StorageError:
+        target.failure = TargetFailure::StorageError;
+        break;
+    }
+    return target;
+}
 }
 
 // Application bootstrap and top-level message loop.
+
+void DesktopApp::StartSteamEntitlementRegistration()
+{
+    if (!steamEntitlementService_)
+        return;
+    const HWND notificationWindow = controlHwnd_;
+    const bool started = steamEntitlementService_->StartRegistration(
+        [notificationWindow]() {
+            if (notificationWindow && IsWindow(notificationWindow))
+                PostMessageW(notificationWindow,
+                    kSteamEntitlementChangedMessage, 0, 0);
+        });
+    if (started && settingsWindow_)
+        settingsWindow_->RefreshGeneralRuntimeState();
+}
 
 int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
@@ -511,6 +577,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();
 
+    const std::filesystem::path executableDirectory(
+        GetExecutableDirectoryPath());
+    steamEntitlementService_ =
+        std::make_unique<snowdesktop::steam_entitlement::Service>(
+            executableDirectory / L"SnowDesktopSteamBridge.exe",
+            std::filesystem::path(snowdesktop::deployment::
+                GetRuntimeFilePath(L"steam_api64.dll")),
+            std::filesystem::path(
+                GetDataFilePath(L"SnowDesktop.entitlement.bin")));
+
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
     settingsHostOptions.windowTitle = _LW("app.settings.title");
     settingsHostOptions.localize = [](std::string_view key) {
@@ -625,6 +701,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 GeneralStartupConflictKind::InstalledVersionOwnsStartup;
         }
         return conflict;
+    };
+    settingsHostOptions.advancedFeatureStatus = [this]() {
+        return steamEntitlementService_
+            ? ToGeneralAdvancedFeatureStatus(
+                  steamEntitlementService_->Current())
+            : snowdesktop::winui::GeneralAdvancedFeatureStatus{};
+    };
+    settingsHostOptions.registerAdvancedFeatures = [this]() {
+        StartSteamEntitlementRegistration();
     };
     settingsHostOptions.pageLayoutPage.capture = [this]() {
         return CapturePageLayoutSnapshot();
@@ -1020,6 +1105,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         WriteDiagnosticLogEntry(message.c_str());
     }
+    StartSteamEntitlementRegistration();
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))

@@ -149,6 +149,7 @@ void PrintUsage()
         << "  SnowDesktopSteamBridge.exe --version\n"
         << "  SnowDesktopSteamBridge.exe configuration\n"
         << "  SnowDesktopSteamBridge.exe status\n"
+        << "  SnowDesktopSteamBridge.exe entitlement status\n"
         << "  SnowDesktopSteamBridge.exe workshop list-subscribed [--details]\n"
         << "  SnowDesktopSteamBridge.exe workshop list-published [--page N]\n"
         << "  SnowDesktopSteamBridge.exe workshop item-details --item ID\n"
@@ -900,6 +901,31 @@ std::optional<ERemoteStoragePublishedFileVisibility> ParseVisibility(
     return std::nullopt;
 }
 
+int PrintEntitlementStatus()
+{
+    SteamApiSession steam;
+    if (!steam.IsInitialized()) return PrintInitializationFailure(steam);
+    ISteamApps* apps = SteamApps();
+    ISteamUser* user = SteamUser();
+    if (!apps || !user)
+        return PrintError(kSteamInitializationFailed,
+            "steam_interface_unavailable",
+            "Steam ownership interfaces were unavailable after initialization");
+    if (!user->BLoggedOn())
+        return PrintError(kSteamInitializationFailed,
+            "steam_not_logged_on",
+            "Steam is offline; account ownership cannot be verified");
+    std::cout << "{\"ok\":true,\"protocolVersion\":1,"
+                 "\"expectedAppId\":"
+              << snowdesktop::steam_bridge::kSteamAppId
+              << ",\"appId\":" << steam.AppId()
+              << ",\"loggedOn\":true,\"owned\":"
+              << (apps->BIsSubscribed() ? "true" : "false")
+              << ",\"steamId\":\""
+              << user->GetSteamID().ConvertToUint64() << "\"}\n";
+    return 0;
+}
+
 bool ApplyComponentSources(const ParsedOptions& options,
     snowdesktop::steam_bridge::WorkshopProject& project,
     std::string& error)
@@ -1526,6 +1552,12 @@ int PrintStatus()
     return kSteamworksUnavailable;
 }
 
+int PrintEntitlementStatus()
+{
+    return PrintError(kSteamworksUnavailable, "steamworks_unavailable",
+        "Configure SNOWDESKTOP_STEAMWORKS_SDK_ROOT with an external Steamworks SDK and rebuild");
+}
+
 int RunWorkshopCommand(const std::wstring&,
     const std::vector<std::wstring>&)
 {
@@ -1558,6 +1590,9 @@ int wmain(int argc, wchar_t* argv[])
         return PrintConfiguration();
     if (command == L"status" && argc == 2)
         return PrintStatus();
+    if (command == L"entitlement" && argc == 3 &&
+        std::wstring_view(argv[2]) == L"status")
+        return PrintEntitlementStatus();
     if (command == L"workshop" && argc >= 3)
     {
         std::vector<std::wstring> arguments;

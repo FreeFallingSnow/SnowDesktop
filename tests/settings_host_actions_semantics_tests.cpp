@@ -272,6 +272,10 @@ int main(int argc, char** argv)
                 std::string_view::npos,
         "auto-start publishes the authoritative Windows result even after a rejected request");
     Check(hostHeader.find("startupConflict") != std::string::npos &&
+            hostHeader.find("advancedFeatureStatus") !=
+                std::string::npos &&
+            hostHeader.find("registerAdvancedFeatures") !=
+                std::string::npos &&
             host.find("general.setAutoStart") != std::string::npos &&
             host.find("general.openStartupAppsSettings") ==
                 std::string::npos &&
@@ -281,7 +285,7 @@ int main(int argc, char** argv)
                 std::string::npos &&
             host.find("Action::OpenStartupAppsSettings") ==
                 std::string::npos,
-        "the General WinUI presenter owns auto-start changes and exposes only runtime ownership conflicts");
+        "the General WinUI presenter owns auto-start changes and receives runtime startup and Steam entitlement state");
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&

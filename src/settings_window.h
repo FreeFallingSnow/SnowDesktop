@@ -63,6 +63,7 @@ public:
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
     void SetWidgetEngine(WidgetEngine* engine);
     void RefreshWidgetsPage();
+    void RefreshGeneralRuntimeState();
     [[nodiscard]] bool PrepareLanguageChange();
     void ApplyLanguageChange(bool widgetRuntimeReloaded);
     [[nodiscard]] bool PublishHomeAboutStatus(

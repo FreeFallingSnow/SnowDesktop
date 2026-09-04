@@ -106,6 +106,13 @@ function Assert-NoDeveloperAssets {
 function Copy-Payload {
     param([Parameter(Mandatory = $true)][string]$Destination)
 
+    $bridgeSource = Join-Path $buildOutput "SnowDesktopSteamBridge.exe"
+    $steamRuntimeSource = Join-Path `
+        (Join-Path $buildOutput $runtimeDirectory) "steam_api64.dll"
+    $includeOwnershipBridge =
+        (Test-Path -LiteralPath $bridgeSource -PathType Leaf) -and
+        (Test-Path -LiteralPath $steamRuntimeSource -PathType Leaf)
+
     $requiredFiles = @(
         (Join-Path $buildOutput "SnowDesktop.exe"),
         (Join-Path $buildOutput "snowwidget.exe"),
@@ -137,6 +144,22 @@ function Copy-Payload {
             -Destination (Join-Path $runtimeDestination $name) -Force
     }
 
+    if ($includeOwnershipBridge) {
+        foreach ($name in @(
+                "SnowDesktopSteamBridge.exe",
+                "SnowDesktopSteamBridge-LICENSE.txt",
+                "SnowDesktopSteamBridge-THIRD-PARTY-NOTICES.md")) {
+            $file = Join-Path $buildOutput $name
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                throw "Required Steam ownership bridge file was not found: $file"
+            }
+            Copy-Item -LiteralPath $file -Destination $Destination -Force
+        }
+        Copy-Item -LiteralPath $steamRuntimeSource `
+            -Destination (Join-Path $runtimeDestination "steam_api64.dll") `
+            -Force
+    }
+
     $licensesDestination = Join-Path $Destination "licenses"
     Copy-SnowDesktopRepositoryLicenses `
         -RepositoryRoot $repositoryRoot `
@@ -166,11 +189,19 @@ function Copy-Payload {
         -BuildOutput $buildOutput `
         -Destination $Destination `
         -RuntimeDirectory $runtimeDirectory
-    Enable-SnowDesktopPrivateRuntimeAssembly `
-        -BuildOutput $buildOutput `
-        -PackageRoot $Destination `
-        -Version $version `
-        -RuntimeDirectory $runtimeDirectory
+    $privateAssemblyArguments = @{
+        BuildOutput = $buildOutput
+        PackageRoot = $Destination
+        Version = $version
+        RuntimeDirectory = $runtimeDirectory
+    }
+    if ($includeOwnershipBridge) {
+        $privateAssemblyArguments.AdditionalRuntimeDlls = @(
+            "steam_api64.dll")
+        $privateAssemblyArguments.AdditionalExecutables = @(
+            "SnowDesktopSteamBridge.exe")
+    }
+    Enable-SnowDesktopPrivateRuntimeAssembly @privateAssemblyArguments
 
     Assert-NoDeveloperAssets -Destination $Destination
 }

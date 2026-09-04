@@ -215,6 +215,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
+    {SettingsPage::General, "general.advancedFeatures",
+        "settings.general.advancedFeatures",
+        "settings.general.advancedFeatures.description"},
     {SettingsPage::Desktop, "desktop.softwareDesktop",
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
@@ -1912,6 +1915,24 @@ struct SettingsWindowHost::Impl
             }
             return state->owner->options.startupConflict();
         };
+        general.queryAdvancedFeatureStatus = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->options.advancedFeatureStatus)
+            {
+                return GeneralAdvancedFeatureStatus{};
+            }
+            return state->owner->options.advancedFeatureStatus();
+        };
+        general.registerAdvancedFeatures = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->options.registerAdvancedFeatures)
+            {
+                return;
+            }
+            state->owner->options.registerAdvancedFeatures();
+        };
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;
@@ -3367,6 +3388,13 @@ void SettingsWindowHost::RefreshWidgetsPage()
     if (impl_->widgetsPageBackend)
         (void)impl_->widgetsPageBackend->Refresh();
     impl_->RebuildSearchIndex();
+}
+
+void SettingsWindowHost::RefreshGeneralRuntimeState()
+{
+    if (!impl_->initialized || !impl_->OnOwnerThread() || !impl_->shell)
+        return;
+    impl_->shell->RefreshRuntimeState();
 }
 
 bool SettingsWindowHost::PrepareLanguageChange()

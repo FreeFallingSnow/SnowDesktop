@@ -465,6 +465,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kUrlDropDownloadCompletedMessage:
         OnUrlDropDownloadCompleted(lp);
         return 0;
+    case kSteamEntitlementChangedMessage:
+        if (settingsWindow_)
+            settingsWindow_->RefreshGeneralRuntimeState();
+        return 0;
     case kWidgetAudioAnalysisWakeMessage:
         if (widgetEngine_)
             widgetEngine_->OnAudioAnalysisWake();

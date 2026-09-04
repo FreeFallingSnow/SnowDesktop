@@ -1714,6 +1714,8 @@ int main()
         "excluded diagnostic log\n");
     Write(fullBackupData / L"SnowDesktop.log.1",
         "excluded rotated diagnostic log\n");
+    Write(fullBackupData / L"SnowDesktop.entitlement.bin",
+        "excluded machine-bound protected entitlement\n");
     Write(fullBackupData / L"crashdumps" / L"test.dmp",
         "excluded dump\n");
     Write(fullBackupData / L"ShellHook" / L"1.0.5.0-test" /
@@ -1791,6 +1793,9 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"SnowDesktop.log.1") &&
         !std::filesystem::exists(
+            createdFullBackup.backup.data /
+                L"SnowDesktop.entitlement.bin") &&
+        !std::filesystem::exists(
             createdFullBackup.backup.data / L"crashdumps") &&
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"ShellHook") &&
@@ -1806,7 +1811,7 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"SteamWorkshopManager" /
                 L"staging"),
-        "complete backup excludes logs, dumps, runtime hooks, tool scratch, staging, and quarantine");
+        "complete backup excludes logs, machine-bound entitlement, dumps, runtime hooks, tool scratch, staging, and quarantine");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.root / L"PrivateState") &&
         !std::filesystem::exists(

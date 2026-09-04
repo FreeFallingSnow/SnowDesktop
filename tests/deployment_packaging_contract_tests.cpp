@@ -178,6 +178,11 @@ void TestPackagers(const std::string& module,
         "release payloads isolate third-party runtime files in one private assembly directory");
     Check(release.find("SnowDesktopWorkshopManager.exe") ==
             std::string::npos &&
+            release.find("SnowDesktopSteamBridge.exe") !=
+                std::string::npos &&
+            release.find("steam_api64.dll") != std::string::npos &&
+            release.find("$includeOwnershipBridge") !=
+                std::string::npos &&
             release.find("widgets\\snowdesktop-lua-widget\\bin\\snowwidget.exe") !=
                 std::string::npos &&
             steam.find("SnowDesktopWorkshopManager.exe") !=
@@ -188,7 +193,7 @@ void TestPackagers(const std::string& module,
                 std::string::npos &&
             steam.find("$payloadSkillPublisher") !=
                 std::string::npos,
-        "only the Steam payload includes the Workshop manager and complete Agent publishing CLI while every release keeps the authoring tool");
+        "SDK-enabled releases include the ownership bridge while only the Steam payload includes the Workshop manager and complete Agent publishing CLI");
     Check(release.find("SnowDesktopLauncher.exe") == std::string::npos &&
             release.find("SnowDesktop.runtime-context.json") ==
                 std::string::npos &&
@@ -224,6 +229,10 @@ void TestPackagers(const std::string& module,
     Check(module.find("AdditionalRuntimeDlls") != std::string::npos &&
             module.find("AdditionalExecutables") != std::string::npos &&
             module.find("existingPrivateManifest") != std::string::npos &&
+            release.find("AdditionalRuntimeDlls") !=
+                std::string::npos &&
+            release.find("AdditionalExecutables") !=
+                std::string::npos &&
             steam.find("-AdditionalRuntimeDlls @(") !=
                 std::string::npos &&
             steam.find("$packagedConfigurationText") !=

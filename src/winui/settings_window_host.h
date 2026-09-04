@@ -46,6 +46,8 @@ struct SettingsWindowHostOptions
     HomeAboutStatusProvider homeAboutStatus;
     /** Runtime-only ownership warnings for the Windows auto-start setting. */
     std::function<GeneralStartupConflict()> startupConflict;
+    std::function<GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
+    std::function<void()> registerAdvancedFeatures;
 
     /** Ensure a persisted component instance is loaded before its declarative
      * settings session is created. The application owns the instance-to-
@@ -113,6 +115,8 @@ public:
     void SetWidgetEngine(WidgetEngine* engine);
     /** Re-capture the component page after an external subscription change. */
     void RefreshWidgetsPage();
+    /** Re-query General-page state owned by the application runtime. */
+    void RefreshGeneralRuntimeState();
     /** Commit the active component editor before its runtime generation changes. */
     [[nodiscard]] bool PrepareLanguageChange();
     /** Rebind localized component schema after the runtime reload completes. */

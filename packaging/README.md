@@ -170,9 +170,10 @@ Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
 Machine Learning、ONNX Runtime 和 DirectML DLL；清单会显式收集这三个文件及其许可和
 NOTICE，避免仅复制主 Windows App SDK 项时遗漏。WebView2 WinRT Core DLL 与 WinMD 也
 来自独立的 NuGet 项，并以同样方式连同许可和 NOTICE 纳入清单。携带版和 MSIX 包含
-`snowwidget.exe`，但不携带只适用于 Steam 的创意工坊管理器；Steam 包才包含管理器，且将
-`steam_api64.dll` 放入同一运行时目录并通过私有程序集加载。所有载荷都会校验 Agent Skill
-内嵌 CLI 与独立 CLI 完全一致。
+`snowwidget.exe`；使用 Steamworks SDK 构建时还会携带仅用于账户所有权验证的
+`SnowDesktopSteamBridge.exe`，并将 `steam_api64.dll` 放入同一运行时目录通过私有程序集加载。
+它们不携带创意工坊管理器；只有 Steam 包包含该管理器和完整发布工具。所有载荷都会校验
+Agent Skill 内嵌 CLI 与独立 CLI 完全一致。
 
 任务栏 Hook 通过 XAML Diagnostics TAP 接入 Explorer。该接口没有对应的进程级关闭 API，
 因此 Hook 模块可能一直映射到 Explorer 重启为止。SnowDesktop 不再直接注入构建或发行目录

@@ -268,6 +268,8 @@ set(SNOWDESKTOP_SOURCES
     src/url_drop_resource.h
     src/steam_runtime_context.cpp
     src/steam_runtime_context.h
+    src/steam_entitlement.cpp
+    src/steam_entitlement.h
     src/calendar_service.cpp
     src/full_data_backup.cpp
     src/portable_data_migration.cpp
@@ -1345,6 +1347,42 @@ if (BUILD_TESTING)
         SOURCES tests/deployment_packaging_contract_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS build contract packaging winui)
+
+    add_executable(SnowDesktopSteamEntitlementBridgeFixture
+        tests/steam_entitlement_bridge_fixture.cpp)
+    set_target_properties(SnowDesktopSteamEntitlementBridgeFixture PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    target_compile_features(
+        SnowDesktopSteamEntitlementBridgeFixture PRIVATE cxx_std_20)
+    target_compile_definitions(SnowDesktopSteamEntitlementBridgeFixture PRIVATE
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID})
+    if (MSVC)
+        set_property(TARGET SnowDesktopSteamEntitlementBridgeFixture PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopSteamEntitlementBridgeFixture PRIVATE
+            /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(
+            SnowDesktopSteamEntitlementBridgeFixture PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+
+    snowdesktop_add_test(
+        SnowDesktopSteamEntitlementTests
+        steam_entitlement
+        SOURCES
+            tests/steam_entitlement_tests.cpp
+            src/atomic_file.cpp
+            src/steam_entitlement.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES crypt32
+        COMMAND_ARGUMENTS
+            "$<TARGET_FILE:SnowDesktopSteamEntitlementBridgeFixture>"
+        LABELS core contract security steam)
+    target_compile_definitions(SnowDesktopSteamEntitlementTests PRIVATE
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID})
+    add_dependencies(SnowDesktopSteamEntitlementTests
+        SnowDesktopSteamEntitlementBridgeFixture)
 
     snowdesktop_add_test(
         SnowDesktopLauncherIconResourceTests

@@ -288,7 +288,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "hasSnapshot = true;\n        UpdateDependentEnabledStates();") !=
                 std::string::npos &&
             presenter.find(
-              "RefreshStartupConflict();\n        UpdateConditionalHintVisibility();") !=
+              "RefreshStartupConflict();\n        RefreshAdvancedFeatureStatus();\n        UpdateConditionalHintVisibility();") !=
                 std::string::npos,
         "desktop passthrough and floating-Dock hints follow only their own toggles and refresh after localization");
     Check(personalization.find(
@@ -326,8 +326,23 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "void GeneralPagePresenter::RefreshRuntimeState() noexcept") !=
                 std::string::npos &&
             presenter.find("impl_->RefreshStartupConflict();") !=
+                std::string::npos &&
+            presenter.find("impl_->RefreshAdvancedFeatureStatus();") !=
                 std::string::npos,
-        "cached General pages expose an explicit runtime-state refresh for startup conflicts");
+        "cached General pages refresh startup conflicts and Steam unlock state");
+    Check(presenter.find(
+              "InitializeCard(advancedFeaturesCard, cardStyle, root)") !=
+                std::string::npos &&
+            presenter.find("advancedFeatureNotice.IsClosable(false)") !=
+                std::string::npos &&
+            presenter.find("actions.registerAdvancedFeatures();") !=
+                std::string::npos &&
+            presenter.find(
+              "GeneralAdvancedFeatureState::RegistrationFailed") !=
+                std::string::npos &&
+            presenterHeader.find("queryAdvancedFeatureStatus") !=
+                std::string::npos,
+        "General presents Steam unlock status, an inline reminder, and a manual registration action");
     Check(presenter.find(
               "startupCard.content.Children().Append(startupOwnershipNotice)") !=
                 std::string::npos &&

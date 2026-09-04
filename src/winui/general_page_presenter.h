@@ -36,6 +36,33 @@ struct GeneralStartupConflict
     std::wstring ownerCommand;
 };
 
+enum class GeneralAdvancedFeatureState : std::uint8_t
+{
+    BridgeUnavailable,
+    Unregistered,
+    Checking,
+    Registered,
+    RegistrationFailed,
+};
+
+enum class GeneralAdvancedFeatureFailure : std::uint8_t
+{
+    None,
+    SteamUnavailable,
+    NotOwned,
+    BridgeError,
+    StorageError,
+};
+
+struct GeneralAdvancedFeatureStatus
+{
+    GeneralAdvancedFeatureState state =
+        GeneralAdvancedFeatureState::BridgeUnavailable;
+    GeneralAdvancedFeatureFailure failure =
+        GeneralAdvancedFeatureFailure::None;
+    bool bridgeAvailable = false;
+};
+
 /** Commands emitted by the cached General settings presenter. */
 struct GeneralPageActions
 {
@@ -54,6 +81,8 @@ struct GeneralPageActions
     std::function<void(std::uint64_t generation, bool enabled)>
         setAutoStart;
     std::function<GeneralStartupConflict()> queryStartupConflict;
+    std::function<GeneralAdvancedFeatureStatus()> queryAdvancedFeatureStatus;
+    std::function<void()> registerAdvancedFeatures;
 
     std::function<void(
         SettingsHostActions::HotkeyTarget target,
