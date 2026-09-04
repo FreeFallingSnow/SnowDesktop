@@ -62,6 +62,8 @@ struct GeneralAdvancedFeatureStatus
         GeneralAdvancedFeatureFailure::None;
     bool bridgeAvailable = false;
     bool registered = false;
+    bool cardVisible = false;
+    bool offerSteamStore = false;
 };
 
 /** Commands emitted by the cached General settings presenter. */
@@ -84,6 +86,7 @@ struct GeneralPageActions
     std::function<GeneralStartupConflict()> queryStartupConflict;
     std::function<GeneralAdvancedFeatureStatus()> queryAdvancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
+    std::function<void()> openAdvancedFeaturesStore;
 
     std::function<void(
         SettingsHostActions::HotkeyTarget target,

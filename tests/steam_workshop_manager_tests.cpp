@@ -208,6 +208,9 @@ void TestSteamIdentity()
     Check(IsExpectedSteamAppId(5080330u) &&
         !IsExpectedSteamAppId(480u),
         "Steam runtime identity rejects placeholder App IDs");
+    Check(snowdesktop::SnowDesktopSteamStoreUrl() ==
+            L"https://store.steampowered.com/app/5080330/",
+        "portable builds link to the production Steam Store page");
     Check(SteamWorkshopHomeUrl() ==
         "https://steamcommunity.com/app/5080330/workshop/",
         "Workshop links target the SnowDesktop application hub");

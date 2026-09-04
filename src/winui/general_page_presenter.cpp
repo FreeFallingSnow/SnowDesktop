@@ -145,6 +145,7 @@ struct GeneralPagePresenter::Impl
     bool dockEnabled = false;
     bool hasSnapshot = false;
     bool updatingControls = false;
+    bool advancedFeatureStoreAction = false;
     bool active = false;
     bool closed = false;
 
@@ -344,9 +345,15 @@ struct GeneralPagePresenter::Impl
             });
         registerAdvancedFeaturesToken = registerAdvancedFeaturesButton.Click(
             [this](const auto&, const auto&) {
-                if (closed || !active || !actions.registerAdvancedFeatures)
+                if (closed || !active)
                     return;
-                actions.registerAdvancedFeatures();
+                if (advancedFeatureStoreAction)
+                {
+                    if (actions.openAdvancedFeaturesStore)
+                        actions.openAdvancedFeaturesStore();
+                }
+                else if (actions.registerAdvancedFeatures)
+                    actions.registerAdvancedFeatures();
                 RefreshAdvancedFeatureStatus();
             });
         softwareDesktopToken = softwareDesktopToggle.Toggled(
@@ -774,8 +781,22 @@ struct GeneralPagePresenter::Impl
         if (actions.queryAdvancedFeatureStatus)
             status = actions.queryAdvancedFeatureStatus();
 
+        advancedFeaturesCard.root.Visibility(status.cardVisible
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        if (!status.cardVisible)
+        {
+            advancedFeatureStoreAction = false;
+            registerAdvancedFeaturesButton.Visibility(
+                mux::Visibility::Collapsed);
+            advancedFeatureNotice.Visibility(mux::Visibility::Collapsed);
+            advancedFeatureNotice.IsOpen(false);
+            return;
+        }
+
         std::string_view statusKey =
             "settings.general.advancedFeatures.unavailable";
+        std::string_view buttonKey =
+            "settings.general.advancedFeatures.register";
         bool showButton = false;
         bool buttonEnabled = false;
         bool showNotice = false;
@@ -815,10 +836,24 @@ struct GeneralPagePresenter::Impl
                 noticeKey = "settings.general.advancedFeatures.failed";
             break;
         case GeneralAdvancedFeatureState::BridgeUnavailable:
+            if (status.offerSteamStore)
+            {
+                statusKey =
+                    "settings.general.advancedFeatures.portable";
+                buttonKey =
+                    "settings.general.advancedFeatures.viewOnSteam";
+                showButton = true;
+                buttonEnabled = true;
+            }
             break;
         }
 
+        advancedFeatureStoreAction = status.offerSteamStore;
         advancedFeatureStatus.Text(L(statusKey));
+        registerAdvancedFeaturesButton.Content(
+            winrt::box_value(L(buttonKey)));
+        muxa::AutomationProperties::SetName(
+            registerAdvancedFeaturesButton, L(buttonKey));
         registerAdvancedFeaturesButton.Visibility(showButton
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         registerAdvancedFeaturesButton.IsEnabled(buttonEnabled);

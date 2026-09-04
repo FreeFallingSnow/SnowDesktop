@@ -277,6 +277,10 @@ int main(int argc, char** argv)
             hostHeader.find("registerAdvancedFeatures") !=
                 std::string::npos &&
             host.find("general.setAutoStart") != std::string::npos &&
+            host.find("general.openAdvancedFeaturesStore") !=
+                std::string::npos &&
+            host.find("SnowDesktopSteamStoreUrl()") !=
+                std::string::npos &&
             host.find("general.openStartupAppsSettings") ==
                 std::string::npos &&
             host.find("general.queryStartupConflict") !=
@@ -286,6 +290,15 @@ int main(int argc, char** argv)
             host.find("Action::OpenStartupAppsSettings") ==
                 std::string::npos,
         "the General WinUI presenter owns auto-start changes and receives runtime startup and Steam entitlement state");
+    Check(run.find("target.cardVisible = source.bridgeAvailable") !=
+                std::string::npos &&
+            run.find("RuntimeDeploymentKind::Portable") !=
+                std::string::npos &&
+            run.find("target.offerSteamStore = !source.bridgeAvailable") !=
+                std::string::npos &&
+            host.find("descriptor.focusId == \"general.advancedFeatures\"") !=
+                std::string::npos,
+        "only portable Bridge-free builds offer the Steam Store while hidden advanced-feature cards are excluded from Settings search");
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&

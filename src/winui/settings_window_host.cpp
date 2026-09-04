@@ -5,6 +5,7 @@
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
 #include "authoring_toolchain.h"
+#include "../steam_app_identity.h"
 #include "../widget_engine.h"
 #include "../widget_settings_service.h"
 
@@ -1150,6 +1151,9 @@ struct SettingsWindowHost::Impl
         input.developerToolsVisible = options.developerToolsVisible &&
             options.developerToolsVisible();
         input.debugVisible = DebugPageVisible();
+        const bool advancedFeaturesVisible =
+            options.advancedFeatureStatus &&
+            options.advancedFeatureStatus().cardVisible;
         if (input.languageTag.empty())
             input.languageTag = "runtime";
 
@@ -1213,6 +1217,14 @@ struct SettingsWindowHost::Impl
                         : input.debugVisible);
                 if (!descriptor.label.empty())
                     input.staticSettings.push_back(std::move(descriptor));
+            }
+        }
+        if (!advancedFeaturesVisible)
+        {
+            for (auto& descriptor : input.staticSettings)
+            {
+                if (descriptor.focusId == "general.advancedFeatures")
+                    descriptor.visible = false;
             }
         }
         return input;
@@ -1932,6 +1944,21 @@ struct SettingsWindowHost::Impl
                 return;
             }
             state->owner->options.registerAdvancedFeatures();
+        };
+        general.openAdvancedFeaturesStore = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner)
+                return;
+            const std::wstring uri = snowdesktop::SnowDesktopSteamStoreUrl();
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    state->owner->window, L"open", uri.c_str(), nullptr,
+                    nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                state->owner->ShowActionError(
+                    SettingsActionResult::Failure(
+                        state->owner->L(
+                            "settings.about.link.openFailed")));
+            }
         };
         shell->SetGeneralPageActions(std::move(general));
 

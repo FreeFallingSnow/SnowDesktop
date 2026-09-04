@@ -205,7 +205,8 @@ bool LaunchSteamWorkshopPublisher(
 
 snowdesktop::winui::GeneralAdvancedFeatureStatus
 ToGeneralAdvancedFeatureStatus(
-    const snowdesktop::steam_entitlement::Snapshot& source)
+    const snowdesktop::steam_entitlement::Snapshot& source,
+    snowdesktop::deployment::RuntimeDeploymentKind deploymentKind)
 {
     using SourceFailure = snowdesktop::steam_entitlement::Failure;
     using SourceState = snowdesktop::steam_entitlement::State;
@@ -216,6 +217,10 @@ ToGeneralAdvancedFeatureStatus(
     snowdesktop::winui::GeneralAdvancedFeatureStatus target;
     target.bridgeAvailable = source.bridgeAvailable;
     target.registered = source.registered;
+    target.cardVisible = source.bridgeAvailable || deploymentKind ==
+        snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    target.offerSteamStore = !source.bridgeAvailable && deploymentKind ==
+        snowdesktop::deployment::RuntimeDeploymentKind::Portable;
     switch (source.state)
     {
     case SourceState::BridgeUnavailable:
@@ -706,7 +711,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.advancedFeatureStatus = [this]() {
         return steamEntitlementService_
             ? ToGeneralAdvancedFeatureStatus(
-                  steamEntitlementService_->Current())
+                  steamEntitlementService_->Current(),
+                  snowdesktop::deployment::GetRuntimeDeploymentContext().kind)
             : snowdesktop::winui::GeneralAdvancedFeatureStatus{};
     };
     settingsHostOptions.registerAdvancedFeatures = [this]() {
