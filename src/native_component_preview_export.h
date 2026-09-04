@@ -31,6 +31,7 @@ struct Output
     std::filesystem::path path;
     bool listMode = false;
     bool scrollContainerMode = false;
+    bool largeFolderTitleless = false;
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;

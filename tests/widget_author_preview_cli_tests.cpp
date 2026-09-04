@@ -844,7 +844,9 @@ int wmain(int argc, wchar_t** argv)
                 std::string::npos &&
             nativeJson.find("\"preset\":\"scroll-list\"") !=
                 std::string::npos &&
-            nativeJson.find("\"preset\":\"large-folder-list\"") !=
+            nativeJson.find("\"preset\":\"large-folder-titleless\"") !=
+                std::string::npos &&
+            nativeJson.find("\"largeFolderTitleless\":true") !=
                 std::string::npos &&
             nativeJson.find("\"cornerRadius\":12") !=
                 std::string::npos &&
@@ -855,6 +857,9 @@ int wmain(int argc, wchar_t** argv)
         nativeOutputDirectory / L"collection-compact.png", 640, 480);
     const auto largeFolderCollection = CheckOpaquePreview(
         nativeOutputDirectory / L"collection-large-folder.png", 640, 480);
+    const auto titlelessCollection = CheckOpaquePreview(
+        nativeOutputDirectory /
+            L"collection-large-folder-titleless.png", 640, 480);
     const auto scrollGridCollection = CheckOpaquePreview(
         nativeOutputDirectory / L"collection-scroll-grid.png", 640, 480);
     const auto scrollListCollection = CheckOpaquePreview(
@@ -864,10 +869,11 @@ int wmain(int argc, wchar_t** argv)
               nativeCanvasBounds) > 1000 &&
             CountDifferingPixels(largeFolderCollection,
                 scrollGridCollection, nativeCanvasBounds) > 1000 &&
+            CountDifferingPixels(largeFolderCollection,
+                titlelessCollection, nativeCanvasBounds) > 1000 &&
             CountDifferingPixels(scrollGridCollection,
                 scrollListCollection, nativeCanvasBounds) > 1000,
         "native collection exports retain visibly distinct configurations");
-    CheckPng(nativeOutputDirectory / L"collection-large-folder-list.png");
 
     const auto transparentOutputDirectory =
         temporary.path / L"native-transparent-previews";
@@ -893,6 +899,7 @@ int wmain(int argc, wchar_t** argv)
     constexpr std::array transparentFilenames{
         L"collection-compact.png",
         L"collection-large-folder.png",
+        L"collection-large-folder-titleless.png",
         L"collection-scroll-grid.png",
         L"collection-scroll-list.png",
         L"collection-group-grid.png",

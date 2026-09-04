@@ -65,6 +65,7 @@ struct ApplySettings
     int rows = 1;
     bool listMode = false;
     bool scrollContainerMode = false;
+    bool largeFolderTitleless = false;
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
@@ -74,6 +75,7 @@ enum class OptionSetting
 {
     ListMode,
     ScrollContainerMode,
+    LargeFolderTitleless,
     DateHeaders,
     ShowFileCategories,
     ShowSearchBox,

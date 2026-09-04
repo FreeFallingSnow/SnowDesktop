@@ -205,6 +205,8 @@ std::string Result::ToJson() const
             << (item.listMode ? "true" : "false")
             << ",\"scrollContainerMode\":"
             << (item.scrollContainerMode ? "true" : "false")
+            << ",\"largeFolderTitleless\":"
+            << (item.largeFolderTitleless ? "true" : "false")
             << ",\"dateHeaders\":"
             << (item.dateHeaders ? "true" : "false")
             << ",\"showFileCategories\":"
@@ -371,6 +373,7 @@ DesktopApp::ExportNativeComponentPreviews(
         std::optional<bool> dateHeaders;
         std::optional<bool> showFileCategories;
         std::optional<bool> showSearchBox;
+        std::optional<bool> largeFolderTitleless;
     };
     struct ComponentDefinition
     {
@@ -403,8 +406,10 @@ DesktopApp::ExportNativeComponentPreviews(
             variants.push_back({ "compact", L"collection-compact.png", 0 });
             variants.push_back({ "large-folder",
                 L"collection-large-folder.png", 1, false, false });
-            variants.push_back({ "large-folder-list",
-                L"collection-large-folder-list.png", 1, false, true });
+            variants.push_back({ "large-folder-titleless",
+                L"collection-large-folder-titleless.png", 1,
+                false, false, std::nullopt, std::nullopt,
+                std::nullopt, true });
             variants.push_back({ "scroll-grid",
                 L"collection-scroll-grid.png", 1, true, false });
             variants.push_back({ "scroll-list",
@@ -514,6 +519,9 @@ DesktopApp::ExportNativeComponentPreviews(
                 settings.showFileCategories = *variant.showFileCategories;
             if (variant.showSearchBox)
                 settings.showSearchBox = *variant.showSearchBox;
+            if (variant.largeFolderTitleless)
+                settings.largeFolderTitleless =
+                    *variant.largeFolderTitleless;
             const component_preview::StagePlacement placement{
                 request.canvasWidth, request.canvasHeight,
                 placementX, placementY, lightStage,
@@ -544,7 +552,8 @@ DesktopApp::ExportNativeComponentPreviews(
             }
             result.outputs.push_back({ std::string(definition.id), variant.id,
                 outputPath, settings.listMode,
-                settings.scrollContainerMode, settings.dateHeaders,
+                settings.scrollContainerMode,
+                settings.largeFolderTitleless, settings.dateHeaders,
                 settings.showFileCategories, settings.showSearchBox,
                 ScaleWidgetCu(appearance.cornerRadius,
                     GetGridPageCuScale(page)),

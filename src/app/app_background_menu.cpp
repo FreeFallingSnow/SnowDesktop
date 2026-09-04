@@ -878,11 +878,10 @@ DesktopApp::BuildAddWidgetMenuPreview(
                            snowdesktop::WidgetPreviewScene>& scene,
                        DesktopWidget root,
                        std::unordered_map<std::string, std::string>
-                           storage = {},
-                       bool showTitle = true) {
+                           storage = {}) {
         root.id = L"__component_preview_" + modeKey;
         root.selected = false;
-        root.showTitle = showTitle;
+        root.showTitle = true;
         if (previewPage)
         {
             root.gridSpan.columns = std::clamp(root.gridSpan.columns,
@@ -941,6 +940,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
             {
                 preview->listMode = settings.listMode;
                 preview->scrollContainerMode = settings.scrollContainerMode;
+                preview->largeFolderTitleless =
+                    settings.largeFolderTitleless;
                 preview->dateHeaders = settings.dateHeaders;
                 preview->showFileCategories = settings.showFileCategories;
                 preview->showSearchBox = settings.showSearchBox;
@@ -973,6 +974,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
             card.applySettings.listMode = rootData->listMode;
             card.applySettings.scrollContainerMode =
                 rootData->scrollContainerMode;
+            card.applySettings.largeFolderTitleless =
+                rootData->largeFolderTitleless;
             card.applySettings.dateHeaders = rootData->dateHeaders;
             card.applySettings.showFileCategories =
                 rootData->showFileCategories;
@@ -1001,6 +1004,12 @@ DesktopApp::BuildAddWidgetMenuPreview(
             "app.widget_preview.mode_large_folder",
             "app.widget_preview.mode_scroll_container");
     };
+    auto collectionTitlelessOption = [&]() {
+        return option(OptionSetting::LargeFolderTitleless,
+            "app.interact.large_folder_titleless",
+            "app.interact.off",
+            "app.interact.on");
+    };
 
     switch (command)
     {
@@ -1016,7 +1025,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         fillItemKeys(compact, *compactScene, 5);
         addCard("app.widget_preview.collection_compact",
             "app.widget_preview.collection_compact_hint", L"collection:compact",
-            compactScene, std::move(compact), {}, false);
+            compactScene, std::move(compact));
 
         auto scrollGridScene = makeScene(true);
         DesktopWidget scrollGrid;
@@ -1028,8 +1037,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
             "app.widget_preview.collection_scroll_grid_hint",
             L"collection:scroll-grid", scrollGridScene,
             std::move(scrollGrid));
-        model.cards.back().options = {
-            collectionModeOption(), layoutOption() };
+        model.cards.back().options = { collectionModeOption(),
+            collectionTitlelessOption(), layoutOption() };
         model.initialCard = 1;
         return model;
     }

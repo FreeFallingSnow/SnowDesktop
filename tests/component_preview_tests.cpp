@@ -411,15 +411,20 @@ int wmain()
         OptionSetting::ScrollContainerMode,
         L"Collection mode", L"Large folder", L"Scroll container" });
     collectionCard.options.push_back({
+        OptionSetting::LargeFolderTitleless,
+        L"Label-free compact mode", L"Off", L"On" });
+    collectionCard.options.push_back({
         OptionSetting::ListMode,
         L"Layout", L"Icons", L"List" });
     bool collectionRenderScrolling = false;
     bool collectionRenderList = false;
+    bool collectionRenderTitleless = false;
     collectionCard.render = [&](int width, int height, UINT,
             const StagePlacement&,
             const ApplySettings& settings, bool) {
         collectionRenderScrolling = settings.scrollContainerMode;
         collectionRenderList = settings.listMode;
+        collectionRenderTitleless = settings.largeFolderTitleless;
         return SolidBitmap(width, height, 0xff406080u);
     };
     collectionOptionsModel.cards.push_back(std::move(collectionCard));
@@ -430,12 +435,23 @@ int wmain()
         "collection option constraints render successfully");
     RECT largeFolderBounds{};
     GetClientRect(window.Handle(), &largeFolderBounds);
-    Expect(!collectionRenderScrolling && !collectionRenderList,
+    Expect(!collectionRenderScrolling && !collectionRenderList &&
+            !collectionRenderTitleless,
         "large-folder preview starts without a list layout");
     RECT hiddenListModeButton = window.OptionBoundsForTesting(
         OptionSetting::ListMode, true);
     Expect(IsRectEmpty(&hiddenListModeButton),
         "large-folder preview does not expose list controls");
+    RECT titlelessModeButton = window.OptionBoundsForTesting(
+        OptionSetting::LargeFolderTitleless, true);
+    Expect(!IsRectEmpty(&titlelessModeButton),
+        "large-folder preview exposes label-free compact mode");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(
+            (titlelessModeButton.left + titlelessModeButton.right) / 2,
+            (titlelessModeButton.top + titlelessModeButton.bottom) / 2));
+    Expect(collectionRenderTitleless,
+        "label-free compact mode rerenders the large-folder preview");
     RECT scrollingModeButton = window.OptionBoundsForTesting(
         OptionSetting::ScrollContainerMode, true);
     Expect(!IsRectEmpty(&scrollingModeButton),
@@ -443,11 +459,12 @@ int wmain()
     SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
         MAKELPARAM((scrollingModeButton.left + scrollingModeButton.right) / 2,
             (scrollingModeButton.top + scrollingModeButton.bottom) / 2));
-    RECT scrollingBounds{};
-    GetClientRect(window.Handle(), &scrollingBounds);
-    Expect(collectionRenderScrolling &&
-            scrollingBounds.bottom > largeFolderBounds.bottom,
-        "list layout appears only after enabling scrolling-container mode");
+    Expect(collectionRenderScrolling && !collectionRenderTitleless,
+        "scrolling-container mode disables label-free compact mode");
+    RECT hiddenTitlelessModeButton = window.OptionBoundsForTesting(
+        OptionSetting::LargeFolderTitleless, true);
+    Expect(IsRectEmpty(&hiddenTitlelessModeButton),
+        "scrolling-container preview removes label-free compact controls");
     RECT listModeButton = window.OptionBoundsForTesting(
         OptionSetting::ListMode, true);
     Expect(!IsRectEmpty(&listModeButton),
@@ -471,10 +488,18 @@ int wmain()
         OptionSetting::ListMode, true);
     Expect(IsRectEmpty(&hiddenListModeButton),
         "large-folder preview removes list click targets");
+    titlelessModeButton = window.OptionBoundsForTesting(
+        OptionSetting::LargeFolderTitleless, true);
+    Expect(!IsRectEmpty(&titlelessModeButton),
+        "returning to large-folder mode restores label-free compact controls");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(
+            (titlelessModeButton.left + titlelessModeButton.right) / 2,
+            (titlelessModeButton.top + titlelessModeButton.bottom) / 2));
     SendMessageW(window.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     Expect(applied.has_value() && !applied->scrollContainerMode &&
-            !applied->listMode,
-        "large-folder settings cannot apply a hidden list layout");
+            !applied->listMode && applied->largeFolderTitleless,
+        "large-folder settings apply label-free compact mode without a hidden list layout");
 
     window.Hide();
     const RECT itemBounds{ 130, 200, 260, 232 };
