@@ -804,6 +804,7 @@
   "app.interact.control_panel": "Panel de control",
   "app.interact.recycle_bin": "Papelera de reciclaje",
   "app.interact.desktop_icon_settings": "Configuración de iconos de escritorio",
+  "app.interact.non_system_icons": "Iconos que no son del sistema",
   "app.interact.desktop_mode": "Modo de escritorio",
   "app.interact.native_desktop": "Escritorio nativo",
   "app.interact.software_desktop": "Software de escritorio",

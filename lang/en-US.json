@@ -804,6 +804,7 @@
     "app.interact.control_panel": "Control Panel",
     "app.interact.recycle_bin": "Recycle Bin",
     "app.interact.desktop_icon_settings": "Desktop Icon Settings",
+    "app.interact.non_system_icons": "Non-system icons",
     "app.interact.desktop_mode": "Desktop Mode",
     "app.interact.native_desktop": "Native Desktop",
     "app.interact.software_desktop": "Software Desktop",

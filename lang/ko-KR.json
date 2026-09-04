@@ -804,6 +804,7 @@
   "app.interact.control_panel": "제어판",
   "app.interact.recycle_bin": "휴지통",
   "app.interact.desktop_icon_settings": "데스크톱 아이콘 설정",
+  "app.interact.non_system_icons": "시스템 외 아이콘",
   "app.interact.desktop_mode": "데스크톱 모드",
   "app.interact.native_desktop": "Windows 기본 데스크톱",
   "app.interact.software_desktop": "소프트웨어 데스크톱",

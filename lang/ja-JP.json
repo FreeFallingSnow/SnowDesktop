@@ -804,6 +804,7 @@
   "app.interact.control_panel": "コントロール パネル",
   "app.interact.recycle_bin": "ごみ箱",
   "app.interact.desktop_icon_settings": "デスクトップアイコンの設定",
+  "app.interact.non_system_icons": "システム以外のアイコン",
   "app.interact.desktop_mode": "デスクトップモード",
   "app.interact.native_desktop": "ネイティブ デスクトップ",
   "app.interact.software_desktop": "ソフトウェア デスクトップ",

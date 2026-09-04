@@ -804,6 +804,7 @@
   "app.interact.control_panel": "Painel de controle",
   "app.interact.recycle_bin": "Lixeira",
   "app.interact.desktop_icon_settings": "Configurações do ícone da área de trabalho",
+  "app.interact.non_system_icons": "Ícones que não são do sistema",
   "app.interact.desktop_mode": "Modo de área de trabalho",
   "app.interact.native_desktop": "Área de trabalho nativa",
   "app.interact.software_desktop": "Área de trabalho por software",

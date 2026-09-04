@@ -804,6 +804,7 @@
   "app.interact.control_panel": "Panneau de commande",
   "app.interact.recycle_bin": "Corbeille",
   "app.interact.desktop_icon_settings": "Paramètres des icônes du bureau",
+  "app.interact.non_system_icons": "Icônes non système",
   "app.interact.desktop_mode": "Mode bureau",
   "app.interact.native_desktop": "Bureau natif",
   "app.interact.software_desktop": "Bureau logiciel",

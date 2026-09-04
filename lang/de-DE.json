@@ -804,6 +804,7 @@
   "app.interact.control_panel": "Systemsteuerung",
   "app.interact.recycle_bin": "Papierkorb",
   "app.interact.desktop_icon_settings": "Desktop-Symboleinstellungen",
+  "app.interact.non_system_icons": "Nicht-Systemsymbole",
   "app.interact.desktop_mode": "Desktop-Modus",
   "app.interact.native_desktop": "Nativer Desktop",
   "app.interact.software_desktop": "Software-Desktop",

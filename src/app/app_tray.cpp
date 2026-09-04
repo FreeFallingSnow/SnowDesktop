@@ -100,6 +100,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         namespaceRegistrations;
     std::vector<size_t> dynamicNamespaceIndexes;
     HMENU iconMenu = CreatePopupMenu();
+    HMENU nonSystemIconMenu = nullptr;
     if (iconMenu)
     {
         struct IS { UINT cmd; const wchar_t* clsid; const wchar_t* label; };
@@ -135,7 +136,9 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
         namespaceRegistrations =
             snowdesktop::LoadDesktopNamespaceRegistrations();
+        nonSystemIconMenu = CreatePopupMenu();
         for (size_t index = 0;
+             nonSystemIconMenu &&
              index < namespaceRegistrations.size() &&
              dynamicNamespaceIndexes.size() <=
                 kTrayDesktopNamespaceLast -
@@ -166,9 +169,24 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                     ? _LW("app.interact.shown")
                     : _LW("app.interact.hidden"));
             AppendMenuW(
-                iconMenu, MF_STRING,
+                nonSystemIconMenu, MF_STRING,
                 command, label.c_str());
             dynamicNamespaceIndexes.push_back(index);
+        }
+        if (nonSystemIconMenu &&
+            !dynamicNamespaceIndexes.empty())
+        {
+            AppendMenuW(iconMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(
+                iconMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(
+                    nonSystemIconMenu),
+                _LW("app.interact.non_system_icons"));
+        }
+        else if (nonSystemIconMenu)
+        {
+            DestroyMenu(nonSystemIconMenu);
+            nonSystemIconMenu = nullptr;
         }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("app.interact.desktop_icon_settings"));
     }
@@ -192,6 +210,14 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     if (iconMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"");
+    if (nonSystemIconMenu)
+    {
+        SetMenuItemIcon(
+            iconMenu,
+            reinterpret_cast<UINT_PTR>(
+                nonSystemIconMenu),
+            L"");
+    }
     SetMenuItemIcon(menu, kTrayToggleDesktopMode,
         nativeActive ? L"" : L"");
     SetMenuItemIcon(menu, kTraySettingsCommand, L"");

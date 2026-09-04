@@ -804,6 +804,7 @@
   "app.interact.control_panel": "控制面板",
   "app.interact.recycle_bin": "回收站",
   "app.interact.desktop_icon_settings": "桌面圖示設定",
+  "app.interact.non_system_icons": "非系統圖示",
   "app.interact.desktop_mode": "桌面模式",
   "app.interact.native_desktop": "原生桌面",
   "app.interact.software_desktop": "軟體桌面",
