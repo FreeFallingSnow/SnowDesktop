@@ -791,7 +791,8 @@ private:
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
     /** Start one Steam ownership registration attempt when it is needed. */
-    void StartSteamEntitlementRegistration();
+    void StartSteamEntitlementRegistration(
+        bool revalidateRegistered = false);
     /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
     [[nodiscard]] bool RequestRestart();
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */

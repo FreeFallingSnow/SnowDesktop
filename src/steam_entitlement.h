@@ -12,7 +12,7 @@ namespace snowdesktop::steam_entitlement
 {
 
 constexpr std::chrono::hours kRegistrationLifetime =
-    std::chrono::hours(24 * 7);
+    std::chrono::hours(24 * 30);
 
 enum class State : std::uint8_t
 {
@@ -37,6 +37,8 @@ struct Snapshot
     State state = State::BridgeUnavailable;
     Failure failure = Failure::None;
     bool bridgeAvailable = false;
+    /** An unexpired last-known ownership result remains usable while offline. */
+    bool registered = false;
     std::uint64_t revision = 0;
 };
 
@@ -62,9 +64,10 @@ struct BridgeResponse
 /**
  * Application-lifetime Steam ownership registration service.
  *
- * Successful ownership checks are cached for seven days in a Windows
- * DPAPI-protected file. An absent or expired cache is unregistered and may be
- * checked once at startup or explicitly from Settings.
+ * Successful ownership checks are cached for thirty days in a Windows
+ * DPAPI-protected file. The host revalidates on every startup when the Bridge
+ * is available; a temporary failure does not renew or revoke an unexpired
+ * cache, while an authoritative owned=false result revokes it immediately.
  */
 class Service final
 {
@@ -81,7 +84,8 @@ public:
     [[nodiscard]] bool IsRegistered() const noexcept;
 
     /** Start one asynchronous Bridge check when not already registered/busy. */
-    [[nodiscard]] bool StartRegistration(std::function<void()> completed);
+    [[nodiscard]] bool StartRegistration(std::function<void()> completed,
+        bool revalidateRegistered = false);
     void Stop() noexcept;
 
 private:

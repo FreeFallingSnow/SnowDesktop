@@ -215,6 +215,7 @@ ToGeneralAdvancedFeatureStatus(
 
     snowdesktop::winui::GeneralAdvancedFeatureStatus target;
     target.bridgeAvailable = source.bridgeAvailable;
+    target.registered = source.registered;
     switch (source.state)
     {
     case SourceState::BridgeUnavailable:
@@ -257,7 +258,7 @@ ToGeneralAdvancedFeatureStatus(
 
 // Application bootstrap and top-level message loop.
 
-void DesktopApp::StartSteamEntitlementRegistration()
+void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 {
     if (!steamEntitlementService_)
         return;
@@ -267,7 +268,7 @@ void DesktopApp::StartSteamEntitlementRegistration()
             if (notificationWindow && IsWindow(notificationWindow))
                 PostMessageW(notificationWindow,
                     kSteamEntitlementChangedMessage, 0, 0);
-        });
+        }, revalidateRegistered);
     if (started && settingsWindow_)
         settingsWindow_->RefreshGeneralRuntimeState();
 }
@@ -1105,7 +1106,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         WriteDiagnosticLogEntry(message.c_str());
     }
-    StartSteamEntitlementRegistration();
+    StartSteamEntitlementRegistration(true);
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))

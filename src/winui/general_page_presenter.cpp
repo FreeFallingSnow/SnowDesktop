@@ -799,7 +799,9 @@ struct GeneralPagePresenter::Impl
             showNotice = status.bridgeAvailable;
             break;
         case GeneralAdvancedFeatureState::RegistrationFailed:
-            statusKey = "settings.general.advancedFeatures.unregistered";
+            statusKey = status.registered
+                ? "settings.general.advancedFeatures.registered"
+                : "settings.general.advancedFeatures.unregistered";
             showButton = status.bridgeAvailable;
             buttonEnabled = showButton;
             showNotice = status.bridgeAvailable;

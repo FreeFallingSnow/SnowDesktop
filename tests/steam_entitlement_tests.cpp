@@ -1,5 +1,7 @@
 #include "steam_entitlement.h"
 
+#include <windows.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -45,11 +47,11 @@ int wmain(int argc, wchar_t** argv)
         "\"steamId\":\"76561198000000001\"}\n", 0);
     Check(notOwned.outcome == BridgeOutcome::NotOwned,
         "an authoritative owned=false result is preserved");
-    const auto offline = ParseBridgeResponse(
+    const auto offlineResponse = ParseBridgeResponse(
         "{\"ok\":false,\"error\":{"
         "\"code\":\"steam_not_logged_on\","
         "\"message\":\"offline\"}}\n", 4);
-    Check(offline.outcome == BridgeOutcome::SteamUnavailable,
+    Check(offlineResponse.outcome == BridgeOutcome::SteamUnavailable,
         "an offline Steam error is distinct from non-ownership");
     Check(ParseBridgeResponse("not json", 0).outcome ==
             BridgeOutcome::Failed,
@@ -81,6 +83,15 @@ int wmain(int argc, wchar_t** argv)
             "a successful ownership check registers advanced features");
         Check(!service.StartRegistration({}),
             "a registered service does not repeat the startup check");
+        Check(service.StartRegistration({}, true),
+            "startup can explicitly revalidate an existing registration");
+        const auto renewalDeadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        while (service.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < renewalDeadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(service.IsRegistered(),
+            "successful startup revalidation renews registration");
     }
 
     const std::string protectedBytes = Read(cache);
@@ -93,6 +104,48 @@ int wmain(int argc, wchar_t** argv)
         Service restored(fixture, fixture, cache);
         Check(restored.IsRegistered(),
             "the current Windows user can restore an unexpired DPAPI cache");
+    }
+    const auto offlineFixture = root / L"offline-bridge.exe";
+    const auto notOwnedFixture = root / L"not-owned-bridge.exe";
+    std::filesystem::copy_file(fixture, offlineFixture,
+        std::filesystem::copy_options::overwrite_existing, error);
+    Check(!error, "the offline Bridge fixture is prepared");
+    error.clear();
+    std::filesystem::copy_file(fixture, notOwnedFixture,
+        std::filesystem::copy_options::overwrite_existing, error);
+    Check(!error, "the non-owner Bridge fixture is prepared");
+    {
+        Service offline(offlineFixture, offlineFixture, cache);
+        Check(offline.IsRegistered() &&
+                offline.StartRegistration({}, true),
+            "an unexpired registration begins startup revalidation");
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        while (offline.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        const Snapshot snapshot = offline.Current();
+        Check(snapshot.registered &&
+                snapshot.state == State::RegistrationFailed &&
+                snapshot.failure == Failure::SteamUnavailable &&
+                std::filesystem::is_regular_file(cache),
+            "temporary Steam failure keeps but does not renew the offline lease");
+    }
+    {
+        Service refunded(notOwnedFixture, notOwnedFixture, cache);
+        Check(refunded.IsRegistered() &&
+                refunded.StartRegistration({}, true),
+            "a cached registration can be checked for refunded ownership");
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        while (refunded.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        const Snapshot snapshot = refunded.Current();
+        Check(!snapshot.registered &&
+                snapshot.failure == Failure::NotOwned &&
+                !std::filesystem::exists(cache),
+            "an authoritative owned=false response immediately revokes the cache");
     }
     {
         Service unavailable(root / L"missing.exe", fixture, cache);

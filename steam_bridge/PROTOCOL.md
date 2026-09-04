@@ -14,6 +14,13 @@ online signed-in user, and returns `owned` from `ISteamApps::BIsSubscribed()`
 for that current account and App ID. It does not treat installation as proof of
 ownership and does not relaunch the process through Steam.
 
+The SnowDesktop host invokes this command after every application startup when
+the Bridge and Steamworks runtime are present, including when SnowDesktop.exe
+was started directly. A successful ownership result is stored for 30 days in a
+current-Windows-user DPAPI-protected cache. Temporary Steam or Bridge failures
+do not renew or revoke an unexpired cache. An authoritative `owned: false`
+result revokes the cache immediately.
+
 ## Transport
 
 - Arguments use the native Windows Unicode command line.

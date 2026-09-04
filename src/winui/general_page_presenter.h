@@ -61,6 +61,7 @@ struct GeneralAdvancedFeatureStatus
     GeneralAdvancedFeatureFailure failure =
         GeneralAdvancedFeatureFailure::None;
     bool bridgeAvailable = false;
+    bool registered = false;
 };
 
 /** Commands emitted by the cached General settings presenter. */

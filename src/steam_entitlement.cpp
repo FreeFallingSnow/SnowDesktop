@@ -410,7 +410,10 @@ struct Service::Impl
             ? State::Unregistered : State::BridgeUnavailable;
         const auto cached = UnprotectCache(protectedCache);
         if (snapshot.bridgeAvailable && cached && cached->validUntil > UnixNow())
+        {
             snapshot.state = State::Registered;
+            snapshot.registered = true;
+        }
     }
 
     std::filesystem::path bridgeExecutable;
@@ -425,6 +428,11 @@ struct Service::Impl
     {
         Failure failure = Failure::BridgeError;
         State state = State::RegistrationFailed;
+        bool registered = false;
+        {
+            std::lock_guard lock(mutex);
+            registered = snapshot.registered;
+        }
         if (response.outcome == BridgeOutcome::Owned)
         {
             const std::int64_t now = UnixNow();
@@ -437,6 +445,7 @@ struct Service::Impl
             {
                 state = State::Registered;
                 failure = Failure::None;
+                registered = true;
             }
             else
                 failure = Failure::StorageError;
@@ -444,6 +453,7 @@ struct Service::Impl
         else if (response.outcome == BridgeOutcome::NotOwned)
         {
             failure = Failure::NotOwned;
+            registered = false;
             std::error_code ignored;
             std::filesystem::remove(protectedCache, ignored);
         }
@@ -457,6 +467,7 @@ struct Service::Impl
             {
                 snapshot.state = state;
                 snapshot.failure = failure;
+                snapshot.registered = registered;
                 ++snapshot.revision;
                 notify = true;
             }
@@ -488,16 +499,18 @@ Snapshot Service::Current() const noexcept
 
 bool Service::IsRegistered() const noexcept
 {
-    return Current().state == State::Registered;
+    return Current().registered;
 }
 
-bool Service::StartRegistration(std::function<void()> completed)
+bool Service::StartRegistration(std::function<void()> completed,
+    bool revalidateRegistered)
 {
     if (!impl_) return false;
     {
         std::lock_guard lock(impl_->mutex);
         if (impl_->stopping || !impl_->snapshot.bridgeAvailable ||
-            impl_->snapshot.state == State::Registered ||
+            (impl_->snapshot.state == State::Registered &&
+                !revalidateRegistered) ||
             impl_->snapshot.state == State::Checking)
             return false;
         impl_->snapshot.state = State::Checking;
