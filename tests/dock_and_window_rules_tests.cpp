@@ -2791,23 +2791,28 @@ int main(int argc, char** argv)
               true, true, true, false, true, false),
         "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
     Check(floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, 1000, 1400) &&
+              true, true, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              false, true, 1000, 1400) &&
+              false, true, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, false, 1000, 1400) &&
+              true, false, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, 1000, 1501) &&
+              true, true, false, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, 1000, 999),
-        "Show Desktop protection requires an active DockHost, desktop foreground, and recent system minimize evidence");
-    Check(floatingDock::IsSystemShowDesktopLayerGuardActive(
-              1000, 2199) &&
-            !floatingDock::IsSystemShowDesktopLayerGuardActive(
-              1000, 2200) &&
-            !floatingDock::IsSystemShowDesktopLayerGuardActive(
-              0, 1000),
-        "the Show Desktop TOPMOST guard must expire at its bounded transition deadline");
+              true, true, true, 1000, 1501) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, true, 1000, 999),
+        "Show Desktop protection requires an active DockHost, an active system minimize state, desktop foreground, and recent minimize evidence");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, true, true, 1000, 1400) ==
+                floatingDock::SystemShowDesktopLayerGuardAction::Start &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, true, true, 1000, 5000) ==
+                floatingDock::SystemShowDesktopLayerGuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, false, true, true, 0, 5000) ==
+                floatingDock::SystemShowDesktopLayerGuardAction::Stop,
+        "the Show Desktop TOPMOST guard must persist until the system minimize state ends");
     Check(!floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
               true, false, false) &&
             floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
@@ -6546,10 +6551,13 @@ int main(int argc, char** argv)
                     floatingBandPolicyBegin - desktopBandPolicyBegin)
                 : std::string{};
         Check(shellMenuSource.find(
-                  "systemShowDesktopDockLayerGuardStartTick_") !=
+                  "systemShowDesktopDockLayerGuardActive_") !=
                     std::string::npos &&
                 shellMenuSource.find(
                   "ShouldShowPersistentDockHost(host)") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                  "const bool shouldBeTopmost = systemShowDesktopGuard ||") !=
                     std::string::npos &&
                 !desktopBandPolicySource.empty() &&
                 desktopBandPolicySource.find(

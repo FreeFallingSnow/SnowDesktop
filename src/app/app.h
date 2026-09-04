@@ -3303,6 +3303,8 @@ private:
     inline static std::atomic<DWORD> dockForegroundChangedTick_{ 0 };
     inline static std::atomic<ULONGLONG>
         dockSystemMinimizeStartedTick_{ 0 };
+    inline static std::atomic<bool>
+        dockSystemMinimizeActive_{ false };
     inline static std::atomic<HWND>
         dockForegroundNotificationWindow_{ nullptr };
     inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
@@ -3321,7 +3323,7 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
-    ULONGLONG systemShowDesktopDockLayerGuardStartTick_ = 0;
+    bool systemShowDesktopDockLayerGuardActive_ = false;
     struct SystemTaskbarMonitorWindowState
     {
         bool visible = false;

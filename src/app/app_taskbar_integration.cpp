@@ -13,7 +13,8 @@ void DesktopApp::StartDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(GetTickCount());
     dockSystemMinimizeStartedTick_.store(0);
-    systemShowDesktopDockLayerGuardStartTick_ = 0;
+    dockSystemMinimizeActive_.store(false);
+    systemShowDesktopDockLayerGuardActive_ = false;
     dockForegroundEventHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
         EVENT_SYSTEM_FOREGROUND, nullptr, &DesktopApp::DockForegroundWinEventProc,
         0, 0, WINEVENT_OUTOFCONTEXT);
@@ -63,7 +64,8 @@ void DesktopApp::StopDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(0);
     dockSystemMinimizeStartedTick_.store(0);
-    systemShowDesktopDockLayerGuardStartTick_ = 0;
+    dockSystemMinimizeActive_.store(false);
+    systemShowDesktopDockLayerGuardActive_ = false;
     systemTaskbarWindowStateChangedTick_.store(0);
     dockWindowListChangedTick_.store(0);
     systemTaskbarWindowStateObservedTick_ = 0;
@@ -102,42 +104,33 @@ bool DesktopApp::IsShellDesktopForegroundWindow(HWND window) const
 void DesktopApp::HandleDockForegroundInteractionChanged()
 {
     ReconcileDesktopHoverState();
-
-    const ULONGLONG now = GetTickCount64();
-    if (!snowdesktop::floating_dock_rules::
-            ShouldStartSystemShowDesktopLayerGuard(
-                floatingDockHostActive_,
-                IsShellDesktopForegroundWindow(
-                    dockForegroundWindow_.load()),
-                dockSystemMinimizeStartedTick_.load(),
-                now))
-    {
-        return;
-    }
-
-    systemShowDesktopDockLayerGuardStartTick_ =
-        now != 0 ? now : 1;
-    ApplyFloatingDockLayerPolicy();
-    WriteDiagnosticLogEntry(
-        L"System Show Desktop Dock layer guard started");
+    UpdateSystemShowDesktopDockLayerGuard();
 }
 
 void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
 {
-    if (systemShowDesktopDockLayerGuardStartTick_ == 0)
+    using GuardAction = snowdesktop::floating_dock_rules::
+        SystemShowDesktopLayerGuardAction;
+    const GuardAction action =
+        snowdesktop::floating_dock_rules::
+            ResolveSystemShowDesktopLayerGuardAction(
+                systemShowDesktopDockLayerGuardActive_,
+                dockSystemMinimizeActive_.load(),
+                floatingDockHostActive_,
+                IsShellDesktopForegroundWindow(
+                    dockForegroundWindow_.load()),
+                dockSystemMinimizeStartedTick_.load(),
+                GetTickCount64());
+    if (action == GuardAction::None)
         return;
-    if (snowdesktop::floating_dock_rules::
-            IsSystemShowDesktopLayerGuardActive(
-                systemShowDesktopDockLayerGuardStartTick_,
-                GetTickCount64()))
-    {
-        return;
-    }
 
-    systemShowDesktopDockLayerGuardStartTick_ = 0;
+    systemShowDesktopDockLayerGuardActive_ =
+        action == GuardAction::Start;
     ApplyFloatingDockLayerPolicy();
     WriteDiagnosticLogEntry(
-        L"System Show Desktop Dock layer guard completed");
+        systemShowDesktopDockLayerGuardActive_
+            ? L"System Show Desktop Dock layer guard started"
+            : L"System Show Desktop Dock layer guard completed");
 }
 
 bool DesktopApp::IsSystemTaskbarHookRequired(

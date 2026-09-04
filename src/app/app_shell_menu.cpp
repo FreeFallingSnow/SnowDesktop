@@ -449,7 +449,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     const bool promoted =
         IsPersistentDockHostEffectivelyFloating(host);
     const bool systemShowDesktopGuard =
-        systemShowDesktopDockLayerGuardStartTick_ != 0 &&
+        systemShowDesktopDockLayerGuardActive_ &&
         ShouldShowPersistentDockHost(host);
 
     if (!promoted && !systemShowDesktopGuard)
@@ -489,10 +489,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         return;
     }
 
-    const bool shouldBeTopmost =
+    const bool shouldBeTopmost = systemShowDesktopGuard ||
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(
-                promoted || systemShowDesktopGuard,
+                promoted,
                 shellPopupMenuLayerDepth_);
     host.backdrop.SetPopupWindowPairZOrder(
         host.hwnd,

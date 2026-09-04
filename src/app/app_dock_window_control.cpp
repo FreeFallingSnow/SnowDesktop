@@ -478,8 +478,23 @@ std::wstring DockItemWindowKey(const DesktopItem& item)
 void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
 {
-    if (event == EVENT_SYSTEM_MINIMIZESTART)
-        dockSystemMinimizeStartedTick_.store(GetTickCount64());
+    if (event == EVENT_SYSTEM_MINIMIZESTART ||
+        event == EVENT_SYSTEM_MINIMIZEEND)
+    {
+        const bool active = event == EVENT_SYSTEM_MINIMIZESTART;
+        dockSystemMinimizeActive_.store(active);
+        dockSystemMinimizeStartedTick_.store(
+            active ? GetTickCount64() : 0);
+        if (const HWND target =
+                dockForegroundNotificationWindow_.load())
+        {
+            PostMessageW(
+                target,
+                kForegroundInteractionChangedMessage,
+                0,
+                0);
+        }
+    }
 
     if (event == EVENT_SYSTEM_FOREGROUND && window)
     {
