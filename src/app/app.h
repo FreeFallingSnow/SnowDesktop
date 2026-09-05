@@ -1929,6 +1929,7 @@ private:
     void ApplyFloatingDockLayerPolicy();
     void ApplyFloatingDockLayerPolicy(
         PersistentDockHost& host);
+    bool ShouldKeepFloatingPopupTopmostForShellMenu() const;
     void BeginShellPopupMenuLayer();
     void EndShellPopupMenuLayer();
     class ShellPopupMenuLayerGuard
@@ -1943,6 +1944,7 @@ private:
 
     private:
         DesktopApp& app_;
+        bool active_ = false;
     };
     /**
      * @brief 判断桌面项是否为受保护的系统图标（如回收站）。

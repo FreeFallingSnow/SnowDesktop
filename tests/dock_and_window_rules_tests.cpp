@@ -4841,6 +4841,16 @@ int main(int argc, char** argv)
         const std::size_t liveNativeMenuPumpBegin =
             shellMenuSource.find(
                 "UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(");
+        const std::size_t shellMenuLayerGuardBegin =
+            shellMenuSource.find(
+                "ShellPopupMenuLayerGuard(DesktopApp& app)");
+        const std::string shellMenuLayerGuardSource =
+            shellMenuLayerGuardBegin != std::string::npos &&
+                    liveNativeMenuPumpBegin != std::string::npos
+                ? shellMenuSource.substr(
+                    shellMenuLayerGuardBegin,
+                    liveNativeMenuPumpBegin - shellMenuLayerGuardBegin)
+                : std::string{};
         const std::size_t firstShellMenuEntry =
             shellMenuSource.find(
                 "void DesktopApp::ShowNewMenuAndInvoke(",
@@ -4852,38 +4862,32 @@ int main(int argc, char** argv)
                     liveNativeMenuPumpBegin,
                     firstShellMenuEntry - liveNativeMenuPumpBegin)
                 : std::string{};
-        const std::size_t newMenuEnd =
-            shellMenuSource.find(
-                "void DesktopApp::ShowDesktopBackgroundContextMenu(",
-                firstShellMenuEntry);
-        const std::string newMenuSource =
-            firstShellMenuEntry != std::string::npos &&
-                    newMenuEnd != std::string::npos
-                ? shellMenuSource.substr(
-                    firstShellMenuEntry,
-                    newMenuEnd - firstShellMenuEntry)
-                : std::string{};
-        const std::size_t newMenuLayerBegin =
-            newMenuSource.find(
-                "ShellPopupMenuLayerGuard shellMenuLayer(*this);");
-        const std::size_t newMenuTrack =
-            newMenuSource.find(
-                "cmd = TrackShellPopupMenuWithDesktopPump(",
-                newMenuLayerBegin);
-        const std::size_t newMenuLayerEnd =
-            newMenuSource.find(
-                "\n    }\n    newMenuContextMenu_.Reset();",
-                newMenuTrack);
-        const std::size_t newMenuInvoke =
-            newMenuSource.find(
-                "SafeInvokeCommand(", newMenuLayerEnd);
         Check(!liveNativeMenuPumpSource.empty() &&
+                !shellMenuLayerGuardSource.empty() &&
+                shellMenuLayerGuardSource.find(
+                    "active_(!app.ShouldKeepFloatingPopupTopmostForShellMenu())") !=
+                    std::string::npos &&
+                CountOccurrences(
+                    shellMenuLayerGuardSource,
+                    "if (active_)") == 2 &&
+                shellMenuLayerGuardSource.find(
+                    "app_.BeginShellPopupMenuLayer();") !=
+                    std::string::npos &&
+                shellMenuLayerGuardSource.find(
+                    "app_.EndShellPopupMenuLayer();") !=
+                    std::string::npos &&
                 liveNativeMenuPumpSource.find(
                     "std::thread") != std::string::npos &&
                 liveNativeMenuPumpSource.find(
                     "CreateWindowExW(") != std::string::npos &&
                 shellMenuSource.find(
                     "ShellMenuTrackerWindowProc") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "topmost ? WS_EX_TOPMOST : 0") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "ShouldKeepFloatingPopupTopmostForShellMenu();") !=
                     std::string::npos &&
                 liveNativeMenuPumpSource.find(
                     "SetForegroundWindow(trackerOwner);") !=
@@ -4908,6 +4912,12 @@ int main(int argc, char** argv)
                 CountOccurrences(
                     itemMenuSource,
                     "TrackShellPopupMenuWithDesktopPump(") == 1 &&
+                CountOccurrences(
+                    shellMenuSource,
+                    "ShellPopupMenuLayerGuard shellMenuLayer(*this);") == 4 &&
+                CountOccurrences(
+                    itemMenuSource,
+                    "ShellPopupMenuLayerGuard shellMenuLayer(*this);") == 1 &&
                 CountOccurrences(
                     shellMenuSource,
                     "TrackPopupMenuEx(") ==
@@ -4940,16 +4950,7 @@ int main(int argc, char** argv)
                     "synchronous fallback") == std::string::npos &&
                 popupLifecycleSource.find(
                     "EndMenu();") == std::string::npos,
-            "native Shell menus must use a tracker-thread-owned window while leaving the desktop pump live");
-        Check(!newMenuSource.empty() &&
-                newMenuLayerBegin != std::string::npos &&
-                newMenuTrack != std::string::npos &&
-                newMenuLayerEnd != std::string::npos &&
-                newMenuInvoke != std::string::npos &&
-                newMenuLayerBegin < newMenuTrack &&
-                newMenuTrack < newMenuLayerEnd &&
-                newMenuLayerEnd < newMenuInvoke,
-            "the Shell New menu must restore its popup source layer before invoking the selected creation command");
+            "native Shell menus must use a tracker-thread-owned window while preserving the floating popup Z-order band");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"

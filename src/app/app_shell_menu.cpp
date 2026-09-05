@@ -55,15 +55,18 @@ LRESULT CALLBACK ShellMenuTrackerWindowProc(
 
 DesktopApp::ShellPopupMenuLayerGuard::
 ShellPopupMenuLayerGuard(DesktopApp& app)
-    : app_(app)
+    : app_(app),
+      active_(!app.ShouldKeepFloatingPopupTopmostForShellMenu())
 {
-    app_.BeginShellPopupMenuLayer();
+    if (active_)
+        app_.BeginShellPopupMenuLayer();
 }
 
 DesktopApp::ShellPopupMenuLayerGuard::
 ~ShellPopupMenuLayerGuard()
 {
-    app_.EndShellPopupMenuLayer();
+    if (active_)
+        app_.EndShellPopupMenuLayer();
 }
 
 UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
@@ -85,13 +88,15 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     }
 
     std::atomic<UINT> selectedCommand{ 0 };
+    const bool topmost =
+        ShouldKeepFloatingPopupTopmostForShellMenu();
     shellPopupTrackerCancelRequested_.store(
         false, std::memory_order_release);
     std::thread tracker;
     try
     {
         tracker = std::thread([this,
-            menu, flags, screenPoint, owner,
+            menu, flags, screenPoint, owner, topmost,
             completedEvent, &selectedCommand]() {
             const HRESULT comResult = CoInitializeEx(
                 nullptr, COINIT_APARTMENTTHREADED);
@@ -99,7 +104,8 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
             ShellMenuTrackerWindowContext windowContext{};
             windowContext.forwardingOwner = owner;
             HWND trackerOwner = CreateWindowExW(
-                WS_EX_TOOLWINDOW,
+                WS_EX_TOOLWINDOW |
+                    (topmost ? WS_EX_TOPMOST : 0),
                 L"STATIC",
                 L"SnowDesktop Shell Menu Tracker",
                 WS_POPUP,
@@ -315,10 +321,6 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     SetForegroundWindow(menuOwner);
     UINT cmd = 0;
     {
-        // Only the visible native menu needs to outrank its popup source.
-        // Restore the popup band before the synchronous New command updates
-        // the folder, otherwise unrelated applications show through until
-        // this function returns and the layer guard finally unwinds.
         ShellPopupMenuLayerGuard shellMenuLayer(*this);
         cmd = TrackShellPopupMenuWithDesktopPump(
             newSub,
@@ -507,6 +509,14 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             ? HWND_TOPMOST : HWND_NOTOPMOST,
         shouldBeTopmost);
     ApplyDragPreviewLayerPolicy();
+}
+
+bool DesktopApp::ShouldKeepFloatingPopupTopmostForShellMenu() const
+{
+    return IsCollectionPopupHostedByFloatingWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_) &&
+        IsWindowVisible(floatingPopupHwnd_);
 }
 
 void DesktopApp::BeginShellPopupMenuLayer()
