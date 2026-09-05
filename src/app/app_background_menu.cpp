@@ -1466,6 +1466,40 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
         }
 
+        HMENU iconSizeMenu = CreatePopupMenu();
+        if (iconSizeMenu)
+        {
+            const int currentIconSizePercent = static_cast<int>(
+                std::round(itemIconSizeScale_ * 100.0f));
+            auto addIconSizeItem = [&](UINT id, const wchar_t* label,
+                                       float scaleValue) {
+                UINT flags = MF_STRING;
+                if (std::abs(itemIconSizeScale_ - scaleValue) < 0.01f)
+                    flags |= MF_CHECKED;
+                AppendMenuW(iconSizeMenu, flags, id, label);
+            };
+            addIconSizeItem(kContextIconSizeSmall,
+                _LW("app.menu.icon_size_small"), kIconSizeSmallScale);
+            addIconSizeItem(kContextIconSizeMedium,
+                _LW("app.menu.icon_size_medium"), kIconSizeMediumScale);
+            addIconSizeItem(kContextIconSizeLarge,
+                _LW("app.menu.icon_size_large"), kIconSizeLargeScale);
+            AppendMenuW(iconSizeMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(iconSizeMenu, MF_STRING,
+                kContextIconSizeIncrease, _LW("app.menu.inc_size"));
+            AppendMenuW(iconSizeMenu, MF_STRING,
+                kContextIconSizeDecrease, _LW("app.menu.dec_size"));
+            const std::wstring iconSizeLabel = _LFW("app.menu.icon_size_pct",
+                std::to_wstring(currentIconSizePercent));
+            AppendMenuW(displaySettingsMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(iconSizeMenu),
+                iconSizeLabel.c_str());
+            SetMenuItemIcon(displaySettingsMenu,
+                reinterpret_cast<UINT_PTR>(iconSizeMenu), L"\uF0B2");
+            SetMenuItemIcon(iconSizeMenu, kContextIconSizeIncrease, L"\uF067");
+            SetMenuItemIcon(iconSizeMenu, kContextIconSizeDecrease, L"\uF068");
+        }
+
         HMENU listFontSizeMenu = CreatePopupMenu();
         if (listFontSizeMenu)
         {
@@ -1965,6 +1999,18 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
         case kContextFontSizeMedium: SetItemFontSize(18.0f); break;
         case kContextFontSizeLarge: SetItemFontSize(24.0f); break;
+        case kContextIconSizeSmall:
+            SetItemIconSize(kIconSizeSmallScale); break;
+        case kContextIconSizeMedium:
+            SetItemIconSize(kIconSizeMediumScale); break;
+        case kContextIconSizeLarge:
+            SetItemIconSize(kIconSizeLargeScale); break;
+        case kContextIconSizeIncrease:
+            SetItemIconSize(std::clamp(itemIconSizeScale_ + kIconSizeAdjustStep,
+                kMinimumItemIconSizeScale, kMaximumItemIconSizeScale)); break;
+        case kContextIconSizeDecrease:
+            SetItemIconSize(std::clamp(itemIconSizeScale_ - kIconSizeAdjustStep,
+                kMinimumItemIconSizeScale, kMaximumItemIconSizeScale)); break;
         case kContextListFontSizeSmall: SetListItemFontSize(12.0f); break;
         case kContextListFontSizeMedium: SetListItemFontSize(18.0f); break;
         case kContextListFontSizeLarge: SetListItemFontSize(24.0f); break;

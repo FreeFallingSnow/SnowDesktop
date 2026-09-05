@@ -302,6 +302,9 @@ void DesktopApp::StartIconLoader()
                 forShortcut, representationName, &iconIsThumbnail);
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
+            // 裁剪图标四周透明边距，让图标内容尽量填满绘制格子。
+            if (task.phase == IconLoadPhase::Phase1 && bitmap)
+                bitmap = TrimIconTransparentMargin(bitmap, bitmapSize);
 
             bool isShortcut = false;
             bool isApplicationShortcut = false;

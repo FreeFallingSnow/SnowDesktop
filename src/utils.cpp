@@ -830,6 +830,106 @@ HBITMAP CreateTopDown32BppDib(HDC referenceDc, int width, int height, void** bit
     return CreateDIBSection(referenceDc, &bitmapInfo, DIB_RGB_COLORS, bits, nullptr, 0);
 }
 
+HBITMAP TrimIconTransparentMargin(HBITMAP source, SIZE& size)
+{
+    if (source == nullptr || size.cx <= 0 || size.cy <= 0)
+        return source;
+
+    const int width = size.cx;
+    const int height = size.cy;
+    HDC screenDc = GetDC(nullptr);
+    if (screenDc == nullptr)
+        return source;
+
+    std::vector<std::uint32_t> pixels(
+        static_cast<size_t>(width) * static_cast<size_t>(height));
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+    bitmapInfo.bmiHeader.biWidth = width;
+    bitmapInfo.bmiHeader.biHeight = -height;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+    if (GetDIBits(screenDc, source, 0, static_cast<UINT>(height),
+            pixels.data(), &bitmapInfo, DIB_RGB_COLORS) == 0)
+    {
+        ReleaseDC(nullptr, screenDc);
+        return source;
+    }
+
+    int minX = width, minY = height, maxX = -1, maxY = -1;
+    for (int y = 0; y < height; ++y)
+    {
+        for (int x = 0; x < width; ++x)
+        {
+            const std::uint32_t pixel =
+                pixels[static_cast<size_t>(y) * width + x];
+            if (((pixel >> 24) & 0xff) > 96)
+            {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX < 0)
+    {
+        ReleaseDC(nullptr, screenDc);
+        return source;
+    }
+
+    const int contentW = maxX - minX + 1;
+    const int contentH = maxY - minY + 1;
+    if (contentW >= static_cast<int>(width * 0.90f) &&
+        contentH >= static_cast<int>(height * 0.90f))
+    {
+        // Content already fills the bitmap; keep it untouched.
+        ReleaseDC(nullptr, screenDc);
+        return source;
+    }
+
+    const int padX = std::clamp(static_cast<int>(std::round(
+        contentW * 0.12f)), 3, 24);
+    const int padY = std::clamp(static_cast<int>(std::round(
+        contentH * 0.12f)), 3, 24);
+    const int srcX = std::max(0, minX - padX);
+    const int srcY = std::max(0, minY - padY);
+    const int srcRight = std::min(width, maxX + 1 + padX);
+    const int srcBottom = std::min(height, maxY + 1 + padY);
+    const int newW = srcRight - srcX;
+    const int newH = srcBottom - srcY;
+    if (newW <= 0 || newH <= 0 || newW > width || newH > height)
+    {
+        ReleaseDC(nullptr, screenDc);
+        return source;
+    }
+
+    void* bits = nullptr;
+    HBITMAP cropped = CreateTopDown32BppDib(screenDc, newW, newH, &bits);
+    if (cropped == nullptr || bits == nullptr)
+    {
+        if (cropped != nullptr) DeleteObject(cropped);
+        ReleaseDC(nullptr, screenDc);
+        return source;
+    }
+    auto* destination = static_cast<std::uint32_t*>(bits);
+    for (int y = 0; y < newH; ++y)
+    {
+        std::copy(
+            pixels.begin() +
+                static_cast<ptrdiff_t>((srcY + y) * width + srcX),
+            pixels.begin() +
+                static_cast<ptrdiff_t>((srcY + y) * width + srcX + newW),
+            destination + static_cast<ptrdiff_t>(y * newW));
+    }
+    ReleaseDC(nullptr, screenDc);
+    DeleteObject(source);
+    size.cx = newW;
+    size.cy = newH;
+    return cropped;
+}
+
 /**
  * @brief 对 BGRA 像素缓冲区执行预乘 Alpha 操作。
  *

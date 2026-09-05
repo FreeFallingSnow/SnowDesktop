@@ -214,6 +214,18 @@ constexpr UINT kContextLuaLogicalSlotMoveNext = 41814;
 constexpr UINT kContextLuaLogicalSlotRemove = 41815;
 constexpr UINT kContextWidgetOpenComponentPanel = 41816;
 
+// ── 图标大小子菜单命令（桌面图标三档预设与微调）─────────────
+constexpr UINT kContextIconSizeSmall = 41850;
+constexpr UINT kContextIconSizeMedium = 41851;
+constexpr UINT kContextIconSizeLarge = 41852;
+constexpr UINT kContextIconSizeIncrease = 41853;
+constexpr UINT kContextIconSizeDecrease = 41854;
+// 图标缩放档位（相对布局默认 1.0 的比例；整体范围 kMinimum~kMaximum）
+constexpr float kIconSizeSmallScale = 0.75f;
+constexpr float kIconSizeMediumScale = 1.0f;
+constexpr float kIconSizeLargeScale = 1.2f;
+constexpr float kIconSizeAdjustStep = 0.05f;
+
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;

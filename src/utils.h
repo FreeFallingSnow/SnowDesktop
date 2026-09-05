@@ -237,6 +237,17 @@ float ScaleWidgetFontCu(float valueCu, float cellScale);
 HBITMAP CreateTopDown32BppDib(HDC referenceDc, int width, int height, void** bits);
 
 /**
+ * @brief 裁剪位图四周的透明边距，使图标内容尽量填满画面。
+ * @details 扫描像素找出不透明内容（Alpha>96）的包围盒，若内容已占位图
+ *          面积的 90% 以上则原样返回；否则按内容 12% 保留内边距后裁剪。
+ *          成功时销毁原位图并返回新位图，size 同步更新为裁剪后尺寸。
+ * @param source 输入位图（可能被销毁）。
+ * @param size [in,out] 位图尺寸；裁剪成功后更新为新尺寸。
+ * @return 裁剪后的位图（成功时）或原位图（未满足裁剪条件/失败时）。
+ */
+HBITMAP TrimIconTransparentMargin(HBITMAP source, SIZE& size);
+
+/**
  * @brief 预乘 BGRA 像素的 Alpha 通道
  * @details 将 BGRA 格式的像素数据进行 Alpha 预乘处理，
  *          即将各颜色通道值乘以 Alpha 值并除以 255，满足 Direct2D 等 API 的输入要求。

@@ -54,6 +54,33 @@ static bool IsShortcutItem(const DesktopItem& item)
 }
 
 /**
+ * @brief 判断 .lnk/.url 快捷方式是否指向文件系统上的真实文件夹。
+ * @param item 桌面项目（快捷方式）。
+ * @return true 如果快捷方式解析后指向一个目录；false 否则（含解析失败）。
+ */
+static bool ShortcutTargetsFolder(const DesktopItem& item)
+{
+    if (item.parsingName.empty())
+        return false;
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&shellLink))))
+        return false;
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)))
+        return false;
+    if (FAILED(persistFile->Load(item.parsingName.c_str(), STGM_READ)))
+        return false;
+    wchar_t targetPath[MAX_PATH]{};
+    if (FAILED(shellLink->GetPath(targetPath, MAX_PATH, nullptr, 0)) ||
+        targetPath[0] == L'\0')
+        return false;
+    const DWORD attributes = GetFileAttributesW(targetPath);
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+/**
  * @brief 判断桌面项目是否为文件系统上的真实文件夹。
  * @param item 桌面项目。
  * @return true 如果 PIDL 可解析为路径且文件属性包含 FILE_ATTRIBUTE_DIRECTORY。
@@ -76,6 +103,9 @@ static std::wstring FileCategoryIdForItem(const DesktopItem& item, const Categor
 {
     const std::wstring ext = DesktopItemExtensionUpper(item);
     if (IsFilesystemFolder(item))
+        return L"folders";
+    // 指向文件夹的快捷方式按其目标归入"文件夹"分类。
+    if (IsShortcutItem(item) && ShortcutTargetsFolder(item))
         return L"folders";
     std::wstring categoryId = CategoryIdForExtension(settings, ext);
     if (!categoryId.empty())
@@ -184,10 +214,11 @@ static std::wstring FileCategoryIdForItemByDate(const DesktopItem& item)
 
 /**
  * @brief 判断桌面项目是否应收录到分类面板中。
- *        排除系统图标（此电脑、用户文件、网络、控制面板、回收站）和快捷方式文件。
+ *        排除系统图标（此电脑、用户文件、网络、控制面板、回收站）。
+ *        普通快捷方式不收录；指向文件夹的快捷方式按文件夹收录。
  * @param app DesktopApp 实例指针。
  * @param item 待判断的桌面项目。
- * @return true 如果项目应被收录；false 如果受保护或为快捷方式。
+ * @return true 如果项目应被收录。
  */
 static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
 {
@@ -200,7 +231,12 @@ static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
         clsid == kDesktopIconClsidNetwork ||
         clsid == kDesktopIconClsidControlPanel ||
         clsid == kDesktopIconClsidRecycleBin;
-    return !protectedIcon && !IsShortcutItem(item) && !item.layoutKey.empty();
+    if (protectedIcon || item.layoutKey.empty())
+        return false;
+    // 快捷方式只有指向文件夹时才收集（当作文件夹处理）。
+    if (IsShortcutItem(item))
+        return ShortcutTargetsFolder(item);
+    return true;
 }
 
 void FileCategories::EnsureCategorySnapshot() const
