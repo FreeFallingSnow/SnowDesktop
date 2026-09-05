@@ -95,26 +95,40 @@ public:
         if (!measured)
             return;
 
-        const auto lineCount = std::max<LRESULT>(1,
+        auto lineCount = std::max<LRESULT>(1,
             SendMessageW(edit, EM_GETLINECOUNT, 0, 0));
         const int borderHeight = (window.bottom - window.top) -
             (client.bottom - client.top);
         // EDIT's formatting bottom can exclude a partial line; use the top
         // inset symmetrically instead of treating that remainder as padding.
         const int padding = 2 * std::max<int>(1, formatting.top - client.top);
-        const auto textHeight = static_cast<long long>(lineCount) *
-            std::max<LONG>(1, metrics.tmHeight) + borderHeight + padding;
-        const int desiredHeight = static_cast<int>(std::clamp<long long>(
-            textHeight, anchor_.bottom - anchor_.top,
-            std::numeric_limits<int>::max()));
-        const RECT next = CalculateRect(anchor_, workArea_,
-            desiredHeight, heightAnchor_);
-        if (EqualRect(&window, &next))
-            return;
-
+        long long textHeight = 0;
+        bool resized = false;
         updating_ = true;
-        Position(next);
-        if (textHeight <= next.bottom - next.top)
+        // If the initial rectangle is shorter than a line of the new font,
+        // EDIT defers its font reflow until WM_SIZE. Read the resulting line
+        // count once more after growing; width stays fixed for both passes.
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            textHeight = static_cast<long long>(lineCount) *
+                std::max<LONG>(1, metrics.tmHeight) + borderHeight + padding;
+            const int desiredHeight = static_cast<int>(std::clamp<long long>(
+                textHeight, anchor_.bottom - anchor_.top,
+                std::numeric_limits<int>::max()));
+            const RECT next = CalculateRect(anchor_, workArea_,
+                desiredHeight, heightAnchor_);
+            if (EqualRect(&window, &next))
+                break;
+            Position(next);
+            window = next;
+            resized = true;
+            const auto reflowedLines = std::max<LRESULT>(1,
+                SendMessageW(edit, EM_GETLINECOUNT, 0, 0));
+            if (reflowedLines == lineCount)
+                break;
+            lineCount = reflowedLines;
+        }
+        if (resized && textHeight <= window.bottom - window.top)
         {
             // A formerly scrolled long name must show its first line once all
             // lines fit again. Keep the selection and undo history untouched.
@@ -122,7 +136,7 @@ public:
             if (first > 0)
                 SendMessageW(edit, EM_LINESCROLL, 0, -first);
         }
-        else
+        else if (resized)
             SendMessageW(edit, EM_SCROLLCARET, 0, 0);
         updating_ = false;
     }
