@@ -905,10 +905,18 @@ int main(int argc, char** argv)
         "empty collection popups must shrink horizontally on narrow work areas");
     Check(
         popupLayout::PreferredColumnCount(
-            1, 5) == 1 &&
+            1, 5) == 3 &&
             popupLayout::RequiredRowCount(
-                1, 1) == 1,
-        "non-empty collection popups must retain their content-driven size");
+                1, 3) == 2 &&
+            popupLayout::PreferredColumnCount(
+                2, 2) == 2 &&
+            popupLayout::RequiredRowCount(
+                2, 2) == 2 &&
+            popupLayout::PreferredColumnCount(
+                8, 5) == 5 &&
+            popupLayout::RequiredRowCount(
+                11, 5) == 3,
+        "non-empty collection popups must retain the empty-state size floor while still growing with their content");
     Check(
         popupLayout::RequiredListRowCount(0) == 5 &&
             popupLayout::RequiredListRowCount(3) == 5 &&

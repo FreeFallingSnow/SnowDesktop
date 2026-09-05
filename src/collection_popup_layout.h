@@ -153,13 +153,16 @@ inline int PreferredColumnCount(
     std::size_t itemCount, int maximumColumns)
 {
     maximumColumns = std::max(1, maximumColumns);
+    const int minimumColumns = std::min(
+        kEmptyColumns, maximumColumns);
     if (itemCount == 0)
-        return std::min(
-            kEmptyColumns, maximumColumns);
+        return minimumColumns;
     return std::clamp(
-        static_cast<int>(std::min<std::size_t>(
-            itemCount, kMaximumColumns)),
-        1, maximumColumns);
+        std::max(
+            minimumColumns,
+            static_cast<int>(std::min<std::size_t>(
+                itemCount, kMaximumColumns))),
+        minimumColumns, maximumColumns);
 }
 
 inline int RequiredRowCount(
@@ -169,7 +172,7 @@ inline int RequiredRowCount(
     if (itemCount == 0)
         return kEmptyRows;
     return std::max(
-        1, (static_cast<int>(itemCount) +
+        kEmptyRows, (static_cast<int>(itemCount) +
                columns - 1) /
             columns);
 }
