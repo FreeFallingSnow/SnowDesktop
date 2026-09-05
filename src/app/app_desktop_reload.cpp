@@ -622,8 +622,10 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     shellReloadPending_ = false;
     shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
+    ULONGLONG stageStarted = GetTickCount64();
     if (!snapshot)
     {
+        shellMetadataCache_ = {};
         dockAppIdentityCache_.clear();
         dockRunningWindows_.clear();
     }
@@ -699,6 +701,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     if (!generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
     ApplyAutoCollectFileCategoryWidgets();
+    if (snapshot) snapshot->modelMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
 
     // Mark widgets as used
     std::unordered_set<std::wstring> usedSlots;
@@ -888,13 +892,20 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         w.itemKeys.erase(it, w.itemKeys.end());
     }
 
+    if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
     SaveLayoutSlots();
+    if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
     RebuildContainersAndItems();
+    if (snapshot) snapshot->rebuildMs = GetTickCount64() - stageStarted;
     reloading_ = false;
     if (!snapshot)
         RefreshDockRunningWindows(false);
+    stageStarted = GetTickCount64();
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("reload");
+    if (snapshot) snapshot->notifyMs = GetTickCount64() - stageStarted;
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 

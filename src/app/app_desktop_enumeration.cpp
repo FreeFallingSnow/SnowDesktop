@@ -5,7 +5,7 @@
 
 bool snowdesktop::shell_refresh::ReadDesktop(
     const std::unordered_map<std::wstring, bool>& visibility,
-    bool showHiddenItems, std::vector<DesktopItem>& items)
+    bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache)
 {
     ComPtr<IShellFolder> desktopFolder;
     HRESULT hr = SHGetDesktopFolder(&desktopFolder);
@@ -37,6 +37,7 @@ bool snowdesktop::shell_refresh::ReadDesktop(
     PITEMID_CHILD child = nullptr;
     ULONG fetched = 0;
     std::unordered_set<std::wstring> seenKeys;
+    std::unordered_set<std::wstring> seenMetadata;
     HRESULT next = S_OK;
     while ((next = enumerator->Next(1, &child, &fetched)) == S_OK)
     {
@@ -92,11 +93,6 @@ bool snowdesktop::shell_refresh::ReadDesktop(
             }
         }
 
-        // Get display name and icon
-        SHFILEINFOW info{};
-        SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0, &info, sizeof(info),
-            SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
-
         // Check visibility (applies to all items)
         if (!IsVisibleByDesktopIconSettings(
                 clsid, visibility,
@@ -116,6 +112,38 @@ bool snowdesktop::shell_refresh::ReadDesktop(
             { ILFree(absolute); ILFree(child); continue; }
         }
 
+        // Enumerate membership every time, but do not repeatedly ask Shell
+        // extensions to resolve unchanged shortcut icons and display metadata.
+        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
+        const bool hasAttributes = !parsingName.empty() &&
+            GetFileAttributesExW(parsingName.c_str(), GetFileExInfoStandard, &fileAttributes);
+        const auto stamp = FileStamp::From(fileAttributes);
+        const auto metadataKey = ToUpperInvariant(parsingName);
+        SHFILEINFOW info{};
+        const auto cached = cache ? cache->desktop.find(metadataKey) : MetadataMap::iterator{};
+        if (cache && hasAttributes && cached != cache->desktop.end() &&
+            cached->second.Matches(parsingName, stamp))
+        {
+            info = cached->second.info;
+            ++cache->hits;
+            seenMetadata.insert(metadataKey);
+        }
+        else
+        {
+            if (cache) ++cache->queries;
+            const auto loaded = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
+                &info, sizeof(info), SHGFI_PIDL | SHGFI_SYSICONINDEX |
+                    SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
+            if (cache && hasAttributes && loaded)
+            {
+                auto& metadata = cache->desktop[metadataKey];
+                metadata.path = parsingName;
+                metadata.stamp = stamp;
+                metadata.info = info;
+                seenMetadata.insert(metadataKey);
+            }
+        }
+
         DesktopItem item;
         item.absolutePidl.reset(absolute);
         item.childPidl.reset(reinterpret_cast<PIDLIST_ABSOLUTE>(child));
@@ -124,11 +152,7 @@ bool snowdesktop::shell_refresh::ReadDesktop(
         item.name = info.szDisplayName[0] ? info.szDisplayName
             : StrRetToString(desktopFolder.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
         item.typeName = info.szTypeName;
-        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
-        if (!item.parsingName.empty() &&
-            GetFileAttributesExW(
-                item.parsingName.c_str(), GetFileExInfoStandard,
-                &fileAttributes))
+        if (hasAttributes)
         {
             item.modifiedTime = fileAttributes.ftLastWriteTime;
             if ((fileAttributes.dwFileAttributes &
@@ -150,6 +174,10 @@ bool snowdesktop::shell_refresh::ReadDesktop(
             continue; // The local item owns both PIDLs, including duplicates.
         items.push_back(std::move(item));
     }
+    if (cache && SUCCEEDED(next))
+        std::erase_if(cache->desktop, [&](const auto& entry) {
+            return !seenMetadata.contains(entry.first);
+        });
     return SUCCEEDED(next);
 }
 
@@ -169,11 +197,15 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
     std::vector<DesktopItem> fresh;
     if (snapshot)
         fresh = std::move(snapshot->desktopItems);
-    else if (!snowdesktop::shell_refresh::ReadDesktop(settingsIconVisibility_,
-            AreExplorerHiddenItemsVisible(), fresh))
+    else
     {
-        WriteDiagnosticLogEntry(L"Desktop enumeration failed; retaining current items");
-        return;
+        shellMetadataCache_.desktop.clear(); // Explicit refresh invalidates metadata too.
+        if (!snowdesktop::shell_refresh::ReadDesktop(settingsIconVisibility_,
+                AreExplorerHiddenItemsVisible(), fresh, &shellMetadataCache_))
+        {
+            WriteDiagnosticLogEntry(L"Desktop enumeration failed; retaining current items");
+            return;
+        }
     }
     auto previous = std::exchange(items_, std::move(fresh));
     std::unordered_map<std::wstring, size_t> previousByKey;

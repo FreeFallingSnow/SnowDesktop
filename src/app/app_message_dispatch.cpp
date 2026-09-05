@@ -1040,11 +1040,18 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // Match our own rename by both paths; unrelated notifications must
         // still reach the normal debounce/reload path.
         const auto change = ReadShellChangeNotification(wp, lp);
+        if (change)
+        {
+            const bool descendants = (change->event & (SHCNE_RENAMEFOLDER | SHCNE_RMDIR)) != 0;
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->source), descendants);
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->target), descendants);
+        }
         if (change && !change->source.empty() && !change->target.empty() &&
             renameNotifications_.Observe(change->source, change->target, GetTickCount64()))
             return 0;
         if (change && (change->event & SHCNE_ASSOCCHANGED) != 0)
         {
+            shellMetadataCache_ = {};
             // Association changes can keep both file timestamps and Shell
             // image indices unchanged. Retain visible bitmaps while requesting
             // fresh icons, without falling back to a synchronous model reload.

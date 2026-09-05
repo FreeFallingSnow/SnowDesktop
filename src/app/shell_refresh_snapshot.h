@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../types.h"
+#include "shell_metadata_cache.h"
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -32,11 +33,14 @@ struct Snapshot
     std::unordered_map<std::wstring, FolderSnapshot> folders;
     std::unordered_set<std::wstring> missingDockPaths;
     ULONGLONG readMs = 0;
+    ULONGLONG desktopReadMs = 0, folderReadMs = 0, dockReadMs = 0;
+    ULONGLONG modelMs = 0, layoutMs = 0, saveMs = 0, rebuildMs = 0, notifyMs = 0;
+    MetadataCache metadata;
 };
 
 bool ReadDesktop(const std::unordered_map<std::wstring, bool>& visibility,
-    bool showHidden, std::vector<DesktopItem>& items);
-FolderSnapshot ReadFolder(const std::wstring& path, bool showHidden);
+    bool showHidden, std::vector<DesktopItem>& items, MetadataCache* cache = nullptr);
+FolderSnapshot ReadFolder(const std::wstring& path, bool showHidden, MetadataCache* cache = nullptr);
 bool Read(const Request& request, Snapshot& snapshot);
 
 // Coalesce notifications and reject a read superseded by later filesystem or

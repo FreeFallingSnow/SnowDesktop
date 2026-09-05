@@ -30,17 +30,18 @@ inline std::optional<ShellChangeNotification> ReadShellChangeNotification(
     } unlock{lock};
     ShellChangeNotification result;
     result.event = event;
-    if (pidls && (event == SHCNE_RENAMEITEM || event == SHCNE_RENAMEFOLDER))
+    constexpr LONG pathEvents = SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER |
+        SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
+        SHCNE_UPDATEITEM | SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES;
+    if (pidls && (event & pathEvents) != 0)
     {
         wchar_t source[MAX_PATH]{};
         wchar_t target[MAX_PATH]{};
-        if (pidls[0] && pidls[1] &&
-            SHGetPathFromIDListW(pidls[0], source) &&
-            SHGetPathFromIDListW(pidls[1], target))
-        {
+        if (pidls[0] && SHGetPathFromIDListW(pidls[0], source))
             result.source = source;
+        if ((event & (SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER)) != 0 &&
+            pidls[1] && SHGetPathFromIDListW(pidls[1], target))
             result.target = target;
-        }
     }
     return result;
 }

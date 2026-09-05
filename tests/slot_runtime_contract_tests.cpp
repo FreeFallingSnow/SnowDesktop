@@ -1788,6 +1788,57 @@ void TestShellRefreshRejectsStaleSnapshots()
         "a manual model reload invalidates an already running background read");
 }
 
+void TestShellMetadataCacheRejectsChangedFiles()
+{
+    using namespace snowdesktop::shell_refresh;
+    WIN32_FILE_ATTRIBUTE_DATA file{};
+    file.dwFileAttributes = FILE_ATTRIBUTE_ARCHIVE;
+    file.ftCreationTime = {1, 0};
+    file.ftLastWriteTime = {2, 0};
+    file.nFileSizeLow = 12;
+    ShellMetadata entry;
+    entry.path = L"C:\\mapped\\link.lnk";
+    entry.stamp = FileStamp::From(file);
+    entry.info.iIcon = 7;
+    entry.absoluteId.reset(static_cast<PIDLIST_ABSOLUTE>(CoTaskMemAlloc(sizeof(USHORT))));
+    Check(entry.absoluteId.get() != nullptr, "metadata fixture owns a PIDL");
+    if (!entry.absoluteId.get()) return;
+    entry.absoluteId.get()->mkid.cb = 0;
+    Check(entry.Matches(entry.path, FileStamp::From(file)), "unchanged metadata can be reused");
+    Check(!entry.Matches(L"C:\\mapped\\Link.lnk", FileStamp::From(file)),
+        "case-only renames must refresh cached display names");
+    auto changed = file;
+    ++changed.nFileSizeLow;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "size changes invalidate metadata");
+    changed = file; ++changed.ftLastWriteTime.dwLowDateTime;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "same-size overwrites invalidate metadata");
+    changed = file; ++changed.ftCreationTime.dwLowDateTime;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "delete/recreate at the same path invalidates metadata");
+    changed = file; changed.dwFileAttributes |= FILE_ATTRIBUTE_HIDDEN;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "attribute changes invalidate metadata");
+    changed = file; ++changed.ftLastAccessTime.dwLowDateTime;
+    Check(entry.Matches(entry.path, FileStamp::From(changed)), "read-induced access time changes keep metadata reusable");
+
+    MetadataCache ui;
+    const auto key = L"C:\\MAPPED\\LINK.LNK";
+    ui.desktop.emplace(key, entry);
+    ui.folders[L"C:\\MAPPED"].emplace(key, entry);
+    ui.folders[L"C:\\MAPPED\\CHILD"].emplace(key, entry);
+    ui.folders[L"C:\\MAPPED-OTHER"].emplace(key, entry);
+    auto worker = ui;
+    Check(worker.desktop.at(key).absoluteId.get() != ui.desktop.at(key).absoluteId.get() &&
+        ILIsEqual(worker.desktop.at(key).absoluteId.get(), ui.desktop.at(key).absoluteId.get()),
+        "a worker cache owns an independent copy of each Shell identity");
+    ui.Invalidate(key);
+    Check(!ui.desktop.contains(key) && ui.folders.at(L"C:\\MAPPED").empty() &&
+        worker.desktop.at(key).Matches(entry.path, entry.stamp),
+        "an explicit update invalidates every UI alias without mutating an in-flight snapshot");
+    ui.Invalidate(L"C:\\MAPPED", true);
+    Check(!ui.folders.contains(L"C:\\MAPPED") && !ui.folders.contains(L"C:\\MAPPED\\CHILD") &&
+        ui.folders.contains(L"C:\\MAPPED-OTHER"),
+        "renamed/deleted folders retire descendant caches without matching sibling prefixes");
+}
+
 void TestShellRefreshPreservesCurrentItemState()
 {
     DesktopItem previous;
@@ -2008,6 +2059,7 @@ int main()
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();
+    TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();

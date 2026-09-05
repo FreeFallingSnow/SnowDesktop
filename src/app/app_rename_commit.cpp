@@ -45,6 +45,7 @@ bool DesktopApp::QueueRename(snowdesktop::ShellRenameRequest request)
         return false;
     }
     ++shellFileOperationInFlight_;
+    shellMetadataCache_.Invalidate(ToUpperInvariant(source), true);
     shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
     return true;

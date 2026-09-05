@@ -434,14 +434,22 @@ bool snowdesktop::shell_refresh::Read(const Request& request, Snapshot& snapshot
 {
     const ULONGLONG started = GetTickCount64();
     const bool showHidden = AreExplorerHiddenItemsVisible();
+    snapshot.metadata.hits = snapshot.metadata.queries = 0;
     snapshot.desktopComplete = ReadDesktop(
-        request.iconVisibility, showHidden, snapshot.desktopItems);
+        request.iconVisibility, showHidden, snapshot.desktopItems, &snapshot.metadata);
+    snapshot.desktopReadMs = GetTickCount64() - started;
+    const ULONGLONG foldersStarted = GetTickCount64();
     for (const auto& path : request.folders)
     {
         const auto [entry, inserted] = snapshot.folders.try_emplace(ToUpperInvariant(path));
         if (inserted)
-            entry->second = ReadFolder(path, showHidden);
+            entry->second = ReadFolder(path, showHidden, &snapshot.metadata);
     }
+    std::erase_if(snapshot.metadata.folders, [&](const auto& entry) {
+        return !snapshot.folders.contains(entry.first);
+    });
+    snapshot.folderReadMs = GetTickCount64() - foldersStarted;
+    const ULONGLONG dockStarted = GetTickCount64();
     for (const auto& path : request.dockPaths)
     {
         if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
@@ -452,6 +460,7 @@ bool snowdesktop::shell_refresh::Read(const Request& request, Snapshot& snapshot
             snapshot.missingDockPaths.insert(ToUpperInvariant(path));
     }
     snapshot.readMs = GetTickCount64() - started;
+    snapshot.dockReadMs = GetTickCount64() - dockStarted;
     return snapshot.desktopComplete;
 }
 
@@ -486,6 +495,9 @@ void DesktopApp::RefreshShellItemsAsync()
         }
         const ULONGLONG started = GetTickCount64();
         const size_t count = snapshot->desktopItems.size();
+        const size_t metadataHits = snapshot->metadata.hits;
+        const size_t metadataQueries = snapshot->metadata.queries;
+        shellMetadataCache_ = std::move(snapshot->metadata);
         ReloadItems(false, snapshot.get());
         if (dockFolderPopupOpen_)
         {
@@ -498,9 +510,14 @@ void DesktopApp::RefreshShellItemsAsync()
         }
         InvalidateFloatingPopupWindow(false);
         InvalidateQuickNavigationWindow();
-        wchar_t timing[256]{};
-        swprintf_s(timing, L"Shell refresh async: items=%zu readMs=%llu applyMs=%llu",
-            count, snapshot->readMs, GetTickCount64() - started);
+        wchar_t timing[512]{};
+        swprintf_s(timing, L"Shell refresh async: items=%zu readMs=%llu applyMs=%llu "
+            L"desktopMs=%llu foldersMs=%llu dockMs=%llu metadataHits=%zu metadataQueries=%zu "
+            L"modelMs=%llu layoutMs=%llu saveMs=%llu rebuildMs=%llu notifyMs=%llu",
+            count, snapshot->readMs, GetTickCount64() - started,
+            snapshot->desktopReadMs, snapshot->folderReadMs, snapshot->dockReadMs,
+            metadataHits, metadataQueries, snapshot->modelMs, snapshot->layoutMs,
+            snapshot->saveMs, snapshot->rebuildMs, snapshot->notifyMs);
         WriteDiagnosticLogEntry(timing);
         return;
     }
@@ -523,6 +540,9 @@ void DesktopApp::RefreshShellItemsAsync()
             request.dockPaths.push_back(entry.reference);
 
     auto snapshot = std::make_shared<snowdesktop::shell_refresh::Snapshot>();
+    // Copy value metadata/PIDLs; the worker never observes mutable UI storage.
+    // Startup/manual enumeration seeds this cache, so the first file change is warm too.
+    snapshot->metadata = shellMetadataCache_;
     auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
         false, [this, snapshot, revision = *revision](bool succeeded) {
             if (shellRefreshRevision_.Finish(revision))

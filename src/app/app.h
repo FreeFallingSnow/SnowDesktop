@@ -3493,6 +3493,7 @@ private:
     bool shellReloadPending_ = false;
     bool shellReloadLayoutFromDiskPending_ = false;
     snowdesktop::shell_refresh::Revision shellRefreshRevision_;
+    snowdesktop::shell_refresh::MetadataCache shellMetadataCache_;
     std::shared_ptr<snowdesktop::shell_refresh::Snapshot> readyShellRefresh_;
     bool shellDockFolderPopupRefreshPending_ = false;
     // Persistent top-level Hosts own every Dock visual in both desktop and
