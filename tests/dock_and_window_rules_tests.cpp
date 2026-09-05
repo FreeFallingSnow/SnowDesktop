@@ -4852,6 +4852,31 @@ int main(int argc, char** argv)
                     liveNativeMenuPumpBegin,
                     firstShellMenuEntry - liveNativeMenuPumpBegin)
                 : std::string{};
+        const std::size_t newMenuEnd =
+            shellMenuSource.find(
+                "void DesktopApp::ShowDesktopBackgroundContextMenu(",
+                firstShellMenuEntry);
+        const std::string newMenuSource =
+            firstShellMenuEntry != std::string::npos &&
+                    newMenuEnd != std::string::npos
+                ? shellMenuSource.substr(
+                    firstShellMenuEntry,
+                    newMenuEnd - firstShellMenuEntry)
+                : std::string{};
+        const std::size_t newMenuLayerBegin =
+            newMenuSource.find(
+                "ShellPopupMenuLayerGuard shellMenuLayer(*this);");
+        const std::size_t newMenuTrack =
+            newMenuSource.find(
+                "cmd = TrackShellPopupMenuWithDesktopPump(",
+                newMenuLayerBegin);
+        const std::size_t newMenuLayerEnd =
+            newMenuSource.find(
+                "\n    }\n    newMenuContextMenu_.Reset();",
+                newMenuTrack);
+        const std::size_t newMenuInvoke =
+            newMenuSource.find(
+                "SafeInvokeCommand(", newMenuLayerEnd);
         Check(!liveNativeMenuPumpSource.empty() &&
                 liveNativeMenuPumpSource.find(
                     "std::thread") != std::string::npos &&
@@ -4916,6 +4941,15 @@ int main(int argc, char** argv)
                 popupLifecycleSource.find(
                     "EndMenu();") == std::string::npos,
             "native Shell menus must use a tracker-thread-owned window while leaving the desktop pump live");
+        Check(!newMenuSource.empty() &&
+                newMenuLayerBegin != std::string::npos &&
+                newMenuTrack != std::string::npos &&
+                newMenuLayerEnd != std::string::npos &&
+                newMenuInvoke != std::string::npos &&
+                newMenuLayerBegin < newMenuTrack &&
+                newMenuTrack < newMenuLayerEnd &&
+                newMenuLayerEnd < newMenuInvoke,
+            "the Shell New menu must restore its popup source layer before invoking the selected creation command");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"

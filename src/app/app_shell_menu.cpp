@@ -313,11 +313,18 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     ctxMenu.As(&newMenuContextMenu_);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     SetForegroundWindow(menuOwner);
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT cmd = TrackShellPopupMenuWithDesktopPump(
-        newSub,
-        TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
-        screenPoint, menuOwner);
+    UINT cmd = 0;
+    {
+        // Only the visible native menu needs to outrank its popup source.
+        // Restore the popup band before the synchronous New command updates
+        // the folder, otherwise unrelated applications show through until
+        // this function returns and the layer guard finally unwinds.
+        ShellPopupMenuLayerGuard shellMenuLayer(*this);
+        cmd = TrackShellPopupMenuWithDesktopPump(
+            newSub,
+            TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
+            screenPoint, menuOwner);
+    }
     newMenuContextMenu_.Reset();
 
     if (cmd != 0 && cmd >= 1)
