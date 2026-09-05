@@ -1043,6 +1043,20 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (change && !change->source.empty() && !change->target.empty() &&
             renameNotifications_.Observe(change->source, change->target, GetTickCount64()))
             return 0;
+        if (change && (change->event & SHCNE_ASSOCCHANGED) != 0)
+        {
+            // Association changes can keep both file timestamps and Shell
+            // image indices unchanged. Retain visible bitmaps while requesting
+            // fresh icons, without falling back to a synchronous model reload.
+            BeginIconLoadGeneration();
+            for (auto& item : items_)
+                item.iconState = IconState::Loading;
+            for (auto& widget : widgets_)
+                for (auto& entry : widget.folderEntries)
+                    entry.iconState = IconState::Loading;
+            for (auto& entry : dockFolderPopupWidget_.folderEntries)
+                entry.iconState = IconState::Loading;
+        }
         RequestShellRefresh();
         return 0;
     }

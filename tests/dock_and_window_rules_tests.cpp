@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -74,6 +75,14 @@ std::string ReadFile(const std::filesystem::path& path)
     std::string source = contents.str();
     source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
     return source;
+}
+
+bool ContainsIgnoringWhitespace(std::string source, std::string sequence)
+{
+    const auto whitespace = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    std::erase_if(source, whitespace);
+    std::erase_if(sequence, whitespace);
+    return source.find(sequence) != std::string::npos;
 }
 
 std::size_t CountOccurrences(
@@ -8888,15 +8897,12 @@ int main(int argc, char** argv)
                 cancelDragHandler.find(
                   "ReleaseCapture();") !=
                     std::string::npos &&
-                keyboardInputSource.find(
-                  "if (dragSession_.IsActive())\n        {\n            CancelActiveItemDrag();") !=
-                    std::string::npos &&
-                pointerMoveSource.find(
-                  "ClearSelection();\n                    CancelActiveItemDrag();\n                    ReloadItems();") !=
-                    std::string::npos &&
-                pointerMoveSource.find(
-                  "ClearDockPressedState();\n                ReleaseCapturePreservingPointerState();") !=
-                    std::string::npos,
+                ContainsIgnoringWhitespace(keyboardInputSource,
+                  "if (dragSession_.IsActive()) { CancelActiveItemDrag();") &&
+                ContainsIgnoringWhitespace(pointerMoveSource,
+                  "ClearSelection(); CancelActiveItemDrag(); RequestShellRefresh();") &&
+                ContainsIgnoringWhitespace(pointerMoveSource,
+                  "ClearDockPressedState(); ReleaseCapturePreservingPointerState();"),
             "Escape and terminal OLE exits must clear every pressed item-drag state before a later button-up");
         Check(cancelPressHandler.find(
                   "widgetAction_ = WidgetAction::None;") !=

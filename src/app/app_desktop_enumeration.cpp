@@ -202,6 +202,10 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
                 item.slot = SlotFromCell(gridPages_, item.gridCell);
             }
         }
+        // Explicit refresh/settings changes must still rebuild icons even if
+        // Shell reuses an image-list index and the file timestamps are equal.
+        if (!snapshot)
+            item.iconState = IconState::Loading;
         if (!item.iconBitmap || item.iconState != IconState::FullQuality)
         {
             IconLoadTask task;

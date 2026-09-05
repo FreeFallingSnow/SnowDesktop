@@ -72,6 +72,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
         RequestShellRefresh();
         return;
     }
+    const bool refreshIcons = !snapshot;
     snowdesktop::shell_refresh::FolderSnapshot local;
     if (!snapshot)
     {
@@ -93,6 +94,8 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
         const auto found = previousByPath.find(ToUpperInvariant(entry.fullPath));
         if (found != previousByPath.end())
             snowdesktop::shell_refresh::PreserveRuntime(entry, previous[found->second]);
+        if (refreshIcons)
+            entry.iconState = IconState::Loading;
         if (!enqueueIconLoads ||
             (entry.iconBitmap && entry.iconState == IconState::FullQuality))
             continue;
