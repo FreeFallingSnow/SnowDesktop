@@ -7,6 +7,33 @@
 
 // Main desktop-window message dispatch.
 
+namespace
+{
+
+/** @brief 根据 8 向缩放方向返回对应系统光标 */
+HCURSOR ResizeCursorForDir(WidgetResizeDir dir)
+{
+    switch (dir)
+    {
+        case WidgetResizeDir::Left:
+        case WidgetResizeDir::Right:
+            return LoadCursorW(nullptr, IDC_SIZEWE);
+        case WidgetResizeDir::Top:
+        case WidgetResizeDir::Bottom:
+            return LoadCursorW(nullptr, IDC_SIZENS);
+        case WidgetResizeDir::TopLeft:
+        case WidgetResizeDir::BottomRight:
+            return LoadCursorW(nullptr, IDC_SIZENWSE);
+        case WidgetResizeDir::TopRight:
+        case WidgetResizeDir::BottomLeft:
+            return LoadCursorW(nullptr, IDC_SIZENESW);
+        default:
+            return LoadCursorW(nullptr, IDC_ARROW);
+    }
+}
+
+} // namespace
+
 bool DesktopApp::RequestWindowsShutdownDialog()
 {
     ComPtr<IShellDispatch> shell;
@@ -117,8 +144,24 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         if (LOWORD(lp) != HTCLIENT) break;
         bool resizeCursor = detailColumnResizeActive_;
+        // Dragging a widget move keeps SIZEALL; an active resize keeps the
+        // directional arrow for the pressed edge/corner.  WM_SETCURSOR is
+        // still delivered to the capturing window on every pointer move.
+        if (!resizeCursor &&
+            widgetAction_ == WidgetAction::Move)
+        {
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+            return TRUE;
+        }
+        if (!resizeCursor &&
+            widgetAction_ == WidgetAction::Resize)
+        {
+            SetCursor(ResizeCursorForDir(widgetResizeDir_));
+            return TRUE;
+        }
         bool cursorPointAvailable = false;
         bool pointInsideCollectionPopup = false;
+        WidgetHit containerHoverHit = WidgetHit::None;
         POINT point{};
         if (!resizeCursor && GetCursorPos(&point) &&
             ScreenToClient(hwnd_, &point))
@@ -152,6 +195,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     dynamic_cast<WidgetContainer*>(it->get());
                 if (!widget) continue;
                 const WidgetHit hit = widget->HitTestWidget(point);
+                containerHoverHit = hit;
                 resizeCursor =
                     hit == WidgetHit::DetailsModifiedDivider ||
                     hit == WidgetHit::DetailsTypeDivider ||
@@ -163,6 +207,38 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
             return TRUE;
+        }
+        // Hover feedback over widget chrome: SIZEALL on the move bar,
+        // directional arrows over the 8-way resize edges/corners.
+        if (cursorPointAvailable && !pointInsideCollectionPopup)
+        {
+            if (containerHoverHit == WidgetHit::MoveHandle)
+            {
+                SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+                return TRUE;
+            }
+            if (IsWidgetResizeHit(containerHoverHit))
+            {
+                SetCursor(ResizeCursorForDir(
+                    ResizeDirFromHit(containerHoverHit)));
+                return TRUE;
+            }
+            const size_t standalone = HitTestStandaloneWidgetIndex(point);
+            if (standalone < widgets_.size())
+            {
+                const WidgetHit hit =
+                    HitTestStandaloneWidget(standalone, point);
+                if (hit == WidgetHit::MoveHandle)
+                {
+                    SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+                    return TRUE;
+                }
+                if (IsWidgetResizeHit(hit))
+                {
+                    SetCursor(ResizeCursorForDir(ResizeDirFromHit(hit)));
+                    return TRUE;
+                }
+            }
         }
         if (widgetEngine_ && cursorPointAvailable)
         {

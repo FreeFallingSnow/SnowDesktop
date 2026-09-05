@@ -604,10 +604,50 @@ void DesktopApp::OnMouseMoveAt(
 
             GridCell cell = widgetDragOriginalCell_;
             GridSpan span = widgetDragOriginalSpan_;
-            span.columns += dCol;
-            span.rows += dRow;
+            const WidgetResizeDir dir = widgetResizeDir_;
+
+            // 水平方向：从右侧拖 = 扩宽；从左侧拖 = 左缘移动同时扩宽
+            switch (dir)
+            {
+                case WidgetResizeDir::Right:
+                case WidgetResizeDir::TopRight:
+                case WidgetResizeDir::BottomRight:
+                    span.columns = widgetDragOriginalSpan_.columns + dCol;
+                    break;
+                case WidgetResizeDir::Left:
+                case WidgetResizeDir::TopLeft:
+                case WidgetResizeDir::BottomLeft:
+                    cell.column = widgetDragOriginalCell_.column + dCol;
+                    span.columns = widgetDragOriginalSpan_.columns - dCol;
+                    break;
+                default: break;
+            }
+            // 垂直方向：从下侧拖 = 增高；从上侧拖 = 顶缘移动同时增高
+            switch (dir)
+            {
+                case WidgetResizeDir::Bottom:
+                case WidgetResizeDir::BottomLeft:
+                case WidgetResizeDir::BottomRight:
+                    span.rows = widgetDragOriginalSpan_.rows + dRow;
+                    break;
+                case WidgetResizeDir::Top:
+                case WidgetResizeDir::TopLeft:
+                case WidgetResizeDir::TopRight:
+                    cell.row = widgetDragOriginalCell_.row + dRow;
+                    span.rows = widgetDragOriginalSpan_.rows - dRow;
+                    break;
+                default: break;
+            }
+
+            // 约束：span 不小于 1、不超出页面；cell 不越界
+            span.columns = std::clamp(span.columns, 1, page->columns);
+            span.rows = std::clamp(span.rows, 1, page->rows);
+            cell.column = std::clamp(cell.column, 0,
+                std::max(0, page->columns - span.columns));
+            cell.row = std::clamp(cell.row, 0,
+                std::max(0, page->rows - span.rows));
             span = ClampWidgetGridSpan(widget, span,
-                page->columns - cell.column, page->rows - cell.row);
+                page->columns, page->rows);
 
             widgetPreviewCell_ = cell;
             widgetPreviewSpan_ = span;

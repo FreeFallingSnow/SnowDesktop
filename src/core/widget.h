@@ -56,7 +56,15 @@ enum class WidgetHit {
     None,               ///< 未命中任何有效区域
     Content,            ///< 成员项区域（item 列表/网格区）
     MoveHandle,         ///< 底栏或无底栏组件左下手柄——拖拽移动组件
-    ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
+    ResizeHandle,       ///< 兼容旧值：右下角缩放手柄（新命中测试返回 ResizeBottomRight）
+    ResizeLeft,         ///< 左边 6px —— 水平缩放
+    ResizeTop,          ///< 上边 6px —— 垂直缩放
+    ResizeRight,        ///< 右边 6px —— 水平缩放
+    ResizeBottom,       ///< 底边 6px —— 垂直缩放
+    ResizeTopLeft,      ///< 左上角 14px —— 对角缩放
+    ResizeTopRight,     ///< 右上角 14px —— 对角缩放
+    ResizeBottomLeft,   ///< 左下角 14px —— 对角缩放
+    ResizeBottomRight,  ///< 右下角 14px —— 对角缩放
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
     DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮
     OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
@@ -74,6 +82,47 @@ enum class WidgetHit {
     DetailsTypeDivider, ///< 详细信息：类型列宽分隔线
     DetailsSizeDivider, ///< 详细信息：大小列宽分隔线
 };
+
+/**
+ * @brief 判断命中类型是否为任一缩放热区（四边/四角）
+ */
+inline bool IsWidgetResizeHit(WidgetHit hit) noexcept
+{
+    return hit == WidgetHit::ResizeHandle ||
+        hit == WidgetHit::ResizeLeft || hit == WidgetHit::ResizeTop ||
+        hit == WidgetHit::ResizeRight || hit == WidgetHit::ResizeBottom ||
+        hit == WidgetHit::ResizeTopLeft || hit == WidgetHit::ResizeTopRight ||
+        hit == WidgetHit::ResizeBottomLeft || hit == WidgetHit::ResizeBottomRight;
+}
+
+/**
+ * @enum WidgetResizeDir
+ * @brief 8 向缩放方向（按下缩放手柄时记录，拖动预览按方向调整行列）
+ */
+enum class WidgetResizeDir {
+    None, Left, Top, Right, Bottom,
+    TopLeft, TopRight, BottomLeft, BottomRight
+};
+
+/**
+ * @brief 将缩放热区命中转换为缩放方向
+ */
+inline WidgetResizeDir ResizeDirFromHit(WidgetHit hit) noexcept
+{
+    switch (hit)
+    {
+        case WidgetHit::ResizeLeft:       return WidgetResizeDir::Left;
+        case WidgetHit::ResizeTop:        return WidgetResizeDir::Top;
+        case WidgetHit::ResizeRight:      return WidgetResizeDir::Right;
+        case WidgetHit::ResizeBottom:     return WidgetResizeDir::Bottom;
+        case WidgetHit::ResizeTopLeft:    return WidgetResizeDir::TopLeft;
+        case WidgetHit::ResizeTopRight:   return WidgetResizeDir::TopRight;
+        case WidgetHit::ResizeBottomLeft: return WidgetResizeDir::BottomLeft;
+        case WidgetHit::ResizeBottomRight:
+        case WidgetHit::ResizeHandle:     return WidgetResizeDir::BottomRight;
+        default:                          return WidgetResizeDir::None;
+    }
+}
 
 /**
  * @class Widget

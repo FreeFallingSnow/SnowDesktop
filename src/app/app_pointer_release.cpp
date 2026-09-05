@@ -1107,6 +1107,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             static_cast<size_t>(-1);
         widgetCollectionGroupInsertIndex_ =
             static_cast<size_t>(-1);
+        widgetResizeDir_ = WidgetResizeDir::None;
         InvalidateDragStaticScene();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;

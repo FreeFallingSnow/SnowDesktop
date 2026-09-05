@@ -676,7 +676,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         if (!wc) continue;
 
         WidgetHit wh = wc->HitTestWidget(pt);
-        if (wh == WidgetHit::MoveHandle || wh == WidgetHit::ResizeHandle)
+        if (wh == WidgetHit::MoveHandle || IsWidgetResizeHit(wh))
             continue;
 
         RECT bodyRect = wc->GetBodyRect();

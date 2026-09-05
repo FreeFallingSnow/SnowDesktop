@@ -522,6 +522,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         }
     }
     widgetAction_ = WidgetAction::None;
+    widgetResizeDir_ = WidgetResizeDir::None;
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;
     detailColumnResizePopup_ = false;

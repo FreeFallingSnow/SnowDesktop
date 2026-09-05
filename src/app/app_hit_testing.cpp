@@ -205,8 +205,29 @@ WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) cons
 
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
-    RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
-    if (PtInRect(&resize, pt)) return WidgetHit::ResizeHandle;
+
+    // 四角热区优先（Windows 惯例：角落 = 对角缩放）
+    const int corner = snowdesktop::widget_chrome_rules::kResizeCornerSize;
+    const int edge = snowdesktop::widget_chrome_rules::kResizeEdgeThickness;
+    const RECT tl = { frame.left, frame.top,
+        frame.left + corner, frame.top + corner };
+    const RECT tr = { frame.right - corner, frame.top,
+        frame.right, frame.top + corner };
+    const RECT bl = { frame.left, frame.bottom - corner,
+        frame.left + corner, frame.bottom };
+    const RECT br = { frame.right - corner, frame.bottom - corner,
+        frame.right, frame.bottom };
+    if (PtInRect(&tl, pt)) return WidgetHit::ResizeTopLeft;
+    if (PtInRect(&tr, pt)) return WidgetHit::ResizeTopRight;
+    if (PtInRect(&bl, pt)) return WidgetHit::ResizeBottomLeft;
+    if (PtInRect(&br, pt)) return WidgetHit::ResizeBottomRight;
+
+    // 四边热区（角区域已排除）
+    if (pt.y <= frame.top + edge) return WidgetHit::ResizeTop;
+    if (pt.y >= frame.bottom - edge) return WidgetHit::ResizeBottom;
+    if (pt.x <= frame.left + edge) return WidgetHit::ResizeLeft;
+    if (pt.x >= frame.right - edge) return WidgetHit::ResizeRight;
+
     if (!snowdesktop::widget_chrome_rules::HasBottomBar(widget.showTitle))
     {
         RECT move = GetStandaloneWidgetCompactMoveHandleRect(widget);

@@ -684,6 +684,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // ── Widget hit-test ─────────────────────────────────────
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     widgetAction_ = WidgetAction::None;
+    widgetResizeDir_ = WidgetResizeDir::None;
     widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
     widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
 
@@ -724,10 +725,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         WidgetHit wh = HitTestStandaloneWidget(wi, pt);
         if (wh == WidgetHit::None) continue;
 
-        if (wh == WidgetHit::ResizeHandle)
+        if (IsWidgetResizeHit(wh))
         {
             SelectWidgetOnly(wi);
             widgetAction_ = WidgetAction::PendingResize;
+            widgetResizeDir_ = ResizeDirFromHit(wh);
             InvalidateDragStaticScene();
             widgetDragOriginalCell_ = widgets_[wi].gridCell;
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
@@ -816,7 +818,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
 
-        if (wh != WidgetHit::ResizeHandle &&
+        if (!IsWidgetResizeHit(wh) &&
             wh != WidgetHit::MoveHandle)
         {
             const int maximum = wc->GetMaxScrollOffset();
@@ -844,10 +846,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
         }
 
-        if (wh == WidgetHit::ResizeHandle)
+        if (IsWidgetResizeHit(wh))
         {
             SelectWidgetOnly(wi);
             widgetAction_ = WidgetAction::PendingResize;
+            widgetResizeDir_ = ResizeDirFromHit(wh);
             InvalidateDragStaticScene();
             widgetDragOriginalCell_ = widgets_[wi].gridCell;
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
@@ -1005,12 +1008,20 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 return;
             }
 
-            // Empty content selects the widget itself.
-            ClearSelection();
-            widgets_[wi].selected = true;
+            // Empty content: drag the widget itself (like Windows dialog
+            // HTCAPTION). A plain click still selects the widget; the move
+            // only engages after the pointer exceeds the drag threshold.
+            SelectWidgetOnly(wi);
+            widgetAction_ = WidgetAction::PendingMove;
+            InvalidateDragStaticScene();
+            widgetDragOriginalCell_ = widgets_[wi].gridCell;
+            widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            RECT bounds = widgets_[wi].bounds;
+            dragGroupOriginX_ = bounds.left;
+            dragGroupOriginY_ = bounds.top;
             mouseDownWidgetIndex_ = wi;
-            marqueeWidgetIndex_ = wi;
-            marqueeInitialScrollOffset_ = wc->GetScrollOffset();
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);

@@ -3544,6 +3544,7 @@ private:
     bool resizingWidget_ = false;
     enum class WidgetAction { None, PendingMove, PendingResize, Move, Resize };
     WidgetAction widgetAction_ = WidgetAction::None;
+    WidgetResizeDir widgetResizeDir_ = WidgetResizeDir::None;
     bool middleButtonWidgetMove_ = false;
     bool detailColumnResizeActive_ = false;
     bool detailColumnResizePopup_ = false;
