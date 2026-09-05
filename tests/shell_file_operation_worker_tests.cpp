@@ -1,6 +1,7 @@
 #include "shell_file_operation_worker.h"
 #include "item_location.h"
 #include "app/shell_change_notification.h"
+#include "low_level_mouse_hook.h"
 
 #include <algorithm>
 #include <atomic>
@@ -188,6 +189,78 @@ void TestAsyncRenames(const std::filesystem::path& root)
               << " worker ms=" << first.elapsedMs << '\n';
 }
 
+// Use a message-only fixture in place of a global hook: this checks the actual
+// hook owner's thread/pump/shutdown boundary without capturing or injecting
+// desktop input. Regressing to UI-thread installation would fail this test.
+HWND hookFixtureWindow = nullptr;
+DWORD hookInstallThread = 0;
+DWORD hookUninstallThread = 0;
+bool hookInstallShouldFail = false;
+constexpr wchar_t hookFixtureClass[] = L"SnowDesktopHookThreadFixture";
+
+HHOOK WINAPI InstallHookFixture(int kind, HOOKPROC, HINSTANCE instance, DWORD targetThread)
+{
+    Expect(kind == WH_MOUSE_LL && targetThread == 0,
+        "the dedicated monitor requests a global low-level mouse hook");
+    hookInstallThread = GetCurrentThreadId();
+    if (hookInstallShouldFail)
+        return nullptr;
+    hookFixtureWindow = CreateWindowExW(0, hookFixtureClass, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, nullptr);
+    return reinterpret_cast<HHOOK>(hookFixtureWindow);
+}
+
+BOOL WINAPI UninstallHookFixture(HHOOK hook)
+{
+    hookUninstallThread = GetCurrentThreadId();
+    return DestroyWindow(reinterpret_cast<HWND>(hook));
+}
+
+void TestMouseHookRemainsResponsiveWhileCallerWaits()
+{
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = hookFixtureClass;
+    windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+        if (message == WM_APP + 9)
+        {
+            SetEvent(reinterpret_cast<HANDLE>(wp));
+            return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    };
+    Expect(RegisterClassW(&windowClass) != 0, "hook fixture class is available");
+    HANDLE answered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Expect(answered != nullptr, "hook response event is available");
+    const DWORD caller = GetCurrentThreadId();
+    snowdesktop::LowLevelMouseHook hook({&InstallHookFixture, &UninstallHookFixture});
+    for (int run = 0; run != 2; ++run)
+    {
+        Expect(hook.Start(instance, nullptr) && static_cast<bool>(hook),
+            "hook monitor can start and restart");
+        Expect(hookInstallThread != caller,
+            "global mouse monitoring must never install on the caller/UI thread");
+        ResetEvent(answered);
+        Expect(PostMessageW(hookFixtureWindow, WM_APP + 9,
+            reinterpret_cast<WPARAM>(answered), 0) != FALSE,
+            "hook thread receives a queued response request");
+        Expect(WaitForSingleObject(answered, 5000) == WAIT_OBJECT_0,
+            "hook message pump responds while caller is blocked without pumping messages");
+        hook.Stop();
+        Expect(!hook && hookUninstallThread == hookInstallThread &&
+            !IsWindow(hookFixtureWindow),
+            "stop uninstalls on the owning thread before returning");
+    }
+    hookInstallShouldFail = true;
+    Expect(!hook.Start(instance, nullptr) && !hook,
+        "hook installation failure leaves no running monitor");
+    hook.Stop();
+    hookInstallShouldFail = false;
+    CloseHandle(answered);
+    UnregisterClassW(hookFixtureClass, instance);
+}
+
 } // namespace
 
 void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& root)
@@ -264,6 +337,7 @@ int wmain()
     const std::filesystem::path root = CreateTemporaryDirectory();
     TestAsyncRenames(root);
     TestBackgroundReadsDoNotBlockFileOperations(root);
+    TestMouseHookRemainsResponsiveWhileCallerWaits();
     const std::filesystem::path sourceDirectory = root / L"source";
     const std::filesystem::path firstDirectory = root / L"first";
     const std::filesystem::path secondDirectory = root / L"second";

@@ -28,11 +28,8 @@ bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()
 
     floatingDockEdgeSwipeMouseActivity_.store(
         false, std::memory_order_relaxed);
-    floatingDockEdgeSwipeMouseHook_ = SetWindowsHookExW(
-        WH_MOUSE_LL,
-        &DesktopApp::FloatingDockEdgeSwipeMouseHookProc,
-        instance_, 0);
-    if (floatingDockEdgeSwipeMouseHook_)
+    if (floatingDockEdgeSwipeMouseHook_.Start(
+            instance_, &DesktopApp::FloatingDockEdgeSwipeMouseHookProc))
         return true;
 
     WriteDiagnosticLogEntry(
@@ -42,11 +39,7 @@ bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()
 
 void DesktopApp::StopFloatingDockEdgeSwipeMouseMonitor()
 {
-    if (floatingDockEdgeSwipeMouseHook_)
-    {
-        UnhookWindowsHookEx(floatingDockEdgeSwipeMouseHook_);
-        floatingDockEdgeSwipeMouseHook_ = nullptr;
-    }
+    floatingDockEdgeSwipeMouseHook_.Stop();
     floatingDockEdgeSwipeMouseActivity_.store(
         false, std::memory_order_relaxed);
 }

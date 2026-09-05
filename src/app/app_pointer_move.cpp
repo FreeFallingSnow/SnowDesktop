@@ -970,29 +970,11 @@ void DesktopApp::OnMouseMoveAt(
                     SaveLayoutSlots();
                 }
 
-                if (!dragDropController_.SelfDragReturned() &&
-                    sourceFolderMapping)
-                {
-                    for (size_t i = 0; i < widgets_.size(); ++i)
-                    {
-                        if (widgets_[i].id == sourceWidgetId &&
-                            widgets_[i].type ==
-                                DesktopWidgetType::FolderMapping)
-                        {
-                            RefreshFolderMappingWidget(i);
-                            break;
-                        }
-                    }
-                }
-
                 if (!dragDropController_.SelfDragReturned())
                 {
                     ClearSelection();
                     CancelActiveItemDrag();
-                    ReloadItems();
-                    if (dockFolderPopupSource &&
-                        dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
+                    RequestShellRefresh();
                 }
                 else
                 {

@@ -6030,12 +6030,9 @@ int main(int argc, char** argv)
                     std::string::npos,
             "the edge-swipe mouse hook must only record low-level L/R/M/X button down/up activity and continue the hook chain");
         const std::size_t edgeMouseHookInstall =
-            edgeMouseHookStartSource.find("SetWindowsHookExW(");
-        const std::size_t edgeMouseHookKind =
-            edgeMouseHookStartSource.find(
-                "WH_MOUSE_LL", edgeMouseHookInstall);
+            edgeMouseHookStartSource.find("floatingDockEdgeSwipeMouseHook_.Start(");
         const std::size_t edgeMouseHookUninstall =
-            edgeMouseHookStopSource.find("UnhookWindowsHookEx(");
+            edgeMouseHookStopSource.find("floatingDockEdgeSwipeMouseHook_.Stop(");
         const std::size_t edgeMouseHookClear =
             edgeMouseHookStopSource.find(
                 "floatingDockEdgeSwipeMouseActivity_.store(",
@@ -6043,18 +6040,22 @@ int main(int argc, char** argv)
         Check(!edgeMouseHookStartSource.empty() &&
                 !edgeMouseHookStopSource.empty() &&
                 edgeMouseHookInstall != std::string::npos &&
-                edgeMouseHookKind != std::string::npos &&
                 edgeMouseHookUninstall != std::string::npos &&
                 edgeMouseHookClear != std::string::npos &&
-                edgeMouseHookInstall < edgeMouseHookKind &&
                 edgeMouseHookUninstall < edgeMouseHookClear &&
                 appHeaderSource.find(
-                  "HHOOK floatingDockEdgeSwipeMouseHook_ = nullptr;") !=
+                  "LowLevelMouseHook floatingDockEdgeSwipeMouseHook_;") !=
+                    std::string::npos &&
+                appHeaderSource.find("LowLevelMouseHook floatingPopupMouseHook_;") !=
+                    std::string::npos &&
+                floatingDockLifecycleSource.find("SetWindowsHookExW(") ==
+                    std::string::npos &&
+                floatingPopupSource.find("SetWindowsHookExW(") ==
                     std::string::npos &&
                 appHeaderSource.find(
                   "floatingDockEdgeSwipeMouseActivity_{ false };") !=
                     std::string::npos,
-            "the edge-swipe activity observer must be a lightweight WH_MOUSE_LL hook with explicit handle and activity cleanup");
+            "global mouse observers must use dedicated hook owners instead of installing on the UI thread, with explicit activity cleanup");
         const std::size_t repeatedApplyCleanup =
             floatingDockApplySource.find(
                 "UnregisterFloatingDockHotkey();");
@@ -8264,7 +8265,7 @@ int main(int argc, char** argv)
                 openCollectionPopupBegin);
         const std::size_t refreshFolderPopupBegin =
             popupTransitionSource.find(
-                "void DesktopApp::RefreshDockFolderPopup()");
+                "void DesktopApp::RefreshDockFolderPopup(");
         const std::size_t refreshFolderPopupClear =
             popupTransitionSource.find(
                 "ClearPopupDragTarget();",
@@ -8500,7 +8501,7 @@ int main(int argc, char** argv)
                 reloadItemsBegin);
         const std::size_t reloadDesktopItems =
             desktopReloadSource.find(
-                "LoadDesktopItems();",
+                "LoadDesktopItems(",
                 reloadItemsBegin);
         Check(reloadItemsBegin != std::string::npos &&
                 reloadItemsDragDeferral != std::string::npos &&
@@ -8564,17 +8565,21 @@ int main(int argc, char** argv)
                 shellReloadDragDeferral);
         const std::size_t shellReloadExecute =
             timerDispatchSource.find(
-                "ReloadItems(reloadLayoutFromDisk);",
+                "ReloadItems(true);",
                 shellReloadRetry);
+        const std::size_t shellAsyncRefreshExecute =
+            timerDispatchSource.find("RefreshShellItemsAsync();", shellReloadRetry);
         Check(shellReloadTimer != std::string::npos &&
                 shellReloadDragDeferral != std::string::npos &&
                 shellReloadRetainedContext != std::string::npos &&
                 shellReloadRetry != std::string::npos &&
                 shellReloadExecute != std::string::npos &&
+                shellAsyncRefreshExecute != std::string::npos &&
                 shellReloadTimer < shellReloadDragDeferral &&
                 shellReloadRetainedContext < shellReloadRetry &&
                 shellReloadDragDeferral < shellReloadRetry &&
-                shellReloadRetry < shellReloadExecute,
+                shellReloadRetry < shellReloadExecute &&
+                shellReloadRetry < shellAsyncRefreshExecute,
             "Shell debounce must keep reload pending while native or OLE drag ownership is active");
         const std::size_t selfOleEnter =
             oleDropSessionSource.find(

@@ -681,16 +681,10 @@ HRESULT DesktopApp::HandleOleDrop(
                             : DropAction::Move;
                 DragSourceList fileSources =
                     dragSession_.SourceList();
-                auto finished = [this,
-                    dockFolderPopupSource,
-                    dockFolderPopupTarget](bool succeeded) {
+                auto finished = [this](bool succeeded) {
                     if (!succeeded)
                         return;
-                    ReloadItems(false);
-                    if ((dockFolderPopupSource ||
-                         dockFolderPopupTarget) &&
-                        dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
+                    RequestShellRefresh();
                 };
                 if (MaterializeFilesToFolder(
                         fileSources, targetPath, action,
@@ -962,7 +956,7 @@ HRESULT DesktopApp::HandleOleDrop(
                         MessageBeep(MB_ICONWARNING);
                         return;
                     }
-                    ReloadItems(false);
+                    RequestShellRefresh();
                     CheckRecycleBinStatus();
                 });
             if (queued)
@@ -1042,13 +1036,10 @@ HRESULT DesktopApp::HandleOleDrop(
                 entry.displayName = FileNameFromPath(path);
                 fileSources.entries.push_back(std::move(entry));
             }
-            auto finished = [this,
-                dockFolderPopupTarget](bool succeeded) {
+            auto finished = [this](bool succeeded) {
                 if (!succeeded)
                     return;
-                ReloadItems(false);
-                if (dockFolderPopupTarget && dockFolderPopupOpen_)
-                    RefreshDockFolderPopup();
+                RequestShellRefresh();
             };
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync =
@@ -1226,9 +1217,7 @@ HRESULT DesktopApp::HandleOleDrop(
                     return;
                 ActivatePendingFolderPlacement(
                     std::move(folderPlacement));
-                ReloadItems(false);
-                if (dockFolderPopupOpen_)
-                    RefreshDockFolderPopup();
+                RequestShellRefresh();
             };
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync =
@@ -1881,7 +1870,7 @@ HRESULT DesktopApp::HandleOleDrop(
                                     replacementShortcutTarget))
                             {
                                 MessageBeep(MB_ICONWARNING);
-                                ReloadItems(false);
+                                RequestShellRefresh();
                             }
                             return;
                         }
@@ -1910,7 +1899,7 @@ HRESULT DesktopApp::HandleOleDrop(
                         StorePendingLandingCache(
                             placementSources, requestedPreview,
                             existingDesktopKeys, nullptr);
-                        ReloadItems(false);
+                        RequestShellRefresh();
                     };
                     contentFallbackExecuted = ExecuteDropPipeline(
                         fallbackSources, requestedPreview,
@@ -1959,7 +1948,7 @@ HRESULT DesktopApp::HandleOleDrop(
                          workerContentPaths.empty() &&
                          resolvedBareDesktopUrls.empty()))
                         MessageBeep(MB_ICONWARNING);
-                    ReloadItems(false);
+                    RequestShellRefresh();
                 }
             };
 

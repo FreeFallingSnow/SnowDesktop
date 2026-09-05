@@ -70,6 +70,7 @@
 #include "../native_component_preview_export.h"
 #include "../widget_preview_scene.h"
 #include "../shell_file_operation_worker.h"
+#include "../low_level_mouse_hook.h"
 #include "everything_search.h"
 #include "quick_navigation_search_async.h"
 #include "data_paths.h"
@@ -3453,7 +3454,7 @@ private:
     HWND floatingDockHotkeyHwnd_ = nullptr;
     HWND desktopPassthroughHotkeyHwnd_ = nullptr;
     HWND floatingDockEdgeSwipeHwnd_ = nullptr;
-    HHOOK floatingDockEdgeSwipeMouseHook_ = nullptr;
+    snowdesktop::LowLevelMouseHook floatingDockEdgeSwipeMouseHook_;
     inline static std::atomic<bool>
         floatingDockEdgeSwipeMouseActivity_{ false };
     snowdesktop::floating_dock_rules::EdgeSwipeDetector
@@ -3541,7 +3542,7 @@ private:
     bool floatingPopupCompositionRenderRecoveryPending_ = false;
     bool floatingPopupCompositionPaintInProgress_ = false;
     bool floatingPopupDropTargetRegistered_ = false;
-    HHOOK floatingPopupMouseHook_ = nullptr;
+    snowdesktop::LowLevelMouseHook floatingPopupMouseHook_;
     std::uint32_t floatingPopupMouseHookGeneration_ = 0;
     inline static std::atomic<HWND>
         floatingPopupMouseHookNotificationWindow_{ nullptr };

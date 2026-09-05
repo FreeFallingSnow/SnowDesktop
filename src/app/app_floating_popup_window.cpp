@@ -173,12 +173,8 @@ bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
         floatingPopupMouseHookGeneration_);
     floatingPopupMouseHookNotificationWindow_.store(
         floatingPopupHwnd_);
-    floatingPopupMouseHook_ = SetWindowsHookExW(
-        WH_MOUSE_LL,
-        &DesktopApp::FloatingPopupMouseHookProc,
-        instance_,
-        0);
-    if (floatingPopupMouseHook_)
+    if (floatingPopupMouseHook_.Start(
+            instance_, &DesktopApp::FloatingPopupMouseHookProc))
         return true;
 
     floatingPopupMouseHookNotificationWindow_.store(nullptr);
@@ -193,14 +189,14 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
     floatingPopupMouseHookNotificationWindow_.store(nullptr);
     if (!floatingPopupMouseHook_)
     {
+        floatingPopupMouseHook_.Stop();
         floatingPopupMouseHookActiveGeneration_.store(0);
         return;
     }
     ++floatingPopupMouseHookGeneration_;
     if (floatingPopupMouseHookGeneration_ == 0)
         ++floatingPopupMouseHookGeneration_;
-    UnhookWindowsHookEx(floatingPopupMouseHook_);
-    floatingPopupMouseHook_ = nullptr;
+    floatingPopupMouseHook_.Stop();
     floatingPopupMouseHookActiveGeneration_.store(0);
 }
 
