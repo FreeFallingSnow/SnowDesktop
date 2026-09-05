@@ -223,6 +223,13 @@ void CheckPopupWindowPairZOrderTransitions()
                 IsPaired(content, backdrop) &&
             isAbove(menu, content),
         "a protected owned menu prevents a popup pair refresh from reclaiming the top Z-order slot");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, nullptr, HWND_NOTOPMOST, false,
+            origin, size, menu) &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(content) &&
+            isAbove(menu, content),
+        "a protected owned menu also prevents a content-only popup refresh from overtaking the menu");
 
     DestroyWindow(separator);
     DestroyWindow(menu);

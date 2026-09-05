@@ -60,33 +60,46 @@ inline bool Apply(
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
         SWP_NOOWNERZORDER;
 
-    if (!backdropWindow || !IsWindow(backdropWindow))
+    const bool usesBandSentinel =
+        contentInsertAfter == HWND_TOPMOST ||
+        contentInsertAfter == HWND_NOTOPMOST;
+    const bool protectedWindowAlreadyAbove =
+        usesBandSentinel &&
+        preserveAboveWindow &&
+        IsWindow(preserveAboveWindow) &&
+        IsAbove(preserveAboveWindow, contentWindow);
+    const bool backdropValid =
+        backdropWindow && IsWindow(backdropWindow);
+    if (protectedWindowAlreadyAbove)
+    {
+        // An owned topmost menu can force its owner back into the TOPMOST
+        // band while the menu-layer policy still requests HWND_NOTOPMOST.
+        // Defer that band transition until the menu closes; attempting it
+        // now reorders the owner ahead of the menu on affected systems.
+        if (!backdropValid)
+            return true;
+        return SetWindowPos(
+            backdropWindow, nullptr,
+            backdropOrigin.x, backdropOrigin.y,
+            backdropSize.cx, backdropSize.cy,
+            backdropFlags | SWP_NOZORDER) != FALSE;
+    }
+
+    if (!backdropValid)
     {
         return SetWindowPos(
             contentWindow, contentInsertAfter,
             0, 0, 0, 0, contentFlags) != FALSE;
     }
 
-    const bool usesBandSentinel =
-        contentInsertAfter == HWND_TOPMOST ||
-        contentInsertAfter == HWND_NOTOPMOST;
     const bool pairAlreadySynchronized =
         IsTopmost(contentWindow) == topmost &&
         IsTopmost(backdropWindow) == topmost &&
         IsPaired(contentWindow, backdropWindow);
-    const bool protectedWindowAlreadyAbove =
-        preserveAboveWindow &&
-        IsWindow(preserveAboveWindow) &&
-        IsTopmost(contentWindow) == topmost &&
-        IsTopmost(backdropWindow) == topmost &&
-        IsAbove(preserveAboveWindow, contentWindow);
-    if (usesBandSentinel &&
-        (pairAlreadySynchronized || protectedWindowAlreadyAbove))
+    if (usesBandSentinel && pairAlreadySynchronized)
     {
         // A layer-policy refresh must not raise an already-correct popup
         // pair above a menu that Windows has since placed over its content.
-        // An owned menu can temporarily interrupt pair adjacency, so its
-        // explicit protected position also makes this refresh idempotent.
         // Keep the helper geometry synchronized without changing Z order.
         return SetWindowPos(
             backdropWindow, nullptr,

@@ -649,10 +649,10 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
     }
 
     bool positionedTogether = false;
+    POINT origin{};
+    SIZE size{};
     if (backdropWindow)
     {
-        POINT origin{};
-        SIZE size{};
         if (impl_->QueryContentPlacement(
                 nullptr, origin, size))
         {
@@ -662,6 +662,14 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
                     contentInsertAfter, topmost,
                     origin, size, preserveAboveWindow);
         }
+    }
+    else
+    {
+        positionedTogether =
+            snowdesktop::popup_window_pair_z_order::Apply(
+                contentWindow, nullptr,
+                contentInsertAfter, topmost,
+                origin, size, preserveAboveWindow);
     }
 
     if (!positionedTogether)
