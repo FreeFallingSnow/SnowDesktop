@@ -1913,6 +1913,7 @@ private:
             onTextChanged = {});
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
+    void PreserveModernMenuHostZOrder(HWND host, WINDOWPOS& position);
     /** @brief 清除当前菜单使用的图标映射。 */
     void ClearMenuIcons();
     /** @brief 恢复桌面窗口层叠顺序。 */

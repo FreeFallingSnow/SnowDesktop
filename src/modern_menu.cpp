@@ -257,10 +257,14 @@ public:
                 }
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
+                TraceOwnedPopupZOrder(
+                    L"after-dispatch", &message, false);
+                RestoreOwnedPopupZOrder();
                 if (options_.eventPump.flushPresentation)
                     options_.eventPump.flushPresentation();
                 TraceOwnedPopupZOrder(
-                    L"after-dispatch", &message, false);
+                    L"after-presentation", &message, false);
+                RestoreOwnedPopupZOrder();
                 ++processedMessages;
             }
 
@@ -283,6 +287,7 @@ public:
                 TraceOwnedPopupZOrder(
                     L"after-scheduled-presentation", nullptr,
                     false);
+                RestoreOwnedPopupZOrder();
             }
         }
 
@@ -2091,31 +2096,48 @@ private:
 
     void RestoreOwnedPopupZOrder()
     {
-        if (!options_.topmost ||
+        if (done_ || !options_.topmost ||
             !options_.zOrderOwner ||
             !IsWindow(options_.zOrderOwner) ||
             popups_.empty() ||
             !popups_.front()->hwnd ||
-            !IsWindow(popups_.front()->hwnd))
+            !IsWindow(popups_.front()->hwnd) ||
+            !IsWindowVisible(popups_.front()->hwnd) ||
+            gActiveRootMenu.load() != popups_.front()->hwnd)
         {
             return;
         }
 
-        const HWND root = popups_.front()->hwnd;
-        for (HWND current = root; current;
-             current = GetWindow(current, GW_HWNDNEXT))
+        bool needsRestore = false;
+        HWND precedingWindow = options_.zOrderOwner;
+        for (const auto& popup : popups_)
         {
-            if (current == options_.zOrderOwner)
-                return;
+            if (!popup || !popup->hwnd || !IsWindowVisible(popup->hwnd))
+                continue;
+            bool abovePrecedingWindow = false;
+            for (HWND current = popup->hwnd; current;
+                 current = GetWindow(current, GW_HWNDNEXT))
+            {
+                if (current == precedingWindow)
+                {
+                    abovePrecedingWindow = true;
+                    break;
+                }
+            }
+            needsRestore = needsRestore || !abovePrecedingWindow ||
+                (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
+                    WS_EX_TOPMOST) == 0;
+            precedingWindow = popup->hwnd;
         }
+        if (!needsRestore)
+            return;
 
         TraceOwnedPopupZOrder(L"restore-needed", nullptr, true);
 
-        // The application's nested event pump may finish a popup animation
-        // by promoting the source host again.  User32 can then move that
-        // owner above its already-visible owned menu.  Restore every menu
-        // popup in parent-to-child order without taking activation, so the
-        // root and any cascade remain above the source host.
+        // Host paints, input, presentation and animations can all change
+        // HWND order. Reconcile before presentation and the next queued
+        // input, independently of whether animation work is scheduled.
+        // Include cascades and never revive a superseded nested session.
         constexpr UINT flags =
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
             SWP_NOOWNERZORDER;

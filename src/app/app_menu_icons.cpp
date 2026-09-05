@@ -2,6 +2,9 @@
 #include "../menu_icon_render.h"
 #include "../modern_menu.h"
 #include "../widget_package_image_cache.h"
+#include "popup_window_pair_z_order.h"
+
+#include <sstream>
 
 // Converts the existing HMENU command model into fully custom popup windows.
 
@@ -735,6 +738,21 @@ UINT DesktopApp::ShowModernMenu(
             }
         }
     }
+    if (zOrderOwner)
+    {
+        std::wostringstream line;
+        line << L"ModernMenuHostContext host=" << zOrderOwner
+             << L" popupHost=" << (floatingPopupHostVisible ? 1 : 0)
+             << L" shellDepth=" << shellPopupMenuLayerDepth_
+             << L" requestedPopupTopmost="
+             << (snowdesktop::floating_popup_rules::ShouldBeTopmost(
+                    true, shellPopupMenuLayerDepth_) ? 1 : 0)
+             << L" popupBackdropAvailable="
+             << (collectionPopupBackdropCompositor_.IsAvailable() ? 1 : 0)
+             << L" popupGlass=" << (collectionPopupGlassTheme_ ? 1 : 0)
+             << L" pid=" << GetCurrentProcessId();
+        WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+    }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
 
@@ -765,6 +783,42 @@ void DesktopApp::ConfigureModernMenuEventPump(
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Debug);
     };
+}
+
+void DesktopApp::PreserveModernMenuHostZOrder(
+    HWND host, WINDOWPOS& position)
+{
+    const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
+    const UINT requestedFlags = position.flags;
+    if (!snowdesktop::popup_window_pair_z_order::PreserveOwnedMenuZOrder(
+            host, menu, position))
+    {
+        return;
+    }
+
+    // Repeated paints request the same operation. Log once per observed
+    // request/session rather than synchronously writing on every mouse move.
+    static HWND lastMenu = nullptr;
+    static HWND lastHost = nullptr;
+    static HWND lastInsertAfter = nullptr;
+    static UINT lastFlags = 0;
+    if (menu == lastMenu && host == lastHost &&
+        position.hwndInsertAfter == lastInsertAfter &&
+        requestedFlags == lastFlags)
+    {
+        return;
+    }
+    lastMenu = menu;
+    lastHost = host;
+    lastInsertAfter = position.hwndInsertAfter;
+    lastFlags = requestedFlags;
+    std::wostringstream line;
+    line << L"ModernMenuHostGuard menu=" << menu << L" host=" << host
+         << L" requestedInsertAfter=" << position.hwndInsertAfter
+         << L" requestedFlags=0x" << std::hex << requestedFlags
+         << L" appliedFlags=0x" << position.flags << std::dec
+         << L" shellDepth=" << shellPopupMenuLayerDepth_;
+    WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
 }
 
 void DesktopApp::ClearMenuIcons()

@@ -1149,6 +1149,11 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
 
     switch (msg)
     {
+    case WM_WINDOWPOSCHANGING:
+        if (lp)
+            PreserveModernMenuHostZOrder(
+                hwnd, *reinterpret_cast<WINDOWPOS*>(lp));
+        break;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case kFloatingPopupExternalPointerMessage:

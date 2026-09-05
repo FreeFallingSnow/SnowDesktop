@@ -31,6 +31,23 @@ inline bool IsAbove(HWND upperWindow, HWND lowerWindow)
     return false;
 }
 
+// Called from the host's WM_WINDOWPOSCHANGING handler, so geometry updates,
+// compositor fallbacks and direct SetWindowPos calls share the same guard.
+// The caller supplies the current modern menu, not an arbitrary owned window.
+inline bool PreserveOwnedMenuZOrder(
+    HWND contentWindow, HWND menuWindow, WINDOWPOS& position)
+{
+    if ((position.flags & (SWP_NOZORDER | SWP_HIDEWINDOW)) != 0 ||
+        !menuWindow || !IsWindowVisible(menuWindow) ||
+        GetWindow(menuWindow, GW_OWNER) != contentWindow ||
+        !IsAbove(menuWindow, contentWindow))
+    {
+        return false;
+    }
+    position.flags |= SWP_NOZORDER;
+    return true;
+}
+
 /**
  * @brief 将 popup 内容窗及其 backdrop 安全地放入同一 Z 序带并保持相邻。
  *
@@ -72,10 +89,9 @@ inline bool Apply(
         backdropWindow && IsWindow(backdropWindow);
     if (protectedWindowAlreadyAbove)
     {
-        // An owned topmost menu can force its owner back into the TOPMOST
-        // band while the menu-layer policy still requests HWND_NOTOPMOST.
-        // Defer that band transition until the menu closes; attempting it
-        // now reorders the owner ahead of the menu on affected systems.
+        // Preserve the actual order for either requested band while this
+        // menu is visible. A topmost owned menu does not imply that its owner
+        // is topmost, so do not infer the requested band from menu styles.
         if (!backdropValid)
             return true;
         return SetWindowPos(

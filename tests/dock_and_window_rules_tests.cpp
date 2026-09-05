@@ -237,10 +237,75 @@ void CheckPopupWindowPairZOrderTransitions()
     DestroyWindow(content);
 }
 
+LRESULT CALLBACK MenuProtectedHostProc(
+    HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_WINDOWPOSCHANGING && lp)
+    {
+        snowdesktop::popup_window_pair_z_order::PreserveOwnedMenuZOrder(
+            window,
+            reinterpret_cast<HWND>(GetWindowLongPtrW(window, GWLP_USERDATA)),
+            *reinterpret_cast<WINDOWPOS*>(lp));
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+void CheckMenuProtectedHostPositionChanges()
+{
+    constexpr wchar_t className[] = L"SnowDesktop.MenuProtectedHostTest";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = MenuProtectedHostProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    Check(RegisterClassW(&windowClass) != 0,
+        "the menu-protected host test class is registered");
+    HWND host = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        className, L"", WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, windowClass.hInstance, nullptr);
+    HWND menu = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+        L"STATIC", L"", WS_POPUP | WS_VISIBLE, 0, 0, 1, 1,
+        host, nullptr, windowClass.hInstance, nullptr);
+    Check(host && menu, "the protected host and its owned menu are created");
+    if (host && menu)
+    {
+        namespace zOrder = snowdesktop::popup_window_pair_z_order;
+        constexpr UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        SetWindowPos(host, HWND_TOPMOST, 0, 0, 32, 32, flags);
+        SetWindowPos(menu, HWND_TOPMOST, 0, 0, 1, 1, flags);
+        SetWindowLongPtrW(host, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(menu));
+        Check(SetWindowPos(host, HWND_NOTOPMOST, 12, 14, 40, 42, flags) &&
+                zOrder::IsTopmost(host) && zOrder::IsAbove(menu, host),
+            "a direct host resize cannot demote or reorder an active owned menu");
+        RECT bounds{};
+        GetWindowRect(host, &bounds);
+        Check(bounds.left == 12 && bounds.top == 14 &&
+                bounds.right == 52 && bounds.bottom == 56,
+            "protecting menu order still applies host geometry changes");
+        // Exercise a second direct path, without the window-pair policy.
+        Check(SetWindowPos(host, HWND_TOP, 0, 0, 0, 0,
+                flags | SWP_NOMOVE | SWP_NOSIZE) &&
+                zOrder::IsAbove(menu, host),
+            "direct HWND_TOP promotion preserves the active menu");
+        ShowWindow(menu, SW_HIDE);
+        Check(SetWindowPos(host, HWND_NOTOPMOST, 0, 0, 0, 0,
+                flags | SWP_NOMOVE | SWP_NOSIZE) && !zOrder::IsTopmost(host),
+            "a hidden superseded menu cannot block host band changes");
+        SetWindowLongPtrW(host, GWLP_USERDATA, 0);
+        Check(SetWindowPos(host, HWND_TOPMOST, 0, 0, 0, 0,
+                flags | SWP_NOMOVE | SWP_NOSIZE) && zOrder::IsTopmost(host),
+            "host layer policy resumes after the menu session ends");
+    }
+    if (menu) DestroyWindow(menu);
+    if (host) DestroyWindow(host);
+    UnregisterClassW(className, windowClass.hInstance);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    CheckMenuProtectedHostPositionChanges();
     using snowdesktop::desktop_keyboard_rules::
         IsForegroundFocusReady;
     using snowdesktop::desktop_keyboard_rules::
