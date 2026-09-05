@@ -202,6 +202,8 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost)
 {
+    if (renameEdit_ != nullptr)
+        CommitRename(false);
     rightButtonDownDockHost_ = dockHost;
     // Right-click menu interaction is never an edge-swipe gesture. Cancel an
     // already armed stroke synchronously instead of waiting for the sampler.

@@ -2,6 +2,29 @@
 
 // Rename commit operations.
 
+namespace
+{
+struct RenameCommitTiming
+{
+    RenameTargetKind target;
+    ULONGLONG started = GetTickCount64();
+    ULONGLONG shellMs = 0;
+    ULONGLONG refreshMs = 0;
+
+    ~RenameCommitTiming()
+    {
+        const ULONGLONG totalMs = GetTickCount64() - started;
+        if (totalMs < 50)
+            return;
+        wchar_t message[256]{};
+        swprintf_s(message,
+            L"Rename commit slow: target=%d totalMs=%llu shellMs=%llu refreshMs=%llu",
+            static_cast<int>(target), totalMs, shellMs, refreshMs);
+        WriteDiagnosticLogEntry(message);
+    }
+};
+}
+
 static std::wstring MakeUniqueFileName(const std::wstring& folderPath, const std::wstring& desiredName)
 {
     wchar_t fullPath[MAX_PATH]{};
@@ -77,6 +100,10 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
         newName == sourceEntry->name)
         return;
 
+    RenameCommitTiming timing{
+        dockPopupEntry ? RenameTargetKind::DockFolderEntry
+                       : RenameTargetKind::FolderEntry };
+    const ULONGLONG shellStarted = GetTickCount64();
     PIDLIST_ABSOLUTE pidl = nullptr;
     const std::wstring oldPath =
         sourceEntry->fullPath;
@@ -109,6 +136,7 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
         parentFolder->Release();
     }
     ILFree(pidl);
+    timing.shellMs = GetTickCount64() - shellStarted;
 
     if (FAILED(hr))
     {
@@ -116,6 +144,7 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
         return;
     }
 
+    const ULONGLONG refreshStarted = GetTickCount64();
     if (!renamedPath.empty())
     {
         auto replaceOrderKey =
@@ -139,19 +168,12 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
             dockFolderPopupWidget_.
                 itemKeys);
     }
-    for (size_t i = 0;
-        i < widgets_.size(); ++i)
-    {
-        if (widgets_[i].type ==
-            DesktopWidgetType::FolderMapping)
-            RefreshFolderMappingWidget(i);
-    }
+    // ReloadItems(false) already enumerates every mapping, rebuilds the
+    // containers and saves the migrated order. Do that work only once.
     ReloadItems(false);
     if (dockFolderPopupOpen_)
         RefreshDockFolderPopup();
-    RebuildContainersAndItems();
-    SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    timing.refreshMs = GetTickCount64() - refreshStarted;
 }
 
 void DesktopApp::CommitRename(bool cancel)
@@ -201,18 +223,21 @@ void DesktopApp::CommitRename(bool cancel)
         return;
     }
 
+    RenameCommitTiming timing{ renameController_.Kind() };
     if (renameController_.IsWidget())
     {
         if (!cancel && renameIndex < widgets_.size())
         {
-            if (!newName.empty())
+            if (!newName.empty() &&
+                newName != widgets_[renameIndex].title)
             {
                 widgets_[renameIndex].title = newName;
                 widgets_[renameIndex].customTitle = newName;
                 widgets_[renameIndex].userRenamed = true;
                 SaveLayoutSlots();
             }
-            else if (!widgets_[renameIndex].customTitle.empty())
+            else if (newName.empty() &&
+                !widgets_[renameIndex].customTitle.empty())
             {
                 DesktopWidget& widget = widgets_[renameIndex];
                 widget.customTitle.clear();
@@ -241,12 +266,25 @@ void DesktopApp::CommitRename(bool cancel)
         return;
     }
 
+    // Ending an unchanged/cancelled edit must not re-enumerate the desktop,
+    // reload widget storage or restart icon loading on the input thread.
+    if (cancel || renameIndex >= items_.size() ||
+        newName.empty() || newName == items_[renameIndex].name)
+    {
+        renameController_.Reset();
+        if (quickNavigationRename)
+            InvalidateQuickNavigationWindow();
+        return;
+    }
+
+    bool renamed = false;
     bool keepLayoutSlots = false;
     bool dockUsageKeyMigrated = false;
     if (!cancel && renameIndex < items_.size() &&
         !newName.empty() &&
         newName != items_[renameIndex].name)
     {
+        const ULONGLONG shellStarted = GetTickCount64();
         std::wstring oldLayoutKey = items_[renameIndex].layoutKey;
         wchar_t desktopPath[MAX_PATH]{};
         SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE);
@@ -256,8 +294,10 @@ void DesktopApp::CommitRename(bool cancel)
             reinterpret_cast<PCUITEMID_CHILD>(
                 items_[renameIndex].childPidl.get()),
             uniqueName.c_str(), SHGDN_NORMAL, &newChild);
+        timing.shellMs = GetTickCount64() - shellStarted;
         if (SUCCEEDED(hr))
         {
+            renamed = true;
             if (newChild)
             {
                 PIDLIST_ABSOLUTE newAbsolute = ILCombine(desktopPidl_.get(), newChild);
@@ -321,11 +361,14 @@ void DesktopApp::CommitRename(bool cancel)
     }
 
     renameController_.Reset();
-    ReloadItems(!keepLayoutSlots);
+    const ULONGLONG refreshStarted = GetTickCount64();
+    if (renamed)
+        ReloadItems(!keepLayoutSlots);
     if (dockUsageKeyMigrated)
         SaveDockUsageStats();
     if (quickNavigationRename)
         InvalidateQuickNavigationWindow();
+    timing.refreshMs = GetTickCount64() - refreshStarted;
 }
 
 /**

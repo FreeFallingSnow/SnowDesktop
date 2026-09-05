@@ -1068,8 +1068,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnQuickNavigationEverythingSearchCompleted(wp);
         return 0;
     case kCommitRenameMessage:
+        // A pointer-down can commit synchronously before this queued focus
+        // notification arrives. Never let it close a later rename session.
+        if (!renameController_.MatchesSession(
+                static_cast<std::size_t>(lp)))
+            return 0;
         renameCommitPending_ = false;
-        CommitRename(wp != 0);
+        if (GetFocus() != renameEdit_)
+            CommitRename(wp != 0);
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);

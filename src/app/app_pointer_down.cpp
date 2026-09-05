@@ -8,7 +8,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     dockPressedClosedCollectionPopup_ = false;
     if (middleButtonWidgetMove_) return;
-    if (renameEdit_ != nullptr) return;
+    // Popup/Dock hosts do not activate on clicks, so the EDIT may never
+    // receive WM_KILLFOCUS. Finish before hit testing can change its target.
+    if (renameEdit_ != nullptr)
+        CommitRename(false);
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();

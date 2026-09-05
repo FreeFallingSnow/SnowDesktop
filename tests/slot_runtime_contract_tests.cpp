@@ -1738,6 +1738,33 @@ void TestRenameControllerKeepsTargetsExclusive()
         "an inactive rename cannot acquire presentation state or lock scrolling");
 }
 
+void TestRenameControllerRejectsStaleFocusCommits()
+{
+    RenameController controller;
+    Check(!controller.MatchesSession(0),
+        "an inactive editor must reject a queued commit");
+
+    controller.BeginDesktopItem(2);
+    const auto firstSession = controller.SessionId();
+    Check(controller.MatchesSession(firstSession),
+        "the active editor must accept its own focus-loss notification");
+    controller.Reset();
+    Check(!controller.MatchesSession(firstSession),
+        "a pointer commit must retire the old focus-loss notification");
+
+    // Reopening even the same item must not consume its previous EDIT's
+    // queued notification, regardless of native HWND reuse.
+    controller.BeginDesktopItem(2);
+    Check(!controller.MatchesSession(firstSession) &&
+            controller.MatchesSession(controller.SessionId()),
+        "reopening the same item must reject the previous editor's commit");
+    const auto secondSession = controller.SessionId();
+    controller.BeginDockFolderEntry(3);
+    Check(!controller.MatchesSession(secondSession) &&
+            controller.MatchesSession(controller.SessionId()),
+        "switching rename surfaces must invalidate the previous session");
+}
+
 void TestPopupDwellControllerHandlesCandidateChanges()
 {
     PopupDwellController controller;
@@ -1796,6 +1823,7 @@ int main()
     TestTrayCallbackClassification();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
+    TestRenameControllerRejectsStaleFocusCommits();
     TestPopupDwellControllerHandlesCandidateChanges();
     if (failures != 0)
     {

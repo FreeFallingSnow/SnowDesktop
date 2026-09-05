@@ -13,10 +13,12 @@
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
     (void)wp;
+    if (renameEdit_ != nullptr)
+        CommitRename(false);
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelRequest_.modal)
         return;
-    if (renameEdit_ != nullptr || mouseDown_ || dragSession_.IsActive() ||
+    if (mouseDown_ || dragSession_.IsActive() ||
         widgetAction_ != WidgetAction::None)
         return;
 

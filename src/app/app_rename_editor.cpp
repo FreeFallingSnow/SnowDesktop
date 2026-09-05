@@ -344,7 +344,9 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
         if (!app->renameCommitPending_)
         {
             app->renameCommitPending_ = true;
-            if (!PostMessageW(app->hwnd_, kCommitRenameMessage, FALSE, 0))
+            if (!PostMessageW(app->hwnd_, kCommitRenameMessage, FALSE,
+                    static_cast<LPARAM>(
+                        app->renameController_.SessionId())))
             {
                 app->renameCommitPending_ = false;
                 app->CommitRename(false);

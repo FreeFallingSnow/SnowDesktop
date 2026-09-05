@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../menu_fluent_glyphs.h"
+#include "../right_click_contract.h"
 
 // Collection/file-group dwell activation and popup tab switching.
 
@@ -1075,5 +1076,8 @@ ShowDockFolderPopupContextMenu(
         break;
     }
     RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    if (snowdesktop::right_click_contract::
+            ShouldRestoreInteractionFocusAfterMenu(
+                false, renameEdit_ != nullptr))
+        RestoreInteractionInputFocus();
 }
