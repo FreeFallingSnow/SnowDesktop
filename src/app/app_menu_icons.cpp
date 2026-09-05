@@ -761,6 +761,10 @@ void DesktopApp::ConfigureModernMenuEventPump(
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
     };
+    options.eventPump.traceDiagnostic = [](const std::wstring& message) {
+        WriteDiagnosticLogEntry(
+            message.c_str(), DiagnosticLogLevel::Debug);
+    };
 }
 
 void DesktopApp::ClearMenuIcons()

@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <utility>
@@ -501,6 +502,14 @@ int wmain()
     Expect(zOrderRefresh != nullptr,
         "the Z-order refresh event is created");
     options.eventPump.scheduledWorkHandle = zOrderRefresh;
+    std::vector<std::wstring> zOrderDiagnostics;
+    bool observedActiveRootWindow = false;
+    options.eventPump.traceDiagnostic =
+        [&](const std::wstring& message) {
+            zOrderDiagnostics.push_back(message);
+            observedActiveRootWindow = observedActiveRootWindow ||
+                snowdesktop::modern_menu::ActiveRootWindow() != nullptr;
+        };
     options.eventPump.dispatchScheduledWork = [&]() {
         SetWindowPos(
             zOrderOwner, HWND_TOPMOST,
@@ -524,6 +533,20 @@ int wmain()
         "a floating-host menu is topmost and owned by its Z-order host");
     Expect(gObservedAboveZOrderOwner,
         "a floating-host menu recovers after scheduled work raises its owner");
+    const auto hasZOrderDiagnostic =
+        [&](const wchar_t* stage) {
+            return std::any_of(
+                zOrderDiagnostics.begin(), zOrderDiagnostics.end(),
+                [&](const std::wstring& message) {
+                    return message.find(stage) != std::wstring::npos;
+                });
+        };
+    Expect(observedActiveRootWindow &&
+            snowdesktop::modern_menu::ActiveRootWindow() == nullptr,
+        "the active root menu diagnostic is scoped to the menu session");
+    Expect(hasZOrderDiagnostic(L"stage=session-start") &&
+            hasZOrderDiagnostic(L"stage=session-end"),
+        "Z-order diagnostics record the menu session boundaries");
     options.eventPump = {};
     CloseHandle(zOrderRefresh);
     options.zOrderOwner = nullptr;

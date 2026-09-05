@@ -3,6 +3,7 @@
 
 #include <array>
 #include <bit>
+#include <sstream>
 
 namespace
 {
@@ -15,6 +16,91 @@ RECT UnionRects(const RECT& first, const RECT& second)
     RECT result{};
     UnionRect(&result, &first, &second);
     return result;
+}
+
+struct MenuHostZOrderSnapshot
+{
+    HWND menu = nullptr;
+    HWND host = nullptr;
+    HWND menuPrevious = nullptr;
+    HWND menuNext = nullptr;
+    HWND hostPrevious = nullptr;
+    HWND hostNext = nullptr;
+    LONG_PTR menuExStyle = 0;
+    LONG_PTR hostExStyle = 0;
+    bool menuAboveHost = false;
+
+    bool operator==(const MenuHostZOrderSnapshot& other) const
+    {
+        return menu == other.menu &&
+            host == other.host &&
+            menuPrevious == other.menuPrevious &&
+            menuNext == other.menuNext &&
+            hostPrevious == other.hostPrevious &&
+            hostNext == other.hostNext &&
+            menuExStyle == other.menuExStyle &&
+            hostExStyle == other.hostExStyle &&
+            menuAboveHost == other.menuAboveHost;
+    }
+};
+
+MenuHostZOrderSnapshot CaptureMenuHostZOrder(HWND host)
+{
+    MenuHostZOrderSnapshot snapshot;
+    snapshot.menu = snowdesktop::modern_menu::ActiveRootWindow();
+    if (!snapshot.menu || !host || !IsWindow(host))
+        return snapshot;
+
+    snapshot.host = host;
+    snapshot.menuPrevious = GetWindow(snapshot.menu, GW_HWNDPREV);
+    snapshot.menuNext = GetWindow(snapshot.menu, GW_HWNDNEXT);
+    snapshot.hostPrevious = GetWindow(host, GW_HWNDPREV);
+    snapshot.hostNext = GetWindow(host, GW_HWNDNEXT);
+    snapshot.menuExStyle =
+        GetWindowLongPtrW(snapshot.menu, GWL_EXSTYLE);
+    snapshot.hostExStyle = GetWindowLongPtrW(host, GWL_EXSTYLE);
+    for (HWND current = snapshot.menu; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+    {
+        if (current == host)
+        {
+            snapshot.menuAboveHost = true;
+            break;
+        }
+    }
+    return snapshot;
+}
+
+void TraceMenuHostZOrderTransition(
+    const wchar_t* stage,
+    const MenuHostZOrderSnapshot& before,
+    const MenuHostZOrderSnapshot& after,
+    bool force = false)
+{
+    if ((!before.menu && !after.menu) ||
+        (!force && before == after))
+    {
+        return;
+    }
+
+    const MenuHostZOrderSnapshot& current =
+        after.menu ? after : before;
+    std::wostringstream line;
+    line << L"FloatingPopupZOrder stage=" << stage
+         << L" menu=" << current.menu
+         << L" host=" << current.host
+         << L" beforeAbove=" << (before.menuAboveHost ? 1 : 0)
+         << L" afterAbove=" << (after.menuAboveHost ? 1 : 0)
+         << L" menuTopmost="
+         << ((current.menuExStyle & WS_EX_TOPMOST) ? 1 : 0)
+         << L" hostTopmost="
+         << ((current.hostExStyle & WS_EX_TOPMOST) ? 1 : 0)
+         << L" menuPrev=" << current.menuPrevious
+         << L" menuNext=" << current.menuNext
+         << L" hostPrev=" << current.hostPrevious
+         << L" hostNext=" << current.hostNext;
+    WriteDiagnosticLogEntry(
+        line.str().c_str(), DiagnosticLogLevel::Debug);
 }
 
 }
@@ -657,6 +743,8 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
     const bool shouldBeTopmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
+    const MenuHostZOrderSnapshot menuZOrderBefore =
+        CaptureMenuHostZOrder(floatingPopupHwnd_);
     collectionPopupBackdropCompositor_.
         SetPopupWindowPairZOrder(
             floatingPopupHwnd_,
@@ -664,6 +752,9 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
             shouldBeTopmost);
     ApplyDragPreviewLayerPolicy();
+    TraceMenuHostZOrderTransition(
+        L"apply-layer-policy", menuZOrderBefore,
+        CaptureMenuHostZOrder(floatingPopupHwnd_));
 }
 
 void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
@@ -727,6 +818,11 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     const bool topmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
+    const MenuHostZOrderSnapshot menuZOrderBefore =
+        CaptureMenuHostZOrder(floatingPopupHwnd_);
+    const wchar_t* zOrderStage =
+        collectionPopupBackdropCompositor_.IsAvailable()
+            ? L"backdrop-reattach" : L"backdrop-initialize";
     if (!collectionPopupBackdropCompositor_.IsAvailable())
     {
         const bool initiallyVisible =
@@ -750,6 +846,9 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         collectionPopupBackdropCompositor_.Reattach(
             floatingPopupHwnd_);
     }
+    TraceMenuHostZOrderTransition(
+        zOrderStage, menuZOrderBefore,
+        CaptureMenuHostZOrder(floatingPopupHwnd_));
 
     RECT panel = GetCollectionPopupRect(*popup);
     OffsetRect(
@@ -861,7 +960,9 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             true, shellPopupMenuLayerDepth_);
     if (!wasVisible || boundsChanged)
     {
-        SetWindowPos(
+        const MenuHostZOrderSnapshot menuZOrderBefore =
+            CaptureMenuHostZOrder(floatingPopupHwnd_);
+        const BOOL positioned = SetWindowPos(
             floatingPopupHwnd_,
             topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
             nextBounds.left + virtualLeft_,
@@ -872,6 +973,13 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
                 1, nextBounds.bottom - nextBounds.top),
             SWP_NOACTIVATE |
                 (wasVisible ? SWP_SHOWWINDOW : 0));
+        TraceMenuHostZOrderTransition(
+            positioned
+                ? L"bounds-set-window-pos"
+                : L"bounds-set-window-pos-failed",
+            menuZOrderBefore,
+            CaptureMenuHostZOrder(floatingPopupHwnd_),
+            positioned == FALSE);
     }
     else
     {
@@ -931,12 +1039,21 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (snowdesktop::floating_popup_rules::ShouldRevealHost(
             wasVisible, immediatePresent))
     {
-        SetWindowPos(
+        const MenuHostZOrderSnapshot menuZOrderBefore =
+            CaptureMenuHostZOrder(floatingPopupHwnd_);
+        const BOOL positioned = SetWindowPos(
             floatingPopupHwnd_,
             topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        TraceMenuHostZOrderTransition(
+            positioned
+                ? L"reveal-set-window-pos"
+                : L"reveal-set-window-pos-failed",
+            menuZOrderBefore,
+            CaptureMenuHostZOrder(floatingPopupHwnd_),
+            positioned == FALSE);
         ApplyCollectionPopupBackdropAnimationFrame();
         wchar_t message[224]{};
         wsprintfW(

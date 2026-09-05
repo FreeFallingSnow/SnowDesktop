@@ -91,6 +91,8 @@ struct EventPump
     HANDLE scheduledWorkHandle = nullptr;
     std::function<void()> dispatchScheduledWork;
     std::function<void()> flushPresentation;
+    /** Receives sparse Z-order diagnostics when the observed state changes. */
+    std::function<void(const std::wstring&)> traceDiagnostic;
 };
 
 struct Options
@@ -138,6 +140,9 @@ Result Show(const std::vector<Item>& items, const Options& options);
 
 /** Whether a modern popup menu is currently running in this process. */
 bool IsActive();
+
+/** Active root menu HWND for internal diagnostics; null outside Show(). */
+HWND ActiveRootWindow();
 
 /** Close the currently active menu without activating a command. */
 void DismissActive();
