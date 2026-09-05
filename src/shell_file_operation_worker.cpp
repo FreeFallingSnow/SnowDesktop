@@ -650,6 +650,35 @@ bool ShellFileOperationWorker::Enqueue(
     return true;
 }
 
+bool ShellFileOperationWorker::Enqueue(ShellReadRequest request, Completion completion)
+{
+    if (!request.read)
+        return false;
+    Task pending{ std::move(request), std::move(completion), {} };
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_)
+            return false;
+        try
+        {
+            tasks_.push_back(std::move(pending));
+            if (!started_)
+            {
+                thread_ = std::thread(&ShellFileOperationWorker::Run, this);
+                started_ = true;
+            }
+        }
+        catch (...)
+        {
+            if (!started_ && !tasks_.empty())
+                tasks_.pop_back();
+            return false;
+        }
+    }
+    cv_.notify_one();
+    return true;
+}
+
 ShellRenameResult ShellFileOperationWorker::Execute(
     const ShellRenameRequest& request)
 {
@@ -1012,13 +1041,20 @@ void ShellFileOperationWorker::Run()
             continue;
         }
         const bool succeeded = std::visit(
-            [](auto& request) {
+            [comResult](auto& request) {
                 using Request = std::decay_t<decltype(request)>;
                 if constexpr (std::is_same_v<Request, ShellDropRequest>)
                     return ShellFileOperationWorker::Execute(
                         std::move(request));
                 else if constexpr (std::is_same_v<Request, ShellFileOperationRequest>)
                     return ShellFileOperationWorker::Execute(request);
+                else if constexpr (std::is_same_v<Request, ShellReadRequest>)
+                {
+                    if (FAILED(comResult))
+                        return false;
+                    try { return request.read(); }
+                    catch (...) { return false; }
+                }
                 else
                     return false;
             },

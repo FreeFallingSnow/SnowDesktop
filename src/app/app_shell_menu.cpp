@@ -402,7 +402,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-        ReloadItems();
+        RequestShellRefresh();
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
@@ -652,7 +652,7 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-        ReloadItems();
+        RequestShellRefresh();
     }
 
     DestroyMenu(menu);
@@ -770,9 +770,8 @@ ShowShellItemContextMenuForPath(
                 [this](bool succeeded) {
                     if (!succeeded)
                         return;
-                    ReloadItems(false);
-                    if (dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
+                    RequestShellRefresh();
+
                 });
             return;
         }
@@ -810,9 +809,8 @@ ShowShellItemContextMenuForPath(
                 RefreshFolderMappingWidget(
                     i);
         }
-        ReloadItems(false);
-        if (dockFolderPopupOpen_)
-            RefreshDockFolderPopup();
+        RequestShellRefresh();
+
     }
 
     DestroyMenu(menu);

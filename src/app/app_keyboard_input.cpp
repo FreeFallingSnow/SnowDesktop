@@ -303,7 +303,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 std::move(steps),
                 [this](bool succeeded) {
                     if (succeeded)
-                        ReloadItems();
+                        RequestShellRefresh();
                 });
         }
         break;
@@ -456,7 +456,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 info.nShow = SW_SHOWNORMAL;
                 SafeInvokeCommand(bgMenu.Get(), &info);
                 cutPaths_.clear();
-                ReloadItems();
+                RequestShellRefresh();
             }
         }
     }

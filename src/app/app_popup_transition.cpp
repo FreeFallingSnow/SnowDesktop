@@ -577,7 +577,8 @@ bool DesktopApp::IsOpenDockFolderPopupDropTarget(
             targetMatchesFolderPath);
 }
 
-void DesktopApp::RefreshDockFolderPopup()
+void DesktopApp::RefreshDockFolderPopup(
+    const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
 {
     if (shellFileOperationInFlight_ > 0)
     {
@@ -586,13 +587,15 @@ void DesktopApp::RefreshDockFolderPopup()
     }
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
-    CancelDockFolderPopupIconLoads();
+    if (!snapshot)
+        CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
-    for (auto& entry : dockFolderPopupWidget_.folderEntries)
-        entry.selected = false;
+    if (!snapshot)
+        for (auto& entry : dockFolderPopupWidget_.folderEntries)
+            entry.selected = false;
     if (!dockFolderPopupMappingWidgetId_.empty())
     {
         const size_t widgetIndex =
@@ -645,7 +648,7 @@ void DesktopApp::RefreshDockFolderPopup()
     if (dockFolderPopupAvailable_)
     {
         EnumerateFolderMappingEntries(
-            dockFolderPopupWidget_, true);
+            dockFolderPopupWidget_, true, snapshot);
         if (ApplyPendingFolderPlacements(
                 dockFolderPopupWidget_,
                 dockFolderPopupMappingWidgetId_,

@@ -74,6 +74,12 @@ struct ShellRenameResult
     ULONGLONG elapsedMs = 0;
 };
 
+/** Value-only metadata capture on the worker STA; must not access UI state. */
+struct ShellReadRequest
+{
+    std::function<bool()> read;
+};
+
 /**
  * @brief Build a recoverable delete request for path-backed Recycle Bin drops.
  *
@@ -125,6 +131,7 @@ public:
     bool Enqueue(ShellFileOperationRequest request, Completion completion);
     bool Enqueue(ShellDropRequest request, Completion completion);
     bool Enqueue(ShellRenameRequest request, RenameCompletion completion);
+    bool Enqueue(ShellReadRequest request, Completion completion);
     void Stop();
 
     /** @brief Execute a request synchronously on the calling STA. */
@@ -137,7 +144,7 @@ private:
     struct Task
     {
         std::variant<ShellFileOperationRequest, ShellDropRequest,
-            ShellRenameRequest> request;
+            ShellRenameRequest, ShellReadRequest> request;
         Completion completion;
         RenameCompletion renameCompletion;
     };

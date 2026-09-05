@@ -399,8 +399,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
         if (mouseDown_ || reloading_ || deferForDrag ||
-            (!pendingRenames_.empty() &&
-                (renameEdit_ || HasActiveContextMenuSession())))
+            renameEdit_ || HasActiveContextMenuSession())
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);
@@ -411,14 +410,20 @@ void DesktopApp::OnTimer(WPARAM timerId)
         {
             const bool reloadLayoutFromDisk =
                 shellReloadLayoutFromDiskPending_;
-            shellReloadPending_ = false;
-            shellReloadLayoutFromDiskPending_ = false;
-            ReloadItems(reloadLayoutFromDisk);
+            if (reloadLayoutFromDisk)
+            {
+                shellReloadPending_ = false;
+                shellReloadLayoutFromDiskPending_ = false;
+                ReloadItems(true);
+            }
+            else
+                RefreshShellItemsAsync();
         }
         if (shellDockFolderPopupRefreshPending_)
         {
             shellDockFolderPopupRefreshPending_ = false;
-            RefreshDockFolderPopup();
+            if (!shellReloadPending_)
+                RequestShellRefresh();
         }
     }
     else if (timerId == kRecycleBinPollTimerId)

@@ -612,7 +612,7 @@ void DesktopApp::ShowItemContextMenu(
                 std::move(steps),
                 [this](bool succeeded) {
                     if (succeeded)
-                        ReloadItems();
+                        RequestShellRefresh();
                 });
         }
         break;
@@ -797,7 +797,7 @@ void DesktopApp::ShowShellContextMenu(
                     std::move(steps),
                     [this](bool succeeded) {
                         if (succeeded)
-                            ReloadItems();
+                            RequestShellRefresh();
                     });
                 return;
             }
@@ -817,7 +817,7 @@ void DesktopApp::ShowShellContextMenu(
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-        ReloadItems();
+        RequestShellRefresh();
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();

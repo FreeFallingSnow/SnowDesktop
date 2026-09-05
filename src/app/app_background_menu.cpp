@@ -2018,7 +2018,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
             {
                 ShowNewMenuAndInvoke(screenPoint, desktopPath);
-                ReloadItems();
+                RequestShellRefresh();
             }
             break;
         }

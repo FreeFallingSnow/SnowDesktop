@@ -963,7 +963,7 @@ void DesktopApp::OnMouseMoveAt(
                                 std::move(steps),
                                 [this](bool succeeded) {
                                     if (succeeded)
-                                        ReloadItems(false);
+                                        RequestShellRefresh();
                                 });
                         }
                     }

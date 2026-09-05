@@ -11,6 +11,7 @@
 #include "app/rename_controller.h"
 #include "app/rename_notification_tracker.h"
 #include "app/rename_model_update.h"
+#include "app/shell_refresh_snapshot.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
 #include "drag_input_rules.h"
@@ -1767,6 +1768,76 @@ void TestRenameControllerRejectsStaleFocusCommits()
         "switching rename surfaces must invalidate the previous session");
 }
 
+void TestShellRefreshRejectsStaleSnapshots()
+{
+    snowdesktop::shell_refresh::Revision revision;
+    revision.Invalidate();
+    const auto initial = revision.Begin();
+    Check(initial.has_value() && !revision.Begin().has_value(),
+        "a burst of file notifications cannot queue concurrent reads");
+    revision.Invalidate(); // A create/delete/rename arrives during the read.
+    Check(!revision.Finish(*initial) && !revision.Running(),
+        "an older directory snapshot must not resurrect a deleted or renamed file");
+    const auto latest = revision.Begin();
+    Check(latest && *latest != *initial && !revision.Finish(*initial) &&
+            revision.Running() && revision.Finish(*latest),
+        "late completions cannot retire a newer read and only its latest result applies");
+    const auto beforeManualReload = revision.Begin();
+    revision.Invalidate(); // A manual/settings reload has newer UI state.
+    Check(!revision.Finish(*beforeManualReload),
+        "a manual model reload invalidates an already running background read");
+}
+
+void TestShellRefreshPreservesCurrentItemState()
+{
+    DesktopItem previous;
+    previous.name = L"kept.txt";
+    previous.gridCell = { L"current-page", 3, 4 };
+    previous.gridSpan = { 2, 1 };
+    previous.slot = 8;
+    previous.selected = true;
+    previous.isCut = true;
+    previous.sysIconIndex = 9;
+    previous.fileSize = 12;
+    previous.modifiedTime = FILETIME{ 1, 2 };
+    previous.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    previous.iconState = IconState::FullQuality;
+    const HBITMAP bitmap = previous.iconBitmap;
+    Check(bitmap != nullptr, "the snapshot preservation fixture owns a real bitmap");
+    DesktopItem read;
+    read.name = previous.name;
+    read.sysIconIndex = previous.sysIconIndex;
+    read.fileSize = previous.fileSize;
+    read.modifiedTime = previous.modifiedTime;
+    snowdesktop::shell_refresh::PreserveRuntime(read, previous);
+    Check(read.gridCell.pageId == L"current-page" && read.gridCell.column == 3 &&
+            read.gridCell.row == 4 && read.gridSpan.columns == 2 && read.slot == 8 &&
+            read.selected && read.isCut && read.iconBitmap == bitmap &&
+            !previous.iconBitmap && read.iconState == IconState::FullQuality,
+        "create/delete refreshes retain current placement, selection and the owned icon");
+    DesktopItem changed;
+    changed.sysIconIndex = read.sysIconIndex;
+    changed.fileSize = 24;
+    changed.modifiedTime = FILETIME{ 3, 2 };
+    snowdesktop::shell_refresh::PreserveRuntime(changed, read);
+    Check(changed.iconBitmap == bitmap && !read.iconBitmap &&
+            changed.iconState == IconState::Loading && changed.selected,
+        "overwriting a file keeps its visible icon while requesting new thumbnail content");
+    FolderEntry folderPrevious;
+    folderPrevious.fullPath = L"C:\\mapped\\kept.txt";
+    folderPrevious.selected = true;
+    folderPrevious.isCut = true;
+    folderPrevious.sysIconIndex = 4;
+    folderPrevious.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    folderPrevious.iconState = IconState::FullQuality;
+    FolderEntry folderRead;
+    folderRead.sysIconIndex = 4;
+    snowdesktop::shell_refresh::PreserveRuntime(folderRead, folderPrevious);
+    Check(folderRead.selected && folderRead.isCut && folderRead.iconBitmap &&
+            !folderPrevious.iconBitmap && folderRead.iconState == IconState::FullQuality,
+        "mapped folders and popup aliases retain their independent selection and icon ownership");
+}
+
 void TestRenameNotificationsPreserveUnrelatedChanges()
 {
     RenameNotificationTracker tracker;
@@ -1936,6 +2007,8 @@ int main()
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
+    TestShellRefreshRejectsStaleSnapshots();
+    TestShellRefreshPreservesCurrentItemState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
     TestPopupDwellControllerHandlesCandidateChanges();

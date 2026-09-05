@@ -91,6 +91,7 @@
 #include "rename_controller.h"
 #include "../rename_edit_layout.h"
 #include "rename_notification_tracker.h"
+#include "shell_refresh_snapshot.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
 #include "widget_notification_presenter.h"
@@ -1014,9 +1015,12 @@ private:
 
     // ── Data ────────────────────────────────────────────────
     /** @brief 从 Explorer 加载桌面项数据（IShellFolder 枚举）。 */
-    void LoadDesktopItems();
+    void LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot = nullptr);
     /** @brief 重新加载所有项目并可选从磁盘恢复布局。 @param reloadLayoutFromDisk 是否重新从磁盘加载布局 */
-    void ReloadItems(bool reloadLayoutFromDisk = true);
+    void ReloadItems(bool reloadLayoutFromDisk = true,
+        snowdesktop::shell_refresh::Snapshot* snapshot = nullptr);
+    void RequestShellRefresh();
+    void RefreshShellItemsAsync();
     /** @brief 根据可用显示器信息更新布局工作区域。 */
     void UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
     /** @brief 用当前设置（行列数）配置指定网格页面。 @param page 网格页面引用 */
@@ -2761,7 +2765,8 @@ private:
     /** @brief 枚举文件夹映射部件中的条目。 @param widget 部件引用 */
     void EnumerateFolderMappingEntries(
         DesktopWidget& widget,
-        bool enqueueIconLoads = true);
+        bool enqueueIconLoads = true,
+        const snowdesktop::shell_refresh::FolderSnapshot* snapshot = nullptr);
     /** @brief 刷新文件夹映射部件的内容。 @param widgetIndex 部件索引 */
     void RefreshFolderMappingWidget(size_t widgetIndex);
     /**
@@ -2817,7 +2822,8 @@ private:
     bool PreserveDockFolderPopupDragSourceForTransition();
     /** @brief 释放拖拽期间保存的 Dock 文件夹弹窗来源快照。 */
     void ClearDockFolderPopupDragSourceSnapshot();
-    void RefreshDockFolderPopup();
+    void RefreshDockFolderPopup(
+        const snowdesktop::shell_refresh::FolderSnapshot* snapshot = nullptr);
     void RefreshDockFolderPopupGeometry();
     /** @brief 刷新当前悬浮 Dock 集合弹窗的几何与宿主裁剪。 */
     void RefreshOpenCollectionPopupGeometry();
@@ -3422,6 +3428,7 @@ private:
     {
         bool succeeded = false;
         FileOperationCompletion callback;
+        bool fileOperation = true;
     };
     struct UrlDropDownloadUiCompletion
     {
@@ -3433,6 +3440,7 @@ private:
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
+    snowdesktop::ShellFileOperationWorker shellRefreshWorker_;
     snowdesktop::UrlDropDownloadWorker urlDropDownloadWorker_;
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;
@@ -3483,6 +3491,8 @@ private:
     // still producing change notifications.
     bool shellReloadPending_ = false;
     bool shellReloadLayoutFromDiskPending_ = false;
+    snowdesktop::shell_refresh::Revision shellRefreshRevision_;
+    std::shared_ptr<snowdesktop::shell_refresh::Snapshot> readyShellRefresh_;
     bool shellDockFolderPopupRefreshPending_ = false;
     // Persistent top-level Hosts own every Dock visual in both desktop and
     // floating Z-order bands.

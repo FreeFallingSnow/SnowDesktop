@@ -4,6 +4,7 @@
 #include <new>
 #include <shldisp.h>
 #include <utility>
+#include <filesystem>
 
 // Asynchronous path-based Shell file operations.
 
@@ -140,6 +141,8 @@ bool DesktopApp::QueueShellFileOperation(
         return false;
     }
     ++shellFileOperationInFlight_;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
     ApplyFloatingDockLayerPolicy();
     return true;
 }
@@ -187,6 +190,8 @@ bool DesktopApp::QueueShellDrop(
         return false;
     }
     ++shellFileOperationInFlight_;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
     ApplyFloatingDockLayerPolicy();
     return true;
 }
@@ -286,6 +291,8 @@ bool DesktopApp::QueueAsyncShellDrop(
         return false;
     }
     ++shellFileOperationInFlight_;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
     ApplyFloatingDockLayerPolicy();
     return true;
 }
@@ -362,7 +369,7 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
         reinterpret_cast<ShellFileOperationUiCompletion*>(lParam));
     if (!result || exitRequested_)
         return;
-    if (shellFileOperationInFlight_ > 0)
+    if (result->fileOperation && shellFileOperationInFlight_ > 0)
         --shellFileOperationInFlight_;
     // The completed request must no longer block its own callback from
     // reloading Shell state.  Other queued requests still keep the counter
@@ -382,6 +389,8 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
     // SHFileOperationW can promote the Explorer/foreground window while the
     // worker thread owns its progress UI. Restore the floating Dock layer once
     // after the final operation instead of forcing a DWM restack per task.
+    if (!result->fileOperation)
+        return; // A metadata read must never activate or restack the desktop.
     RestoreDesktopWindowLayer();
     if (snowdesktop::floating_dock_rules::
             ShouldRefocusFloatingDockKeyboardSession(
@@ -394,7 +403,9 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
 
 void DesktopApp::StopShellFileOperationWorker()
 {
+    shellRefreshWorker_.Stop();
     shellFileOperationWorker_.Stop();
+    readyShellRefresh_.reset();
 
     const HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
@@ -415,4 +426,130 @@ void DesktopApp::StopShellFileOperationWorker()
         delete reinterpret_cast<ShellFileOperationUiCompletion*>(
             message.lParam);
     }
+}
+
+bool snowdesktop::shell_refresh::Read(const Request& request, Snapshot& snapshot)
+{
+    const ULONGLONG started = GetTickCount64();
+    const bool showHidden = AreExplorerHiddenItemsVisible();
+    snapshot.desktopComplete = ReadDesktop(
+        request.iconVisibility, showHidden, snapshot.desktopItems);
+    for (const auto& path : request.folders)
+    {
+        const auto [entry, inserted] = snapshot.folders.try_emplace(ToUpperInvariant(path));
+        if (inserted)
+            entry->second = ReadFolder(path, showHidden);
+    }
+    for (const auto& path : request.dockPaths)
+    {
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+            continue;
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+            error == ERROR_INVALID_NAME)
+            snapshot.missingDockPaths.insert(ToUpperInvariant(path));
+    }
+    snapshot.readMs = GetTickCount64() - started;
+    return snapshot.desktopComplete;
+}
+
+void DesktopApp::RequestShellRefresh()
+{
+    if (exitRequested_)
+        return;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
+    shellReloadPending_ = true;
+    // A filesystem event says nothing about saved layout or Lua storage.
+    // Preserve any separately requested full reload, but never introduce one.
+    if (hwnd_ && IsWindow(hwnd_))
+        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+}
+
+void DesktopApp::RefreshShellItemsAsync()
+{
+    if (readyShellRefresh_)
+    {
+        auto snapshot = std::exchange(readyShellRefresh_, {});
+        if (!snapshot->desktopComplete)
+        {
+            shellReloadPending_ = false;
+            shellDockFolderPopupRefreshPending_ = false;
+            WriteDiagnosticLogEntry(L"Shell refresh read failed; retaining current model");
+            return; // Retry on a new event, not in an unbounded timer loop.
+        }
+        const ULONGLONG started = GetTickCount64();
+        const size_t count = snapshot->desktopItems.size();
+        ReloadItems(false, snapshot.get());
+        if (dockFolderPopupOpen_)
+        {
+            const auto folder = snapshot->folders.find(
+                ToUpperInvariant(dockFolderPopupWidget_.sourceFolderPath));
+            if (folder != snapshot->folders.end())
+                RefreshDockFolderPopup(&folder->second);
+            else
+                RequestShellRefresh();
+        }
+        InvalidateFloatingPopupWindow(false);
+        InvalidateQuickNavigationWindow();
+        wchar_t timing[256]{};
+        swprintf_s(timing, L"Shell refresh async: items=%zu readMs=%llu applyMs=%llu",
+            count, snapshot->readMs, GetTickCount64() - started);
+        WriteDiagnosticLogEntry(timing);
+        return;
+    }
+
+    const auto revision = shellRefreshRevision_.Begin();
+    if (!revision)
+        return;
+    const HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
+        ? controlHwnd_ : hwnd_;
+    snowdesktop::shell_refresh::Request request;
+    request.iconVisibility = settingsIconVisibility_;
+    for (const auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            request.folders.push_back(widget.sourceFolderPath);
+    if (dockFolderPopupOpen_)
+        request.folders.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    for (const auto& entry : dockEntries_)
+        if (entry.type == DockEntryType::DesktopItem &&
+            std::filesystem::path(entry.reference).is_absolute())
+            request.dockPaths.push_back(entry.reference);
+
+    auto snapshot = std::make_shared<snowdesktop::shell_refresh::Snapshot>();
+    auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
+        false, [this, snapshot, revision = *revision](bool succeeded) {
+            if (shellRefreshRevision_.Finish(revision))
+            {
+                snapshot->desktopComplete &= succeeded;
+                readyShellRefresh_ = snapshot;
+                shellReloadPending_ = true;
+            }
+        }, false };
+    if (!completion || !completionWindow || !IsWindow(completionWindow))
+    {
+        delete completion;
+        shellRefreshRevision_.Finish(*revision);
+        shellReloadPending_ = false;
+        return;
+    }
+    const bool queued = shellRefreshWorker_.Enqueue(
+        snowdesktop::ShellReadRequest{
+            [request = std::move(request), snapshot] {
+                return snowdesktop::shell_refresh::Read(request, *snapshot);
+            } },
+        [completionWindow, completion](bool succeeded) {
+            completion->succeeded = succeeded;
+            if (!PostMessageW(completionWindow, kShellFileOperationCompletedMessage,
+                    0, reinterpret_cast<LPARAM>(completion)))
+                delete completion;
+        });
+    if (!queued)
+    {
+        delete completion;
+        shellRefreshRevision_.Finish(*revision);
+        shellReloadPending_ = false;
+        return;
+    }
+    shellReloadPending_ = true;
 }

@@ -589,7 +589,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
  * @brief 重新加载桌面项，可选择是否重新从磁盘读取布局。
  * @param reloadLayoutFromDisk 是否重新加载布局文件。
  */
-void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
+void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
+    snowdesktop::shell_refresh::Snapshot* snapshot)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     const bool deferForDrag =
@@ -613,17 +614,23 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         return;
     }
     if (reloading_) return;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
     ClearPopupDragTarget();
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kShellChangeTimerId);
     shellReloadPending_ = false;
     shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
-    dockAppIdentityCache_.clear();
-    dockRunningWindows_.clear();
+    if (!snapshot)
+    {
+        dockAppIdentityCache_.clear();
+        dockRunningWindows_.clear();
+    }
     dockFolderTargetCache_.clear();
     dockFolderIconIndexCache_.clear();
-    BeginIconLoadGeneration();
+    if (!snapshot)
+        BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
     {
@@ -641,10 +648,19 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         for (auto& widget : widgets_)
         {
             if (widget.type == DesktopWidgetType::FolderMapping)
-                EnumerateFolderMappingEntries(widget);
+            {
+                if (!snapshot)
+                    EnumerateFolderMappingEntries(widget);
+                else if (const auto folder = snapshot->folders.find(
+                        ToUpperInvariant(widget.sourceFolderPath));
+                    folder != snapshot->folders.end())
+                    EnumerateFolderMappingEntries(widget, true, &folder->second);
+                else
+                    RequestShellRefresh(); // The mapping changed during the read.
+            }
         }
     }
-    LoadDesktopItems();
+    LoadDesktopItems(snapshot);
     // LoadLayoutSlots may normalize Dock entries before the freshly
     // enumerated desktop items are available. Discard those provisional
     // resolutions so paths and shortcut targets are classified from the new
@@ -655,13 +671,15 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     // otherwise survives and still consumes a slot.  Only prune references
     // that are confirmed missing on disk: hidden files and temporarily
     // unenumerated Shell items must remain pinned.
-    std::erase_if(dockEntries_, [this](const DockEntry& entry) {
+    std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
         if (entry.type != DockEntryType::DesktopItem)
             return false;
         if (IsRecycleBinDockEntry(entry))
             return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
 
         const std::wstring& path = entry.reference;
+        if (snapshot)
+            return snapshot->missingDockPaths.contains(ToUpperInvariant(path));
         const bool driveAbsolute = path.size() >= 3 &&
             ((path[0] >= L'A' && path[0] <= L'Z') ||
              (path[0] >= L'a' && path[0] <= L'z')) &&
@@ -873,7 +891,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     SaveLayoutSlots();
     RebuildContainersAndItems();
     reloading_ = false;
-    RefreshDockRunningWindows(false);
+    if (!snapshot)
+        RefreshDockRunningWindows(false);
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("reload");
     InvalidateRect(hwnd_, nullptr, TRUE);

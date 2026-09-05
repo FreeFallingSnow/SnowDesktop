@@ -1305,11 +1305,7 @@ void DesktopApp::ShowWidgetContextMenu(
             ShowNewMenuAndInvoke(screenPoint,
                 widgets_[effectiveSourceIndex].
                     sourceFolderPath);
-            RefreshFolderMappingWidget(
-                effectiveSourceIndex);
-            RebuildContainersAndItems();
-            SaveLayoutSlots();
-            InvalidateRect(hwnd_, nullptr, TRUE);
+            RequestShellRefresh();
         }
         else if (effectiveSourceIndex < widgets_.size() &&
                  widgets_[effectiveSourceIndex].type ==
@@ -1322,7 +1318,7 @@ void DesktopApp::ShowWidgetContextMenu(
             {
                 ShowNewMenuAndInvoke(
                     screenPoint, desktopPath);
-                ReloadItems();
+                RequestShellRefresh();
             }
         }
         break;

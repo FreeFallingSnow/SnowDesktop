@@ -1043,9 +1043,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (change && !change->source.empty() && !change->target.empty() &&
             renameNotifications_.Observe(change->source, change->target, GetTickCount64()))
             return 0;
-        shellReloadPending_ = true;
-        shellReloadLayoutFromDiskPending_ = true;
-        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+        RequestShellRefresh();
         return 0;
     }
     case kIconLoadedMessage:

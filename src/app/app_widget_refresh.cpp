@@ -3,51 +3,15 @@
 
 // Folder-mapping enumeration and automatic file-category collection.
 
-void DesktopApp::EnumerateFolderMappingEntries(
-    DesktopWidget& widget, bool enqueueIconLoads)
+snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolder(
+    const std::wstring& path, bool showHiddenItems)
 {
-    const bool showHiddenItems = AreExplorerHiddenItemsVisible();
-
-    struct OldFolderIcon {
-        HBITMAP bitmap = nullptr;
-        SIZE size{};
-        int sysIconIndex = -1;
-        bool shortcutArrow = false;
-        bool isShortcut = false;
-        bool isApplicationShortcut = false;
-        bool iconIsMediaThumbnail = false;
-        IconState iconState = IconState::Loading;
-    };
-    std::unordered_map<std::wstring, OldFolderIcon> oldFolderIconCache;
-
-    // Preserve the current entry state and bitmap across directory enumeration.
-    for (auto& entry : widget.folderEntries) {
-        if (!entry.fullPath.empty()) {
-            OldFolderIcon old;
-            old.bitmap = entry.iconBitmap;
-            old.size = entry.iconBitmapSize;
-            old.sysIconIndex = entry.sysIconIndex;
-            old.shortcutArrow = entry.shortcutArrow;
-            old.isShortcut = entry.isShortcut;
-            old.isApplicationShortcut = entry.isApplicationShortcut;
-            old.iconIsMediaThumbnail = entry.iconIsMediaThumbnail;
-            old.iconState = entry.iconState;
-            oldFolderIconCache.emplace(ToUpperInvariant(entry.fullPath), std::move(old));
-            entry.iconBitmap = nullptr;
-        } else if (entry.iconBitmap) {
-            DeleteObject(entry.iconBitmap);
-        }
-    }
-
-    widget.folderEntries.clear();
-    if (widget.sourceFolderPath.empty()) {
-        for (auto& [key, old] : oldFolderIconCache) {
-            if (old.bitmap) {
-                EraseD2DIconCacheForBitmap(old.bitmap);
-                DeleteObject(old.bitmap);
-            }
-        }
-        return;
+    FolderSnapshot result;
+    result.path = path;
+    if (path.empty())
+    {
+        result.complete = true;
+        return result;
     }
     // 磁盘根目录（如 "C:\"）自身以反斜杠结尾：直接拼接会生成 "C:\\名称"
     // 这种双反斜杠路径，SHParseDisplayName 对其返回 E_INVALIDARG，
@@ -55,17 +19,14 @@ void DesktopApp::EnumerateFolderMappingEntries(
     // ChildPath 先剥离尾部分隔符，再用单一反斜杠拼接搜索串与条目路径。
     std::wstring search =
         snowdesktop::folder_mapping_rules::ChildPath(
-            widget.sourceFolderPath, L"*");
+            path, L"*");
     WIN32_FIND_DATAW fd{};
     HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) {
-        for (auto& [key, old] : oldFolderIconCache) {
-            if (old.bitmap) {
-                EraseD2DIconCacheForBitmap(old.bitmap);
-                DeleteObject(old.bitmap);
-            }
-        }
-        return;
+    if (hFind == INVALID_HANDLE_VALUE)
+    {
+        const DWORD error = GetLastError();
+        result.complete = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+        return result;
     }
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
@@ -77,7 +38,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
         entry.name = fd.cFileName;
         entry.fullPath =
             snowdesktop::folder_mapping_rules::ChildPath(
-                widget.sourceFolderPath, fd.cFileName);
+                path, fd.cFileName);
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         entry.lastWriteTime = fd.ftLastWriteTime;
         if (!entry.isDirectory)
@@ -92,91 +53,68 @@ void DesktopApp::EnumerateFolderMappingEntries(
         entry.sysIconIndex = info.iIcon;
         entry.typeName = info.szTypeName;
 
-        auto oldIt = oldFolderIconCache.find(ToUpperInvariant(entry.fullPath));
-        if (oldIt != oldFolderIconCache.end() && oldIt->second.sysIconIndex == entry.sysIconIndex) {
-            entry.iconBitmap = oldIt->second.bitmap;
-            entry.iconBitmapSize = oldIt->second.size;
-            entry.shortcutArrow = oldIt->second.shortcutArrow;
-            entry.isShortcut = oldIt->second.isShortcut;
-            entry.isApplicationShortcut = oldIt->second.isApplicationShortcut;
-            entry.iconIsMediaThumbnail = oldIt->second.iconIsMediaThumbnail;
-            entry.iconState = oldIt->second.iconState;
-            oldIt->second.bitmap = nullptr;
-            oldFolderIconCache.erase(oldIt);
-            if (enqueueIconLoads &&
-                entry.iconState == IconState::IconReady)
-            {
-                IconLoadTask phase2;
-                phase2.serial = iconLoadSerial_;
-                phase2.widgetId = widget.id;
-                PIDLIST_ABSOLUTE pidl = nullptr;
-                if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
-                {
-                    phase2.absolutePidl.reset(pidl);
-                    phase2.folderPath = entry.fullPath;
-                    phase2.sysIconIndex = entry.sysIconIndex;
-                    phase2.isDesktopItem = false;
-                    phase2.phase = IconLoadPhase::Phase2;
-                    EnqueueIconLoad(std::move(phase2));
-                }
-            }
-            else if (enqueueIconLoads &&
-                entry.iconState == IconState::Loading)
-            {
-                IconLoadTask phase1;
-                phase1.serial = iconLoadSerial_;
-                phase1.widgetId = widget.id;
-                phase1.folderPath = entry.fullPath;
-                phase1.sysIconIndex = entry.sysIconIndex;
-                phase1.parsingName = entry.name;
-                phase1.isDesktopItem = false;
-                phase1.phase = IconLoadPhase::Phase1;
-                PIDLIST_ABSOLUTE pidl = nullptr;
-                if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
-                {
-                    phase1.absolutePidl.reset(pidl);
-                    EnqueueIconLoad(std::move(phase1));
-                }
-            }
-        } else {
-            if (oldIt != oldFolderIconCache.end()) {
-                if (oldIt->second.bitmap) {
-                    EraseD2DIconCacheForBitmap(oldIt->second.bitmap);
-                    DeleteObject(oldIt->second.bitmap);
-                }
-                oldFolderIconCache.erase(oldIt);
-            }
-            entry.iconBitmap = nullptr;
-            entry.iconState = IconState::Loading;
-
-            if (enqueueIconLoads)
-            {
-                IconLoadTask task;
-                task.serial = iconLoadSerial_;
-                task.widgetId = widget.id;
-                task.layoutKey = ToUpperInvariant(entry.fullPath);
-                PIDLIST_ABSOLUTE pidl = nullptr;
-                if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
-                {
-                    task.absolutePidl.reset(pidl);
-                    task.sysIconIndex = entry.sysIconIndex;
-                    task.parsingName = entry.name;
-                    task.isDesktopItem = false;
-                    task.folderPath = entry.fullPath;
-                    task.phase = IconLoadPhase::Phase1;
-                    EnqueueIconLoad(std::move(task));
-                }
-            }
-        }
-        widget.folderEntries.push_back(std::move(entry));
+        PIDLIST_ABSOLUTE absolute = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &absolute, 0, nullptr)))
+            result.absoluteIds.emplace(ToUpperInvariant(entry.fullPath), Pidl(absolute));
+        result.entries.push_back(std::move(entry));
     } while (FindNextFileW(hFind, &fd));
+    result.complete = GetLastError() == ERROR_NO_MORE_FILES;
     FindClose(hFind);
-    for (auto& [key, old] : oldFolderIconCache) {
-        if (old.bitmap) {
-            EraseD2DIconCacheForBitmap(old.bitmap);
-            DeleteObject(old.bitmap);
-        }
+    return result;
+}
+
+void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
+    bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
+{
+    if (snapshot && ToUpperInvariant(snapshot->path) !=
+            ToUpperInvariant(widget.sourceFolderPath))
+    {
+        RequestShellRefresh();
+        return;
     }
+    snowdesktop::shell_refresh::FolderSnapshot local;
+    if (!snapshot)
+    {
+        local = snowdesktop::shell_refresh::ReadFolder(widget.sourceFolderPath,
+            AreExplorerHiddenItemsVisible());
+        snapshot = &local;
+    }
+    if (!snapshot->complete)
+    {
+        WriteDiagnosticLogEntry(L"Folder enumeration failed; retaining current entries");
+        return;
+    }
+    auto previous = std::exchange(widget.folderEntries, snapshot->entries);
+    std::unordered_map<std::wstring, size_t> previousByPath;
+    for (size_t i = 0; i < previous.size(); ++i)
+        previousByPath.emplace(ToUpperInvariant(previous[i].fullPath), i);
+    for (auto& entry : widget.folderEntries)
+    {
+        const auto found = previousByPath.find(ToUpperInvariant(entry.fullPath));
+        if (found != previousByPath.end())
+            snowdesktop::shell_refresh::PreserveRuntime(entry, previous[found->second]);
+        if (!enqueueIconLoads ||
+            (entry.iconBitmap && entry.iconState == IconState::FullQuality))
+            continue;
+        const auto absolute = snapshot->absoluteIds.find(ToUpperInvariant(entry.fullPath));
+        if (absolute == snapshot->absoluteIds.end())
+            continue;
+        IconLoadTask task;
+        task.serial = iconLoadSerial_;
+        task.widgetId = widget.id;
+        task.layoutKey = ToUpperInvariant(entry.fullPath);
+        task.absolutePidl.reset(ILCloneFull(absolute->second.get()));
+        task.sysIconIndex = entry.sysIconIndex;
+        task.parsingName = entry.fullPath;
+        task.isDesktopItem = false;
+        task.folderPath = entry.fullPath;
+        task.phase = entry.iconState == IconState::IconReady
+            ? IconLoadPhase::Phase2 : IconLoadPhase::Phase1;
+        EnqueueIconLoad(std::move(task));
+    }
+    for (const auto& oldEntry : previous)
+        if (oldEntry.iconBitmap)
+            EraseD2DIconCacheForBitmap(oldEntry.iconBitmap);
     std::sort(widget.folderEntries.begin(), widget.folderEntries.end(),
         [](const FolderEntry& a, const FolderEntry& b) {
             if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
@@ -210,6 +148,7 @@ void DesktopApp::EnumerateFolderMappingEntries(
     snowdesktop::folder_sort_rules::RewriteOrderKeys(
         widget.folderEntries, widget.itemKeys);
 }
+
 
 /**
  * @brief 刷新文件夹映射组件的内容（重新枚举目录）。

@@ -11,6 +11,7 @@
 #include <future>
 #include <iostream>
 #include <string>
+#include <stdexcept>
 
 namespace
 {
@@ -189,6 +190,71 @@ void TestAsyncRenames(const std::filesystem::path& root)
 
 } // namespace
 
+void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& root)
+{
+    const auto temporaryFile = root / L"read-worker-delete.txt";
+    std::ofstream(temporaryFile) << "temporary read fixture";
+    snowdesktop::ShellFileOperationWorker reader;
+    snowdesktop::ShellFileOperationWorker operations;
+    const DWORD callerThread = GetCurrentThreadId();
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    std::promise<bool> completed;
+    auto completedFuture = completed.get_future();
+    const auto started = std::chrono::steady_clock::now();
+    Expect(reader.Enqueue(snowdesktop::ShellReadRequest{[&] {
+        APTTYPE apartment{};
+        APTTYPEQUALIFIER qualifier{};
+        const bool separateSta = GetCurrentThreadId() != callerThread &&
+            SUCCEEDED(CoGetApartmentType(&apartment, &qualifier)) &&
+            apartment == APTTYPE_STA;
+        entered.set_value();
+        releaseFuture.wait();
+        return separateSta && !std::filesystem::exists(temporaryFile);
+    }}, [&](bool success) { completed.set_value(success); }),
+        "metadata work can be queued without waiting for its I/O");
+    const auto enqueueUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    Expect(enteredFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+        "the metadata read reaches its deterministic I/O gate");
+    Expect(completedFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready,
+        "the caller remains available while metadata I/O is deliberately blocked");
+    std::promise<bool> deleted;
+    auto deletedFuture = deleted.get_future();
+    snowdesktop::ShellFileOperationRequest request;
+    request.steps.push_back({FO_DELETE, {temporaryFile.wstring()}, {},
+        static_cast<FILEOP_FLAGS>(FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI)});
+    Expect(operations.Enqueue(std::move(request), [&](bool success) { deleted.set_value(success); }),
+        "file deletion can be queued while the independent reader is blocked");
+    Expect(deletedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+            deletedFuture.get(),
+        "a slow directory read must not block later file operations");
+    release.set_value();
+    Expect(completedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+            completedFuture.get(),
+        "the STA read completes with data after the concurrent deletion");
+    std::promise<bool> exceptionResult, nextResult;
+    auto exceptionFuture = exceptionResult.get_future();
+    auto nextFuture = nextResult.get_future();
+    Expect(reader.Enqueue(snowdesktop::ShellReadRequest{[]() -> bool {
+        throw std::runtime_error("fixture read failed");
+    }}, [&](bool success) { exceptionResult.set_value(success); }),
+        "a failing read can report failure through the completion channel");
+    Expect(reader.Enqueue(snowdesktop::ShellReadRequest{[] { return true; }},
+        [&](bool success) { nextResult.set_value(success); }),
+        "a later read remains queued after a failed read");
+    Expect(exceptionFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+            !exceptionFuture.get() &&
+            nextFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready && nextFuture.get(),
+        "a read exception neither terminates the worker nor falsely reports success");
+    reader.Stop();
+    operations.Stop();
+    Expect(!reader.Enqueue(snowdesktop::ShellReadRequest{[] { return true; }}, {}),
+        "a stopped metadata worker cannot accept new reads");
+    std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
+}
+
 int wmain()
 {
     const HRESULT comResult =
@@ -197,6 +263,7 @@ int wmain()
         "COM initializes for copied folder-shortcut validation");
     const std::filesystem::path root = CreateTemporaryDirectory();
     TestAsyncRenames(root);
+    TestBackgroundReadsDoNotBlockFileOperations(root);
     const std::filesystem::path sourceDirectory = root / L"source";
     const std::filesystem::path firstDirectory = root / L"first";
     const std::filesystem::path secondDirectory = root / L"second";

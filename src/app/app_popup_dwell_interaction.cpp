@@ -1011,7 +1011,7 @@ ShowDockFolderPopupContextMenu(
             dockFolderPopupWidget_.
                 sourceFolderPath,
             screenPoint);
-        RefreshDockFolderPopup();
+        RequestShellRefresh();
         break;
     case kContextPasteCommand:
         PasteClipboardToFolderPath(
@@ -1023,16 +1023,7 @@ ShowDockFolderPopupContextMenu(
             screenPoint,
             dockFolderPopupWidget_.
                 sourceFolderPath);
-        for (size_t i = 0;
-            i < widgets_.size(); ++i)
-        {
-            if (widgets_[i].type ==
-                DesktopWidgetType::
-                    FolderMapping)
-                RefreshFolderMappingWidget(
-                    i);
-        }
-        RefreshDockFolderPopup();
+        RequestShellRefresh();
         break;
     case kContextWidgetSortByName:
         SortDockFolderPopupContents(
