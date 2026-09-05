@@ -3,6 +3,7 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cwchar>
 #include <iostream>
@@ -132,6 +133,18 @@ int wmain()
     Expect(snowdesktop::item_location::CanReveal(shortcutPath),
         "shortcut with existing target can be revealed");
 
+    const auto missingShortcutProbeStart =
+        std::chrono::steady_clock::now();
+    Expect(snowdesktop::item_location::CanReveal(
+            missingFolderShortcutPath),
+        "shortcut with unavailable target can reveal the shortcut itself");
+    const auto missingShortcutProbeElapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() -
+            missingShortcutProbeStart);
+    Expect(missingShortcutProbeElapsed < std::chrono::seconds(1),
+        "shortcut reveal availability avoids Shell target resolution timeout");
+
     const std::wstring missingPath = JoinPath(directory, L"missing.txt");
     Expect(!snowdesktop::item_location::CanReveal(missingPath),
         "missing item cannot be revealed");
@@ -159,9 +172,15 @@ int wmain()
     Expect(fileShortcut.kind == FolderTargetKind::None,
         "file shortcut is not classified as a folder target");
 
+    const auto unavailableShortcutStart =
+        std::chrono::steady_clock::now();
     const auto unavailableShortcut =
         snowdesktop::item_location::ResolveFolderTarget(
             missingFolderShortcutPath);
+    const auto unavailableShortcutElapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() -
+            unavailableShortcutStart);
     Expect(!unavailableShortcut.available &&
         unavailableShortcut.kind ==
             FolderTargetKind::Shortcut &&
@@ -169,6 +188,8 @@ int wmain()
             unavailableShortcut.path,
             missingDirectory),
         "unavailable folder shortcut retains a disabled target");
+    Expect(unavailableShortcutElapsed < std::chrono::seconds(1),
+        "unavailable shortcut target resolution skips Shell search timeout");
 
     const auto unavailableFolder =
         snowdesktop::item_location::ResolveFolderTarget(
