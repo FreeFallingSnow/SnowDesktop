@@ -139,6 +139,18 @@ items_.clear();
             { ILFree(absolute); ILFree(child); continue; }
         }
 
+        // Drop duplicate layout keys before DesktopItem below claims ownership
+        // of absolute/child; freeing them while they are still owned by the
+        // loop is safe (the old late duplicate check double-freed PIDLs that
+        // had already been transferred into the item, corrupting the heap).
+        {
+            std::wstring layoutKey =
+                GetStableLayoutKey(absolute, parsingName, clsid);
+            if (seenKeys.contains(layoutKey))
+            { ILFree(absolute); ILFree(child); continue; }
+            seenKeys.insert(layoutKey);
+        }
+
         DesktopItem item;
         item.absolutePidl.reset(absolute);
         item.childPidl.reset(reinterpret_cast<PIDLIST_ABSOLUTE>(child));
@@ -211,10 +223,6 @@ auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
             task.phase = IconLoadPhase::Phase1;
             EnqueueIconLoad(std::move(task));
         }
-
-        if (seenKeys.contains(item.layoutKey))
-        { ILFree(absolute); ILFree(child); continue; }
-        seenKeys.insert(item.layoutKey);
 
         auto knownRecord = layoutRecords_.find(item.layoutKey);
         if (knownRecord != layoutRecords_.end() && knownRecord->second.hasGrid)
