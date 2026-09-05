@@ -398,12 +398,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
             snowdesktop::drag_input_rules::ShouldDeferModelReload(
                 dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
-        if (mouseDown_ || reloading_ || deferForDrag)
+        if (mouseDown_ || reloading_ || deferForDrag ||
+            (!pendingRenames_.empty() &&
+                (renameEdit_ || HasActiveContextMenuSession())))
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);
             return;
         }
+        ApplyPendingRenames();
         if (shellReloadPending_)
         {
             const bool reloadLayoutFromDisk =

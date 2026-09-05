@@ -9,6 +9,8 @@
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
+#include "app/rename_notification_tracker.h"
+#include "app/rename_model_update.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
 #include "drag_input_rules.h"
@@ -1765,6 +1767,103 @@ void TestRenameControllerRejectsStaleFocusCommits()
         "switching rename surfaces must invalidate the previous session");
 }
 
+void TestRenameNotificationsPreserveUnrelatedChanges()
+{
+    RenameNotificationTracker tracker;
+    Check(tracker.Begin(L"C:\\Desktop\\old.txt", 0) &&
+            !tracker.Begin(L"c:\\desktop\\OLD.txt", 1),
+        "one source cannot be renamed twice while its result is pending");
+    Check(!tracker.Observe(L"C:\\Desktop\\other.txt", L"C:\\Desktop\\x.txt", 2),
+        "an unrelated rename must still trigger normal Shell refresh");
+    Check(tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 3) &&
+            !tracker.Finish(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", true, 4),
+        "a notification before completion must not cause a duplicate full reload");
+    Check(tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 5) &&
+            !tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\external.txt", 5),
+        "late suppression must match both paths rather than hiding other changes");
+    Check(!tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 60000),
+        "completed rename notifications must expire instead of hiding future changes");
+    tracker.Begin(L"failed", 60001);
+    tracker.Observe(L"failed", L"external", 60002);
+    Check(tracker.Finish(L"failed", {}, false, 60003),
+        "a failed local operation must replay a deferred external rename");
+    tracker.Begin(L"raced", 60004);
+    tracker.Observe(L"raced", L"external", 60005);
+    Check(tracker.Finish(L"raced", L"ours", true, 60006),
+        "a different concurrent destination must not be suppressed by local success");
+}
+
+void TestRenameUpdatesOnlyMatchingModels()
+{
+    snowdesktop::ShellRenameResult result;
+    result.status = S_OK;
+    result.sourcePath = L"C:\\Desktop\\before.txt";
+    result.path = L"C:\\Desktop\\after.txt";
+    result.displayName = L"after.txt";
+    result.typeName = L"Text document";
+    result.metadataComplete = true;
+    result.attributes.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+    result.attributes.nFileSizeLow = 37;
+    // An empty desktop-root PIDL is sufficient for ownership/clone checks;
+    // path matching and metadata application must perform no Shell lookup.
+    result.absoluteId = { 0, 0 };
+    result.desktopChildId = { 0, 0 };
+    std::vector<DesktopItem> items(2);
+    items[0].parsingName = L"C:\\Desktop\\unrelated.txt";
+    items[0].name = L"unrelated.txt";
+    items[1].parsingName = result.sourcePath;
+    items[1].layoutKey = L"C:\\DESKTOP\\BEFORE.TXT";
+    items[1].name = L"before.txt";
+    items[1].selected = true;
+    items[1].slot = 17;
+    items[1].gridCell = { L"page", 3, 2 };
+    items[1].iconState = IconState::FullQuality;
+    items[1].iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    const auto originalBitmap = items[1].iconBitmap;
+    const auto* originalAddress = &items[1];
+    std::vector<DesktopWidget> widgets(2);
+    widgets[0].type = DesktopWidgetType::Collection;
+    widgets[0].itemKeys = { result.sourcePath, items[0].parsingName };
+    widgets[1].type = DesktopWidgetType::FolderMapping;
+    widgets[1].id = L"mapped";
+    widgets[1].folderSortMode = snowdesktop::folder_sort_rules::kManual;
+    widgets[1].folderEntries.resize(2);
+    widgets[1].folderEntries[0].fullPath = items[0].parsingName;
+    widgets[1].folderEntries[1].fullPath = result.sourcePath;
+    widgets[1].folderEntries[1].selected = true;
+    DesktopWidget popup = widgets[1];
+    std::vector<DockEntry> dock(1);
+    dock[0].type = DockEntryType::DesktopItem;
+    dock[0].reference = result.sourcePath;
+
+    const auto changes = snowdesktop::rename_model_update::Apply(
+        result, L"C:\\DESKTOP\\AFTER.TXT", items, widgets, dock, &popup);
+    Check(!changes.needsReload && changes.desktopItems == std::vector<size_t>{1} &&
+            changes.folders == std::vector<std::wstring>{L"mapped"} && changes.popup,
+        "one renamed path must identify only its desktop, mapped and popup views");
+    Check(&items[1] == originalAddress && items[1].selected && items[1].slot == 17 &&
+            items[1].gridCell.pageId == L"page" && items[1].gridCell.column == 3 &&
+            items[1].gridCell.row == 2 && items[1].iconBitmap == originalBitmap &&
+            items[1].iconState == IconState::FullQuality && items[1].fileSize == 37,
+        "incremental rename must preserve position, selection, adapters and visible bitmap");
+    Check(items[1].name == result.displayName && items[1].parsingName == result.path &&
+            items[1].layoutKey == L"C:\\DESKTOP\\AFTER.TXT" &&
+            items[0].name == L"unrelated.txt" &&
+            widgets[0].itemKeys[0] == result.path && dock[0].reference == result.path &&
+            widgets[1].folderEntries[1].fullPath == result.path &&
+            widgets[1].folderEntries[1].selected &&
+            popup.folderEntries[1].fullPath == result.path,
+        "rename must migrate every matching reference without reordering manual lists");
+
+    result.status = E_ACCESSDENIED;
+    result.sourcePath = items[0].parsingName;
+    const auto failed = snowdesktop::rename_model_update::Apply(
+        result, L"wrong", items, widgets, dock, &popup);
+    Check(failed.desktopItems.empty() && items[0].name == L"unrelated.txt" &&
+            widgets[0].itemKeys[1] == result.sourcePath,
+        "failed async renames must leave the displayed name and references unchanged");
+}
+
 void TestPopupDwellControllerHandlesCandidateChanges()
 {
     PopupDwellController controller;
@@ -1824,6 +1923,8 @@ int main()
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
+    TestRenameNotificationsPreserveUnrelatedChanges();
+    TestRenameUpdatesOnlyMatchingModels();
     TestPopupDwellControllerHandlesCandidateChanges();
     if (failures != 0)
     {

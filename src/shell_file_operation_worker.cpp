@@ -5,9 +5,11 @@
 #include <shlobj.h>
 #include <shldisp.h>
 #include <shobjidl.h>
+#include <shlwapi.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <new>
 #include <type_traits>
 #include <utility>
@@ -598,11 +600,167 @@ void ShellFileOperationWorker::Stop()
             CancelShellDropRequest(std::move(*drop));
         if (task.completion)
             task.completion(false);
+        if (task.renameCompletion)
+        {
+            ShellRenameResult result;
+            result.sourcePath =
+                std::get<ShellRenameRequest>(task.request).sourcePath;
+            task.renameCompletion(std::move(result));
+        }
     }
 
     cv_.notify_all();
     if (thread_.joinable())
         thread_.join();
+}
+
+bool ShellFileOperationWorker::Enqueue(
+    ShellRenameRequest request, RenameCompletion completion)
+{
+    if (request.sourcePath.empty() || request.newName.empty())
+        return false;
+    Task pending{ std::move(request), {}, std::move(completion) };
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_)
+            return false;
+        try
+        {
+            tasks_.push_back(std::move(pending));
+        }
+        catch (...)
+        {
+            return false;
+        }
+        if (!started_)
+        {
+            try
+            {
+                thread_ = std::thread(&ShellFileOperationWorker::Run, this);
+                started_ = true;
+            }
+            catch (...)
+            {
+                tasks_.pop_back();
+                return false;
+            }
+        }
+    }
+    cv_.notify_one();
+    return true;
+}
+
+ShellRenameResult ShellFileOperationWorker::Execute(
+    const ShellRenameRequest& request)
+{
+    ShellRenameResult result;
+    result.sourcePath = request.sourcePath;
+    const ULONGLONG started = GetTickCount64();
+    const auto finish = [&]() {
+        result.elapsedMs = GetTickCount64() - started;
+        return std::move(result);
+    };
+    if (request.newName.empty() || request.newName == L"." ||
+        request.newName == L".." ||
+        request.newName.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos)
+    {
+        result.status = E_INVALIDARG;
+        return finish();
+    }
+
+    const std::filesystem::path source(request.sourcePath);
+    const auto directory = source.parent_path();
+    std::wstring uniqueName = request.newName;
+    // Preserve the existing collision suffix convention, but use the actual
+    // source directory (including the public desktop) and allow case changes.
+    const DWORD sourceAttributes = GetFileAttributesW(source.c_str());
+    const bool isDirectory = sourceAttributes != INVALID_FILE_ATTRIBUTES &&
+        (sourceAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    const std::filesystem::path desired(request.newName);
+    const std::wstring stem = isDirectory ? request.newName : desired.stem().wstring();
+    const std::wstring extension = isDirectory ? L"" : desired.extension().wstring();
+    for (int suffix = 2; suffix <= 1000; ++suffix)
+    {
+        const auto candidate = directory / uniqueName;
+        if (CompareStringOrdinal(candidate.c_str(), -1, source.c_str(), -1,
+                TRUE) == CSTR_EQUAL ||
+            GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+            break;
+        uniqueName = stem + L" (" + std::to_wstring(suffix) + L")" + extension;
+    }
+
+    ComPtr<IShellFolder> parent;
+    PIDLIST_ABSOLUTE sourceId = nullptr;
+    PIDLIST_ABSOLUTE parentId = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (!request.desktopChildId.empty())
+    {
+        result.status = SHGetDesktopFolder(&parent);
+        if (SUCCEEDED(result.status))
+            result.status = SHGetSpecialFolderLocation(
+                nullptr, CSIDL_DESKTOP, &parentId);
+        child = reinterpret_cast<PCUITEMID_CHILD>(request.desktopChildId.data());
+    }
+    else
+    {
+        result.status = SHParseDisplayName(
+            source.c_str(), nullptr, &sourceId, 0, nullptr);
+        if (SUCCEEDED(result.status))
+            result.status = SHBindToParent(sourceId, IID_PPV_ARGS(&parent), &child);
+        if (SUCCEEDED(result.status))
+        {
+            parentId = ILCloneFull(sourceId);
+            if (parentId)
+                ILRemoveLastID(parentId);
+        }
+    }
+    if (FAILED(result.status) || !parent || !parentId)
+    {
+        if (SUCCEEDED(result.status))
+            result.status = E_OUTOFMEMORY;
+        ILFree(sourceId);
+        ILFree(parentId);
+        return finish();
+    }
+
+    PITEMID_CHILD renamedChild = nullptr;
+    result.status = parent->SetNameOf(
+        nullptr, child, uniqueName.c_str(), SHGDN_NORMAL, &renamedChild);
+    if (SUCCEEDED(result.status) && renamedChild)
+    {
+        PIDLIST_ABSOLUTE absolute = ILCombine(parentId, renamedChild);
+        if (absolute)
+        {
+            const auto* bytes = reinterpret_cast<const BYTE*>(absolute);
+            result.absoluteId.assign(bytes, bytes + ILGetSize(absolute));
+            if (!request.desktopChildId.empty())
+            {
+                bytes = reinterpret_cast<const BYTE*>(renamedChild);
+                result.desktopChildId.assign(bytes, bytes + ILGetSize(renamedChild));
+            }
+            PWSTR path = nullptr;
+            if (SUCCEEDED(SHGetNameFromIDList(absolute, SIGDN_FILESYSPATH, &path)))
+            {
+                result.path = path;
+                CoTaskMemFree(path);
+            }
+            SHFILEINFOW info{};
+            const bool hasInfo = SHGetFileInfoW(
+                reinterpret_cast<LPCWSTR>(absolute), 0, &info, sizeof(info),
+                SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_DISPLAYNAME | SHGFI_TYPENAME) != 0;
+            result.displayName = info.szDisplayName;
+            result.typeName = info.szTypeName;
+            result.sysIconIndex = info.iIcon;
+            result.metadataComplete = hasInfo && !result.path.empty() &&
+                GetFileAttributesExW(result.path.c_str(), GetFileExInfoStandard,
+                    &result.attributes) != FALSE;
+            ILFree(absolute);
+        }
+    }
+    ILFree(renamedChild);
+    ILFree(sourceId);
+    ILFree(parentId);
+    return finish();
 }
 
 bool ShellFileOperationWorker::Execute(
@@ -839,14 +997,30 @@ void ShellFileOperationWorker::Run()
             tasks_.pop_front();
         }
 
+        if (auto* rename = std::get_if<ShellRenameRequest>(&task.request))
+        {
+            ShellRenameResult result;
+            if (SUCCEEDED(comResult))
+                result = Execute(*rename);
+            else
+            {
+                result.sourcePath = rename->sourcePath;
+                result.status = comResult;
+            }
+            if (task.renameCompletion)
+                task.renameCompletion(std::move(result));
+            continue;
+        }
         const bool succeeded = std::visit(
             [](auto& request) {
                 using Request = std::decay_t<decltype(request)>;
                 if constexpr (std::is_same_v<Request, ShellDropRequest>)
                     return ShellFileOperationWorker::Execute(
                         std::move(request));
-                else
+                else if constexpr (std::is_same_v<Request, ShellFileOperationRequest>)
                     return ShellFileOperationWorker::Execute(request);
+                else
+                    return false;
             },
             task.request);
         if (task.completion)

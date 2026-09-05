@@ -89,6 +89,7 @@
 #include "ole_drag_drop_adapter.h"
 #include "popup_dwell_controller.h"
 #include "rename_controller.h"
+#include "rename_notification_tracker.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
 #include "widget_notification_presenter.h"
@@ -3772,6 +3773,10 @@ private:
         int selectionEnd);
     /** @brief 提交或取消重命名操作。 @param cancel true 取消，false 提交 */
     void CommitRename(bool cancel);
+    bool QueueRename(snowdesktop::ShellRenameRequest request);
+    void ApplyPendingRenames();
+    RenameNotificationTracker renameNotifications_;
+    std::vector<std::shared_ptr<snowdesktop::ShellRenameResult>> pendingRenames_;
     /** @brief 重命名编辑框的子类化窗口过程。 @param hwnd 窗口句柄 @param message 消息 @param wParam WPARAM @param lParam LPARAM @param subclassId 子类化 ID @param refData 引用数据 @return 消息处理结果 */
     static LRESULT CALLBACK RenameEditSubclassProc(HWND hwnd, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData);

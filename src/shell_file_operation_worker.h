@@ -51,6 +51,29 @@ struct ShellFileOperationRequest
     std::vector<ShellShortcutOperationStep> shortcuts;
 };
 
+/** A rename owns only copied paths/PIDL bytes, never UI-thread COM objects. */
+struct ShellRenameRequest
+{
+    std::wstring sourcePath;
+    std::wstring newName;
+    std::vector<BYTE> desktopChildId;
+};
+
+struct ShellRenameResult
+{
+    HRESULT status = E_ABORT;
+    std::wstring sourcePath;
+    std::wstring path;
+    std::wstring displayName;
+    std::wstring typeName;
+    std::vector<BYTE> absoluteId;
+    std::vector<BYTE> desktopChildId;
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    int sysIconIndex = -1;
+    bool metadataComplete = false;
+    ULONGLONG elapsedMs = 0;
+};
+
 /**
  * @brief Build a recoverable delete request for path-backed Recycle Bin drops.
  *
@@ -91,6 +114,7 @@ class ShellFileOperationWorker
 {
 public:
     using Completion = std::function<void(bool)>;
+    using RenameCompletion = std::function<void(ShellRenameResult)>;
 
     ShellFileOperationWorker() = default;
     ~ShellFileOperationWorker();
@@ -100,18 +124,22 @@ public:
 
     bool Enqueue(ShellFileOperationRequest request, Completion completion);
     bool Enqueue(ShellDropRequest request, Completion completion);
+    bool Enqueue(ShellRenameRequest request, RenameCompletion completion);
     void Stop();
 
     /** @brief Execute a request synchronously on the calling STA. */
     static bool Execute(const ShellFileOperationRequest& request);
     /** @brief Execute a path-backed IDropTarget handoff on the calling STA. */
     static bool Execute(ShellDropRequest request);
+    static ShellRenameResult Execute(const ShellRenameRequest& request);
 
 private:
     struct Task
     {
-        std::variant<ShellFileOperationRequest, ShellDropRequest> request;
+        std::variant<ShellFileOperationRequest, ShellDropRequest,
+            ShellRenameRequest> request;
         Completion completion;
+        RenameCompletion renameCompletion;
     };
 
     void Run();

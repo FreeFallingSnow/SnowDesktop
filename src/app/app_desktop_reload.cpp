@@ -596,7 +596,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
             dragSession_.HasContext(),
             dragDropController_.IsTransportActive());
-    if (shellFileOperationInFlight_ > 0 || deferForDrag)
+    if (shellFileOperationInFlight_ > 0 || deferForDrag || !pendingRenames_.empty())
     {
         shellReloadPending_ = true;
         shellReloadLayoutFromDiskPending_ =
@@ -605,7 +605,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         // debounce timer can no longer use that field as a drag-lifetime
         // proxy. Keep one pending reload alive until both native and OLE drag
         // ownership have ended.
-        if (deferForDrag && hwnd_ && IsWindow(hwnd_))
+        if ((deferForDrag || !pendingRenames_.empty()) && hwnd_ && IsWindow(hwnd_))
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);

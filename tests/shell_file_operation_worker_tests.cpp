@@ -1,6 +1,8 @@
 #include "shell_file_operation_worker.h"
 #include "item_location.h"
+#include "app/shell_change_notification.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -39,6 +41,146 @@ std::filesystem::path CreateTemporaryDirectory()
     return root;
 }
 
+void TestAsyncRenames(const std::filesystem::path& root)
+{
+    constexpr UINT notificationMessage = WM_APP + 1;
+    const wchar_t* className = L"SnowDesktopRenameNotificationTest";
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        if (message == WM_APP + 1)
+        {
+            auto* changes = reinterpret_cast<std::vector<ShellChangeNotification>*>(
+                GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (const auto change = ReadShellChangeNotification(wp, lp); change && changes)
+                changes->push_back(*change);
+            return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    };
+    Expect(RegisterClassW(&windowClass) != 0, "notification test class is registered");
+    std::vector<ShellChangeNotification> notifications;
+    const HWND notificationWindow = CreateWindowExW(0, className, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, &notifications);
+    PIDLIST_ABSOLUTE rootId = nullptr;
+    Expect(notificationWindow && SUCCEEDED(SHParseDisplayName(
+        root.c_str(), nullptr, &rootId, 0, nullptr)), "isolated notification root is available");
+    SHChangeNotifyEntry watch{rootId, FALSE};
+    const ULONG registration = SHChangeNotifyRegister(notificationWindow,
+        SHCNRF_ShellLevel | SHCNRF_NewDelivery, SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER,
+        notificationMessage, 1, &watch);
+    ILFree(rootId);
+    Expect(registration != 0, "real Shell rename notifications are registered");
+    const auto source = root / L"rename-source.txt";
+    const auto collision = root / L"occupied.txt";
+    { std::ofstream(source) << "rename payload"; }
+    { std::ofstream(collision) << "keep original"; }
+    snowdesktop::ShellFileOperationWorker worker;
+    std::promise<snowdesktop::ShellRenameResult> firstPromise;
+    auto firstFuture = firstPromise.get_future();
+    std::promise<void> releaseWorker;
+    auto gate = releaseWorker.get_future().share();
+    std::atomic<DWORD> workerThread{0};
+    std::atomic<bool> workerIsSta{false};
+    const DWORD callerThread = GetCurrentThreadId();
+    const auto enqueueStart = std::chrono::steady_clock::now();
+    Expect(worker.Enqueue(
+        snowdesktop::ShellRenameRequest{source.wstring(), L"renamed.txt", {}},
+        [&](snowdesktop::ShellRenameResult result) {
+            workerThread = GetCurrentThreadId();
+            APTTYPE apartment{};
+            APTTYPEQUALIFIER qualifier{};
+            workerIsSta = SUCCEEDED(CoGetApartmentType(&apartment, &qualifier)) &&
+                (apartment == APTTYPE_STA || apartment == APTTYPE_MAINSTA);
+            firstPromise.set_value(std::move(result));
+            gate.wait();
+        }), "rename request is accepted without waiting for Shell");
+    const auto enqueueMs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - enqueueStart).count();
+    Expect(firstFuture.wait_for(std::chrono::seconds(15)) == std::future_status::ready,
+        "background rename completes within the test deadline");
+    const auto first = firstFuture.get();
+    Expect(SUCCEEDED(first.status) && first.metadataComplete &&
+            first.path == (root / L"renamed.txt").wstring() &&
+            !std::filesystem::exists(source) && std::filesystem::exists(first.path) &&
+            workerThread != callerThread && workerIsSta,
+        "rename executes on a separate STA and returns the actual Shell path and metadata");
+
+    // Deliberately hold the worker callback. A second enqueue must still
+    // return, while its dependent operation waits in the serial queue.
+    std::promise<snowdesktop::ShellRenameResult> secondPromise;
+    auto secondFuture = secondPromise.get_future();
+    Expect(worker.Enqueue(
+        snowdesktop::ShellRenameRequest{first.path, L"occupied.txt", {}},
+        [&](snowdesktop::ShellRenameResult result) {
+            secondPromise.set_value(std::move(result));
+        }), "a blocked worker still accepts another rename");
+    Expect(secondFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout,
+        "dependent renames wait for the preceding operation without blocking the caller");
+    releaseWorker.set_value();
+    Expect(secondFuture.wait_for(std::chrono::seconds(15)) == std::future_status::ready,
+        "queued rename completes after releasing the preceding callback");
+    const auto second = secondFuture.get();
+    Expect(SUCCEEDED(second.status) &&
+            second.path == (root / L"occupied (2).txt").wstring(),
+        "collision renaming reports its actual suffixed destination");
+    std::string contents;
+    { std::ifstream stream(collision); std::getline(stream, contents); }
+    Expect(contents == "keep original", "rename must not overwrite the colliding file");
+    worker.Stop();
+
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    bool receivedRename = false;
+    while (!receivedRename && GetTickCount64() < deadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            DispatchMessageW(&message);
+        receivedRename = std::any_of(notifications.begin(), notifications.end(),
+            [&](const auto& change) {
+                return change.event == SHCNE_RENAMEITEM &&
+                    _wcsicmp(change.source.c_str(), source.c_str()) == 0 &&
+                    _wcsicmp(change.target.c_str(), first.path.c_str()) == 0;
+            });
+        if (!receivedRename)
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+    }
+    Expect(receivedRename,
+        "NewDelivery decoding recovers the actual old/new paths and releases the notification");
+    SHChangeNotifyDeregister(registration);
+    DestroyWindow(notificationWindow);
+    UnregisterClassW(className, windowClass.hInstance);
+
+    const auto caseOnly = snowdesktop::ShellFileOperationWorker::Execute(
+        snowdesktop::ShellRenameRequest{second.path, L"OCCUPIED (2).txt", {}});
+    Expect(SUCCEEDED(caseOnly.status) &&
+            std::filesystem::path(caseOnly.path).filename() == L"OCCUPIED (2).txt",
+        "case-only rename must not add an unnecessary collision suffix");
+    const auto directory = root / L"rename-directory";
+    std::filesystem::create_directory(directory);
+    { std::ofstream(directory / L"child.txt") << "preserve child"; }
+    const auto folder = snowdesktop::ShellFileOperationWorker::Execute(
+        snowdesktop::ShellRenameRequest{directory.wstring(), L"renamed-directory", {}});
+    Expect(SUCCEEDED(folder.status) && folder.metadataComplete &&
+            (folder.attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+            std::filesystem::exists(std::filesystem::path(folder.path) / L"child.txt"),
+        "directory renames retain their children and return directory metadata");
+    const auto invalid = snowdesktop::ShellFileOperationWorker::Execute(
+        snowdesktop::ShellRenameRequest{caseOnly.path, L"invalid/name.txt", {}});
+    Expect(FAILED(invalid.status) && std::filesystem::exists(caseOnly.path),
+        "invalid names fail without changing the source");
+    Expect(!worker.Enqueue(
+        snowdesktop::ShellRenameRequest{caseOnly.path, L"after-stop.txt", {}},
+        [](snowdesktop::ShellRenameResult) {}),
+        "shutdown rejects new rename requests");
+    std::cout << "rename enqueue us=" << enqueueMs
+              << " worker ms=" << first.elapsedMs << '\n';
+}
+
 } // namespace
 
 int wmain()
@@ -48,6 +190,7 @@ int wmain()
     Expect(SUCCEEDED(comResult),
         "COM initializes for copied folder-shortcut validation");
     const std::filesystem::path root = CreateTemporaryDirectory();
+    TestAsyncRenames(root);
     const std::filesystem::path sourceDirectory = root / L"source";
     const std::filesystem::path firstDirectory = root / L"first";
     const std::filesystem::path secondDirectory = root / L"second";
