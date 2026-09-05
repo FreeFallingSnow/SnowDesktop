@@ -8,6 +8,23 @@
 
 namespace snowdesktop::rename_model_update
 {
+inline void AttachDesktopIdentity(ShellRenameRequest& request,
+    const std::vector<DesktopItem>& items)
+{
+    if (!request.desktopChildId.empty())
+        return;
+    for (const auto& item : items)
+    {
+        if (!item.desktopIconClsid.empty() || !item.childPidl.get() ||
+            !desktop_item_reference_migration::KeysEqual(
+                item.parsingName, request.sourcePath))
+            continue;
+        const auto* bytes = reinterpret_cast<const BYTE*>(item.childPidl.get());
+        request.desktopChildId.assign(bytes, bytes + ILGetSize(item.childPidl.get()));
+        return;
+    }
+}
+
 struct Changes
 {
     std::vector<size_t> desktopItems;

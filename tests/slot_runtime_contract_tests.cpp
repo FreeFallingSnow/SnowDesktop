@@ -1778,10 +1778,17 @@ void TestRenameNotificationsPreserveUnrelatedChanges()
     Check(tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 3) &&
             !tracker.Finish(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", true, 4),
         "a notification before completion must not cause a duplicate full reload");
-    Check(tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 5) &&
-            !tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\external.txt", 5),
-        "late suppression must match both paths rather than hiding other changes");
-    Check(!tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 60000),
+    Check(!tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 5),
+        "an already consumed rename must not hide future changes with the same path pair");
+    tracker.Begin(L"late-old", 6);
+    Check(!tracker.Finish(L"late-old", L"Late-New", true, 7) &&
+            !tracker.Observe(L"late-old", L"late-new", 8) &&
+            tracker.Observe(L"late-old", L"Late-New", 9) &&
+            !tracker.Observe(L"late-old", L"Late-New", 10),
+        "late matching consumes one exact destination and preserves external case changes");
+    tracker.Begin(L"expired", 11);
+    tracker.Finish(L"expired", L"new", true, 12);
+    Check(!tracker.Observe(L"expired", L"new", 60000),
         "completed rename notifications must expire instead of hiding future changes");
     tracker.Begin(L"failed", 60001);
     tracker.Observe(L"failed", L"external", 60002);
@@ -1819,6 +1826,12 @@ void TestRenameUpdatesOnlyMatchingModels()
     items[1].gridCell = { L"page", 3, 2 };
     items[1].iconState = IconState::FullQuality;
     items[1].iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    items[1].childPidl.reset(ILCloneFull(
+        reinterpret_cast<PCIDLIST_ABSOLUTE>(result.desktopChildId.data())));
+    snowdesktop::ShellRenameRequest aliasRequest{result.sourcePath, L"after.txt", {}};
+    snowdesktop::rename_model_update::AttachDesktopIdentity(aliasRequest, items);
+    Check(aliasRequest.desktopChildId == result.desktopChildId,
+        "mapped-popup desktop aliases must retain desktop identity for incremental completion");
     const auto originalBitmap = items[1].iconBitmap;
     const auto* originalAddress = &items[1];
     std::vector<DesktopWidget> widgets(2);

@@ -38,7 +38,11 @@ std::filesystem::path CreateTemporaryDirectory()
     std::filesystem::remove(root, error);
     Expect(!error && std::filesystem::create_directory(root, error),
         "worker-test directory can be created");
-    return root;
+    wchar_t longPath[MAX_PATH]{};
+    const DWORD length = GetLongPathNameW(root.c_str(), longPath, MAX_PATH);
+    Expect(length != 0 && length < MAX_PATH,
+        "temporary fixture paths normalize 8.3 aliases before Shell comparisons");
+    return std::filesystem::path(longPath);
 }
 
 void TestAsyncRenames(const std::filesystem::path& root)
@@ -104,11 +108,13 @@ void TestAsyncRenames(const std::filesystem::path& root)
     Expect(firstFuture.wait_for(std::chrono::seconds(15)) == std::future_status::ready,
         "background rename completes within the test deadline");
     const auto first = firstFuture.get();
-    Expect(SUCCEEDED(first.status) && first.metadataComplete &&
-            first.path == (root / L"renamed.txt").wstring() &&
-            !std::filesystem::exists(source) && std::filesystem::exists(first.path) &&
-            workerThread != callerThread && workerIsSta,
-        "rename executes on a separate STA and returns the actual Shell path and metadata");
+    Expect(SUCCEEDED(first.status), "background Shell rename reports success");
+    Expect(first.metadataComplete, "background Shell rename returns complete metadata");
+    Expect(!std::filesystem::exists(source) &&
+            std::filesystem::equivalent(first.path, root / L"renamed.txt"),
+        "rename returns the actual Shell destination, including canonicalized paths");
+    Expect(workerThread != callerThread && workerIsSta,
+        "rename executes on a separate STA");
 
     // Deliberately hold the worker callback. A second enqueue must still
     // return, while its dependent operation waits in the serial queue.
@@ -126,7 +132,7 @@ void TestAsyncRenames(const std::filesystem::path& root)
         "queued rename completes after releasing the preceding callback");
     const auto second = secondFuture.get();
     Expect(SUCCEEDED(second.status) &&
-            second.path == (root / L"occupied (2).txt").wstring(),
+            std::filesystem::equivalent(second.path, root / L"occupied (2).txt"),
         "collision renaming reports its actual suffixed destination");
     std::string contents;
     { std::ifstream stream(collision); std::getline(stream, contents); }

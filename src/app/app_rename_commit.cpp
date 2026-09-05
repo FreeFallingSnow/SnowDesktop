@@ -8,6 +8,9 @@
 // and return through the existing UI-thread file-operation message.
 bool DesktopApp::QueueRename(snowdesktop::ShellRenameRequest request)
 {
+    // A desktop file can also be reached through a mapped-folder popup. Keep
+    // its desktop namespace identity so that surface uses the same fast path.
+    snowdesktop::rename_model_update::AttachDesktopIdentity(request, items_);
     const HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
     if (!completionWindow || !IsWindow(completionWindow) ||

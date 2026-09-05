@@ -21,8 +21,9 @@ public:
         ULONGLONG now)
     {
         Expire(now);
-        for (auto& entry : entries_)
+        for (auto it = entries_.begin(); it != entries_.end(); ++it)
         {
+            auto& entry = *it;
             if (!Equal(entry.source, source))
                 continue;
             if (entry.pending)
@@ -30,8 +31,13 @@ public:
                 entry.observedTargets.push_back(target);
                 return true;
             }
-            if (Equal(entry.target, target))
+            // Destination spelling matters for subsequent case-only renames.
+            // Consume one expected event, not every equal pair for a time span.
+            if (entry.target == target)
+            {
+                entries_.erase(it);
                 return true;
+            }
         }
         return false;
     }
@@ -47,9 +53,12 @@ public:
             const bool needsRefresh = std::any_of(
                 it->observedTargets.begin(), it->observedTargets.end(),
                 [&](const auto& observed) {
-                    return !succeeded || !Equal(observed, target);
+                    return !succeeded || observed != target;
                 });
-            if (!succeeded || target.empty())
+            const bool alreadyObserved = std::find(
+                it->observedTargets.begin(), it->observedTargets.end(), target) !=
+                    it->observedTargets.end();
+            if (!succeeded || target.empty() || alreadyObserved)
                 entries_.erase(it);
             else
             {
