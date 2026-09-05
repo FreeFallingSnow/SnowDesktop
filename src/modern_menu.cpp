@@ -270,6 +270,7 @@ public:
                         WAIT_OBJECT_0))
             {
                 options_.eventPump.dispatchScheduledWork();
+                RestoreOwnedPopupZOrder();
                 if (options_.eventPump.flushPresentation)
                     options_.eventPump.flushPresentation();
             }
@@ -1963,6 +1964,46 @@ private:
     {
         return std::clamp(activeDepth_, 0,
             std::max(0, static_cast<int>(popups_.size()) - 1));
+    }
+
+    void RestoreOwnedPopupZOrder()
+    {
+        if (!options_.topmost ||
+            !options_.zOrderOwner ||
+            !IsWindow(options_.zOrderOwner) ||
+            popups_.empty() ||
+            !popups_.front()->hwnd ||
+            !IsWindow(popups_.front()->hwnd))
+        {
+            return;
+        }
+
+        const HWND root = popups_.front()->hwnd;
+        for (HWND current = root; current;
+             current = GetWindow(current, GW_HWNDNEXT))
+        {
+            if (current == options_.zOrderOwner)
+                return;
+        }
+
+        // The application's nested event pump may finish a popup animation
+        // by promoting the source host again.  User32 can then move that
+        // owner above its already-visible owned menu.  Restore every menu
+        // popup in parent-to-child order without taking activation, so the
+        // root and any cascade remain above the source host.
+        constexpr UINT flags =
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER;
+        for (const auto& popup : popups_)
+        {
+            if (popup && popup->hwnd && IsWindow(popup->hwnd) &&
+                IsWindowVisible(popup->hwnd))
+            {
+                SetWindowPos(
+                    popup->hwnd, HWND_TOPMOST,
+                    0, 0, 0, 0, flags);
+            }
+        }
     }
 
     Popup* ActivePopup()

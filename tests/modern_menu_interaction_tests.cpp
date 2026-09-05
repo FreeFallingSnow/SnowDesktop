@@ -34,6 +34,9 @@ bool gCaptureTopmost = false;
 bool gObservedTopmost = false;
 bool gCaptureRootOwner = false;
 HWND gObservedRootOwner = nullptr;
+bool gCaptureAboveZOrderOwner = false;
+bool gObservedAboveZOrderOwner = false;
+HWND gZOrderOwnerProbe = nullptr;
 bool gDismissOnDrive = false;
 bool gObservedDismissHidden = false;
 bool gSelectEnd = false;
@@ -49,6 +52,19 @@ struct MenuWindows
     HWND root = nullptr;
     HWND child = nullptr;
 };
+
+bool IsWindowAbove(HWND upper, HWND lower)
+{
+    if (!upper || !lower)
+        return false;
+    for (HWND current = upper; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+    {
+        if (current == lower)
+            return true;
+    }
+    return false;
+}
 
 BOOL CALLBACK FindMenuWindows(HWND hwnd, LPARAM parameter)
 {
@@ -127,6 +143,11 @@ LRESULT CALLBACK OwnerWindowProc(
             if (gCaptureRootOwner)
                 gObservedRootOwner =
                     GetWindow(menus.root, GW_OWNER);
+            if (gCaptureAboveZOrderOwner)
+            {
+                gObservedAboveZOrderOwner =
+                    IsWindowAbove(menus.root, gZOrderOwnerProbe);
+            }
             if (gDismissOnDrive)
             {
                 snowdesktop::modern_menu::DismissActive();
@@ -468,10 +489,26 @@ int wmain()
     gObservedTopmost = false;
     gCaptureRootOwner = true;
     gObservedRootOwner = nullptr;
+    gCaptureAboveZOrderOwner = true;
+    gObservedAboveZOrderOwner = false;
+    gZOrderOwnerProbe = zOrderOwner;
     gWatchdogFired = false;
     options.anchor = { 220, 220 };
     options.topmost = true;
     options.zOrderOwner = zOrderOwner;
+    HANDLE zOrderRefresh = CreateEventW(
+        nullptr, FALSE, FALSE, nullptr);
+    Expect(zOrderRefresh != nullptr,
+        "the Z-order refresh event is created");
+    options.eventPump.scheduledWorkHandle = zOrderRefresh;
+    options.eventPump.dispatchScheduledWork = [&]() {
+        SetWindowPos(
+            zOrderOwner, HWND_TOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                SWP_NOOWNERZORDER);
+    };
+    SetEvent(zOrderRefresh);
     SetTimer(owner, kDriveTimer, 10, nullptr);
     SetTimer(owner, kWatchdogTimer, 3000, nullptr);
     const auto ownedMenuResult =
@@ -485,8 +522,14 @@ int wmain()
     Expect(gObservedTopmost &&
             gObservedRootOwner == zOrderOwner,
         "a floating-host menu is topmost and owned by its Z-order host");
+    Expect(gObservedAboveZOrderOwner,
+        "a floating-host menu recovers after scheduled work raises its owner");
+    options.eventPump = {};
+    CloseHandle(zOrderRefresh);
     options.zOrderOwner = nullptr;
     gCaptureRootOwner = false;
+    gCaptureAboveZOrderOwner = false;
+    gZOrderOwnerProbe = nullptr;
     DestroyWindow(zOrderOwner);
 
     gDriveMode = DriveMode::Simple;
