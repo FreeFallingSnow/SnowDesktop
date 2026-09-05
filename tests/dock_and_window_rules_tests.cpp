@@ -247,6 +247,73 @@ void CheckPopupWindowPairZOrderTransitions()
     DestroyWindow(content);
 }
 
+void CheckDockWindowPreviewLateOwnerPromotion()
+{
+    constexpr DWORD extendedStyle =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    HWND host = CreateWindowExW(
+        extendedStyle, L"STATIC", L"dock-preview-owner",
+        WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND preview = CreateWindowExW(
+        extendedStyle, L"STATIC", L"dock-preview-late-owned",
+        WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND ordinary = CreateWindowExW(
+        extendedStyle, L"STATIC", L"dock-preview-ordinary",
+        WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(host && preview && ordinary,
+        "Dock preview late-owner test windows are created");
+    if (!host || !preview || !ordinary)
+    {
+        if (ordinary) DestroyWindow(ordinary);
+        if (preview) DestroyWindow(preview);
+        if (host) DestroyWindow(host);
+        return;
+    }
+
+    constexpr UINT bandFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER;
+    Check(SetWindowPos(
+            host, HWND_TOPMOST,
+            0, 0, 0, 0, bandFlags) != FALSE,
+        "Dock preview owner enters TOPMOST before ownership is assigned");
+    SetWindowLongPtrW(
+        preview, GWLP_HWNDPARENT,
+        reinterpret_cast<LONG_PTR>(host));
+
+    const DockWindowPreviewZOrderPolicy policy =
+        ResolveDockWindowPreviewZOrderPolicy(true, false);
+    Check(SetWindowPos(
+            preview, policy.insertAfter,
+            -32000, -32000, 32, 32,
+            policy.flags) != FALSE,
+        "late-owned Dock preview applies its presentation Z-order policy");
+    SetWindowPos(
+        preview, nullptr,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+            SWP_NOOWNERZORDER | SWP_NOACTIVATE |
+            SWP_SHOWWINDOW);
+    SetWindowPos(
+        ordinary, HWND_TOP,
+        0, 0, 0, 0, bandFlags);
+
+    namespace zOrder = snowdesktop::popup_window_pair_z_order;
+    Check(zOrder::IsTopmost(host) &&
+            zOrder::IsTopmost(preview) &&
+            !zOrder::IsTopmost(ordinary) &&
+            zOrder::IsAbove(preview, host) &&
+            zOrder::IsAbove(preview, ordinary),
+        "a preview bound after owner promotion remains above ordinary windows");
+
+    DestroyWindow(ordinary);
+    DestroyWindow(preview);
+    DestroyWindow(host);
+}
+
 LRESULT CALLBACK MenuProtectedHostProc(
     HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
@@ -458,6 +525,7 @@ int main(int argc, char** argv)
 {
     CheckAdaptiveRenameEditor();
     CheckMenuProtectedHostPositionChanges();
+    CheckDockWindowPreviewLateOwnerPromotion();
     using snowdesktop::desktop_keyboard_rules::
         IsForegroundFocusReady;
     using snowdesktop::desktop_keyboard_rules::
@@ -2425,10 +2493,10 @@ int main(int argc, char** argv)
         "an active persistent DockHost must require a right-button press that began on the same Host while the desktop fallback remains usable");
     const DockWindowPreviewZOrderPolicy floatingPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(true, false);
-    Check(floatingPreviewZOrder.insertAfter == nullptr &&
-            (floatingPreviewZOrder.flags & SWP_NOZORDER) != 0 &&
+    Check(floatingPreviewZOrder.insertAfter == HWND_TOPMOST &&
+            (floatingPreviewZOrder.flags & SWP_NOZORDER) == 0 &&
             (floatingPreviewZOrder.flags & SWP_NOOWNERZORDER) != 0,
-        "a preview owned by the floating Dock must preserve its topmost owner Z order");
+        "a preview owned by the floating Dock must reassert TOPMOST without reordering its owner");
     const DockWindowPreviewZOrderPolicy desktopPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(false, false);
     Check(desktopPreviewZOrder.insertAfter == HWND_TOPMOST &&
