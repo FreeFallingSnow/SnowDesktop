@@ -766,18 +766,10 @@ void DesktopApp::OnMouseMoveAt(
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
-                const bool dockFolderPopupSource =
-                    dockFolderPopupOpen_ &&
-                    dragSession_.Source() ==
-                        dockFolderPopupContainer_.get();
                 auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSession_.Source());
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
                 const std::wstring sourceWidgetId =
                     sourceWidgetData ? sourceWidgetData->id : L"";
-                const bool sourceFolderMapping =
-                    sourceWidgetData &&
-                    sourceWidgetData->type ==
-                        DesktopWidgetType::FolderMapping;
                 const HWND nativeCaptureHwnd = GetCapture();
 
                 HideDragHintWindow();
