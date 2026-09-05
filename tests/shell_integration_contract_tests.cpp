@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -41,6 +43,13 @@ std::string_view FunctionBody(std::string_view source,
         return source.substr(begin);
     return source.substr(begin, end - begin);
 }
+
+std::string WithoutWhitespace(std::string_view source)
+{
+    std::string result(source);
+    std::erase_if(result, [](unsigned char ch) { return std::isspace(ch) != 0; });
+    return result;
+}
 }
 
 int main(int argc, char** argv)
@@ -75,14 +84,41 @@ int main(int argc, char** argv)
         root / "src" / "app" / "app_message_dispatch.cpp");
     const std::string controlDispatch = ReadFile(
         root / "src" / "app" / "app_desktop_reload.cpp");
+    const std::string shellOperations = ReadFile(
+        root / "src" / "app" / "app_shell_file_operation.cpp");
+    const std::string constants = ReadFile(root / "src" / "constants.h");
     Check(!utils.empty() && !lifecycle.empty() && !settingsApply.empty() &&
             !dockSettings.empty() && !taskbarHook.empty() &&
             !deploymentContext.empty() && !autoStartManager.empty() &&
             !settingsWindow.empty() &&
             !settingsHost.empty() && !dockPresenter.empty() &&
             !presenterControls.empty() &&
-            !messageDispatch.empty() && !controlDispatch.empty(),
+            !messageDispatch.empty() && !controlDispatch.empty() &&
+            !shellOperations.empty() && !constants.empty(),
         "shell integration sources are readable");
+
+    // Architectural latency boundary: a finished worker must not start a
+    // second debounce, and notification bursts must not reset the first wake.
+    // General worker tests cannot detect delays added by the UI completion.
+    const std::string completion = WithoutWhitespace(FunctionBody(shellOperations,
+        "void DesktopApp::OnShellFileOperationCompleted(",
+        "void DesktopApp::StopShellFileOperationWorker("));
+    Check(completion.find("OnTimer(kShellChangeTimerId);") != std::string::npos &&
+            completion.find("SetTimer(") == std::string::npos,
+        "completed operations and reads drain through interaction guards without another debounce");
+    const std::string requestRefresh = WithoutWhitespace(FunctionBody(shellOperations,
+        "void DesktopApp::RequestShellRefresh(",
+        "void DesktopApp::RefreshShellItemsAsync("));
+    Check(requestRefresh.find("constboolalreadyPending=shellReloadPending_;") <
+            requestRefresh.find("shellReloadPending_=true;") &&
+            requestRefresh.find("if(!alreadyPending&&hwnd_&&IsWindow(hwnd_))SetTimer(") !=
+                std::string::npos,
+        "notification bursts retain their first scheduled refresh wake");
+    const std::regex delayPattern(R"(kShellChangeDebounceMs\s*=\s*(\d+)\s*;)");
+    std::smatch delay;
+    Check(std::regex_search(constants, delay, delayPattern) &&
+            std::stoul(delay[1].str()) > 0 && std::stoul(delay[1].str()) <= 100,
+        "external change coalescing and interaction retries stay within the 100 ms feedback budget");
 
     const std::string_view ensureDesktop = FunctionBody(utils,
         "bool EnsureDesktopWorkerWindow()",

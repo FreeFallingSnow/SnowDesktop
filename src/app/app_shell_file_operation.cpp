@@ -383,8 +383,10 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
          shellDockFolderPopupRefreshPending_) &&
         hwnd_ && IsWindow(hwnd_))
     {
-        SetTimer(hwnd_, kShellChangeTimerId,
-            kShellChangeDebounceMs, nullptr);
+        // We already know that the operation/read has finished. Run the same
+        // guarded drain as the timer now, instead of adding a second debounce.
+        // It still defers model replacement during edits, menus and drags.
+        OnTimer(kShellChangeTimerId);
     }
     // SHFileOperationW can promote the Explorer/foreground window while the
     // worker thread owns its progress UI. Restore the floating Dock layer once
@@ -459,10 +461,14 @@ void DesktopApp::RequestShellRefresh()
         return;
     shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
+    const bool alreadyPending = shellReloadPending_;
     shellReloadPending_ = true;
     // A filesystem event says nothing about saved layout or Lua storage.
     // Preserve any separately requested full reload, but never introduce one.
-    if (hwnd_ && IsWindow(hwnd_))
+    // Keep the first wake deadline. Resetting it for every notification can
+    // indefinitely postpone feedback during a stream of filesystem changes.
+    // An active read/operation will drain pending work from its completion.
+    if (!alreadyPending && hwnd_ && IsWindow(hwnd_))
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
 }
 

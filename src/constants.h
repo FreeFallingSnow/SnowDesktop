@@ -236,7 +236,9 @@ constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;
 constexpr UINT kSteamEntitlementChangedMessage = WM_APP + 19;
 constexpr UINT_PTR kShellChangeTimerId = 2;
-constexpr UINT kShellChangeDebounceMs = 500;
+// Briefly coalesce external notifications/retry after an active interaction.
+// Completed file operations and metadata reads bypass this delay entirely.
+constexpr UINT kShellChangeDebounceMs = 50;
 
 // ── 定时器ID与间隔 ────────────────────────────
 constexpr UINT_PTR kRecycleBinPollTimerId = 3;
