@@ -125,10 +125,15 @@ void CheckPopupWindowPairZOrderTransitions()
         extendedStyle, L"STATIC", L"popup-pair-menu",
         WS_POPUP, 0, 0, 32, 32,
         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-    Check(content && backdrop && menu,
+    HWND separator = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-separator",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(content && backdrop && menu && separator,
         "popup pair transition test windows are created");
-    if (!content || !backdrop || !menu)
+    if (!content || !backdrop || !menu || !separator)
     {
+        if (separator) DestroyWindow(separator);
         if (menu) DestroyWindow(menu);
         if (backdrop) DestroyWindow(backdrop);
         if (content) DestroyWindow(content);
@@ -184,6 +189,42 @@ void CheckPopupWindowPairZOrderTransitions()
             isAbove(menu, content),
         "an idempotent popup layer refresh must not raise the pair above an existing menu");
 
+    SetWindowLongPtrW(
+        menu, GWLP_HWNDPARENT,
+        reinterpret_cast<LONG_PTR>(content));
+    constexpr UINT zOrderOnlyFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER;
+    Check(GetWindow(menu, GW_OWNER) == content &&
+            SetWindowPos(
+                separator, HWND_TOPMOST,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            SetWindowPos(
+                separator, content,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            SetWindowPos(
+                backdrop, separator,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            SetWindowPos(
+                menu, HWND_TOPMOST,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            !snowdesktop::popup_window_pair_z_order::
+                IsPaired(content, backdrop) &&
+            isAbove(menu, content),
+        "an owned menu probe can interrupt pair adjacency while remaining above its content host");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size, menu) &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(content) &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(backdrop) &&
+            !snowdesktop::popup_window_pair_z_order::
+                IsPaired(content, backdrop) &&
+            isAbove(menu, content),
+        "a protected owned menu prevents a popup pair refresh from reclaiming the top Z-order slot");
+
+    DestroyWindow(separator);
     DestroyWindow(menu);
     DestroyWindow(backdrop);
     DestroyWindow(content);

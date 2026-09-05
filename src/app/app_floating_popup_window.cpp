@@ -745,12 +745,20 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
             true, shellPopupMenuLayerDepth_);
     const MenuHostZOrderSnapshot menuZOrderBefore =
         CaptureMenuHostZOrder(floatingPopupHwnd_);
+    HWND preserveAboveWindow =
+        snowdesktop::modern_menu::ActiveRootWindow();
+    if (preserveAboveWindow &&
+        GetWindow(preserveAboveWindow, GW_OWNER) !=
+            floatingPopupHwnd_)
+    {
+        preserveAboveWindow = nullptr;
+    }
     collectionPopupBackdropCompositor_.
         SetPopupWindowPairZOrder(
             floatingPopupHwnd_,
             shouldBeTopmost
                 ? HWND_TOPMOST : HWND_NOTOPMOST,
-            shouldBeTopmost);
+            shouldBeTopmost, preserveAboveWindow);
     ApplyDragPreviewLayerPolicy();
     TraceMenuHostZOrderTransition(
         L"apply-layer-policy", menuZOrderBefore,

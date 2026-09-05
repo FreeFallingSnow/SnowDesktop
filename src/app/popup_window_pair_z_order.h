@@ -18,6 +18,19 @@ inline bool IsPaired(HWND contentWindow, HWND backdropWindow)
         GetWindow(backdropWindow, GW_HWNDPREV) == contentWindow;
 }
 
+inline bool IsAbove(HWND upperWindow, HWND lowerWindow)
+{
+    if (!upperWindow || !lowerWindow)
+        return false;
+    for (HWND current = upperWindow; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+    {
+        if (current == lowerWindow)
+            return true;
+    }
+    return false;
+}
+
 /**
  * @brief 将 popup 内容窗及其 backdrop 安全地放入同一 Z 序带并保持相邻。
  *
@@ -32,7 +45,8 @@ inline bool Apply(
     HWND contentInsertAfter,
     bool topmost,
     POINT backdropOrigin,
-    SIZE backdropSize)
+    SIZE backdropSize,
+    HWND preserveAboveWindow = nullptr)
 {
     if (!contentWindow || !IsWindow(contentWindow))
         return false;
@@ -60,10 +74,19 @@ inline bool Apply(
         IsTopmost(contentWindow) == topmost &&
         IsTopmost(backdropWindow) == topmost &&
         IsPaired(contentWindow, backdropWindow);
-    if (usesBandSentinel && pairAlreadySynchronized)
+    const bool protectedWindowAlreadyAbove =
+        preserveAboveWindow &&
+        IsWindow(preserveAboveWindow) &&
+        IsTopmost(contentWindow) == topmost &&
+        IsTopmost(backdropWindow) == topmost &&
+        IsAbove(preserveAboveWindow, contentWindow);
+    if (usesBandSentinel &&
+        (pairAlreadySynchronized || protectedWindowAlreadyAbove))
     {
         // A layer-policy refresh must not raise an already-correct popup
         // pair above a menu that Windows has since placed over its content.
+        // An owned menu can temporarily interrupt pair adjacency, so its
+        // explicit protected position also makes this refresh idempotent.
         // Keep the helper geometry synchronized without changing Z order.
         return SetWindowPos(
             backdropWindow, nullptr,

@@ -630,7 +630,7 @@ bool DesktopBackdropCompositor::InitializePopup(
 
 void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
     HWND contentWindow, HWND contentInsertAfter,
-    bool topmost)
+    bool topmost, HWND preserveAboveWindow)
 {
     const bool contentValid =
         contentWindow && IsWindow(contentWindow);
@@ -660,7 +660,7 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
                 snowdesktop::popup_window_pair_z_order::Apply(
                     contentWindow, backdropWindow,
                     contentInsertAfter, topmost,
-                    origin, size);
+                    origin, size, preserveAboveWindow);
         }
     }
 
