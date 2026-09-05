@@ -86,6 +86,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case WM_COMMAND:
+        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+            HIWORD(wp) == EN_UPDATE)
+        {
+            renameEditLayout_.Update(renameEdit_);
+            return 0;
+        }
+        break;
     case WM_GETOBJECT:
     {
         LRESULT accessibilityResult = 0;

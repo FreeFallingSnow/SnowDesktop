@@ -430,6 +430,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         OnMouseWheel(wp, lp);
         return 0;
     case WM_COMMAND:
+        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+            HIWORD(wp) == EN_UPDATE)
+        {
+            renameEditLayout_.Update(renameEdit_);
+            return 0;
+        }
         if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_ && HIWORD(wp) == EN_CHANGE)
         {
             RefreshQuickNavigationSearchText();

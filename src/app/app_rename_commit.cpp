@@ -221,6 +221,7 @@ void DesktopApp::CommitRename(bool cancel)
 
     HWND edit = renameEdit_;
     renameEdit_ = nullptr;
+    renameEditLayout_.Reset();
     RemoveWindowSubclass(edit, &DesktopApp::RenameEditSubclassProc, 1);
 
     std::wstring newName;

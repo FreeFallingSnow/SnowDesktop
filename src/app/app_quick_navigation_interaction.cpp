@@ -46,8 +46,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST,
         L"EDIT", name.c_str(),
-        WS_POPUP |
-            ES_CENTER | ES_AUTOHSCROLL,
+        snowdesktop::rename_edit_layout::EditStyle(),
         editRect.left + virtualLeft_,
         editRect.top + virtualTop_,
         editRect.right - editRect.left,
@@ -90,13 +89,9 @@ void DesktopApp::BeginQuickNavigationItemRename(
         &DesktopApp::RenameEditSubclassProc,
         1,
         reinterpret_cast<DWORD_PTR>(this));
-    SetWindowPos(
-        renameEdit_, HWND_TOPMOST,
-        editRect.left + virtualLeft_,
-        editRect.top + virtualTop_,
-        editRect.right - editRect.left,
-        editRect.bottom - editRect.top,
-        SWP_SHOWWINDOW);
+    renameEditLayout_.Begin(renameEdit_);
+    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
     int selectionEnd = -1;
     if (!isDirectory)

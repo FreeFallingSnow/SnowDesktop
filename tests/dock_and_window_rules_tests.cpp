@@ -1,6 +1,7 @@
 #include "dock_magnification.h"
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
+#include "rename_edit_layout.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
 #include "dock_collection_icon_rules.h"
@@ -301,10 +302,152 @@ void CheckMenuProtectedHostPositionChanges()
     UnregisterClassW(className, windowClass.hInstance);
 }
 
+LRESULT CALLBACK RenameLayoutTestOwnerProc(
+    HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_COMMAND && HIWORD(wp) == EN_UPDATE)
+    {
+        auto* layout = reinterpret_cast<
+            snowdesktop::rename_edit_layout::EditorLayout*>(
+                GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (layout)
+            layout->Update(reinterpret_cast<HWND>(lp));
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wp, lp);
+}
+
+void CheckAdaptiveRenameEditor()
+{
+    namespace layout = snowdesktop::rename_edit_layout;
+    const RECT work{ -1920, -100, 0, 980 };
+    const RECT anchor{ -1200, 200, -1040, 226 };
+    const RECT grown = layout::CalculateRect(anchor, work, 110);
+    Check(grown.top == anchor.top && grown.bottom - grown.top == 110 &&
+            grown.left == anchor.left && grown.right == anchor.right,
+        "a multiline rename grows vertically without changing its label width");
+    const RECT bottom = layout::CalculateRect(
+        anchor, work, 110, layout::HeightAnchor::Bottom);
+    const RECT center = layout::CalculateRect(
+        anchor, work, 110, layout::HeightAnchor::Center);
+    Check(bottom.bottom == anchor.bottom &&
+            center.top + center.bottom == anchor.top + anchor.bottom,
+        "Dock editors grow away from the icon while retaining their anchor");
+    const RECT edgeAnchor{ -160, 954, 0, 980 };
+    const RECT edge = layout::CalculateRect(edgeAnchor, work, 110);
+    const RECT restored = layout::CalculateRect(edgeAnchor, work, 26);
+    const RECT capped = layout::CalculateRect(edgeAnchor, work, 10000);
+    const RECT expectedCap{
+        edgeAnchor.left, work.top, edgeAnchor.right, work.bottom };
+    Check(edge.bottom == work.bottom && edge.bottom - edge.top == 110 &&
+            EqualRect(&restored, &edgeAnchor) && EqualRect(&capped, &expectedCap),
+        "edge editors stay on screen and shrinking restores their original position");
+
+    const wchar_t* className = L"SnowDesktopRenameLayoutTestOwner";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = RenameLayoutTestOwnerProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    Check(RegisterClassW(&windowClass) != 0,
+        "the isolated rename layout test owner can be registered");
+    HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        className, L"", WS_POPUP, 0, 0, 1, 1,
+        nullptr, nullptr, windowClass.hInstance, nullptr);
+    Check(owner != nullptr, "the hidden rename layout test owner can be created");
+    if (!owner)
+        return;
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitorInfo);
+    const RECT available = monitorInfo.rcWork;
+    for (bool leftAligned : { false, true })
+    {
+        // Both grid and list alignment use the actual native wrapping engine.
+        // The owner stays hidden; this never launches or drives the desktop host.
+        layout::EditorLayout adaptive;
+        SetWindowLongPtrW(owner, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&adaptive));
+        const std::wstring longName = leftAligned
+            ? std::wstring(100, L'A') + L".txt"
+            : L"这是一个包含很多汉字的长文件名称需要完整显示自动换行后的所有文字以便在重命名时查看和编辑.txt";
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW,
+            L"EDIT", longName.c_str(), layout::EditStyle(leftAligned),
+            available.left + 40, available.top + 40, 160, 26,
+            owner, nullptr, windowClass.hInstance, nullptr);
+        Check(edit != nullptr, "the native multiline rename fixture can be created");
+        if (!edit)
+            continue;
+        HFONT font = CreateFontW(leftAligned ? -26 : -13,
+            0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+            MAKELPARAM(6, 6));
+        adaptive.Begin(edit);
+        RECT initial{};
+        GetWindowRect(edit, &initial);
+        RECT formatting{};
+        SendMessageW(edit, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&formatting));
+        HDC dc = GetDC(edit);
+        const HGDIOBJ previous = SelectObject(dc, font);
+        TEXTMETRICW metrics{};
+        GetTextMetricsW(dc, &metrics);
+        SelectObject(dc, previous);
+        ReleaseDC(edit, dc);
+        const LRESULT lines = SendMessageW(edit, EM_GETLINECOUNT, 0, 0);
+        Check(lines > 1 && initial.bottom - initial.top > 26 &&
+                formatting.bottom - formatting.top >= lines * metrics.tmHeight,
+            "initial Chinese and unbroken names fit all wrapped lines at different font sizes");
+
+        // EM_REPLACESEL follows the same EN_UPDATE route as native typing and
+        // paste. Do not manually invoke Update: missing wiring must fail here.
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SendMessageW(edit, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"a"));
+        RECT shortened{};
+        GetWindowRect(edit, &shortened);
+        Check(shortened.bottom - shortened.top < initial.bottom - initial.top &&
+                shortened.left == initial.left && shortened.top == initial.top,
+            "deleting a long name automatically shrinks its editor without drifting");
+        SendMessageW(edit, WM_UNDO, 0, 0);
+        RECT undone{};
+        GetWindowRect(edit, &undone);
+        Check(EqualRect(&initial, &undone) &&
+                GetWindowTextLengthW(edit) == static_cast<int>(longName.size()),
+            "undo retains the original name and restores its required editor height");
+
+        const std::wstring oversized(2000, L'W');
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SendMessageW(edit, EM_REPLACESEL, TRUE,
+            reinterpret_cast<LPARAM>(oversized.c_str()));
+        RECT overflow{};
+        GetWindowRect(edit, &overflow);
+        DWORD selectionStart = 0, selectionEnd = 0;
+        SendMessageW(edit, EM_GETSEL, reinterpret_cast<WPARAM>(&selectionStart),
+            reinterpret_cast<LPARAM>(&selectionEnd));
+        Check(overflow.top >= available.top && overflow.bottom <= available.bottom &&
+                GetWindowTextLengthW(edit) == static_cast<int>(oversized.size()) &&
+                selectionStart == oversized.size() && selectionEnd == oversized.size(),
+            "oversized names stay editable on screen without truncation or caret changes");
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SendMessageW(edit, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"a"));
+        RECT finalRect{};
+        GetWindowRect(edit, &finalRect);
+        Check(EqualRect(&shortened, &finalRect) &&
+                SendMessageW(edit, EM_GETFIRSTVISIBLELINE, 0, 0) == 0,
+            "shrinking an overflowed name restores its anchor and removes stale scrolling");
+        adaptive.Reset();
+        DestroyWindow(edit);
+        DeleteObject(font);
+        SetWindowLongPtrW(owner, GWLP_USERDATA, 0);
+    }
+    DestroyWindow(owner);
+    UnregisterClassW(className, windowClass.hInstance);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    CheckAdaptiveRenameEditor();
     CheckMenuProtectedHostPositionChanges();
     using snowdesktop::desktop_keyboard_rules::
         IsForegroundFocusReady;

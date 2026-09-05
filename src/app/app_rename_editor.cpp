@@ -26,8 +26,8 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     RECT screenRect = rect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
-    DWORD style = WS_POPUP | WS_VISIBLE | ES_AUTOVSCROLL;
-    style |= widgets_[widgetIndex].listMode ? ES_LEFT : (ES_MULTILINE | ES_CENTER | ES_WANTRETURN);
+    const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
+        widgets_[widgetIndex].listMode);
     renameEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT", widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
         screenRect.left, screenRect.top,
@@ -55,8 +55,9 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
-    SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
-        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
+    renameEditLayout_.Begin(renameEdit_);
+    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameEdit_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
             widgets_[widgetIndex].folderEntries[memberIndex].name,
@@ -120,8 +121,7 @@ bool DesktopApp::BeginDockAnchoredRename(
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT", text.c_str(),
-        WS_POPUP | WS_VISIBLE |
-            ES_CENTER | ES_AUTOHSCROLL,
+        snowdesktop::rename_edit_layout::EditStyle(),
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left,
         screenRect.bottom - screenRect.top,
@@ -154,11 +154,14 @@ bool DesktopApp::BeginDockAnchoredRename(
     SetWindowSubclass(renameEdit_,
         &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
-    SetWindowPos(renameEdit_, HWND_TOPMOST,
-        screenRect.left, screenRect.top,
-        screenRect.right - screenRect.left,
-        screenRect.bottom - screenRect.top,
-        SWP_SHOWWINDOW);
+    using snowdesktop::rename_edit_layout::HeightAnchor;
+    const auto heightAnchor = dockSettings_.position == DockPosition::Bottom
+        ? HeightAnchor::Bottom
+        : dockSettings_.position == DockPosition::Top
+            ? HeightAnchor::Top : HeightAnchor::Center;
+    renameEditLayout_.Begin(renameEdit_, heightAnchor);
+    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameEdit_, EM_SETSEL,
         0, selectionEnd);
     SetFocus(renameEdit_);
@@ -211,13 +214,8 @@ BeginRenameDockFolderPopupEntry(
         reinterpret_cast<POINT*>(
             &screenRect), 2);
 
-    DWORD style =
-        WS_POPUP | WS_VISIBLE |
-        ES_AUTOVSCROLL;
-    style |= dockFolderPopupWidget_.listMode
-        ? ES_LEFT
-        : (ES_MULTILINE | ES_CENTER |
-            ES_WANTRETURN);
+    const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
+        dockFolderPopupWidget_.listMode);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE |
             WS_EX_TOOLWINDOW |
@@ -282,15 +280,9 @@ BeginRenameDockFolderPopupEntry(
         1,
         reinterpret_cast<DWORD_PTR>(
             this));
-    SetWindowPos(
-        renameEdit_, HWND_TOPMOST,
-        screenRect.left,
-        screenRect.top,
-        screenRect.right -
-            screenRect.left,
-        screenRect.bottom -
-            screenRect.top,
-        SWP_SHOWWINDOW);
+    renameEditLayout_.Begin(renameEdit_);
+    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(
         renameEdit_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(

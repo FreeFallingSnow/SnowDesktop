@@ -89,6 +89,7 @@
 #include "ole_drag_drop_adapter.h"
 #include "popup_dwell_controller.h"
 #include "rename_controller.h"
+#include "../rename_edit_layout.h"
 #include "rename_notification_tracker.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
@@ -3763,6 +3764,7 @@ private:
     HFONT renameFont_ = nullptr;
     bool renameCommitPending_ = false;
     RenameController renameController_;
+    snowdesktop::rename_edit_layout::EditorLayout renameEditLayout_;
     /** 右键菜单或内联编辑期间强制保持可见的组件 ID。 */
     std::wstring interactionPinnedWidgetId_;
     /** @brief 开始重命名选中的项。 */
