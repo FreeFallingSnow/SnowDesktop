@@ -98,6 +98,7 @@ DWM 和驱动公共工作没有逐组件归属；本工具也不报告逐组件 
 | `widget.shared.memory/package_bitmap_bgra_bytes_estimate` | 包图片已上传位图的宽×高×4 |
 | `widget.shared.memory/shell_icon_bgra_bytes_estimate` / `shell_icon_count` | Shell 图标位图的宽×高×4 / 项数 |
 | `widget.shared.memory/text_format_count` / `private_text_format_count` / `private_font_count` / `brush_count` | 对应原生资源缓存项数，未估算这些对象的字节数 |
+| `widget.shared.memory/text_layout_cache_entries` / `text_layout_cache_input_bytes` | 声明式文字布局缓存项数 / 保留的实例、surface、节点键、文本与 locale 数据长度；不含 COM、字形、字体和分配器开销 |
 | `widget.shared.memory/background_cache_retained_bytes_estimate` / `background_cache_entries` | 背景模糊缓存的保留资源估算 / 项数 |
 
 这些资源指标重叠：实例引用不能与共享总数相加，背景缓存也可能引用同一输入图片。
@@ -105,6 +106,18 @@ DWM 和驱动公共工作没有逐组件归属；本工具也不报告逐组件 
 它们用于缩小内存差额的来源范围，不构成进程总内存的完整分账。
 采样异常记录 `profiler/widget_resources_error`，不影响宿主运行；UI 忙时仍可能延后。
 所有新增项沿用报告 schema 1 和现有 CLI，消费者应容忍未知模块和阶段。
+
+`widget.text.layout/hits_per_draw`、`misses_per_draw`、`bypasses_per_draw`
+记录一次视图绘制内的布局请求数，只输出非零项；owner 为组件实例。trace 可累加
+事件的 value 得到请求总数，不能把 group.count 当作请求数；summary 只保留
+各项的采样次数、范围和末值。`widget.view/text.layout.create` 记录未命中或回退
+时的 DirectWrite 创建与排版配置，命中时跳过该阶段。
+
+缓存以实例、surface 和节点键隔离，仅保存当前文本布局。字体对象、文本、locale、
+有效宽高、对齐、方向、斜体、行距、字距、下划线和截断方式参与匹配；颜色、透明度
+和绘制坐标仍逐帧应用。最多 128 项、64 KiB 输入数据，单条文本最多 2048 个
+UTF-16 码元；超限直接排版。该上限不是 DirectWrite 总内存上限。隐藏、卸载、
+重载、设备切换和关闭对应辅助 surface 时清理缓存，未改变 Lua view 调用频率。
 
 ## 耦合关系
 

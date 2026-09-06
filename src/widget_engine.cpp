@@ -37,6 +37,7 @@
 #include "widget_interaction_region.h"
 #include "widget_draw_geometry.h"
 #include "widget_background_cache.h"
+#include "widget_text_layout_cache.h"
 #include "widget_view_lua.h"
 #include "widget_view_tree.h"
 #include "widget_resource_lua.h"
@@ -758,6 +759,7 @@ struct D2DState
     ComPtr<ID2D1Device> bitmapDevice;
     ComPtr<ID2D1DeviceContext> immediateCommandContext;
     snowdesktop::widget_runtime::WidgetBackgroundCache backgroundCache;
+    snowdesktop::widget_runtime::WidgetTextLayoutCache textLayoutCache;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
@@ -882,6 +884,7 @@ static void ClearRuntimeImagesForWidget(
 {
     if (!state || widgetId.empty()) return;
     state->backgroundCache.Erase(widgetId);
+    state->textLayoutCache.Erase(widgetId);
     std::vector<std::string> removed;
     for (const auto& [key, resource] : state->runtimeImages)
     {
@@ -9735,6 +9738,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     if (state->bitmapDevice.Get() == device.Get()) return;
     state->bitmapDevice = std::move(device);
     state->backgroundCache.Clear();
+    state->textLayoutCache.Clear();
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
     state->runtimeImageBitmaps.clear();
@@ -18348,31 +18352,53 @@ static void DrawWidgetViewNode(D2DState* state,
             const float textHeight = content.height;
             const float layoutHeight = ViewTextLayoutHeight(
                 node, textHeight);
-            ComPtr<IDWriteTextLayout> layout;
-            if (SUCCEEDED(state->dwrite->CreateTextLayout(
-                    text.data(), static_cast<UINT32>(text.size()),
-                    format, textWidth, layoutHeight,
-                    &layout)) && layout)
-            {
-                ApplyViewTextLocaleAndDirection(layout.Get(), node, text);
+            using TextLayoutCache =
+                snowdesktop::widget_runtime::WidgetTextLayoutCache;
+            const TextLayoutCache::Options options{
+                textWidth, layoutHeight, node.fontStyle, node.textDirection,
+                node.overflowText,
+                iconNode || node.textAlign == ViewTextAlignment::Center
+                    ? DWRITE_TEXT_ALIGNMENT_CENTER
+                    : node.textAlign == ViewTextAlignment::End
+                        ? DWRITE_TEXT_ALIGNMENT_TRAILING
+                        : DWRITE_TEXT_ALIGNMENT_LEADING,
+                node.lineHeight, node.letterSpacing,
+                node.type == ViewNodeType::Link };
+            const auto layout = state->textLayoutCache.Resolve(
+                state->currentWidgetId, CurrentWidgetSurface(state), node.key,
+                format, options, text, node.locale, [&]() {
+                snowdesktop::performance::Scope scope(
+                    "widget.view", "text.layout.create", state->currentWidgetId);
+                ComPtr<IDWriteTextLayout> created;
+                if (FAILED(state->dwrite->CreateTextLayout(
+                        text.data(), static_cast<UINT32>(text.size()),
+                        format, textWidth, layoutHeight, &created)) || !created)
+                    return ComPtr<IDWriteTextLayout>{};
+                // Configuration happens only on a new layout. Cached layouts
+                // have no drawing effects and are never mutated after storage.
+                ApplyViewTextLocaleAndDirection(created.Get(), node, text);
                 if (iconNode || node.textAlign == ViewTextAlignment::Center)
-                    layout->SetTextAlignment(
+                    created->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_CENTER);
                 else if (node.textAlign == ViewTextAlignment::End)
-                    layout->SetTextAlignment(
+                    created->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_TRAILING);
                 else
-                    layout->SetTextAlignment(
+                    created->SetTextAlignment(
                         DWRITE_TEXT_ALIGNMENT_LEADING);
-                layout->SetParagraphAlignment(
+                created->SetParagraphAlignment(
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-                ApplyViewTextTypography(layout.Get(), node,
+                ApplyViewTextTypography(created.Get(), node,
                     static_cast<UINT32>(text.size()));
                 if (node.type == ViewNodeType::Link)
-                    layout->SetUnderline(TRUE,
+                    created->SetUnderline(TRUE,
                         DWRITE_TEXT_RANGE{ 0,
                             static_cast<UINT32>(text.size()) });
-                SetViewTextOverflow(state, format, layout.Get(), node);
+                SetViewTextOverflow(state, format, created.Get(), node);
+                return created;
+            });
+            if (layout)
+            {
                 DWRITE_TEXT_METRICS metrics{};
                 const float contentHeight = SUCCEEDED(
                         layout->GetMetrics(&metrics))
@@ -18511,9 +18537,11 @@ static bool DrawWidgetViewTree(D2DState* state,
 {
     snowdesktop::performance::Scope scope("widget.view", "draw",
         state ? std::wstring_view(state->currentWidgetId) : std::wstring_view{});
+    if (!state || !state->ctx) return false;
     const auto now = snowdesktop::widget_runtime::
         ViewTransitionRuntime::Clock::now();
     const auto palette = BuildWidgetViewThemePalette(state);
+    const auto textCountsBefore = state->textLayoutCache.Statistics();
     transitions.BeginFrame();
     DrawWidgetViewNode(state, tree, regions, focusedKey,
         &transitions, now, reducedMotion, palette);
@@ -18551,6 +18579,19 @@ static bool DrawWidgetViewTree(D2DState* state,
             --state->widgetClipDepth;
         }
     }
+    const auto textCountsAfter = state->textLayoutCache.Statistics();
+    if (textCountsAfter.hits != textCountsBefore.hits)
+        snowdesktop::performance::Value("widget.text.layout", "hits_per_draw",
+            state->currentWidgetId,
+            static_cast<double>(textCountsAfter.hits - textCountsBefore.hits));
+    if (textCountsAfter.misses != textCountsBefore.misses)
+        snowdesktop::performance::Value("widget.text.layout", "misses_per_draw",
+            state->currentWidgetId,
+            static_cast<double>(textCountsAfter.misses - textCountsBefore.misses));
+    if (textCountsAfter.bypasses != textCountsBefore.bypasses)
+        snowdesktop::performance::Value("widget.text.layout", "bypasses_per_draw",
+            state->currentWidgetId,
+            static_cast<double>(textCountsAfter.bypasses - textCountsBefore.bypasses));
     return transitions.HasActive();
 }
 
@@ -20796,7 +20837,11 @@ void WidgetEngine::ApplyWidgetHostVisibility(
         return;
 
     widget.hostVisible = visible;
-    if (!visible && d2dState_) d2dState_->backgroundCache.Erase(widget.widgetId);
+    if (!visible && d2dState_)
+    {
+        d2dState_->backgroundCache.Erase(widget.widgetId);
+        d2dState_->textLayoutCache.Erase(widget.widgetId);
+    }
     const auto timerNow = widget.preview
         ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
             std::chrono::milliseconds(snowdesktop::widget_runtime::
@@ -29258,6 +29303,7 @@ void WidgetEngine::CloseWidgetPanelSurface(
         IsPanelSurface(hostScrollbarDrag_.surface))
         hostScrollbarDrag_ = {};
     widget.panelActive = false;
+    if (d2dState_) d2dState_->textLayoutCache.Erase(widgetId, closingSurface);
     ApplyWidgetHostVisibility(
         widget, widget.desktopVisible || widget.panelActive ||
             widget.keepRuntimeActiveForHiddenPage);
@@ -29476,6 +29522,8 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
         shared("shell_icon_bgra_bytes_estimate", cacheBytes(d2dState_->shellIconCache));
         shared("shell_icon_count", d2dState_->shellIconCache.size());
         shared("text_format_count", d2dState_->textFormatCache.size());
+        shared("text_layout_cache_entries", d2dState_->textLayoutCache.Size());
+        shared("text_layout_cache_input_bytes", d2dState_->textLayoutCache.RetainedInputBytes());
         shared("private_text_format_count", d2dState_->privateTextFormatCache.size());
         shared("private_font_count", d2dState_->privateFonts.size());
         shared("brush_count", d2dState_->brushCache.size());

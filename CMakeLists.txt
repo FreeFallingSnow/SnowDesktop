@@ -2063,6 +2063,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp
+            tests/widget_text_layout_cache_tests.cpp
             src/widget_background_cache.cpp
             src/component_preview.cpp
             src/menu_icon_render.cpp
@@ -2070,7 +2071,7 @@ if (BUILD_TESTING)
             src/widget_preview_scene.cpp
             src/widget_preview_scene_model.cpp
         INCLUDE_DIRECTORIES src src/core
-        LINK_LIBRARIES advapi32 d2d1 d3d11 dxgi dxguid gdi32 ole32 user32 uuid windowscodecs
+        LINK_LIBRARIES advapi32 d2d1 d3d11 dwrite dxgi dxguid gdi32 ole32 user32 uuid windowscodecs
         LABELS integration ui preview)
 
     snowdesktop_add_test(
