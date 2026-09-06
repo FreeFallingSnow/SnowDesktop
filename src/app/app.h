@@ -1886,6 +1886,8 @@ private:
         const std::vector<std::wstring>& paths);
     bool RunPathAsAdministrator(
         const std::wstring& path);
+    bool RunPathAsAdministratorAfterMenu(
+        const std::wstring& path);
     void ShowPathProperties(
         const std::wstring& path);
     /** @brief 原生 Shell 菜单的模态消息循环中及时提交 DComp 更新。 */

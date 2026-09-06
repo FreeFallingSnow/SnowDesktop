@@ -913,9 +913,16 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
         break;
     }
     case kAppRunAsAdministrator:
-        if (administratorShortcut &&
-            RunPathAsAdministrator(entry.parsingName))
-            CloseQuickNavigation();
+        if (administratorShortcut)
+        {
+            const std::wstring launchPath =
+                entry.parsingName;
+            CloseQuickNavigationThen(
+                [this, launchPath]() {
+                    RunPathAsAdministratorAfterMenu(
+                        launchPath);
+                });
+        }
         break;
     case kAppCreateShortcut:
         CreateDesktopShortcutForApp(entry);
@@ -1001,9 +1008,15 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         break;
     }
     case kEverythingRunAsAdministrator:
-        if (administratorShortcut &&
-            RunPathAsAdministrator(entry.path))
-            CloseQuickNavigation();
+        if (administratorShortcut)
+        {
+            const std::wstring launchPath = entry.path;
+            CloseQuickNavigationThen(
+                [this, launchPath]() {
+                    RunPathAsAdministratorAfterMenu(
+                        launchPath);
+                });
+        }
         break;
     case kEverythingReveal:
         snowdesktop::item_location::Reveal(

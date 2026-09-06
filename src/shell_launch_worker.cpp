@@ -450,7 +450,7 @@ bool ShellLaunchWorker::ExecuteRunAsAdministrator(
 
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = SEE_MASK_ASYNCOK | SEE_MASK_FLAG_NO_UI;
+    executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
     executeInfo.hwnd = validOwner;
     executeInfo.lpVerb = L"runas";
     executeInfo.lpFile = path.c_str();

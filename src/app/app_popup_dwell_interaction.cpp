@@ -967,7 +967,8 @@ ShowDockFolderPopupContextMenu(
     case kContextRunAsAdministratorCommand:
         if (selectedPaths.size() == 1 &&
             IsAdministratorRunnablePath(selectedPaths.front()))
-            RunPathAsAdministrator(selectedPaths.front());
+            RunPathAsAdministratorAfterMenu(
+                selectedPaths.front());
         break;
     case kContextPropertiesCommand:
         if (selectedPaths.size() == 1)

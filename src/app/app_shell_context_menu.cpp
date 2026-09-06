@@ -157,7 +157,23 @@ void DesktopApp::ShowFolderEntryContextMenu(
         break;
     case kContextRunAsAdministratorCommand:
         if (canRunAsAdministrator)
-            RunPathAsAdministrator(selectedPaths.front());
+        {
+            const std::wstring launchPath =
+                selectedPaths.front();
+            if (keepQuickNavigationOpen)
+            {
+                CloseQuickNavigationThen(
+                    [this, launchPath]() {
+                        RunPathAsAdministratorAfterMenu(
+                            launchPath);
+                    });
+            }
+            else
+            {
+                RunPathAsAdministratorAfterMenu(
+                    launchPath);
+            }
+        }
         break;
     case kContextPropertiesCommand:
         if (canShowProperties)

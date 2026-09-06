@@ -85,6 +85,27 @@ bool DesktopApp::RunPathAsAdministrator(
         path);
 }
 
+bool DesktopApp::RunPathAsAdministratorAfterMenu(
+    const std::wstring& path)
+{
+    if (!IsAdministratorRunnablePath(path))
+        return false;
+
+    // The elevation worker can race the tail of the menu's input handler.
+    // Defer one UI turn so Windows has retired the active menu before the
+    // worker requests foreground access for the consent broker.
+    return uiAnimationScheduler_.ScheduleOnce(
+        1,
+        [this, path](snowdesktop::UiScheduleToken) {
+            const HWND owner = hwnd_ && IsWindow(hwnd_)
+                ? hwnd_
+                : ShellDialogOwnerHwnd();
+            if (owner)
+                SetForegroundWindow(owner);
+            RunPathAsAdministrator(path);
+        }) != 0;
+}
+
 void DesktopApp::ShowPathProperties(
     const std::wstring& path)
 {
@@ -437,7 +458,20 @@ void DesktopApp::ShowItemContextMenu(
         break;
     case kContextRunAsAdministratorCommand:
         if (canRunAsAdministrator)
-            RunPathAsAdministrator(itemPath);
+        {
+            if (keepQuickNavigationOpen)
+            {
+                CloseQuickNavigationThen(
+                    [this, itemPath]() {
+                        RunPathAsAdministratorAfterMenu(
+                            itemPath);
+                    });
+            }
+            else
+            {
+                RunPathAsAdministratorAfterMenu(itemPath);
+            }
+        }
         break;
     case kContextPropertiesCommand:
         if (canShowProperties)
