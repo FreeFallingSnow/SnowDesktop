@@ -388,20 +388,11 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         }
         const std::wstring launchPath =
             everythingEntry.path;
-        if (snowdesktop::ShellLaunchWorker::
-                ShortcutRequestsAdministrator(launchPath))
-        {
-            if (RunPathAsAdministrator(launchPath))
-                CloseQuickNavigation();
-        }
-        else
-        {
-            CloseQuickNavigationThen(
-                [this, launchPath]() {
-                    shellLaunchWorker_.Enqueue(
-                        nullptr, launchPath);
-                });
-        }
+        CloseQuickNavigationThen(
+            [this, launchPath]() {
+                LaunchPathWithShortcutPolicy(
+                    nullptr, launchPath);
+            });
         return true;
     }
 
@@ -429,38 +420,19 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
             const size_t itemIndex = entry.itemIndex;
-            if (snowdesktop::ShellLaunchWorker::
-                    ShortcutRequestsAdministrator(
-                        items_[itemIndex].parsingName))
-            {
-                if (LaunchDesktopItem(itemIndex, true))
-                    CloseQuickNavigation();
-            }
-            else
-            {
-                CloseQuickNavigationThen(
-                    [this, itemIndex]() {
-                        LaunchDesktopItem(itemIndex, true);
-                    });
-            }
+            CloseQuickNavigationThen(
+                [this, itemIndex]() {
+                    LaunchDesktopItem(itemIndex, true);
+                });
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
         {
             const std::wstring launchPath = entry.path;
-            if (snowdesktop::ShellLaunchWorker::
-                    ShortcutRequestsAdministrator(launchPath))
-            {
-                if (RunPathAsAdministrator(launchPath))
-                    CloseQuickNavigation();
-            }
-            else
-            {
-                CloseQuickNavigationThen(
-                    [this, launchPath]() {
-                        shellLaunchWorker_.Enqueue(
-                            nullptr, launchPath);
-                    });
-            }
+            CloseQuickNavigationThen(
+                [this, launchPath]() {
+                    LaunchPathWithShortcutPolicy(
+                        nullptr, launchPath);
+                });
         }
         return true;
     }
