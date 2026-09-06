@@ -203,4 +203,5 @@ Lua 结果保持、嵌套归属、跨线程隔离、失效来源、事件上限�
 [背景模糊缓存](performance_background_cache.md)、
 [视图与资源诊断](performance_view_resources.md)、
 [缺省字段查询](performance_view_presence.md)、
-[文字布局复用及后续优先级](performance_text_layout_cache.md)。
+[文字布局复用及后续优先级](performance_text_layout_cache.md)、
+[设置关闭、毛玻璃与隐藏页资源评估](performance_settings_resources.md)。
