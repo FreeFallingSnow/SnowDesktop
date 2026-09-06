@@ -399,7 +399,7 @@ Bytes Channel::Request(std::string_view name, Bytes arguments, DWORD timeoutMs)
             }
             if (!impl_->connected) throw ProtocolError("settings process disconnected");
             const auto now = GetTickCount64();
-            if (now >= deadline) throw ProtocolError("settings IPC response timed out");
+            if (now >= deadline) throw ProtocolError("settings IPC response timed out: " + std::string(name));
             HANDLE handles[] = {impl_->ready, impl_->peerProcess};
             const DWORD wait = MsgWaitForMultipleObjectsEx(2, handles,
                 static_cast<DWORD>(deadline - now), QS_SENDMESSAGE,

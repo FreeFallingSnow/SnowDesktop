@@ -155,6 +155,7 @@ void TestChannel()
         }
         catch (const std::exception& error)
         {
+            std::cerr << "IPC session iteration " << iteration << ": ";
             Check(false, error.what());
             PostThreadMessageW(GetThreadId(child.native_handle()), WM_QUIT, 0, 0);
             if (child.joinable()) child.join();

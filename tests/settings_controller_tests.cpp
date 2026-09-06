@@ -1003,23 +1003,29 @@ void TestRemoteSaveFailureKeepsSessionOpen()
     host.Open(hostRead, hostWrite, processHandle());
     BindController(host, controller);
     std::promise<DWORD> started;
+    std::atomic<int> phaseReached = 0;
     std::thread peer([&] {
         Channel ui;
         ui.Open(uiRead, uiWrite, processHandle());
         std::unique_ptr<ISettingsController> proxy;
         ui.Bind<bool, int>("test.edit", [&](int phase) {
+            phaseReached = 1;
             if (!proxy) proxy = CreateControllerProxy(ui);
+            phaseReached = 2;
             if (phase == 0)
             {
                 if (!proxy->Initialize().Succeeded() ||
                     !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded()) return false;
                 auto general = proxy->Snapshot()->values.general;
+                phaseReached = 3;
                 general.demoModeEnabled = true;
                 proxy->UpdateGeneral(general, SettingsUpdateMode::Commit);
+                phaseReached = 4;
                 return !proxy->FlushAll().Succeeded() && !proxy->CloseSession().Succeeded() &&
                     proxy->Snapshot()->sessionActive &&
                     HasSettingsDomain(proxy->Snapshot()->dirtyDomains, SettingsDomain::General);
             }
+            phaseReached = 5;
             return proxy->RetryPending() && proxy->CloseSession().Succeeded() &&
                 !proxy->Snapshot()->sessionActive;
         });
@@ -1041,6 +1047,7 @@ void TestRemoteSaveFailureKeepsSessionOpen()
     }
     catch (const std::exception& error)
     {
+        std::cerr << "Remote save test phase " << phaseReached.load() << ": ";
         Check(false, error.what());
         PostThreadMessageW(thread, WM_QUIT, 0, 0);
     }
