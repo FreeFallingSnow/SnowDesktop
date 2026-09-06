@@ -210,6 +210,17 @@ void TestProcessLifecycle()
         channel.Close();
         process.Stop();
     }
+    Channel channel;
+    SettingsProcess process;
+    process.Start(channel);
+    Check(channel.Call<bool>("test.identity", ExecutableIdentity()),
+        "supervised child starts before application shutdown simulation");
+    HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, process.ProcessId());
+    process.Stop();
+    Check(child && WaitForSingleObject(child, 5000) == WAIT_OBJECT_0,
+        "closing the application-owned job terminates the settings UI without an orphan process");
+    if (child) CloseHandle(child);
+    channel.Close();
 }
 }
 

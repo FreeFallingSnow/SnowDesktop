@@ -1029,6 +1029,29 @@ void TestRemoteSaveFailureKeepsSessionOpen()
             return proxy->RetryPending() && proxy->CloseSession().Succeeded() &&
                 !proxy->Snapshot()->sessionActive;
         });
+        ui.Bind<bool>("test.stale", [&] {
+            if (!proxy || !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded())
+                return false;
+            const auto original = proxy->Snapshot();
+            auto changed = original->values.general;
+            changed.demoModeEnabled = !changed.demoModeEnabled;
+            using Reply = std::pair<SettingsActionResult, ISettingsController::SnapshotPtr>;
+            const auto badRevision = ui.Call<Reply>("controller.UpdateGeneral", original->generation,
+                original->domainRevisions.general + 1, original->domainRevisions.systemTaskbar,
+                changed, SettingsUpdateMode::Commit);
+            const auto badGeneration = ui.Call<Reply>("controller.UpdateGeneral", original->generation + 1,
+                original->domainRevisions.general, original->domainRevisions.systemTaskbar,
+                changed, SettingsUpdateMode::Commit);
+            const auto badTaskbarRevision = ui.Call<Reply>("controller.UpdateDock", original->generation,
+                original->domainRevisions.dock, original->domainRevisions.systemTaskbar + 1,
+                original->values.dock, SettingsUpdateMode::Commit);
+            const bool unchanged = badRevision.second && badGeneration.second && badTaskbarRevision.second &&
+                badRevision.second->values.general.demoModeEnabled == original->values.general.demoModeEnabled &&
+                badGeneration.second->values.general.demoModeEnabled == original->values.general.demoModeEnabled &&
+                badTaskbarRevision.second->domainRevisions.dock == original->domainRevisions.dock;
+            return !badRevision.first.Succeeded() && !badGeneration.first.Succeeded() &&
+                !badTaskbarRevision.first.Succeeded() && unchanged && proxy->CloseSession().Succeeded();
+        });
         ui.Bind<void>("test.quit", [] { PostQuitMessage(0); });
         started.set_value(GetCurrentThreadId());
         MSG message{};
@@ -1043,6 +1066,8 @@ void TestRemoteSaveFailureKeepsSessionOpen()
         store->failingDomains = SettingsDomain::None;
         Check(host.Call<bool>("test.edit", 1) && store->lastSavedGeneral.demoModeEnabled,
             "remote retry closes only after authoritative host persistence succeeds");
+        Check(host.Call<bool>("test.stale"),
+            "remote stale domain, generation and system taskbar edits cannot overwrite authoritative state");
         host.Notify("test.quit");
     }
     catch (const std::exception& error)
