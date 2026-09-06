@@ -77,6 +77,35 @@ DWM 和驱动公共工作没有逐组件归属；本工具也不报告逐组件 
 设置页面记录打开、导航、快照应用等宿主阶段，XAML 后续布局/呈现不等于这些同步
 方法的返回时间，需要进一步的 WPR/WPA XAML 跟踪。
 
+### 视图阶段和图片资源
+
+`lua/context.arguments` 单独记录生命周期回调的宿主参数构造，
+`lua/view.parse` 记录 Lua 表到原生视图树的解析，`widget.view/layout` 记录验证和布局，
+`widget.view/draw` 记录视图树原生绘制。前两个使用 `lua` 分类以继承调用方实例，
+不表示它们是纯 Lua VM 时间。`widget/context` 仍覆盖整个执行上下文生命周期，
+其 self 值不是上下文构造时间。作用域会嵌套，不能把 inclusive 时间全部相加。
+
+仅在显式采集期间，UI 线程约每秒补充图片资源采样；关闭后不遍历缓存或分配统计表：
+
+| 模块 / 指标 | 口径 |
+|---|---|
+| `widget.memory/runtime_image_sources` | 实例注册的运行时图片令牌数量 |
+| `widget.memory/runtime_image_referenced_bytes` | 实例引用的像素数据长度，同实例按像素对象去重；不同实例可以共享 |
+| `widget.memory/runtime_bitmap_bgra_bytes_estimate` | 实例令牌对应的已上传位图宽×高×4 |
+| `widget.shared.memory/runtime_image_unique_bytes` | 所有实例运行时像素按对象去重的总数据长度 |
+| `widget.shared.memory/runtime_bitmap_bgra_bytes_estimate` | 全部运行时位图宽×高×4，包括无法关联到当前实例的位图 |
+| `widget.shared.memory/package_image_decoded_bytes` / `package_image_sources` | 包图片缓存的解码数据长度 / 项数 |
+| `widget.shared.memory/package_bitmap_bgra_bytes_estimate` | 包图片已上传位图的宽×高×4 |
+| `widget.shared.memory/shell_icon_bgra_bytes_estimate` / `shell_icon_count` | Shell 图标位图的宽×高×4 / 项数 |
+| `widget.shared.memory/text_format_count` / `private_text_format_count` / `private_font_count` / `brush_count` | 对应原生资源缓存项数，未估算这些对象的字节数 |
+| `widget.shared.memory/background_cache_retained_bytes_estimate` / `background_cache_entries` | 背景模糊缓存的保留资源估算 / 项数 |
+
+这些资源指标重叠：实例引用不能与共享总数相加，背景缓存也可能引用同一输入图片。
+像素长度不含容器容量、分配器和驱动开销；位图估算不是实际显存驻留。
+它们用于缩小内存差额的来源范围，不构成进程总内存的完整分账。
+采样异常记录 `profiler/widget_resources_error`，不影响宿主运行；UI 忙时仍可能延后。
+所有新增项沿用报告 schema 1 和现有 CLI，消费者应容忍未知模块和阶段。
+
 ## 耦合关系
 
 CLI 默认 `-Mode summary`：保留进程/GPU/组件资源、调用次数及嵌套耗时汇总，

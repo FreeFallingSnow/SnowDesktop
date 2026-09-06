@@ -2351,6 +2351,7 @@ static bool ValidateAndLayoutWidgetView(
     const LuaWidget& widget, std::string_view surface,
     float width, float height, std::string& error)
 {
+    snowdesktop::performance::Scope scope("widget.view", "layout", widget.widgetId);
     AttachVariableVirtualMeasurements(root, widget, surface);
     return snowdesktop::widget_runtime::ValidateAndLayoutViewTree(
         root, width, height, error);
@@ -18508,6 +18509,8 @@ static bool DrawWidgetViewTree(D2DState* state,
     snowdesktop::widget_runtime::ViewTransitionRuntime& transitions,
     bool reducedMotion)
 {
+    snowdesktop::performance::Scope scope("widget.view", "draw",
+        state ? std::wstring_view(state->currentWidgetId) : std::wstring_view{});
     const auto now = snowdesktop::widget_runtime::
         ViewTransitionRuntime::Clock::now();
     const auto palette = BuildWidgetViewThemePalette(state);
@@ -29409,6 +29412,81 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
         result.push_back(std::move(entry));
     }
     return result;
+}
+
+void WidgetEngine::RecordPerformanceResources() const noexcept
+{
+    if (!snowdesktop::performance::Enabled() || !d2dState_) return;
+    try
+    {
+        using snowdesktop::performance::Value;
+        using Pixels = snowdesktop::widget_runtime::WidgetRuntimeImagePixels;
+        snowdesktop::performance::Scope scope("profiler", "sample.widget.resources");
+        struct Usage
+        {
+            std::size_t sources = 0, pixelBytes = 0, bitmapBytes = 0;
+            std::unordered_set<const Pixels*> pixels;
+        };
+        std::map<std::wstring_view, Usage> owners;
+        for (const auto& widget : widgets_) owners.try_emplace(widget.widgetId);
+        std::unordered_set<const Pixels*> uniquePixels;
+        std::size_t pixelBytes = 0;
+        for (const auto& [key, resource] : d2dState_->runtimeImages)
+        {
+            auto& owner = owners[resource.ownerWidgetId];
+            ++owner.sources;
+            if (!resource.pixels) continue;
+            const auto* pixels = resource.pixels.get();
+            const auto bytes = pixels->bgraPremultiplied.size();
+            if (owner.pixels.insert(pixels).second) owner.pixelBytes += bytes;
+            if (uniquePixels.insert(pixels).second) pixelBytes += bytes;
+        }
+        const auto bitmapBytes = [](ID2D1Bitmap* bitmap) -> std::size_t {
+            if (!bitmap) return 0;
+            const auto size = bitmap->GetPixelSize();
+            return std::size_t(size.width) * size.height * 4;
+        };
+        const auto cacheBytes = [&](const auto& cache) {
+            std::size_t bytes = 0;
+            for (const auto& [key, bitmap] : cache) bytes += bitmapBytes(bitmap.Get());
+            return bytes;
+        };
+        for (const auto& [key, bitmap] : d2dState_->runtimeImageBitmaps)
+        {
+            const auto source = d2dState_->runtimeImages.find(key);
+            if (source != d2dState_->runtimeImages.end())
+                owners[source->second.ownerWidgetId].bitmapBytes += bitmapBytes(bitmap.Get());
+        }
+        for (const auto& [id, usage] : owners)
+        {
+            Value("widget.memory", "runtime_image_sources", id, static_cast<double>(usage.sources));
+            Value("widget.memory", "runtime_image_referenced_bytes", id, static_cast<double>(usage.pixelBytes));
+            Value("widget.memory", "runtime_bitmap_bgra_bytes_estimate", id, static_cast<double>(usage.bitmapBytes));
+        }
+        const auto shared = [](std::string_view name, std::size_t value) {
+            Value("widget.shared.memory", name, {}, static_cast<double>(value));
+        };
+        // Source pixels can be shared across owners. Report their deduplicated
+        // total separately; owner rows are references, not exclusive ownership.
+        shared("runtime_image_unique_bytes", pixelBytes);
+        shared("runtime_bitmap_bgra_bytes_estimate", cacheBytes(d2dState_->runtimeImageBitmaps));
+        shared("package_image_decoded_bytes", d2dState_->packageImageCache.Bytes());
+        shared("package_image_sources", d2dState_->packageImageCache.Size());
+        shared("package_bitmap_bgra_bytes_estimate", cacheBytes(d2dState_->imageCache));
+        shared("shell_icon_bgra_bytes_estimate", cacheBytes(d2dState_->shellIconCache));
+        shared("shell_icon_count", d2dState_->shellIconCache.size());
+        shared("text_format_count", d2dState_->textFormatCache.size());
+        shared("private_text_format_count", d2dState_->privateTextFormatCache.size());
+        shared("private_font_count", d2dState_->privateFonts.size());
+        shared("brush_count", d2dState_->brushCache.size());
+        shared("background_cache_retained_bytes_estimate", d2dState_->backgroundCache.RetainedBytes());
+        shared("background_cache_entries", d2dState_->backgroundCache.Size());
+    }
+    catch (...)
+    {
+        // Diagnostic allocation failure must not change the running desktop.
+        snowdesktop::performance::Value("profiler", "widget_resources_error", {}, 1);
+    }
 }
 
 // ── List available widget scripts ────────────────────────────────

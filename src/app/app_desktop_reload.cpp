@@ -417,6 +417,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 auto* app = static_cast<DesktopApp*>(context);
                 snowdesktop::performance::Scope sample("profiler", "sample.widgets");
                 if (!app->widgetEngine_) return;
+                app->widgetEngine_->RecordPerformanceResources();
                 for (const auto& widget : app->widgetEngine_->GetWidgets())
                 {
                     using snowdesktop::performance::Value;

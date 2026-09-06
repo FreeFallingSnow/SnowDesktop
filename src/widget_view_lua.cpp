@@ -1,6 +1,7 @@
 #include "widget_view_lua.h"
 #include "widget_view_contract.h"
 #include "widget_resource_lua.h"
+#include "performance_trace.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3443,6 +3444,8 @@ int MakeNode(lua_State* state, const char* type)
 bool ParseLuaViewTree(lua_State* state, int index, ViewNode& root,
     std::string& error)
 {
+    // Native Lua-table parsing; owner follows the enclosing widget context.
+    snowdesktop::performance::Scope scope("lua", "view.parse");
     error.clear();
     std::size_t parsedNodes = 0;
     return ParseNode(state, index, root, 0, parsedNodes, error);

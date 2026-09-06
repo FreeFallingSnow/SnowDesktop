@@ -1074,6 +1074,8 @@ public:
      * @return 诊断条目数组
      */
     std::vector<WidgetDiagnosticEntry> GetWidgetDiagnostics() const;
+    // Internal UI-thread probe callback; does no work while capture is off.
+    void RecordPerformanceResources() const noexcept;
     std::string GetSystemSnapshotError() const;
 
     /**
