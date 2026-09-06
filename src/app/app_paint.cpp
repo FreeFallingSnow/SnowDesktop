@@ -99,14 +99,13 @@ void DesktopApp::OnPaint(const RECT* updateRect)
                 desktopMarqueeActive,
                 dcompUpdate,
                 clientRect);
+    desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
     if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
     {
         desktopBackdropCompositor_.RemovePanel(
             GetStandaloneWidgetFrameRect(
                 widgets_[mouseDownWidgetIndex_]));
     }
-    desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
-
     RenderFrame(
         context.Get(),
         forceCompleteGlassCollection ? nullptr : dcompUpdate,

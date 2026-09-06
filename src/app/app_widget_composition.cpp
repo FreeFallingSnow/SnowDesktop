@@ -503,6 +503,25 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         (void)item.clip->SetBottom(
             visible ? static_cast<float>(item.height) : 0.0f);
     }
+    if (!visible)
+    {
+        // Retaining pixels briefly must not keep a native animation running
+        // behind a zero-sized clip. The next draw uses the retained phase/time.
+        const auto marquees = widgetMarqueeCompositionItems_.find(widgetId);
+        if (marquees != widgetMarqueeCompositionItems_.end())
+        {
+            for (auto& [_, marquee] : marquees->second)
+            {
+                if (marquee.textVisual && marquee.scrolling &&
+                    FAILED(marquee.textVisual->SetOffsetX(0.0f)))
+                {
+                    desktopWidgetCompositionFailurePending_ = true;
+                    if (hwnd_ && IsWindow(hwnd_))
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            }
+        }
+    }
 }
 
 void DesktopApp::KeepDesktopWidgetBackdropPanels()
