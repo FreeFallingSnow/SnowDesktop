@@ -7,7 +7,9 @@ param(
     [string]$OutputDirectory,
     [string]$Session,
     [string]$ReportPath,
-    [string]$BaselinePath
+    [string]$BaselinePath,
+    [ValidateSet('summary', 'trace')][string]$Mode = 'summary',
+    [switch]$ScopeCpu
 )
 
 Set-StrictMode -Version Latest
@@ -40,10 +42,10 @@ function Get-Summary($Report) {
             module = $_.module; phase = $_.phase; owner = $_.owner; calls = $_.count
             callsPerSecond = if ($seconds -gt 0) { $_.count / $seconds } else { $null }
             wallMs = $_.wallMs; selfWallMs = $_.selfWallMs
-            selfCpuMs = $_.selfCpuMs; cpuSamples = $_.cpuSamples
+            selfCpuMs = if ($_.cpuSamples -gt 0) { $_.selfCpuMs } else { $null }; cpuSamples = $_.cpuSamples
             p95WallUpperMs = $_.p95WallUpperMs; maxWallMs = $_.maxWallMs
         }
-    } | Sort-Object selfCpuMs -Descending)
+    } | Sort-Object selfWallMs -Descending)
     $cpuSamples = @($Report.groups | Where-Object {
         $_.module -eq 'process' -and $_.phase -eq 'cpu_total_ms'
     })
@@ -58,6 +60,8 @@ function Get-Summary($Report) {
     }
     [pscustomobject]@{
         schemaVersion = 1; session = $Report.session; hostVersion = $Report.hostVersion
+        captureMode = if ($Report.PSObject.Properties['captureMode']) { $Report.captureMode } else { 'trace' }
+        scopeCpuEnabled = if ($Report.PSObject.Properties['scopeCpuEnabled']) { $Report.scopeCpuEnabled } else { $true }
         processId = $Report.processId; durationMs = $Report.durationMs
         processCpuPercent = $cpuPercent; processCpuSampleWindowMs = $cpuWindowMs
         droppedEvents = $Report.droppedEvents; droppedGroups = $Report.droppedGroups
@@ -81,6 +85,9 @@ function Export-Summary([string]$Path) {
 }
 
 try {
+    if ($Command -in @('capture', 'start') -and $ScopeCpu -and $Mode -ne 'trace') {
+        throw 'ScopeCpu requires -Mode trace.'
+    }
     if ($Command -eq 'report') {
         Export-Summary $ReportPath | ConvertTo-Json -Compress
         exit 0
@@ -98,8 +105,10 @@ try {
             $old = $keys[$key]
             [pscustomobject]@{
                 module = $_.module; phase = $_.phase; owner = $_.owner
-                baselineSelfCpuMsPerSecond = if ($old) { $old.selfCpuMs * 1000 / $before.durationMs } else { $null }
-                currentSelfCpuMsPerSecond = $_.selfCpuMs * 1000 / $after.durationMs
+                baselineSelfCpuMsPerSecond = if ($old -and $null -ne $old.selfCpuMs) { $old.selfCpuMs * 1000 / $before.durationMs } else { $null }
+                currentSelfCpuMsPerSecond = if ($null -ne $_.selfCpuMs) { $_.selfCpuMs * 1000 / $after.durationMs } else { $null }
+                baselineSelfWallMsPerSecond = if ($old) { $old.selfWallMs * 1000 / $before.durationMs } else { $null }
+                currentSelfWallMsPerSecond = $_.selfWallMs * 1000 / $after.durationMs
                 baselineCallsPerSecond = if ($old) { $old.callsPerSecond } else { $null }
                 currentCallsPerSecond = $_.callsPerSecond
                 baselineP95WallUpperMs = if ($old) { $old.p95WallUpperMs } else { $null }
@@ -108,6 +117,8 @@ try {
         })
         [pscustomobject]@{ schemaVersion = 1; baselineSession = $before.session
             currentSession = $after.session; scopes = $rows
+            baselineMode = $before.captureMode; currentMode = $after.captureMode
+            sameProbeConfiguration = ($before.captureMode -eq $after.captureMode -and $before.scopeCpuEnabled -eq $after.scopeCpuEnabled)
             note = 'Only matched instance IDs are comparable. Keep workload, machine and display configuration equal; timings are instrumented observations, not proof of causality.'
         } | ConvertTo-Json -Depth 8
         exit 0
@@ -197,11 +208,12 @@ public static class SnowDesktopPerformanceClient {
     $metadata = [pscustomobject]@{ schemaVersion = 1; session = $sessionId; processId = $hostPid
         executable = $hostProcess.Path; startedUtc = [DateTime]::UtcNow.ToString('o')
         executableSha256 = Get-ExecutableSha256 $hostProcess.Path
-        seconds = $Seconds; report = $capturePath; osVersion = [Environment]::OSVersion.VersionString }
+        seconds = $Seconds; captureMode = $Mode; scopeCpuEnabled = [bool]$ScopeCpu
+        report = $capturePath; osVersion = [Environment]::OSVersion.VersionString }
     Write-JsonFile $metadata $metadataPath
-    $request = @('1', 'start', $sessionId, [string]$Seconds, $capturePath) -join "`n"
+    $request = @('2', 'start', $sessionId, [string]$Seconds, $capturePath, $Mode, $(if ($ScopeCpu) { '1' } else { '0' })) -join "`n"
     if ([SnowDesktopPerformanceClient]::Request($window, $request) -ne 1) {
-        throw 'Capture was rejected (busy, invalid options, output reservation or sampler setup failure). See session.json and any .partial file.'
+        throw 'Capture was rejected (older host without v2 capture modes, busy, invalid options, output reservation or sampler setup failure). See session.json and any .partial file.'
     }
     if ($Command -eq 'start') { $metadata | ConvertTo-Json -Compress; exit 0 }
 

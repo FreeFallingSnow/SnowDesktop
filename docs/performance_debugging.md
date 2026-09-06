@@ -17,6 +17,12 @@ scripts/profile.bat status
 # 在现有耦合场景中采集 60 秒，到期生成报告和摘要
 scripts/profile.bat capture -Seconds 60
 
+# 定位同步调用链、任务关联或刷新来源时，短时使用详细模式
+scripts/profile.bat capture -Seconds 10 -Mode trace
+
+# 仅在需要时增加逐作用域 CPU 查询（短调用仍受计时量化影响）
+scripts/profile.bat capture -Seconds 10 -Mode trace -ScopeCpu
+
 # 非阻塞启动，JSON 返回 session、processId、report 等字段
 scripts/profile.bat start -Seconds 120 -TargetProcessId 1234
 
@@ -45,7 +51,7 @@ scripts/profile.bat compare -BaselinePath <旧capture.json> -ReportPath <新capt
 
 - `session.json`：启动时间、目标 PID、可执行文件路径/哈希、操作系统及输出路径。
 - `capture.json`：schema 1、宿主版本、时长、聚合统计、带线程/父级/关联 ID 的事件。
-- `summary.json`：CPU 比例、按自身 CPU 时间排序的阶段及全部资源指标。
+- `summary.json`：进程 CPU 比例、按 self 墙钟耗时排序的阶段及全部资源指标。
 - `scopes.csv` / `gauges.csv`：可供脚本、表格或分析程序读取的汇总。
 
 宿主先独占创建 `capture.json.partial`，完整写入并关闭后才发布 `capture.json`。
@@ -73,6 +79,23 @@ DWM 和驱动公共工作没有逐组件归属；本工具也不报告逐组件 
 
 ## 耦合关系
 
+CLI 默认 `-Mode summary`：保留进程/GPU/组件资源、调用次数及嵌套耗时汇总，
+不保存逐事件时间线、任务关联或刷新来源。作用域标签按线程分组复用，只在首次
+出现时分配并转换；作用域汇总不经过全局追踪锁，不查询线程 CPU。线程缓冲使用
+局部锁保护停止/导出的并发边界，不是无锁实现。最多 64 个线程缓冲、4096 个线程
+分组；合并后的报告也限制为 4096 组，超限计入 `droppedGroups`。
+
+`-Mode trace` 保留下面描述的完整来源关联，默认也不查询逐作用域 CPU；
+`-ScopeCpu` 只允许配合 trace。进程 CPU 始终由累计计数差分取得。
+`cpuSamples=0` / `cpuAvailable=false` 表示该作用域 CPU 未测量；脚本在摘要与
+比较中输出 `null`，不能将其解释为零成本。排行使用 self 墙钟耗时。
+比较输出 `sameProbeConfiguration` 提醒两份报告的模式及 CPU 查询设置是否一致。
+
+报告 schemaVersion 仍为 1，新增 `captureMode`、`scopeCpuEnabled`、
+`timelinePolicy`。summary 的 `events=[]`、`timelinePolicy=none` 是主动省略，
+不计为 `droppedEvents`。停止后释放无在途作用域引用的缓冲；跨停止边界的作用域
+持有自身缓冲到退出，且不会写入下一会话。关闭模式不构造 ScopeToken。
+
 `events.id` 为会话内事件 ID，`parent` 为同步父作用域，`thread` 为线程 ID。
 Lua `protectedCall` 从宿主组件执行上下文继承实例 owner。
 `task.start`、`task.dispatch`、`task.completion` 的 `correlation` 是同一任务 ID；
@@ -89,7 +112,7 @@ Lua `protectedCall` 从宿主组件执行上下文继承实例 owner。
 `droppedGroups` 和 `droppedLinks`。时间线满后既有组继续汇总，因此 CPU/资源
 摘要不依赖被截断的事件。跨采集边界尚未结束的作用域不计入该次报告。
 
-## 控制协议 v1
+## 控制协议 v1 / v2
 
 此接口用于本机自动化，不是 Lua 公共 API，不要求更改组件 `apiVersion`、
 `minHostVersion` 或 capability。既有组件不需要修改；旧宿主不支持时客户端拒绝执行。
@@ -101,6 +124,11 @@ Lua `protectedCall` 从宿主组件执行上下文继承实例 owner。
   正好五行：`1`、`start|stop`、session、秒数、输出 JSON 绝对路径。
   stop 的最后两行为空；session 为 1～64 个 ASCII 字母/数字/连字符。
 - 命令返回 1 表示接受，0 表示拒绝；start 不接受覆盖已有报告或 partial。
+- v2 使用同一消息入口和 COPYDATA tag，载荷正好七行：`2`、`start`、session、
+  秒数、输出 JSON 绝对路径、`summary|trace`、`0|1`（逐作用域 CPU 开关）。
+  summary 必须使用 `0`。新 CLI 使用 v2 start；stop 继续使用兼容的 v1 请求。
+- 旧 v1 start 保留 trace + 逐作用域 CPU 查询行为，不静默改变已有自动化的结果。
+  v2 在旧宿主被明确拒绝；客户端不会把轻量采集静默降级成高开销的 v1 追踪。
 - 标准 Windows 窗口消息权限边界适用，客户端不会修改 UIPI 或申请管理员权限。
 
 ## 验证与优化
@@ -111,6 +139,17 @@ Lua 结果保持、嵌套归属、跨线程隔离、失效来源、事件上限�
 这些用例加入已有诊断测试目标，不新增测试程序。
 `SnowDesktopWidgetRuntimeDiagnosticsTests.exe --performance-control-fixture` 提供
 仅用于协议验证的不可见控制窗口，按 PID 定向连接；它不验证真实桌面交互。
+
+已有诊断测试程序还提供显式开销基准：
+
+```powershell
+.build/Release/tests/SnowDesktopWidgetRuntimeDiagnosticsTests.exe --performance-overhead <尚不存在的输出目录>
+```
+
+基准轮换运行 off、summary、trace、trace-cpu，每种配置三轮；每轮预热后计时
+10000 次嵌套调用，共 40000 个作用域，并输出 JSONL 及采集报告。计时区间不含
+采样器初始化和报告导出，不是应用的 CPU/GPU 降幅，也不替代真实场景复测。
+基准不会作为 CTest 的时间阈值断言，避免把机器负载波动当作功能回归。
 
 先在相同机器、显示器配置和工作负载下记录多次基线，再一次修改一个热点。
 资源下降须同时检查交互、动画、提醒及更新行为。实际桌面视觉、框选、拖放、Dock

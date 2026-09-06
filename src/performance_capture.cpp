@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -102,6 +103,34 @@ struct Aggregate
 };
 using GroupKey = std::tuple<bool, std::string, std::string, std::string>;
 
+using SummaryKey = std::tuple<std::string, std::string, std::wstring>;
+struct SummaryKeyLess
+{
+    using is_transparent = void;
+    template<typename A, typename B> bool operator()(const A& a, const B& b) const
+    {
+        const auto view = [](const auto& key) {
+            return std::tuple<std::string_view, std::string_view, std::wstring_view>{
+                std::get<0>(key), std::get<1>(key), std::get<2>(key) };
+        };
+        return view(a) < view(b);
+    }
+};
+struct SummaryGroup
+{
+    std::string ownerUtf8;
+    const std::wstring* owner = nullptr;
+    Aggregate aggregate;
+};
+struct SummaryBuffer
+{
+    std::uint64_t generation = 0;
+    std::mutex mutex;
+    std::map<SummaryKey, SummaryGroup, SummaryKeyLess> groups;
+};
+thread_local std::weak_ptr<SummaryBuffer> localSummary;
+std::atomic<std::uint64_t> summaryGeneration{ 0 };
+
 struct State
 {
     std::mutex mutex;
@@ -116,6 +145,9 @@ struct State
     CaptureOptions options;
     std::vector<Event> events;
     std::map<GroupKey, Aggregate> groups;
+    std::vector<std::shared_ptr<SummaryBuffer>> summaryBuffers;
+    std::atomic<std::size_t> summaryGroupCount{ 0 };
+    std::atomic<std::uint64_t> summaryDroppedGroups{ 0 };
     std::map<std::pair<std::string, std::string>, std::vector<std::uint64_t>> drawOrigins;
     std::uint64_t droppedLinks = 0;
     HANDLE output = INVALID_HANDLE_VALUE;
@@ -167,6 +199,7 @@ void RecordLocked(Event event)
         }
         ++group.histogram[bucket];
     }
+    if (state.options.mode == CaptureMode::Summary) return;
     if (state.events.size() < state.options.maximumEvents)
         state.events.push_back(std::move(event));
     else ++state.droppedEvents;
@@ -195,7 +228,7 @@ void BeginScope(ScopeToken& token, std::string_view module,
         token.id = ++state.nextId;
         token.correlation = correlation;
         token.thread = GetCurrentThreadId();
-        token.cpuAvailable = ThreadCpu(token.cpuStart);
+        token.cpuAvailable = state.options.scopeCpu && ThreadCpu(token.cpuStart);
         token.start = Nanoseconds();
         currentScope = &token;
     }
@@ -207,7 +240,7 @@ void EndScope(ScopeToken& token) noexcept
     if (!token.generation) return;
     const std::uint64_t ended = Nanoseconds();
     std::uint64_t cpuEnd = 0;
-    const bool hasCpu = ThreadCpu(cpuEnd) && token.cpuAvailable;
+    const bool hasCpu = token.cpuAvailable && ThreadCpu(cpuEnd);
     currentScope = token.previous;
     const auto wall = ended - token.start;
     const auto cpu = hasCpu && cpuEnd >= token.cpuStart
@@ -306,7 +339,123 @@ void RecordDrawLink(std::string_view surface, std::wstring_view owner,
     }
     catch (...) { /* Best-effort causality must not affect invalidation. */ }
 }
-const Hooks hooks{ BeginScope, EndScope, RecordValue, RecordDrawLink };
+void BeginSummary(ScopeToken& token, std::string_view module,
+    std::string_view phase, std::wstring_view owner, std::uint64_t) noexcept
+{
+    try
+    {
+        const auto generation = summaryGeneration.load(std::memory_order_acquire);
+        if (!generation) return;
+        auto bufferRef = localSummary.lock();
+        if (!bufferRef || bufferRef->generation != generation)
+        {
+            std::lock_guard lock(state.mutex);
+            if (!state.recording || state.generation != generation) return;
+            if (state.summaryBuffers.size() >= 64)
+            { ++state.summaryDroppedGroups; return; }
+            auto buffer = std::make_shared<SummaryBuffer>();
+            buffer->generation = generation;
+            state.summaryBuffers.push_back(buffer);
+            bufferRef = std::move(buffer);
+            localSummary = bufferRef;
+        }
+        module = module.substr(0, 256);
+        phase = phase.substr(0, 512);
+        owner = owner.substr(0, 256);
+        if (owner.empty() && module == "lua" && currentScope &&
+            currentScope->generation == generation && currentScope->summaryGroup)
+            owner = *static_cast<SummaryGroup*>(currentScope->summaryGroup)->owner;
+        auto& buffer = *bufferRef;
+        std::lock_guard lock(buffer.mutex);
+        if (summaryGeneration.load(std::memory_order_relaxed) != generation) return;
+        auto found = buffer.groups.find(std::tuple{ module, phase, owner });
+        if (found == buffer.groups.end())
+        {
+            if (state.summaryGroupCount.fetch_add(1) >= MaximumGroups)
+            {
+                --state.summaryGroupCount;
+                ++state.summaryDroppedGroups;
+                return;
+            }
+            found = buffer.groups.try_emplace(SummaryKey{
+                std::string(module), std::string(phase), std::wstring(owner) }).first;
+            found->second.owner = &std::get<2>(found->first);
+            found->second.ownerUtf8 = Utf8(owner);
+        }
+        token.generation = generation;
+        token.summaryGroup = &found->second;
+        token.summaryBuffer = &buffer;
+        token.summaryStorage = std::move(bufferRef);
+        token.previous = currentScope;
+        token.start = Nanoseconds();
+        currentScope = &token;
+    }
+    catch (...) { ++state.summaryDroppedGroups; }
+}
+
+void EndSummary(ScopeToken& token) noexcept
+{
+    if (!token.generation) return;
+    const auto ended = Nanoseconds();
+    currentScope = token.previous;
+    if (summaryGeneration.load(std::memory_order_acquire) != token.generation) return;
+    const auto wall = ended - token.start;
+    if (token.previous && token.previous->generation == token.generation)
+        token.previous->childWall += wall;
+    try
+    {
+        auto& buffer = *static_cast<SummaryBuffer*>(token.summaryBuffer);
+        std::lock_guard lock(buffer.mutex);
+        if (summaryGeneration.load(std::memory_order_relaxed) != token.generation) return;
+        auto& group = static_cast<SummaryGroup*>(token.summaryGroup)->aggregate;
+        ++group.count;
+        group.wall += wall;
+        group.selfWall += wall - std::min(wall, token.childWall);
+        group.maximumWall = std::max(group.maximumWall, wall);
+        std::size_t bucket = 0;
+        std::uint64_t upper = 1000;
+        while (wall > upper && bucket + 1 < group.histogram.size())
+        { ++bucket; upper *= 2; }
+        ++group.histogram[bucket];
+    }
+    catch (...) { ++state.summaryDroppedGroups; }
+}
+
+// Summary scopes retain per-thread aggregates only. Labels are interned once
+// per group; hot calls do not allocate, transcode UTF-16, query thread CPU or
+// contend on the global trace lock. A buffer lock protects stop/export races.
+void MergeSummariesLocked()
+{
+    state.droppedGroups += state.summaryDroppedGroups.load();
+    for (const auto& buffer : state.summaryBuffers)
+    {
+        std::lock_guard lock(buffer->mutex);
+        for (const auto& [key, source] : buffer->groups)
+        {
+            if (!source.aggregate.count) continue;
+            GroupKey targetKey{ false, std::get<0>(key), std::get<1>(key), source.ownerUtf8 };
+            auto found = state.groups.find(targetKey);
+            if (found == state.groups.end() && state.groups.size() >= MaximumGroups)
+            { state.droppedGroups += source.aggregate.count; continue; }
+            if (found == state.groups.end())
+                found = state.groups.emplace(std::move(targetKey), Aggregate{}).first;
+            auto& target = found->second;
+            const auto& group = source.aggregate;
+            target.count += group.count;
+            target.wall += group.wall;
+            target.selfWall += group.selfWall;
+            target.maximumWall = std::max(target.maximumWall, group.maximumWall);
+            for (std::size_t i = 0; i < group.histogram.size(); ++i)
+                target.histogram[i] += group.histogram[i];
+        }
+        // Scope tokens own their buffer across stop; inactive threads retain
+        // only a weak reference, so stopping releases unused group storage.
+    }
+}
+
+void IgnoreDrawLink(std::string_view, std::wstring_view, bool) noexcept {}
+const Hooks traceHooks{ BeginScope, EndScope, RecordValue, RecordDrawLink };
+const Hooks summaryHooks{ BeginSummary, EndSummary, RecordValue, IgnoreDrawLink };
 
 class GpuSampler
 {
@@ -400,6 +549,9 @@ std::string Report()
     out.imbue(std::locale::classic());
     out << std::setprecision(12);
     out << "{\"schemaVersion\":1,\"session\":" << Quote(state.options.session)
+        << ",\"captureMode\":" << Quote(state.options.mode == CaptureMode::Summary ? "summary" : "trace")
+        << ",\"scopeCpuEnabled\":" << (state.options.scopeCpu ? "true" : "false")
+        << ",\"timelinePolicy\":" << Quote(state.options.mode == CaptureMode::Summary ? "none" : "prefix")
         << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
         << ",\"processId\":" << GetCurrentProcessId()
         << ",\"logicalProcessors\":" << GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)
@@ -411,12 +563,12 @@ std::string Report()
         << ",\"droppedLinks\":" << state.droppedLinks
         << ",\"probeErrors\":" << state.probeErrors
         << ",\"limitations\":["
-           "\"Scope CPU uses GetThreadTimes; short calls can quantize to zero.\","
+           "\"Scope CPU is optional; cpuSamples=0 means unavailable, not zero CPU. Enabled short-call CPU can quantize to zero.\","
            "\"Self timings exclude instrumented synchronous children only; inclusive rows overlap.\","
            "\"Task correlations are lifecycle links, not asynchronous CPU ownership.\","
            "\"GPU counters are per process/engine; shared DWM work and per-widget GPU time are not attributed.\","
            "\"Lua bytes exclude native heaps, textures and shared caches; surface bytes are estimates.\","
-           "\"The bounded timeline retains its prefix; aggregates continue after it fills.\","
+           "\"Trace mode retains a bounded timeline prefix; summary mode intentionally omits events and draw-source links.\","
            "\"Scopes spanning capture boundaries are omitted; counters are sampled, not exact peaks.\","
            "\"Profiler overhead is included in process totals; instrumentation itself is not fully timed.\"],\"groups\":[";
     bool comma = false;
@@ -501,12 +653,14 @@ void Worker() noexcept
         }
     }
     catch (...) { ++state.probeErrors; }
+    summaryGeneration.store(0, std::memory_order_release);
     captureHooks.store(nullptr, std::memory_order_release);
     {
         std::lock_guard lock(state.mutex);
         state.recording = false;
         state.ended = Nanoseconds();
         state.status.store(ProtocolFinishing);
+        if (state.options.mode == CaptureMode::Summary) MergeSummariesLocked();
     }
     try
     {
@@ -528,6 +682,7 @@ void Worker() noexcept
         std::lock_guard lock(state.mutex);
         std::vector<Event>().swap(state.events);
         state.groups.clear();
+        state.summaryBuffers.clear();
         state.drawOrigins.clear();
     }
     state.status.store(succeeded ? ProtocolIdle : ProtocolFailed);
@@ -551,6 +706,8 @@ bool Start(const CaptureOptions& options, std::string& error)
         options.session.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != std::string::npos ||
         options.seconds < 1 || options.seconds > 600 ||
         options.maximumEvents < 1 || options.maximumEvents > 65536 ||
+        (options.mode != CaptureMode::Trace && options.mode != CaptureMode::Summary) ||
+        (options.mode == CaptureMode::Summary && options.scopeCpu) ||
         !options.output.is_absolute() || options.output.extension() != L".json")
     { error = "invalidCaptureOptions"; return false; }
     if (state.worker.joinable()) state.worker.join();
@@ -569,8 +726,11 @@ bool Start(const CaptureOptions& options, std::string& error)
         state.options = options;
         state.partial = partial;
         state.events.clear();
-        state.events.reserve(options.maximumEvents);
+        if (options.mode == CaptureMode::Trace) state.events.reserve(options.maximumEvents);
         state.groups.clear();
+        state.summaryBuffers.clear();
+        state.summaryGroupCount.store(0);
+        state.summaryDroppedGroups.store(0);
         state.drawOrigins.clear();
         state.droppedLinks = 0;
         state.droppedEvents = state.droppedGroups = state.probeErrors = 0;
@@ -581,13 +741,17 @@ bool Start(const CaptureOptions& options, std::string& error)
         state.output = output;
         state.recording = true;
         state.status.store(ProtocolRecording);
-        captureHooks.store(&hooks, std::memory_order_release);
+        summaryGeneration.store(options.mode == CaptureMode::Summary ? state.generation : 0,
+            std::memory_order_release);
+        captureHooks.store(options.mode == CaptureMode::Summary ? &summaryHooks : &traceHooks,
+            std::memory_order_release);
         state.worker = std::thread(Worker);
         return true;
     }
     catch (...)
     {
         captureHooks.store(nullptr);
+        summaryGeneration.store(0);
         state.recording = false;
         state.output = INVALID_HANDLE_VALUE;
         state.status.store(ProtocolFailed);
@@ -646,17 +810,25 @@ LRESULT HandleControlMessage(HWND window, UINT message, WPARAM,
         {
             const auto split = request.find(L'\n');
             fields.emplace_back(request.substr(0, split));
-            if (fields.size() > 5) return 0;
+            if (fields.size() > 7) return 0;
             if (split == std::wstring_view::npos) break;
             request.remove_prefix(split + 1);
         }
-        if (fields.size() != 5 || fields[0] != L"1") return 0;
+        const bool version2 = fields.size() == 7 && fields[0] == L"2";
+        if (!version2 && (fields.size() != 5 || fields[0] != L"1")) return 0;
         const auto session = Utf8(fields[2]);
         if (fields[1] == L"stop") return RequestStop(session) ? 1 : 0;
         if (fields[1] != L"start" || fields[3].empty() ||
             fields[3].size() > 3 ||
             fields[3].find_first_not_of(L"0123456789") != std::wstring::npos) return 0;
         CaptureOptions options;
+        if (version2)
+        {
+            if ((fields[5] != L"summary" && fields[5] != L"trace") ||
+                (fields[6] != L"0" && fields[6] != L"1")) return 0;
+            options.mode = fields[5] == L"summary" ? CaptureMode::Summary : CaptureMode::Trace;
+            options.scopeCpu = fields[6] == L"1";
+        }
         options.session = session;
         options.seconds = static_cast<unsigned>(std::stoul(fields[3]));
         options.output = fields[4];

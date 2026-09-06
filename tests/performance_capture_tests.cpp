@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <chrono>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -206,8 +207,88 @@ void RunPerformanceCaptureTests()
         Check(String(event, "module") != "old-session", "old scopes must not leak into a new session");
     Check(String(next, "stopReason") == "duration", "automatic stop must be distinguished from requested stop");
 
+    options = { "summary-test", root / L"summary.json", 60, 1,
+        perf::CaptureMode::Summary, false };
+    Check(perf::Start(options, error), "start bounded summary capture");
+    ExerciseCoupledScopes();
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < 4; ++thread)
+        threads.emplace_back([] {
+            for (int i = 0; i < 200; ++i)
+            {
+                perf::Scope outer("summary", "parallel", L"shared-owner");
+                perf::Scope inner("lua", "nested");
+            }
+        });
+    for (auto& thread : threads) thread.join();
+    auto summarySpanning = std::make_unique<perf::Scope>("summary-old", "spanning");
+    perf::Shutdown();
+    const auto summary = Read(options.output);
+    Check(String(summary, "captureMode") == "summary" &&
+            String(summary, "timelinePolicy") == "none" &&
+            summary.Find("events")->array.empty() && Number(summary, "droppedEvents") == 0,
+        "summary must intentionally omit timeline without reporting truncation");
+    const auto& merged = Find(summary, "groups", "summary", "parallel");
+    const auto& summaryLua = Find(summary, "groups", "lua", "nested");
+    Check(Number(merged, "count") == 800 && Number(summaryLua, "count") == 800 &&
+            String(summaryLua, "owner") == "shared-owner" &&
+            Number(merged, "cpuSamples") == 0 &&
+            Number(merged, "wallMs") - Number(merged, "selfWallMs") >=
+                Number(summaryLua, "wallMs") - 0.001,
+        "thread-local aggregates must merge counts and preserve owner and nested self time");
+    Check(Number(Find(summary, "groups", "widget.memory", "lua_bytes"), "last") == 256,
+        "summary must retain resource gauges");
+
+    options = { "summary-stop", root / L"summary-stop.json", 60, 1,
+        perf::CaptureMode::Summary, false };
+    Check(perf::Start(options, error), "start summary stop race");
+    std::atomic<bool> entered{ false }, release{ false };
+    std::thread crossing([&] {
+        { perf::Scope completed("summary-stop", "completed", L"worker"); }
+        perf::Scope crossingScope("summary-stop", "crossing", L"worker");
+        entered.store(true);
+        while (!release.load()) std::this_thread::yield();
+    });
+    while (!entered.load()) std::this_thread::yield();
+    perf::Shutdown();
+    release.store(true);
+    crossing.join();
+    const auto stoppedSummary = Read(options.output);
+    Check(Number(Find(stoppedSummary, "groups", "summary-stop", "completed"), "count") == 1,
+        "a worker buffer must survive stop while an old scope still owns it");
+    for (const auto& group : stoppedSummary.Find("groups")->array)
+        Check(String(group, "phase") != "crossing", "unfinished summary scopes must be omitted");
+
+    options = { "trace-no-cpu", root / L"trace-no-cpu.json", 60, 2048,
+        perf::CaptureMode::Trace, false };
+    Check(perf::Start(options, error), "switch summary to trace without thread CPU");
+    ExerciseCoupledScopes();
+    summarySpanning.reset();
+    perf::Shutdown();
+    const auto trace = Read(options.output);
+    Check(Number(Find(trace, "groups", "lua", "protectedCall"), "cpuSamples") == 0 &&
+            !Find(trace, "events", "lua", "protectedCall").Find("cpuAvailable")->boolean,
+        "disabled scope CPU must be unavailable while trace retains causality");
+    Check(Number(Find(trace, "events", "settings", "apply"), "parent") == 0,
+        "a trace session must not inherit an old summary scope");
+
+    options = { "summary-invalid", root / L"invalid-summary.json", 1, 10,
+        perf::CaptureMode::Summary, true };
+    Check(!perf::Start(options, error), "summary cannot silently enable expensive scope CPU");
+
+    options = { "summary-bounds", root / L"summary-bounds.json", 60, 1,
+        perf::CaptureMode::Summary, false };
+    Check(perf::Start(options, error), "start bounded summary groups");
+    for (int i = 0; i < 4200; ++i)
+    { perf::Scope scope("bounded-summary", std::to_string(i), L"owner"); }
+    perf::Shutdown();
+    const auto summaryBounds = Read(options.output);
+    Check(summaryBounds.Find("groups")->array.size() <= 4096 &&
+            Number(summaryBounds, "droppedGroups") > 0,
+        "summary labels from dynamic callers must have a bounded memory budget");
+
     Check(Request(nullptr, L"2\nstart\ninvalid\n1\nignored.json") == 0,
-        "unsupported control protocol must be rejected");
+        "incomplete v2 control payload must be rejected");
     Check(Request(nullptr, L"1\nstart\ninvalid\n601\nignored.json") == 0,
         "unbounded capture duration must be rejected");
     COPYDATASTRUCT malformed{ perf::CopyDataTag, 3, const_cast<char*>("bad") };
@@ -218,4 +299,49 @@ void RunPerformanceCaptureTests()
     for (const auto& entry : std::filesystem::directory_iterator(root))
         std::filesystem::remove(entry.path());
     std::filesystem::remove(root);
+}
+
+// Explicit benchmark, not a timing-sensitive pass/fail test. Export happens
+// after the measured loop. Preserve each report for counts/bounds auditing.
+int RunPerformanceOverheadBenchmark(const char* directory)
+{
+    const auto root = std::filesystem::absolute(directory);
+    if (std::filesystem::exists(root)) return 2;
+    std::filesystem::create_directories(root);
+    constexpr int iterations = 10000;
+    std::uint64_t result = 0;
+    for (int round = 0; round < 3; ++round)
+    {
+        for (int step = 0; step < 4; ++step)
+        {
+            // Rotate order so a consistently earlier warmup is not favored.
+            const int mode = (step + round) % 4;
+            const char* name = mode == 0 ? "off" : mode == 1 ? "summary" :
+                mode == 2 ? "trace" : "trace-cpu";
+            std::string error;
+            const std::string session = std::string(name) + "-" + std::to_string(round);
+            perf::CaptureOptions options{ session, root / (session + ".json"), 60, 65536,
+                mode == 1 ? perf::CaptureMode::Summary : perf::CaptureMode::Trace, mode == 3 };
+            if (mode && !perf::Start(options, error)) return 3;
+            // Let the one-time sampler initialization finish before timing.
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            const auto begin = std::chrono::steady_clock::now();
+            for (int i = 0; i < iterations; ++i)
+            {
+                perf::Scope event("widget.event", "frame", L"benchmark-widget-123456");
+                { perf::Scope lua("lua", "protectedCall"); result = result * 33 + i; }
+                { perf::Scope invalidate("widget.invalidate", "desktop", L"benchmark-widget-123456");
+                  perf::DrawLink("desktop", L"benchmark-widget-123456", false); }
+                { perf::Scope draw("widget.composition", "draw", L"benchmark-widget-123456");
+                  perf::DrawLink("desktop", L"benchmark-widget-123456", true); }
+            }
+            const double elapsed = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - begin).count();
+            if (mode) perf::Shutdown();
+            std::cout << "{\"mode\":\"" << name << "\",\"round\":" << round
+                << ",\"iterations\":" << iterations << ",\"scopeCount\":" << iterations * 4
+                << ",\"elapsedMs\":" << elapsed << ",\"result\":" << result << "}\n";
+        }
+    }
+    return 0;
 }

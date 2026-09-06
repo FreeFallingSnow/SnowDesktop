@@ -2,12 +2,14 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 
 // Internal instrumentation, deliberately independent of the capture backend.
 // Without an explicitly started session, hooks stay null: no clocks, locks,
-// strings, buffers, threads, timers or file I/O are used by these probes.
+// token construction, buffers, threads, timers or file I/O are used by probes.
 namespace snowdesktop::performance
 {
 struct ScopeToken
@@ -17,6 +19,9 @@ struct ScopeToken
     unsigned long thread = 0;
     bool cpuAvailable = false;
     ScopeToken* previous = nullptr;
+    void* summaryGroup = nullptr;
+    void* summaryBuffer = nullptr;
+    std::shared_ptr<void> summaryStorage;
     std::string module, phase, owner;
 };
 
@@ -43,15 +48,15 @@ public:
         std::wstring_view owner = {}, std::uint64_t correlation = 0) noexcept
         : hooks_(captureHooks.load(std::memory_order_acquire))
     {
-        if (hooks_) hooks_->begin(token_, module, phase, owner, correlation);
+        if (hooks_) hooks_->begin(token_.emplace(), module, phase, owner, correlation);
     }
-    ~Scope() { if (hooks_) hooks_->end(token_); }
+    ~Scope() { if (hooks_) hooks_->end(*token_); }
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 
 private:
     const Hooks* hooks_;
-    ScopeToken token_;
+    std::optional<ScopeToken> token_;
 };
 
 // Values are gauges/counters, never CPU durations. correlation connects task

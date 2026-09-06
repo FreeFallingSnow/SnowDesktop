@@ -17,12 +17,17 @@ inline constexpr LRESULT ProtocolRecording = 0x53445011;
 inline constexpr LRESULT ProtocolFinishing = 0x53445012;
 inline constexpr LRESULT ProtocolFailed = 0x53445013;
 
+enum class CaptureMode { Trace, Summary };
+
 struct CaptureOptions
 {
     std::string session;
     std::filesystem::path output;
     unsigned seconds = 60;
     std::size_t maximumEvents = 32768;
+    // Preserve v1/backend callers; v2 CLI explicitly defaults to summary.
+    CaptureMode mode = CaptureMode::Trace;
+    bool scopeCpu = true;
 };
 
 // Backend entry points are also exercised by the runtime-diagnostics tests.
