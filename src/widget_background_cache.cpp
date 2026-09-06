@@ -83,17 +83,17 @@ public:
 
     IFACEMETHODIMP BeginDraw() override { return Add(1); }
     IFACEMETHODIMP EndDraw() override { return Add(2); }
-    IFACEMETHODIMP SetAntialiasMode(D2D1_ANTIALIAS_MODE value) override { return Add(3, value); }
+    IFACEMETHODIMP SetAntialiasMode(D2D1_ANTIALIAS_MODE mode) override { return Add(3, mode); }
     // Tags affect diagnostics, and text settings cannot affect supported draws.
     IFACEMETHODIMP SetTags(D2D1_TAG, D2D1_TAG) override { return S_OK; }
     IFACEMETHODIMP SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE) override { return S_OK; }
     IFACEMETHODIMP SetTextRenderingParams(IDWriteRenderingParams*) override { return S_OK; }
-    IFACEMETHODIMP SetTransform(const D2D1_MATRIX_3X2_F* value) override
-        { return value ? Add(4, *value) : Reject(); }
-    IFACEMETHODIMP SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND value) override
-        { return value == D2D1_PRIMITIVE_BLEND_SOURCE_OVER ? Add(5, value) : Reject(); }
-    IFACEMETHODIMP SetUnitMode(D2D1_UNIT_MODE value) override { return Add(6, value); }
-    IFACEMETHODIMP Clear(const D2D1_COLOR_F* value) override { return Optional(7, value); }
+    IFACEMETHODIMP SetTransform(const D2D1_MATRIX_3X2_F* matrix) override
+        { return matrix ? Add(4, *matrix) : Reject(); }
+    IFACEMETHODIMP SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND blend) override
+        { return blend == D2D1_PRIMITIVE_BLEND_SOURCE_OVER ? Add(5, blend) : Reject(); }
+    IFACEMETHODIMP SetUnitMode(D2D1_UNIT_MODE mode) override { return Add(6, mode); }
+    IFACEMETHODIMP Clear(const D2D1_COLOR_F* color) override { return Optional(7, color); }
     IFACEMETHODIMP DrawBitmap(ID2D1Bitmap* bitmap, const D2D1_RECT_F* destination,
         FLOAT opacity, D2D1_INTERPOLATION_MODE interpolation,
         const D2D1_RECT_F* source, const D2D1_MATRIX_4X4_F* perspective) override

@@ -178,16 +178,27 @@ void RunWidgetBackgroundCacheTests()
     graphics.context->SetUnitMode(D2D1_UNIT_MODE_DIPS);
     auto commands = graphics.Commands(cover.Get(), 96, D2D1_UNIT_MODE_DIPS);
     auto original = cache.Resolve(L"player", graphics.context.Get(), commands.Get(), bounds, 8, immutable);
+    auto recolored = graphics.Commands(cover.Get(), 96, D2D1_UNIT_MODE_DIPS, true);
+    auto recoloredResult = cache.Resolve(L"player", graphics.context.Get(), recolored.Get(), bounds, 8, immutable);
+    Check(recoloredResult.outcome == Cache::Outcome::Miss,
+        "changing only gradient colors must invalidate the same artwork");
+    SamePixels(graphics.Pixels(recolored.Get(), nullptr, 96, D2D1_UNIT_MODE_DIPS, 8),
+        graphics.Pixels(recolored.Get(), recoloredResult.bitmap.Get(), 96, D2D1_UNIT_MODE_DIPS, 8));
     auto altered = graphics.Commands(otherCover.Get(), 96, D2D1_UNIT_MODE_DIPS, true);
     auto updated = cache.Resolve(L"player", graphics.context.Get(), altered.Get(), bounds, 8, immutable);
     Check(updated.outcome == Cache::Outcome::Miss && updated.bitmap.Get() != original.bitmap.Get(),
-        "artwork and gradient changes cannot reuse stale background pixels");
+        "changing only artwork cannot reuse stale background pixels");
     SamePixels(graphics.Pixels(altered.Get(), nullptr, 96, D2D1_UNIT_MODE_DIPS, 8),
         graphics.Pixels(altered.Get(), updated.bitmap.Get(), 96, D2D1_UNIT_MODE_DIPS, 8));
     auto blurChanged = cache.Resolve(L"player", graphics.context.Get(), altered.Get(), bounds, 4, immutable);
     Check(blurChanged.outcome == Cache::Outcome::Miss, "blur radius change rebuilds");
     SamePixels(graphics.Pixels(altered.Get(), nullptr, 96, D2D1_UNIT_MODE_DIPS, 4),
         graphics.Pixels(altered.Get(), blurChanged.bitmap.Get(), 96, D2D1_UNIT_MODE_DIPS, 4));
+    auto resized = cache.Resolve(L"player", graphics.context.Get(), altered.Get(),
+        D2D1::RectF(4, 6, 100, 86), 4, immutable);
+    Check(resized.outcome == Cache::Outcome::Miss && resized.bitmap &&
+        resized.bitmap->GetPixelSize().width == 96 && resized.bitmap->GetPixelSize().height == 80,
+        "resizing an existing widget rebuilds its full pixel extent");
     Check(!cache.Resolve(L"player", graphics.context.Get(), altered.Get(), bounds, 0, immutable).bitmap && cache.Size() == 0,
         "disabling blur releases the previous cache");
     Check(!cache.Resolve(L"untrusted", graphics.context.Get(), altered.Get(), bounds, 8,
