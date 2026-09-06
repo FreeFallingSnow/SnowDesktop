@@ -122,6 +122,10 @@ public:
     };
 
     bool Request(std::string name, bool reducedMotion = false);
+    // Host data refresh shares the next deadline but is not a Lua animation.
+    // It survives cancellation of named frames and reduced-motion rejection.
+    bool RequestDataRefresh();
+    bool ConsumeDataRefresh() noexcept;
     bool Cancel(std::string_view name);
     bool SetVisible(bool visible);
     std::vector<Frame> Consume(TimePoint now);
@@ -132,6 +136,7 @@ public:
 private:
     std::vector<std::string> pending_;
     std::unordered_map<std::string, TimePoint> previousFrames_;
+    bool dataRefreshPending_ = false;
     bool visible_ = true;
 };
 }

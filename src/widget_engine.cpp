@@ -11722,18 +11722,30 @@ void WidgetEngine::DrainAudioAnalysisChanges()
     {
         return;
     }
+    if (!dataBroker_) return;
+    const auto now = snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
     for (auto& widget : widgets_)
     {
         if (!widget.valid || widget.preview) continue;
-        const bool subscribed = std::any_of(
-            widget.dataSubscriptions.begin(),
-            widget.dataSubscriptions.end(),
-            [](const auto& entry) {
-                return entry.second == "audio.output.analysis";
-            });
-        if (!subscribed)
+        bool due = false;
+        for (const auto& [id, topic] : widget.dataSubscriptions)
+        {
+            if (topic == "audio.output.analysis" &&
+                dataBroker_->ConsumeUpdateDue(id, now))
+                due = true;
+        }
+        if (!due) continue;
+        snowdesktop::performance::DrawLink("desktop", widget.widgetId, false);
+        // Audio is asynchronous data, so share an existing animation deadline
+        // or request one host frame. Pointer invalidation remains synchronous.
+        if (widget.animationFrames.RequestDataRefresh() &&
+            ScheduleAnimationFrame(widget))
+        {
+            snowdesktop::performance::Value("shared.audio", "refresh.queued",
+                widget.widgetId, 1);
             continue;
-
+        }
+        (void)widget.animationFrames.ConsumeDataRefresh();
         RuntimeInvalidateHost(widget.widgetId);
     }
 }
@@ -20832,6 +20844,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         if (widget.animationTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.animationTimerId);
         widget.animationTimerId = 0;
+        const bool dataRefreshFrame = widget.animationFrames.ConsumeDataRefresh();
         const auto now = snowdesktop::widget_runtime::
             AnimationFrameRequests::Clock::now();
         const auto nowMilliseconds = snowdesktop::widget_runtime::
@@ -20878,7 +20891,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
             desktopTransitionFrame || desktopProgressFrame ||
             (panelTransitionFrame && widget.panelActive) ||
             panelProgressFrame;
-        if (generalAnimationFrame)
+        if (generalAnimationFrame || dataRefreshFrame)
             RuntimeInvalidateHost(activeWidgetId);
         else if (desktopMarqueeFrame && invalidateCallback_)
             invalidateCallback_(activeWidgetId,

@@ -103,6 +103,33 @@ void TestEventInvalidationBatch()
         "native unwinding must restore dispatch without drawing stale requests");
 }
 
+// Protect data freshness when a music animation is cancelled or disallowed.
+// A host data wake uses no Lua request quota and must not create fake events.
+void TestDataRefreshWithAnimation()
+{
+    FrameRequests requests;
+    Check(requests.Request("record") && requests.RequestDataRefresh() &&
+            requests.RequestDataRefresh() && requests.Size() == 1,
+        "audio and animation must share a deadline without duplicate Lua requests");
+    Check(requests.Cancel("record") && requests.HasPending() &&
+            requests.Consume(FrameRequests::TimePoint{}).empty(),
+        "cancelling a record animation must retain data refresh without synthesizing a frame event");
+    Check(requests.ConsumeDataRefresh() && !requests.ConsumeDataRefresh() &&
+            !requests.HasPending(),
+        "repeated audio wakes must produce one refresh then stop");
+    Check(!requests.Request("record", true) && requests.RequestDataRefresh() &&
+            requests.HasPending(),
+        "reduced motion must not suppress data freshness");
+    Check(requests.SetVisible(false) && !requests.HasPending() &&
+            !requests.RequestDataRefresh() && !requests.ConsumeDataRefresh(),
+        "hiding must discard pending data refresh and reject hidden wakes");
+    Check(requests.SetVisible(true) && requests.RequestDataRefresh(),
+        "visible widgets may resume data refresh");
+    requests.Clear();
+    Check(!requests.HasPending() && !requests.ConsumeDataRefresh(),
+        "runtime teardown must not leave an implicit frame loop");
+}
+
 void TestLimitsAndReplacement()
 {
     Schedule schedule;
@@ -433,6 +460,7 @@ void TestAnimationFrameRequests()
 int main()
 {
     TestEventInvalidationBatch();
+    TestDataRefreshWithAnimation();
     TestLimitsAndReplacement();
     TestDueConsumption();
     TestDelayClampingAndRounding();

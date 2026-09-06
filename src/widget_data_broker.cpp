@@ -144,6 +144,7 @@ std::size_t WidgetDataBroker::SetInstanceVisible(
             subscription.options.visible == visible)
             continue;
         subscription.options.visible = visible;
+        subscription.nextDelivery.reset();
         changedTopics.insert(subscription.topic);
     }
     for (const std::string& topic : changedTopics)
@@ -169,6 +170,7 @@ std::size_t WidgetDataBroker::SetPermission(
             subscription.options.permissionGranted == granted)
             continue;
         subscription.options.permissionGranted = granted;
+        subscription.nextDelivery.reset();
         changedTopics.insert(subscription.topic);
     }
     for (const std::string& topic : changedTopics)
@@ -298,6 +300,37 @@ WidgetDataBroker::SubscriptionSnapshots(std::string_view topic) const
         if (snapshot) result.push_back(*snapshot);
     }
     return result;
+}
+
+bool WidgetDataBroker::ConsumeUpdateDue(
+    std::uint64_t subscriptionId, TimePoint now)
+{
+    const auto found = subscriptions_.find(subscriptionId);
+    if (found == subscriptions_.end()) return false;
+    auto& subscription = found->second;
+    const auto provider = providers_.find(subscription.topic);
+    if (provider == providers_.end()) return false;
+    const auto& descriptor = provider->second.descriptor;
+    const auto& options = subscription.options;
+    if (options.preview ||
+        (!options.permissionGranted && !descriptor.requiredPermission.empty()) ||
+        (!options.visible && (descriptor.highRisk ||
+            options.whenHidden == DataHiddenPolicy::Pause)))
+    {
+        subscription.nextDelivery.reset();
+        return false;
+    }
+    if (subscription.nextDelivery && now < *subscription.nextDelivery)
+        return false;
+    auto interval = std::max(options.requestedInterval,
+        descriptor.minimumInterval);
+    if (!options.visible && (options.whenHidden == DataHiddenPolicy::Throttle ||
+        !descriptor.supportsHiddenContinue))
+        interval = std::max(interval, descriptor.hiddenInterval);
+    // Never replay missed samples or accelerate this subscriber to the rate
+    // requested by another widget. Provider jitter can reduce the actual rate.
+    subscription.nextDelivery = now + interval;
+    return true;
 }
 
 std::vector<DataBrokerAction> WidgetDataBroker::DrainActions()
