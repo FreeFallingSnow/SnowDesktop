@@ -36,6 +36,7 @@
 #include "widget_preview_context.h"
 #include "widget_interaction_region.h"
 #include "widget_draw_geometry.h"
+#include "widget_background_cache.h"
 #include "widget_view_lua.h"
 #include "widget_view_tree.h"
 #include "widget_resource_lua.h"
@@ -756,6 +757,7 @@ struct D2DState
     std::vector<D2D1_RECT_F> immediateClipRects;
     ComPtr<ID2D1Device> bitmapDevice;
     ComPtr<ID2D1DeviceContext> immediateCommandContext;
+    snowdesktop::widget_runtime::WidgetBackgroundCache backgroundCache;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
     std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
@@ -879,6 +881,7 @@ static void ClearRuntimeImagesForWidget(
     D2DState* state, const std::wstring& widgetId)
 {
     if (!state || widgetId.empty()) return;
+    state->backgroundCache.Erase(widgetId);
     std::vector<std::string> removed;
     for (const auto& [key, resource] : state->runtimeImages)
     {
@@ -895,6 +898,7 @@ static void ClearRuntimeImagesForSource(
     D2DState* state, std::string_view source)
 {
     if (!state || source.empty()) return;
+    state->backgroundCache.Clear();
     std::vector<std::string> removed;
     for (const auto& [key, resource] : state->runtimeImages)
     {
@@ -9729,6 +9733,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->ctx->GetDevice(&device);
     if (state->bitmapDevice.Get() == device.Get()) return;
     state->bitmapDevice = std::move(device);
+    state->backgroundCache.Clear();
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
     state->runtimeImageBitmaps.clear();
@@ -19118,6 +19123,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     SetWidgetRectContext(d2dState_, bounds);
 
     auto recordError = [&](std::string message) {
+        d2dState_->backgroundCache.Erase(widgetId);
         if (message.size() > 4096) message.resize(4096);
         if (widget.backgroundLayerError == message) return;
         widget.backgroundLayerError = message;
@@ -19132,6 +19138,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     if (lua_isnil(state, -1))
     {
         widget.backgroundLayerError.clear();
+        d2dState_->backgroundCache.Erase(widgetId);
         return false;
     }
     if (!lua_istable(state, -1))
@@ -19260,6 +19267,26 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
         return false;
     }
 
+    const auto cachedBackground = d2dState_->backgroundCache.Resolve(widgetId,
+        context, commands.Get(), D2D1::RectF(static_cast<float>(bounds.left),
+            static_cast<float>(bounds.top), static_cast<float>(bounds.right),
+            static_cast<float>(bounds.bottom)), blurRadius,
+        [this](ID2D1Bitmap* bitmap) {
+            // These caches create immutable decoded bitmaps. Arbitrary target
+            // bitmaps or effect inputs must never enter the signature cache.
+            const auto contains = [bitmap](const auto& cache) {
+                return std::any_of(cache.begin(), cache.end(), [&](const auto& item) {
+                    return static_cast<ID2D1Bitmap*>(item.second.Get()) == bitmap;
+                });
+            };
+            return contains(d2dState_->imageCache) || contains(d2dState_->runtimeImageBitmaps);
+        });
+    using CacheOutcome = snowdesktop::widget_runtime::WidgetBackgroundCache::Outcome;
+    snowdesktop::performance::Value("widget.background.cache",
+        cachedBackground.outcome == CacheOutcome::Hit ? "hit" :
+            cachedBackground.outcome == CacheOutcome::Miss ? "miss" : "bypass", widgetId, 1);
+    snowdesktop::performance::Value("widget.background.cache", "retained_bytes_estimate", {},
+        static_cast<double>(d2dState_->backgroundCache.RetainedBytes()));
     ComPtr<ID2D1Image> output;
     if (FAILED(commands.As(&output)) || !output)
     {
@@ -19267,7 +19294,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
         return false;
     }
     ComPtr<ID2D1Effect> blur;
-    if (blurRadius > 0.0f)
+    if (!cachedBackground.bitmap && blurRadius > 0.0f)
     {
         if (FAILED(context->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) ||
             !blur)
@@ -19306,7 +19333,10 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     context->PushLayer(D2D1::LayerParameters(frame, clip.Get(),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
         D2D1::Matrix3x2F::Identity(), opacity), nullptr);
-    context->DrawImage(output.Get());
+    if (cachedBackground.bitmap)
+        context->DrawImage(cachedBackground.bitmap.Get(),
+            D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.top)));
+    else context->DrawImage(output.Get());
     context->PopLayer();
     widget.backgroundLayerError.clear();
     return true;
@@ -20763,6 +20793,7 @@ void WidgetEngine::ApplyWidgetHostVisibility(
         return;
 
     widget.hostVisible = visible;
+    if (!visible && d2dState_) d2dState_->backgroundCache.Erase(widget.widgetId);
     const auto timerNow = widget.preview
         ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
             std::chrono::milliseconds(snowdesktop::widget_runtime::

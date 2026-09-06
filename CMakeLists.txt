@@ -375,6 +375,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_system_data_provider.cpp
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
+    src/widget_background_cache.cpp
     src/widget_interaction_region.cpp
     src/widget_accessibility_events.cpp
     src/widget_accessibility_provider.cpp
@@ -2061,13 +2062,15 @@ if (BUILD_TESTING)
         component_preview
         SOURCES
             tests/component_preview_tests.cpp
+            tests/widget_background_cache_tests.cpp
+            src/widget_background_cache.cpp
             src/component_preview.cpp
             src/menu_icon_render.cpp
             src/widget_preview_stage.cpp
             src/widget_preview_scene.cpp
             src/widget_preview_scene_model.cpp
         INCLUDE_DIRECTORIES src src/core
-        LINK_LIBRARIES advapi32 d2d1 dxguid gdi32 ole32 user32 uuid windowscodecs
+        LINK_LIBRARIES advapi32 d2d1 d3d11 dxgi dxguid gdi32 ole32 user32 uuid windowscodecs
         LABELS integration ui preview)
 
     snowdesktop_add_test(

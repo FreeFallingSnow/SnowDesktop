@@ -64,8 +64,11 @@ bool PumpMessagesUntil(
 
 } // namespace
 
+void RunWidgetBackgroundCacheTests();
+
 int wmain()
 {
+    RunWidgetBackgroundCacheTests();
     using namespace snowdesktop::component_preview;
 
     bool hasPartialRoundedCoverage = false;
