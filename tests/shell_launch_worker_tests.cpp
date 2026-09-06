@@ -290,6 +290,7 @@ void TestAdministratorShortcutMetadataIsDetected()
         "the administrator shortcut test paths must be available");
 
     std::wstring linkPath;
+    std::wstring manifestLinkPath;
     Microsoft::WRL::ComPtr<IShellLinkW> shellLink;
     Microsoft::WRL::ComPtr<IPersistFile> persistFile;
     Microsoft::WRL::ComPtr<IShellLinkDataList> dataList;
@@ -334,6 +335,41 @@ void TestAdministratorShortcutMetadataIsDetected()
                     ShortcutRequestsAdministrator(linkPath),
                 "the SLDF_RUNAS_USER flag must select administrator launch");
         }
+
+        wchar_t windowsDirectory[MAX_PATH]{};
+        const UINT windowsDirectoryLength = GetWindowsDirectoryW(
+            windowsDirectory,
+            static_cast<UINT>(std::size(windowsDirectory)));
+        manifestLinkPath = std::wstring(tempPath) +
+            L"SnowDesktopManifestAdministratorShortcut-" +
+            identifierText + L".lnk";
+        const std::wstring regeditPath =
+            windowsDirectoryLength > 0 &&
+                windowsDirectoryLength < std::size(windowsDirectory)
+            ? std::wstring(windowsDirectory) + L"\\regedit.exe"
+            : std::wstring();
+
+        Microsoft::WRL::ComPtr<IShellLinkW> manifestShellLink;
+        Microsoft::WRL::ComPtr<IPersistFile> manifestPersistFile;
+        const bool manifestLinkCreated = !regeditPath.empty() &&
+            SUCCEEDED(CoCreateInstance(
+                shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(manifestShellLink.GetAddressOf()))) &&
+            manifestShellLink &&
+            SUCCEEDED(manifestShellLink->SetPath(regeditPath.c_str())) &&
+            SUCCEEDED(manifestShellLink.As(&manifestPersistFile)) &&
+            manifestPersistFile &&
+            SUCCEEDED(manifestPersistFile->Save(
+                manifestLinkPath.c_str(), TRUE));
+        Check(manifestLinkCreated,
+            "an executable-manifest shortcut fixture must be created");
+        if (manifestLinkCreated)
+        {
+            Check(
+                snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(manifestLinkPath),
+                "a highestAvailable target manifest must select administrator launch");
+        }
     }
 
     Check(
@@ -346,6 +382,8 @@ void TestAdministratorShortcutMetadataIsDetected()
     shellLink.Reset();
     if (!linkPath.empty())
         DeleteFileW(linkPath.c_str());
+    if (!manifestLinkPath.empty())
+        DeleteFileW(manifestLinkPath.c_str());
     CoUninitialize();
 }
 

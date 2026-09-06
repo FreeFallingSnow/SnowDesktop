@@ -61,6 +61,41 @@ bool EnsureShellAsyncThreadReference()
     return reference.Ensure();
 }
 
+bool ExecutableManifestRequestsAdministrator(
+    const std::wstring& executablePath)
+{
+    if (executablePath.empty())
+        return false;
+    const wchar_t* extension = PathFindExtensionW(executablePath.c_str());
+    if (!extension || _wcsicmp(extension, L".exe") != 0)
+        return false;
+
+    ACTCTXW context{};
+    context.cbSize = sizeof(context);
+    context.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
+    context.lpSource = executablePath.c_str();
+    context.lpResourceName = MAKEINTRESOURCEW(
+        CREATEPROCESS_MANIFEST_RESOURCE_ID);
+    const HANDLE activationContext = CreateActCtxW(&context);
+    if (activationContext == INVALID_HANDLE_VALUE)
+        return false;
+
+    ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION runLevel{};
+    SIZE_T writtenOrRequired = 0;
+    const bool queried = QueryActCtxW(
+        0,
+        activationContext,
+        nullptr,
+        RunlevelInformationInActivationContext,
+        &runLevel,
+        sizeof(runLevel),
+        &writtenOrRequired) != FALSE;
+    ReleaseActCtx(activationContext);
+    return queried &&
+        (runLevel.RunLevel == ACTCTX_RUN_LEVEL_REQUIRE_ADMIN ||
+         runLevel.RunLevel == ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE);
+}
+
 bool SafeInvokeContextMenu(
     IContextMenu* contextMenu,
     LPCMINVOKECOMMANDINFO invoke)
@@ -428,9 +463,34 @@ bool ShellLaunchWorker::ShortcutRequestsAdministrator(
 
     ComPtr<IShellLinkDataList> dataList;
     DWORD flags = 0;
-    return SUCCEEDED(shellLink.As(&dataList)) && dataList &&
+    if (SUCCEEDED(shellLink.As(&dataList)) && dataList &&
         SUCCEEDED(dataList->GetFlags(&flags)) &&
-        (flags & SLDF_RUNAS_USER) != 0;
+        (flags & SLDF_RUNAS_USER) != 0)
+    {
+        return true;
+    }
+
+    wchar_t targetPath[32768]{};
+    if (FAILED(shellLink->GetPath(
+            targetPath,
+            static_cast<int>(std::size(targetPath)),
+            nullptr,
+            SLGP_RAWPATH)) ||
+        targetPath[0] == L'\0')
+    {
+        return false;
+    }
+
+    wchar_t expandedPath[32768]{};
+    const DWORD expandedLength = ExpandEnvironmentStringsW(
+        targetPath,
+        expandedPath,
+        static_cast<DWORD>(std::size(expandedPath)));
+    const std::wstring executablePath =
+        expandedLength > 0 && expandedLength <= std::size(expandedPath)
+        ? expandedPath
+        : targetPath;
+    return ExecutableManifestRequestsAdministrator(executablePath);
 }
 
 void ShellLaunchWorker::Run(const std::shared_ptr<State>& state)
