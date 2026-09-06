@@ -440,10 +440,18 @@ bool ShellLaunchWorker::ExecuteRunAsAdministrator(
     if (path.empty())
         return false;
 
+    const HWND validOwner = owner && IsWindow(owner) ? owner : nullptr;
+    if (validOwner)
+        SetForegroundWindow(validOwner);
+    // The elevation broker is a different process. Grant it foreground
+    // eligibility immediately before ShellExecuteEx so another input event
+    // cannot consume a grant made earlier on the enqueueing UI thread.
+    AllowSetForegroundWindow(ASFW_ANY);
+
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
     executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
-    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
+    executeInfo.hwnd = validOwner;
     executeInfo.lpVerb = L"runas";
     executeInfo.lpFile = path.c_str();
     executeInfo.nShow = showCommand;
