@@ -186,6 +186,15 @@ bool InvokeShellItemOpen(
         invoke, invocationDirectory, invocationDirectoryA);
     invoke.nShow = showCommand;
 
+    if (asynchronous)
+    {
+        // The interaction thread received the double-click/keyboard input,
+        // but the asynchronous execution delegate or elevation broker owns
+        // the window that must become foreground. Transfer that short-lived
+        // foreground eligibility immediately before dispatch; Windows revokes
+        // ASFW_ANY on the next unrelated user input.
+        AllowSetForegroundWindow(ASFW_ANY);
+    }
     const bool opened = SafeInvokeContextMenu(
         contextMenu.Get(),
         reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
