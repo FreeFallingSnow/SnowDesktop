@@ -74,8 +74,7 @@ bool ExecutableManifestRequestsAdministrator(
     context.cbSize = sizeof(context);
     context.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
     context.lpSource = executablePath.c_str();
-    context.lpResourceName = MAKEINTRESOURCEW(
-        CREATEPROCESS_MANIFEST_RESOURCE_ID);
+    context.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
     const HANDLE activationContext = CreateActCtxW(&context);
     if (activationContext == INVALID_HANDLE_VALUE)
         return false;
