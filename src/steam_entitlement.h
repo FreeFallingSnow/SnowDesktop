@@ -13,6 +13,30 @@ namespace snowdesktop::steam_entitlement
 
 constexpr std::chrono::hours kRegistrationLifetime =
     std::chrono::hours(24 * 30);
+inline constexpr std::uint32_t kSupportedBridgeProtocolVersion = 1;
+
+struct SteamBridgeConfiguration
+{
+    bool valid = false;
+    std::string version;
+    std::uint32_t protocolVersion = 0;
+    std::uint32_t expectedAppId = 0;
+    bool steamworksCompiled = false;
+};
+
+/** Parse the final JSON object returned by `configuration`. */
+[[nodiscard]] SteamBridgeConfiguration ParseSteamBridgeConfiguration(
+    std::string_view output, std::uint32_t exitCode);
+
+/** Require the deployed Bridge to match this host and its protocol exactly. */
+[[nodiscard]] bool IsSteamBridgeConfigurationCompatible(
+    const SteamBridgeConfiguration& configuration,
+    std::string_view expectedVersion) noexcept;
+
+/** Query `configuration` without initializing Steam and validate the result. */
+[[nodiscard]] bool IsSteamBridgeExecutableCompatible(
+    const std::filesystem::path& executable,
+    std::string_view expectedVersion);
 
 enum class State : std::uint8_t
 {

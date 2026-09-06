@@ -1700,6 +1700,8 @@ private:
     void StartSteamWorkshopWatcher();
     void StopSteamWorkshopWatcher();
     static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);
+    /** Open this app's Workshop in Steam, falling back to the web page. */
+    [[nodiscard]] bool OpenSteamWorkshop();
     /** @brief 当前拖拽载荷是否能由集合弹窗的放置管线处理。 */
     bool CanCurrentDragUseCollectionPopup() const;
     /** @brief 更新集合弹出面板的悬停停留计时。 @param point 当前鼠标位置 */

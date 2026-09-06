@@ -8,6 +8,8 @@ explicit command, or load component code.
 the compiled version, expected App ID (`5080330`), Windows depot ID (`5080331`),
 protocol version, and whether the binary was built with Steamworks. Packaging
 and local-development scripts use it to reject stale or placeholder binaries.
+The resident host also requires an exact application-version and protocol
+match before it exposes Steam-backed features or Workshop entry points.
 
 `entitlement status` initializes Steam for App ID `5080330`, requires an
 online signed-in user, and returns `owned` from `ISteamApps::BIsSubscribed()`

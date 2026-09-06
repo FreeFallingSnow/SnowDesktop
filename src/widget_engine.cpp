@@ -29,6 +29,7 @@
 #include "search_match.h"
 #include "widget_package.h"
 #include "steam_workshop_source.h"
+#include "steam_entitlement.h"
 #include "widget_api_registry.h"
 #include "widget_l10n_format.h"
 #include "widget_time.h"
@@ -30492,12 +30493,9 @@ bool WidgetEngine::IsSteamWorkshopBridgeAvailable()
     const std::filesystem::path bridge =
         std::filesystem::path(GetExecutableDirectoryPath()) /
         L"SnowDesktopSteamBridge.exe";
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(bridge, error) || error)
-        return false;
-    const DWORD attributes = GetFileAttributesW(bridge.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+    static const bool compatible = snowdesktop::steam_entitlement::
+        IsSteamBridgeExecutableCompatible(bridge, SNOWDESKTOP_VERSION);
+    return compatible;
 }
 
 bool WidgetEngine::UnsubscribeSteamWorkshopItem(

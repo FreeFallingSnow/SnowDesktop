@@ -1372,7 +1372,8 @@ if (BUILD_TESTING)
     target_compile_features(
         SnowDesktopSteamEntitlementBridgeFixture PRIVATE cxx_std_20)
     target_compile_definitions(SnowDesktopSteamEntitlementBridgeFixture PRIVATE
-        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID})
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
     if (MSVC)
         set_property(TARGET SnowDesktopSteamEntitlementBridgeFixture PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -1396,7 +1397,8 @@ if (BUILD_TESTING)
             "$<TARGET_FILE:SnowDesktopSteamEntitlementBridgeFixture>"
         LABELS core contract security steam)
     target_compile_definitions(SnowDesktopSteamEntitlementTests PRIVATE
-        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID})
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
+        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
     add_dependencies(SnowDesktopSteamEntitlementTests
         SnowDesktopSteamEntitlementBridgeFixture)
 

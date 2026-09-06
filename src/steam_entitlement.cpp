@@ -15,6 +15,8 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -159,8 +161,27 @@ std::optional<JsonValue> FinalJsonObject(std::string_view output)
     return std::nullopt;
 }
 
-BridgeResponse RunBridge(const std::filesystem::path& executable,
-    std::stop_token stop)
+std::optional<std::uint32_t> Uint32Field(
+    const JsonValue& object, std::string_view name)
+{
+    const JsonValue* value = Field(object, name, JsonValue::Type::Number);
+    if (!value || !std::isfinite(value->number) || value->number < 0.0 ||
+        std::floor(value->number) != value->number ||
+        value->number > static_cast<double>(
+            std::numeric_limits<std::uint32_t>::max()))
+        return std::nullopt;
+    return static_cast<std::uint32_t>(value->number);
+}
+
+struct BridgeCommandResult
+{
+    std::uint32_t exitCode = std::numeric_limits<std::uint32_t>::max();
+    std::string output;
+};
+
+std::optional<BridgeCommandResult> RunBridgeCommand(
+    const std::filesystem::path& executable, std::wstring_view arguments,
+    std::stop_token stop, std::chrono::seconds timeout)
 {
     SECURITY_ATTRIBUTES security{};
     security.nLength = sizeof(security);
@@ -168,11 +189,11 @@ BridgeResponse RunBridge(const std::filesystem::path& executable,
     HANDLE readRaw = nullptr;
     HANDLE writeRaw = nullptr;
     if (!CreatePipe(&readRaw, &writeRaw, &security, 0))
-        return {};
+        return std::nullopt;
     UniqueHandle readPipe(readRaw);
     UniqueHandle writePipe(writeRaw);
     if (!SetHandleInformation(readPipe.Get(), HANDLE_FLAG_INHERIT, 0))
-        return {};
+        return std::nullopt;
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -182,7 +203,7 @@ BridgeResponse RunBridge(const std::filesystem::path& executable,
     startup.hStdError = writePipe.Get();
     PROCESS_INFORMATION process{};
     std::wstring commandLine = Quote(executable.wstring()) +
-        L" entitlement status";
+        L" " + std::wstring(arguments);
     const std::wstring workingDirectory = executable.parent_path().wstring();
     std::vector<wchar_t> environment =
         BuildSnowDesktopSteamChildEnvironment();
@@ -190,14 +211,14 @@ BridgeResponse RunBridge(const std::filesystem::path& executable,
             commandLine.data(), nullptr, nullptr, TRUE,
             CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
             environment.data(), workingDirectory.c_str(), &startup, &process))
-        return {};
+        return std::nullopt;
 
     UniqueHandle processHandle(process.hProcess);
     UniqueHandle threadHandle(process.hThread);
     writePipe.Reset();
-    std::string output;
+    BridgeCommandResult result;
     const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::seconds(15);
+        timeout;
     while (true)
     {
         DWORD available = 0;
@@ -206,7 +227,7 @@ BridgeResponse RunBridge(const std::filesystem::path& executable,
         {
             if (WaitForSingleObject(processHandle.Get(), 0) == WAIT_OBJECT_0)
                 break;
-            return {};
+            return std::nullopt;
         }
         if (available > 0)
         {
@@ -215,14 +236,14 @@ BridgeResponse RunBridge(const std::filesystem::path& executable,
             if (!ReadFile(readPipe.Get(), buffer.data(),
                     (std::min)(available,
                         static_cast<DWORD>(buffer.size())), &read, nullptr))
-                return {};
-            if (output.size() + read > kMaximumBridgeOutputBytes)
+                return std::nullopt;
+            if (result.output.size() + read > kMaximumBridgeOutputBytes)
             {
                 TerminateProcess(processHandle.Get(), kTimedOutExitCode);
                 WaitForSingleObject(processHandle.Get(), 5000);
-                return {};
+                return std::nullopt;
             }
-            output.append(buffer.data(), read);
+            result.output.append(buffer.data(), read);
             continue;
         }
         if (WaitForSingleObject(processHandle.Get(), 0) == WAIT_OBJECT_0)
@@ -231,20 +252,31 @@ BridgeResponse RunBridge(const std::filesystem::path& executable,
         {
             TerminateProcess(processHandle.Get(), kCanceledExitCode);
             WaitForSingleObject(processHandle.Get(), 5000);
-            return {};
+            return std::nullopt;
         }
         if (std::chrono::steady_clock::now() >= deadline)
         {
             TerminateProcess(processHandle.Get(), kTimedOutExitCode);
             WaitForSingleObject(processHandle.Get(), 5000);
-            return {};
+            return std::nullopt;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     DWORD exitCode = 0;
     if (!GetExitCodeProcess(processHandle.Get(), &exitCode))
-        return {};
-    return ParseBridgeResponse(output, exitCode);
+        return std::nullopt;
+    result.exitCode = exitCode;
+    return result;
+}
+
+BridgeResponse RunBridge(const std::filesystem::path& executable,
+    std::stop_token stop)
+{
+    const auto result = RunBridgeCommand(executable, L"entitlement status",
+        stop, std::chrono::seconds(15));
+    return result
+        ? ParseBridgeResponse(result->output, result->exitCode)
+        : BridgeResponse{};
 }
 
 template<typename Integer>
@@ -365,6 +397,56 @@ std::int64_t UnixNow()
 }
 }
 
+SteamBridgeConfiguration ParseSteamBridgeConfiguration(
+    std::string_view output, std::uint32_t exitCode)
+{
+    SteamBridgeConfiguration configuration;
+    if (exitCode != 0) return configuration;
+    const auto root = FinalJsonObject(output);
+    if (!root) return configuration;
+
+    const JsonValue* ok = Field(*root, "ok", JsonValue::Type::Boolean);
+    const JsonValue* version = Field(
+        *root, "version", JsonValue::Type::String);
+    const JsonValue* steamworksCompiled = Field(
+        *root, "steamworksCompiled", JsonValue::Type::Boolean);
+    const auto protocolVersion = Uint32Field(*root, "protocolVersion");
+    const auto expectedAppId = Uint32Field(*root, "expectedAppId");
+    if (!ok || !ok->boolean || !version || version->string.empty() ||
+        !steamworksCompiled || !protocolVersion || !expectedAppId)
+        return configuration;
+
+    configuration.valid = true;
+    configuration.version = version->string;
+    configuration.protocolVersion = *protocolVersion;
+    configuration.expectedAppId = *expectedAppId;
+    configuration.steamworksCompiled = steamworksCompiled->boolean;
+    return configuration;
+}
+
+bool IsSteamBridgeConfigurationCompatible(
+    const SteamBridgeConfiguration& configuration,
+    std::string_view expectedVersion) noexcept
+{
+    return configuration.valid &&
+        configuration.version == expectedVersion &&
+        configuration.protocolVersion == kSupportedBridgeProtocolVersion &&
+        configuration.expectedAppId == kSnowDesktopSteamAppId &&
+        configuration.steamworksCompiled;
+}
+
+bool IsSteamBridgeExecutableCompatible(
+    const std::filesystem::path& executable,
+    std::string_view expectedVersion)
+{
+    if (!IsSafeRegularFile(executable)) return false;
+    const auto result = RunBridgeCommand(executable, L"configuration", {},
+        std::chrono::seconds(3));
+    return result && IsSteamBridgeConfigurationCompatible(
+        ParseSteamBridgeConfiguration(result->output, result->exitCode),
+        expectedVersion);
+}
+
 BridgeResponse ParseBridgeResponse(
     std::string_view output, std::uint32_t exitCode)
 {
@@ -404,8 +486,9 @@ struct Service::Impl
         : bridgeExecutable(std::move(bridge)),
           steamRuntime(std::move(runtime)), protectedCache(std::move(cache))
     {
-        snapshot.bridgeAvailable = IsSafeRegularFile(bridgeExecutable) &&
-            IsSafeRegularFile(steamRuntime);
+        snapshot.bridgeAvailable = IsSafeRegularFile(steamRuntime) &&
+            IsSteamBridgeExecutableCompatible(
+                bridgeExecutable, SNOWDESKTOP_VERSION);
         snapshot.state = snapshot.bridgeAvailable
             ? State::Unregistered : State::BridgeUnavailable;
         const auto cached = UnprotectCache(protectedCache);

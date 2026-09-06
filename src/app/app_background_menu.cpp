@@ -154,11 +154,19 @@ size_t LuaWidgetMenuPageCount(size_t widgetCount)
 std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
     const std::vector<LuaWidgetMenuEntry>& allLuaWidgets,
     const std::vector<LuaWidgetMenuEntry>& luaWidgets, size_t page,
-    const std::wstring& search, LuaWidgetMenuFilter filter)
+    const std::wstring& search, LuaWidgetMenuFilter filter,
+    bool workshopAvailable)
 {
     using snowdesktop::modern_menu::Item;
 
     std::vector<Item> items;
+    auto appendWorkshopAction = [&]() {
+        if (!workshopAvailable) return;
+        items.push_back({ 0, L"", L"", false, false, true });
+        items.push_back({ kContextOpenSteamWorkshop,
+            _LW("app.settings.widgets_open_steam_workshop"),
+            snowdesktop::menu_fluent_glyphs::kWorkshop, true });
+    };
     UINT inlineGroup = 1;
     auto appendPair = [&](UINT command, UINT previewCommand,
                           const wchar_t* label, const wchar_t* glyph) {
@@ -200,7 +208,10 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
         snowdesktop::menu_fluent_glyphs::kFileGroup);
 
     if (allLuaWidgets.empty())
+    {
+        appendWorkshopAction();
         return items;
+    }
 
     items.push_back({ 0, L"", L"", false, false, true });
 
@@ -258,6 +269,7 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
         empty.glyph = snowdesktop::menu_fluent_glyphs::kCollectionGroup;
         empty.enabled = false;
         items.push_back(std::move(empty));
+        appendWorkshopAction();
         return items;
     }
 
@@ -315,6 +327,7 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
         next.inlineGroup = inlineGroup;
         items.push_back(std::move(next));
     }
+    appendWorkshopAction();
     return items;
 }
 
@@ -1279,13 +1292,16 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     snowdesktop::component_preview::Window previewWindow;
     previewWindow.PrefetchDesktopWallpaperBackdrop(hwnd_, screenPoint);
     const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
+    const bool workshopAvailable =
+        WidgetEngine::IsSteamWorkshopBridgeAvailable();
     std::wstring luaSearch;
     LuaWidgetMenuFilter luaFilter = LuaWidgetMenuFilter::All;
     auto luaWidgets = FilterLuaWidgetMenuEntries(
         allLuaWidgets, luaSearch, luaFilter);
     size_t luaPage = 0;
     auto items = BuildAddWidgetMenuItems(
-        allLuaWidgets, luaWidgets, luaPage, luaSearch, luaFilter);
+        allLuaWidgets, luaWidgets, luaPage, luaSearch, luaFilter,
+        workshopAvailable);
     UINT previewCacheCommand = 0;
     std::wstring previewCachePackage;
     snowdesktop::component_preview::Model previewCache;
@@ -1353,7 +1369,8 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
             previewCachePackage.clear();
             previewCache = {};
             currentItems = BuildAddWidgetMenuItems(allLuaWidgets,
-                luaWidgets, luaPage, luaSearch, luaFilter);
+                luaWidgets, luaPage, luaSearch, luaFilter,
+                workshopAvailable);
             return true;
         }
         const size_t pageCount = LuaWidgetMenuPageCount(luaWidgets.size());
@@ -1368,7 +1385,8 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
         previewCachePackage.clear();
         previewCache = {};
         currentItems = BuildAddWidgetMenuItems(allLuaWidgets,
-            luaWidgets, luaPage, luaSearch, luaFilter);
+            luaWidgets, luaPage, luaSearch, luaFilter,
+            workshopAvailable);
         return true;
     };
     options.onTextChanged = [&](UINT command, const std::wstring& text,
@@ -1384,7 +1402,8 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
         previewCachePackage.clear();
         previewCache = {};
         currentItems = BuildAddWidgetMenuItems(allLuaWidgets,
-            luaWidgets, luaPage, luaSearch, luaFilter);
+            luaWidgets, luaPage, luaSearch, luaFilter,
+            workshopAvailable);
     };
     options.onHover = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
         if (hover.command != 0)
@@ -1427,6 +1446,9 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
         AddFileCategoryWidgetAt(screenPoint); break;
     case kContextAddFolderMappingWidget:
         AddFolderMappingWidgetAt(screenPoint); break;
+    case kContextOpenSteamWorkshop:
+        (void)OpenSteamWorkshop();
+        return;
     default:
         break;
     }
@@ -1597,6 +1619,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
+    const bool workshopAvailable =
+        WidgetEngine::IsSteamWorkshopBridgeAvailable();
     std::wstring luaSearch;
     LuaWidgetMenuFilter luaFilter = LuaWidgetMenuFilter::All;
     auto luaWidgets = FilterLuaWidgetMenuEntries(
@@ -1607,7 +1631,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         const auto widgetItems =
             BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets, luaPage,
-                luaSearch, luaFilter);
+                luaSearch, luaFilter, workshopAvailable);
         for (const auto& item : widgetItems)
         {
             if (item.separator)
@@ -1802,6 +1826,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             L"\uF15B", MenuIconFont::FluentRegular);
         SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetNextPage,
             L"\uF181", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(widgetMenu, kContextOpenSteamWorkshop,
+            snowdesktop::menu_fluent_glyphs::kWorkshop,
+            MenuIconFont::FluentRegular);
     }
     if (pinPageMenu)
     {
@@ -1879,7 +1906,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             previewCache = {};
             return ReplaceAddWidgetSubmenu(rootItems,
                 BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
-                    luaPage, luaSearch, luaFilter));
+                    luaPage, luaSearch, luaFilter, workshopAvailable));
         }
         const size_t pageCount = LuaWidgetMenuPageCount(luaWidgets.size());
         if (command == kContextAddLuaWidgetPreviousPage && luaPage > 0)
@@ -1894,7 +1921,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         previewCache = {};
         return ReplaceAddWidgetSubmenu(rootItems,
             BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
-                luaPage, luaSearch, luaFilter));
+                luaPage, luaSearch, luaFilter, workshopAvailable));
     };
     auto searchLuaWidgets = [&](UINT command, const std::wstring& text,
                                 auto& rootItems) {
@@ -1910,7 +1937,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         previewCache = {};
         ReplaceAddWidgetSubmenu(rootItems,
             BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
-                luaPage, luaSearch, luaFilter));
+                luaPage, luaSearch, luaFilter, workshopAvailable));
     };
     auto previewWidgetMenuItem = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
         if (!wallpaperPrefetchStarted &&
@@ -2012,6 +2039,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextAddFileGroupWidget: AddFileGroupWidgetAt(screenPoint); break;
         case kContextAddFileCategoryWidget: AddFileCategoryWidgetAt(screenPoint); break;
         case kContextAddFolderMappingWidget: AddFolderMappingWidgetAt(screenPoint); break;
+        case kContextOpenSteamWorkshop:
+            needsDesktopFocus = false;
+            (void)OpenSteamWorkshop();
+            break;
         case kContextNewMenu:
         {
             wchar_t desktopPath[MAX_PATH]{};

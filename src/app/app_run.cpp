@@ -924,20 +924,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.widgetsPage.openWorkshop = [this](
         std::string_view) {
-        const std::wstring client =
-            snowdesktop::SnowDesktopSteamWorkshopClientUrl();
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
-                client.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-        {
-            const std::wstring web =
-                snowdesktop::SnowDesktopSteamWorkshopUrl();
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
-                    web.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-            {
-                return snowdesktop::winui::WidgetsPageHostOperationResult::
-                    Failure(_LW("settings.widgets.workshop.openFailed"));
-            }
-        }
+        if (!OpenSteamWorkshop())
+            return snowdesktop::winui::WidgetsPageHostOperationResult::
+                Failure(_LW("settings.widgets.workshop.openFailed"));
         return snowdesktop::winui::WidgetsPageHostOperationResult::Success(
             false);
     };

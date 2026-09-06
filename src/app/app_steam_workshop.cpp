@@ -86,6 +86,21 @@ void CloseWorkshopWatch(WorkshopWatchEntry& watch)
 }
 }
 
+bool DesktopApp::OpenSteamWorkshop()
+{
+    HWND owner = controlHwnd_ && IsWindow(controlHwnd_)
+        ? controlHwnd_ : hwnd_;
+    const std::wstring client =
+        snowdesktop::SnowDesktopSteamWorkshopClientUrl();
+    if (reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open",
+            client.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32)
+        return true;
+
+    const std::wstring web = snowdesktop::SnowDesktopSteamWorkshopUrl();
+    return reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open",
+        web.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+}
+
 void DesktopApp::StartSteamWorkshopWatcher()
 {
     if (steamWorkshopWatcherActive_.load()) return;

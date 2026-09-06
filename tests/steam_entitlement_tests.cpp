@@ -57,6 +57,34 @@ int wmain(int argc, wchar_t** argv)
             BridgeOutcome::Failed,
         "malformed Bridge output never unlocks features");
 
+    const auto compatibleConfiguration = ParseSteamBridgeConfiguration(
+        "noise\n{\"ok\":true,\"protocolVersion\":1,"
+        "\"version\":\"" SNOWDESKTOP_VERSION
+        "\",\"expectedAppId\":5080330,"
+        "\"steamworksCompiled\":true}\n", 0);
+    Check(IsSteamBridgeConfigurationCompatible(
+            compatibleConfiguration, SNOWDESKTOP_VERSION),
+        "the host accepts an exact Bridge version and protocol match");
+    Check(!IsSteamBridgeConfigurationCompatible(
+            compatibleConfiguration, "0.0.0.0"),
+        "a stale Bridge version is rejected");
+    Check(!IsSteamBridgeConfigurationCompatible(
+            ParseSteamBridgeConfiguration(
+                "{\"ok\":true,\"protocolVersion\":2,"
+                "\"version\":\"" SNOWDESKTOP_VERSION "\","
+                "\"expectedAppId\":5080330,"
+                "\"steamworksCompiled\":true}", 0),
+            SNOWDESKTOP_VERSION),
+        "an unsupported Bridge protocol is rejected");
+    Check(!IsSteamBridgeConfigurationCompatible(
+            ParseSteamBridgeConfiguration(
+                "{\"ok\":true,\"protocolVersion\":1,"
+                "\"version\":\"" SNOWDESKTOP_VERSION "\","
+                "\"expectedAppId\":5080330,"
+                "\"steamworksCompiled\":false}", 0),
+            SNOWDESKTOP_VERSION),
+        "an SDK-free Bridge is not exposed as Workshop-capable");
+
     const std::filesystem::path fixture =
         std::filesystem::absolute(argv[1]);
     const std::filesystem::path root = fixture.parent_path() /
@@ -113,6 +141,8 @@ int wmain(int argc, wchar_t** argv)
     }
     const auto offlineFixture = root / L"offline-bridge.exe";
     const auto notOwnedFixture = root / L"not-owned-bridge.exe";
+    const auto staleFixture = root / L"stale-bridge.exe";
+    const auto sdkFreeFixture = root / L"sdk-free-bridge.exe";
     std::filesystem::copy_file(fixture, offlineFixture,
         std::filesystem::copy_options::overwrite_existing, error);
     Check(!error, "the offline Bridge fixture is prepared");
@@ -120,6 +150,14 @@ int wmain(int argc, wchar_t** argv)
     std::filesystem::copy_file(fixture, notOwnedFixture,
         std::filesystem::copy_options::overwrite_existing, error);
     Check(!error, "the non-owner Bridge fixture is prepared");
+    error.clear();
+    std::filesystem::copy_file(fixture, staleFixture,
+        std::filesystem::copy_options::overwrite_existing, error);
+    Check(!error, "the stale Bridge fixture is prepared");
+    error.clear();
+    std::filesystem::copy_file(fixture, sdkFreeFixture,
+        std::filesystem::copy_options::overwrite_existing, error);
+    Check(!error, "the SDK-free Bridge fixture is prepared");
     {
         Service offline(offlineFixture, offlineFixture, cache);
         Check(offline.IsRegistered() &&
@@ -160,6 +198,20 @@ int wmain(int argc, wchar_t** argv)
         Check(unavailable.Current().state == State::BridgeUnavailable &&
                 !unavailable.StartRegistration({}),
             "a missing Bridge cannot register advanced features");
+    }
+    {
+        Service stale(staleFixture, staleFixture, cache);
+        Check(stale.Current().state == State::BridgeUnavailable &&
+                !stale.Current().bridgeAvailable &&
+                !stale.StartRegistration({}),
+            "a stale Bridge cannot register or expose Steam features");
+    }
+    {
+        Service sdkFree(sdkFreeFixture, sdkFreeFixture, cache);
+        Check(sdkFree.Current().state == State::BridgeUnavailable &&
+                !sdkFree.Current().bridgeAvailable &&
+                !sdkFree.StartRegistration({}),
+            "an SDK-free Bridge cannot register or expose Steam features");
     }
 
     std::filesystem::remove_all(root, error);
