@@ -373,7 +373,8 @@ local function drawHeaderButton(key, glyph, label, shape, colors, enabled,
     end
     draw.fluent(glyph,
         shape.x + (shape.width - metrics.iconSize) / 2,
-        shape.y + (shape.height - metrics.iconSize) / 2,
+        shape.y + (shape.height - metrics.iconSize) / 2 +
+            metrics.spacingXs * 0.5,
         metrics.iconSize, colors.accent, enabled and 1.0 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
         width = shape.width, height = shape.height,
@@ -390,7 +391,8 @@ local function drawHeaderTextButton(key, label, shape, colors, enabled,
     draw.rect(shape.x, shape.y, shape.width, shape.height,
         colors.accent, metrics.controlRadius,
         pressed and 0.16 or (hovered and 0.10 or 0.055))
-    centeredText(label, shape.x, shape.y, shape.width, shape.height,
+    centeredText(label, shape.x - metrics.strokeWidth * 0.5,
+        shape.y, shape.width, shape.height,
         fontSize, colors.accent, true,
         enabled and 0.92 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
