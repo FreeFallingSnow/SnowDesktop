@@ -183,3 +183,10 @@ Lua 结果保持、嵌套归属、跨线程隔离、失效来源、事件上限�
 先在相同机器、显示器配置和工作负载下记录多次基线，再一次修改一个热点。
 资源下降须同时检查交互、动画、提醒及更新行为。实际桌面视觉、框选、拖放、Dock
 悬停等依照仓库规则由用户实机验证，不使用桌面自动化捕捉宿主窗口。
+
+实际验证记录：[探针模式](performance_probe_modes.md)、
+[事件刷新合并](performance_event_invalidation.md)、
+[音频与动画合帧](performance_audio_cadence.md)、
+[背景模糊缓存](performance_background_cache.md)、
+[视图与资源诊断](performance_view_resources.md)、
+[缺省字段查询及后续优先级](performance_view_presence.md)。
