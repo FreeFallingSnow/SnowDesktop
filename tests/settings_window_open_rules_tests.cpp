@@ -1,5 +1,6 @@
 #include "settings_window_open_rules.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -23,7 +24,9 @@ std::string ReadFile(const std::filesystem::path& path)
     if (!file) return {};
     std::ostringstream contents;
     contents << file.rdbuf();
-    return contents.str();
+    auto result = contents.str();
+    result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
+    return result;
 }
 }
 
@@ -152,16 +155,17 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 source.find("SettingsPage::Personalization") !=
                     std::string::npos &&
-                source.find("SettingsRoute::ForWidget(widgetId)") !=
+                source.find("SettingsRoute::ForWidget(") !=
                     std::string::npos,
             "compatibility entry points canonicalize legacy routes and use current typed destinations");
         Check(header.find("HWND Window() const noexcept") !=
                     std::string::npos &&
                 source.find("HWND SettingsWindow::Window() const noexcept") !=
                     std::string::npos &&
-                source.find("impl_->host->Window()") !=
-                    std::string::npos,
-            "the settings facade exposes its lazy application-level HWND for window classification");
+                source.find("GetWindowThreadProcessId(impl_->window, &owner)") !=
+                    std::string::npos &&
+                source.find("owner == impl_->process.ProcessId()") != std::string::npos,
+            "the settings facade only exposes an HWND owned by its current child process");
         Check(appSettings.find(
                   "bool DesktopApp::IsSettingsApplicationWindow(") !=
                     std::string::npos &&
@@ -206,20 +210,27 @@ int main(int argc, char** argv)
                 ? std::string_view(source).substr(
                       openFacadeBegin, openFacadeEnd - openFacadeBegin)
                 : std::string_view{};
-        Check(source.find("bool EnsureInitialized()") !=
-                    std::string::npos &&
-                source.find("auto candidate =") != std::string::npos &&
-                source.find("host = std::move(candidate)") !=
-                    std::string::npos &&
-                openFacade.find("impl_->host->Open(canonical)") !=
-                    std::string_view::npos &&
-                openFacade.find("impl_->host->LastError()") !=
-                    std::string_view::npos &&
-                openFacade.find("impl_->host->Shutdown()") ==
-                    std::string_view::npos &&
-                openFacade.find("impl_->host.reset()") ==
-                    std::string_view::npos,
-            "failed lazy initialization can use a fresh candidate, while a transient Open failure preserves the process-lifetime WinUI host for scheduled retries");
+        const std::string entry = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "main.cpp");
+        const std::string child = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "winui" /
+                "settings_process_entry.cpp");
+        Check(source.find("std::unique_ptr<winui::SettingsWindowHost>") == std::string::npos &&
+                source.find("SettingsWindowHost>();") == std::string::npos &&
+                source.find("process.Start(*channel)") != std::string::npos &&
+                openFacade.find("ui.open") != std::string_view::npos &&
+                child.find("SettingsWindowHost>();") != std::string::npos,
+            "only the child entry creates the XAML host; the application facade opens routes over IPC");
+        const auto settingsEntry = entry.find("return snowdesktop::settings_ipc::RunSettingsProcess(instance)");
+        Check(settingsEntry != std::string::npos &&
+                settingsEntry < entry.find("snowdesktop::single_instance::Guard singleInstance") &&
+                settingsEntry < entry.find("StartForCurrentProcess(GetCurrentExecutablePath())") &&
+                settingsEntry < entry.find("DesktopApp app;"),
+            "settings mode returns before owning the desktop, single-instance guard, or crash watchdog");
+        Check(child.find("options.sessionClosed =") != std::string::npos &&
+                child.find("PostQuitMessage(0)") != std::string::npos &&
+                source.find("SetDisconnected([this] { EndSession(); })") != std::string::npos,
+            "a settings session close exits its message loop and disconnect tears down application-side session resources");
         Check(appSettings.find("foregroundMatch=%d") !=
                     std::string::npos &&
                 appSettings.find("settingsWindow_->LastError()") !=
@@ -233,7 +244,7 @@ int main(int argc, char** argv)
                 host.find("runtime.Detach();") != std::string::npos &&
                 host.find("releaseAfterClose") == std::string::npos &&
                 source.find("ReleaseClosedHost") == std::string::npos,
-            "a successful close asynchronously releases route resources while retaining the process WinUI runtime, root view, and host");
+            "the child releases route resources safely beyond the input callback before final process teardown");
         Check(appRun.find("ensureWidgetSettingsInstance") !=
                     std::string::npos &&
                 appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=
@@ -268,7 +279,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 appRun.find("settingsWindow_->Render()") ==
                     std::string::npos,
-            "the reusable WinUI host flushes on close and participates in the native message pump");
+            "the WinUI host retains durable close flushing and the application has no frame-render loop for settings");
 
         const std::string pageGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /

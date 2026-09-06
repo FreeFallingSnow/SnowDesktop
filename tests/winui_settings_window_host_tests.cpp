@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +25,9 @@ std::string ReadText(const std::filesystem::path& path)
         return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    auto result = content.str();
+    result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
+    return result;
 }
 
 std::size_t Count(std::string_view text, std::string_view token)
@@ -609,7 +612,7 @@ void TestHostContract(const std::filesystem::path& repository)
         "coalesced preview and commit work does not rewrite localized XAML while a continuous control owns pointer or flyout interaction");
 
     const std::size_t snapshotQueueBegin = source.find(
-        "void QueueSnapshot(SettingsController::SnapshotPtr snapshot)");
+        "void QueueSnapshot(");
     const std::size_t snapshotQueueEnd = source.find(
         "void ApplySnapshotNow", snapshotQueueBegin);
     const std::string_view snapshotQueueFunction =
