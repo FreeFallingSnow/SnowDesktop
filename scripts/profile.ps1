@@ -19,6 +19,13 @@ function Write-JsonFile($Value, [string]$Path) {
     [IO.File]::WriteAllText($Path, $json, (New-Object Text.UTF8Encoding($false)))
 }
 
+function Get-ExecutableSha256([string]$Path) {
+    $stream = [IO.File]::OpenRead($Path)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '') }
+    finally { $algorithm.Dispose(); $stream.Dispose() }
+}
+
 function Read-Capture([string]$Path) {
     if (-not $Path) { throw 'ReportPath is required.' }
     $report = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -157,8 +164,8 @@ public static class SnowDesktopPerformanceClient {
     $message = [SnowDesktopPerformanceClient]::RegisterWindowMessage('FreeFallingSnow.SnowDesktop.Performance.v1')
     $status = [SnowDesktopPerformanceClient]::Send($window, $message, [IntPtr]::Zero)
     # Keep protocol constants in hexadecimal here to make their wire identity explicit.
-    $states = @{}; $states[[ulong]0x53445010] = 'idle'; $states[[ulong]0x53445011] = 'recording'
-    $states[[ulong]0x53445012] = 'finishing'; $states[[ulong]0x53445013] = 'failed'
+    $states = @{}; $states[[UInt64]0x53445010] = 'idle'; $states[[UInt64]0x53445011] = 'recording'
+    $states[[UInt64]0x53445012] = 'finishing'; $states[[UInt64]0x53445013] = 'failed'
     if (-not $states.ContainsKey($status)) { throw 'The running host does not support performance protocol v1. It may be an older build.' }
     $hostPid = [SnowDesktopPerformanceClient]::ProcessId($window)
     if ($Command -eq 'status') {
@@ -189,7 +196,7 @@ public static class SnowDesktopPerformanceClient {
     $hostProcess = Get-Process -Id $hostPid
     $metadata = [pscustomobject]@{ schemaVersion = 1; session = $sessionId; processId = $hostPid
         executable = $hostProcess.Path; startedUtc = [DateTime]::UtcNow.ToString('o')
-        executableSha256 = (Get-FileHash -LiteralPath $hostProcess.Path -Algorithm SHA256).Hash
+        executableSha256 = Get-ExecutableSha256 $hostProcess.Path
         seconds = $Seconds; report = $capturePath; osVersion = [Environment]::OSVersion.VersionString }
     Write-JsonFile $metadata $metadataPath
     $request = @('1', 'start', $sessionId, [string]$Seconds, $capturePath) -join "`n"

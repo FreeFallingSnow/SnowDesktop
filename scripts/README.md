@@ -94,7 +94,8 @@ CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capa
 携带版和 MSIX 均不分发该管理器。
 
 发布流程的完整说明见 `packaging\README.md`。
-# 耦合运行性能调试
+
+## 耦合运行性能调试
 
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`

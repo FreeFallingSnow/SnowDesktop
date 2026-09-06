@@ -105,9 +105,10 @@ Lua `protectedCall` 从宿主组件执行上下文继承实例 owner。
 
 ## 验证与优化
 
-运行 `scripts/test.bat name "^(widget_runtime_diagnostics|lua_runtime)$"` 验证默认关闭、
+运行 `scripts/test.bat name widget_runtime_diagnostics` 验证默认关闭、
 Lua 结果保持、嵌套归属、跨线程隔离、失效来源、事件上限、重复采集、超时、
-旧会话隔离和非法协议载荷。这些用例加入已有诊断测试目标，不新增测试程序。
+旧会话隔离和非法协议载荷；`scripts/test.bat name lua_runtime` 运行原有 Lua 测试。
+这些用例加入已有诊断测试目标，不新增测试程序。
 `SnowDesktopWidgetRuntimeDiagnosticsTests.exe --performance-control-fixture` 提供
 仅用于协议验证的不可见控制窗口，按 PID 定向连接；它不验证真实桌面交互。
 
