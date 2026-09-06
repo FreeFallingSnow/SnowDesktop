@@ -74,14 +74,24 @@ bool DesktopApp::RunPathAsAdministrator(
     if (!IsAdministratorRunnablePath(path))
         return false;
 
-    SHELLEXECUTEINFOW executeInfo{};
-    executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
-    executeInfo.hwnd = ShellDialogOwnerHwnd();
-    executeInfo.lpVerb = L"runas";
-    executeInfo.lpFile = path.c_str();
-    executeInfo.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&executeInfo) != FALSE;
+    // Context-menu activation first foregrounds its owner before dispatching
+    // runas. Direct double-clicks arrive through desktop/Dock windows that may
+    // deliberately be non-activating, so perform the same handoff here and
+    // let the elevation broker inherit foreground eligibility.
+    HWND foregroundOwner = quickNavigationHwnd_ &&
+        IsWindow(quickNavigationHwnd_) &&
+        IsWindowVisible(quickNavigationHwnd_)
+        ? quickNavigationHwnd_
+        : hwnd_;
+    if (foregroundOwner && IsWindow(foregroundOwner))
+        SetForegroundWindow(foregroundOwner);
+    AllowSetForegroundWindow(ASFW_ANY);
+
+    // ShellExecuteEx(runas) can wait for the consent UI or a third-party
+    // shortcut handler. Keep that wait off the rendering/input thread while
+    // using a dedicated queue so a pending prompt cannot delay ordinary Open.
+    return shellElevationWorker_.Enqueue(
+        ShellDialogOwnerHwnd(), path);
 }
 
 void DesktopApp::ShowPathProperties(

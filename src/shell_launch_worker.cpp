@@ -431,6 +431,25 @@ bool ShellLaunchWorker::ExecuteInteractive(
         launchMask, true);
 }
 
+bool ShellLaunchWorker::ExecuteRunAsAdministrator(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE,
+    int showCommand)
+{
+    if (path.empty())
+        return false;
+
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
+    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
+    executeInfo.lpVerb = L"runas";
+    executeInfo.lpFile = path.c_str();
+    executeInfo.nShow = showCommand;
+    return ShellExecuteExW(&executeInfo) != FALSE;
+}
+
 bool ShellLaunchWorker::ShortcutRequestsAdministrator(
     const std::wstring& path)
 {

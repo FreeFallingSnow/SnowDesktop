@@ -3456,6 +3456,8 @@ private:
         std::wstring shortcutFallbackUrl;
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
+    snowdesktop::ShellLaunchWorker shellElevationWorker_{
+        &snowdesktop::ShellLaunchWorker::ExecuteRunAsAdministrator };
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
     snowdesktop::ShellFileOperationWorker shellRefreshWorker_;
     snowdesktop::UrlDropDownloadWorker urlDropDownloadWorker_;

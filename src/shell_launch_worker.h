@@ -83,7 +83,14 @@ public:
         PCIDLIST_ABSOLUTE absolutePidl,
         int showCommand = SW_SHOWNORMAL);
 
-    /** @brief Whether a .lnk stores the Shell "Run as administrator" flag. */
+    /** @brief Execute one runas launch on a Shell worker STA. */
+    static bool ExecuteRunAsAdministrator(
+        HWND owner,
+        const std::wstring& path,
+        PCIDLIST_ABSOLUTE absolutePidl,
+        int showCommand = SW_SHOWNORMAL);
+
+    /** @brief Whether a shortcut or its target requests administrator launch. */
     static bool ShortcutRequestsAdministrator(
         const std::wstring& path);
 

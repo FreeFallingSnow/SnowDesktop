@@ -26,6 +26,7 @@ DesktopApp::~DesktopApp()
     floatingDockPointerPresentPending_ = false;
     pageNotifyFadeOutToken_ = 0;
     shellLaunchWorker_.Stop();
+    shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
     StopSteamWorkshopWatcher();
@@ -1001,6 +1002,7 @@ void DesktopApp::RequestExit()
     }
     exitRequested_ = true;
     shellLaunchWorker_.Stop();
+    shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
     quickNavigationEverythingSearch_.Stop();
