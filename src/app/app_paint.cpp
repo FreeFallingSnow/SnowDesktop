@@ -1,10 +1,16 @@
 #include "app.h"
+#include "../performance_trace.h"
 #include "desktop_backdrop_update_rules.h"
 
 // Desktop composition paint transaction.
 
 void DesktopApp::OnPaint(const RECT* updateRect)
 {
+    snowdesktop::performance::Scope performanceScope("desktop", "paint");
+    if (updateRect)
+        snowdesktop::performance::Value("desktop", "dirty_pixels", {},
+            static_cast<double>(std::max(0L, updateRect->right - updateRect->left)) *
+            std::max(0L, updateRect->bottom - updateRect->top));
     RecordShellHoverTrace(ShellHoverTraceEvent::PaintBegin);
     // COM calls made while resolving glass wallpaper sources may dispatch a
     // nested WM_PAINT on this same UI thread. D2D/DComp drawing is not

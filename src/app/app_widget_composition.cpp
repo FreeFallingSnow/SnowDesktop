@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../performance_trace.h"
 
 namespace
 {
@@ -26,6 +27,8 @@ struct DesktopWidgetSurfaceFailure
 bool DesktopApp::QueueDesktopWidgetComposition(
     const std::wstring& widgetId)
 {
+    snowdesktop::performance::Scope performanceScope(
+        "widget.composition", "queue", widgetId);
     const auto fail = [&]() {
         desktopWidgetCompositionFailurePending_ = true;
         if (hwnd_ && IsWindow(hwnd_))
@@ -148,6 +151,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     }
 
     auto pending = std::move(pendingDesktopWidgetCompositions_);
+    snowdesktop::performance::Scope performanceScope("composition.shared", "widgets.flush");
+    snowdesktop::performance::Value("composition.shared", "batch_widget_count", {},
+        static_cast<double>(pending.size()));
     pendingDesktopWidgetCompositions_.clear();
     const bool ownsPaintScope = !compositionPaintInProgress_;
     if (ownsPaintScope)
@@ -160,6 +166,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     std::vector<DesktopWidgetSurfaceFailure> surfaceFailures;
     for (const auto& widgetId : pending)
     {
+        snowdesktop::performance::Scope widgetPerformanceScope(
+            "widget.composition", "draw", widgetId);
+        snowdesktop::performance::DrawLink("desktop", widgetId, true);
         auto composition = desktopWidgetCompositionItems_.find(widgetId);
         if (composition == desktopWidgetCompositionItems_.end())
             continue;

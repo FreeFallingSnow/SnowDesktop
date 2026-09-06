@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../performance_capture.h"
+#include "../performance_trace.h"
 #include "../drag_input_rules.h"
 #include "../popup_icon_load_rules.h"
 
@@ -408,6 +410,35 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
+    {
+        return snowdesktop::performance::HandleControlMessage(
+            hwnd, msg, wp, lp, +[](void* context) {
+                auto* app = static_cast<DesktopApp*>(context);
+                snowdesktop::performance::Scope sample("profiler", "sample.widgets");
+                if (!app->widgetEngine_) return;
+                for (const auto& widget : app->widgetEngine_->GetWidgets())
+                {
+                    using snowdesktop::performance::Value;
+                    if (widget.quota)
+                        Value("widget.memory", "lua_bytes", widget.widgetId,
+                            static_cast<double>(widget.quota->memoryBytes));
+                    Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
+                    Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
+                    Value("widget.state", "timers", widget.widgetId,
+                        static_cast<double>(widget.namedTimers.Size()));
+                    Value("widget.state", "animation_requests", widget.widgetId,
+                        static_cast<double>(widget.animationFrames.Size()));
+                    Value("widget.package", widget.packageId, widget.widgetId, 1);
+                }
+                for (const auto& [id, item] : app->desktopWidgetCompositionItems_)
+                    snowdesktop::performance::Value("widget.memory",
+                        "surface_bgra_bytes_estimate", id,
+                        static_cast<double>(item.width) * item.height * 4);
+            }, this);
+    }
+    if (msg == WM_DESTROY)
+        snowdesktop::performance::Shutdown();
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;

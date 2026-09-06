@@ -1,4 +1,5 @@
 #include "lua_runtime.h"
+#include "performance_trace.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -130,6 +131,7 @@ int ProtectedCall(lua_State* state, int arguments, int results,
     }
 
     ProtectedCallDepthFrame depthFrame;
+    performance::Scope performanceScope("lua", "protectedCall");
     HookFrame hookFrame(
         state, quota, instructionBudget, timeBudget);
     const auto started = std::chrono::steady_clock::now();

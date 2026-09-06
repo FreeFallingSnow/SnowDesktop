@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../performance_trace.h"
 #include "../drag_input_rules.h"
 
 // Floating-Dock paint and window-message dispatch.
@@ -6,6 +7,7 @@
 bool DesktopApp::RenderFloatingDockCompositionFrame(
     PersistentDockHost& host)
 {
+    snowdesktop::performance::Scope performanceScope("dock", "floating.paint");
     if (host.compositionPaintInProgress)
         return false;
     host.compositionPaintInProgress = true;

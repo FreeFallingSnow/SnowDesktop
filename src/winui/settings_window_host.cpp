@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "../performance_trace.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -1298,6 +1299,7 @@ struct SettingsWindowHost::Impl
 
     void ApplySnapshotNow(SettingsController::SnapshotPtr snapshot)
     {
+        performance::Scope performanceScope("settings", "snapshot.apply");
         if (!shell || !snapshot || shuttingDown)
             return;
         if (!Visible() && !snapshot->sessionActive)
@@ -2343,6 +2345,7 @@ struct SettingsWindowHost::Impl
     [[nodiscard]] bool CommitRoute(const SettingsRoute& route,
         SettingsActionResult* controllerResult = nullptr)
     {
+        performance::Scope performanceScope("settings.navigate", SettingsPageKey(route.page));
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
         if ((route.page == SettingsPage::DeveloperTools &&
@@ -3017,6 +3020,7 @@ struct SettingsWindowHost::Impl
 
     [[nodiscard]] bool CreateView()
     {
+        performance::Scope performanceScope("settings", "view.create");
         if (shell && runtime.IsAttached())
             return true;
         if (!window || !IsWindow(window) || !runtime.IsInitialized() ||
@@ -3105,6 +3109,7 @@ struct SettingsWindowHost::Impl
 
     [[nodiscard]] bool HideWindow()
     {
+        performance::Scope performanceScope("settings", "hide");
         if (!controller || !window || shuttingDown)
             return false;
         if (!FlushPendingChanges())
@@ -3282,6 +3287,7 @@ void SettingsWindowHost::Shutdown() noexcept
 
 bool SettingsWindowHost::Open(const SettingsRoute& route)
 {
+    performance::Scope performanceScope("settings.open", SettingsPageKey(route.page));
     impl_->lastError.clear();
     if (!impl_->initialized)
     {

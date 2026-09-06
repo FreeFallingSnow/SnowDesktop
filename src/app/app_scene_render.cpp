@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../performance_trace.h"
 #include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
 #include "../drag_visual_rules.h"
@@ -13,6 +14,7 @@ void DesktopApp::DrawStaticBackground(
     const RECT* updateRect,
     bool hiddenMode)
 {
+    snowdesktop::performance::Scope performanceScope("desktop", "background");
     auto intersectsUpdate =
         [&](RECT bounds, int overdraw = 0) {
         if (!updateRect)
@@ -195,6 +197,7 @@ void DesktopApp::DrawDesktopForeground(
     ID2D1DeviceContext* ctx,
     bool hiddenMode)
 {
+    snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
@@ -221,6 +224,7 @@ void DesktopApp::DrawDynamicOverlays(
     ID2D1DeviceContext* ctx,
     bool hiddenMode)
 {
+    snowdesktop::performance::Scope performanceScope("desktop", "overlays");
     auto beginPopupAnimationTransform =
         [&](const RECT& popup,
             D2D1_MATRIX_3X2_F& previousTransform) {

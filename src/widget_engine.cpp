@@ -11,6 +11,7 @@
  */
 
 #include "widget_engine.h"
+#include "performance_trace.h"
 #include "widget_logical_slot_manifest.h"
 #include "logical_slot_keyboard_rules.h"
 #include "logical_slot_picker_rules.h"
@@ -2095,7 +2096,7 @@ class WidgetExecutionContextGuard
 public:
     WidgetExecutionContextGuard(
         D2DState* state, const std::wstring& widgetId)
-        : state_(state)
+        : performanceScope_("widget", "context", widgetId), state_(state)
     {
         if (!state_)
             return;
@@ -2146,6 +2147,7 @@ public:
         const WidgetExecutionContextGuard&) = delete;
 
 private:
+    snowdesktop::performance::Scope performanceScope_;
     D2DState* state_ = nullptr;
     ID2D1DeviceContext* context_ = nullptr;
     D2D1_RECT_F widgetRect_{};
@@ -11714,6 +11716,7 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
 
 void WidgetEngine::DrainAudioAnalysisChanges()
 {
+    snowdesktop::performance::Scope performanceScope("shared.audio", "deliver");
     if (!widgetAudioAnalysisProvider_ ||
         !widgetAudioAnalysisProvider_->DrainChanged())
     {
@@ -12278,6 +12281,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
     }
     for (const auto& action : taskBroker_->DrainActions())
     {
+        snowdesktop::performance::Scope performanceScope(
+            "task.dispatch", action.name,
+            snowdesktop::performance::Enabled()
+                ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
             if (mediaTaskExecutor_)
@@ -14018,6 +14025,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
     for (auto& completion : taskBroker_->DrainCompletions())
     {
+        snowdesktop::performance::Scope performanceScope(
+            "task.completion", completion.name,
+            snowdesktop::performance::Enabled()
+                ? Utf8ToWideLocal(completion.instanceId) : std::wstring{}, completion.id);
         auto widget = std::find_if(widgets_.begin(), widgets_.end(),
             [&completion](const LuaWidget& candidate) {
                 return candidate.runtimeToken == completion.ownerToken;
@@ -15048,6 +15059,8 @@ void WidgetEngine::InvokeSimpleCallback(LuaWidget& widget, const char* callbackN
 
 bool WidgetEngine::InitializeWidgetLifecycle(LuaWidget& widget)
 {
+    snowdesktop::performance::Scope performanceScope(
+        "widget.lifecycle", "setup", widget.widgetId);
     lua_State* state = widget.state;
     if (!state) return false;
     PreviewExecutionScope previewScope(
@@ -15079,6 +15092,8 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
     const char* kind,
     const std::function<void(lua_State*)>& pushFields)
 {
+    snowdesktop::performance::Scope performanceScope(
+        "widget.event", kind ? kind : "unknown", widget.widgetId);
     if (!widget.state || !kind || !*kind)
         return false;
     PreviewExecutionScope previewScope(
@@ -15113,6 +15128,8 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
 void WidgetEngine::DisposeWidgetLifecycle(
     LuaWidget& widget, const char* reason)
 {
+    snowdesktop::performance::Scope performanceScope(
+        "widget.lifecycle", "dispose", widget.widgetId);
     if (!widget.state) return;
     PreviewExecutionScope previewScope(
         widget.preview ? &widget.previewStorage : nullptr);
@@ -19069,6 +19086,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     RECT bounds, int columns, int rows, float inheritedBlurRadius,
     float cornerRadius)
 {
+    snowdesktop::performance::Scope performanceScope("widget.render", "backgroundLayer", widgetId);
     const int index = FindWidget(widgetId);
     if (index < 0 || !context || IsRectEmpty(&bounds)) return false;
     LuaWidget& widget = widgets_[index];
@@ -19283,6 +19301,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
+    snowdesktop::performance::Scope performanceScope("widget.render", "desktop", widgetId);
     (void)scriptPath;
 
     int idx = FindWidget(widgetId);
@@ -19988,6 +20007,8 @@ bool WidgetEngine::RenderWidgetPanel(
     ID2D1DeviceContext* context, RECT bounds,
     std::string_view surface)
 {
+    snowdesktop::performance::Scope performanceScope("widget.render", surface, widgetId);
+    snowdesktop::performance::DrawLink(surface, widgetId, true);
     const int index = FindWidget(widgetId);
     if (index < 0 || !context)
         return false;
@@ -20789,6 +20810,8 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
 
 void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
 {
+    snowdesktop::performance::Scope performanceScope(
+        "widget", "timer.dispatch", widgetId);
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     auto& widget = widgets_[idx];
@@ -24057,6 +24080,8 @@ void WidgetEngine::RuntimeSetWidgetTitle(const std::wstring& widgetId, const std
 void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
     std::optional<RECT> dirtyRect, std::string_view surface)
 {
+    snowdesktop::performance::Scope performanceScope(
+        "widget.invalidate", surface.empty() ? "current" : surface, widgetId);
     if (snowdesktop::widget_runtime::IsDryLoad()) return;
     // Calls made while evaluating or interacting with an auxiliary surface
     // belong to that surface unless the caller explicitly names another one.
@@ -24070,6 +24095,8 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
         if (IsPanelSurface(currentSurface))
             surface = currentSurface;
     }
+    snowdesktop::performance::DrawLink(
+        surface.empty() ? "desktop" : surface, widgetId, false);
     const int index = widgetId.empty() ? -1 : FindWidget(widgetId);
     if (index >= 0)
     {
@@ -25258,7 +25285,10 @@ WidgetEngine::RuntimeStartTask(
     auto result = taskBroker_->Start(
         WidgetWideToUtf8(widgetId), name, options);
     if (result)
+    {
+        snowdesktop::performance::Value("task.start", name, widgetId, 1, result.id);
         widget.taskIds.insert(result.id);
+    }
     return result;
 }
 

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../performance_trace.h"
 #include "native_menu_presentation_rules.h"
 
 namespace
@@ -288,6 +289,7 @@ bool DesktopApp::FlushPendingCompositionCommit()
 {
     if (!compositionCommitPending_)
         return true;
+    snowdesktop::performance::Scope performanceScope("composition.shared", "commit");
     if (!dcompDevice_)
     {
         compositionCommitPending_ = false;

@@ -396,6 +396,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_logical_slot.cpp
     src/widget_lua_lifecycle.cpp
     src/widget_runtime_diagnostics.cpp
+    src/performance_capture.cpp
     src/widget_runtime_scheduler.cpp
     src/widget_engine.cpp
     src/widget_permission_broker.cpp
@@ -1073,8 +1074,12 @@ if (BUILD_TESTING)
         widget_runtime_diagnostics
         SOURCES
             tests/widget_runtime_diagnostics_tests.cpp
+            tests/performance_capture_tests.cpp
             src/widget_runtime_diagnostics.cpp
+            src/performance_capture.cpp
+            src/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua pdh psapi user32
         LABELS contract widget)
 
     snowdesktop_add_test(

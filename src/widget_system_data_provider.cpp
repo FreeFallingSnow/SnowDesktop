@@ -1,4 +1,5 @@
 #include "widget_system_data_provider.h"
+#include "performance_trace.h"
 #include "widget_media_contract.h"
 
 #include <windows.h>
@@ -1171,6 +1172,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
 
 WidgetCpuDataSnapshot WidgetSystemDataProvider::SampleCpu()
 {
+    performance::Scope performanceScope("shared.system", "SampleCpu");
     WidgetCpuDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     SYSTEM_INFO systemInfo{};
@@ -1218,6 +1220,7 @@ WidgetCpuDataSnapshot WidgetSystemDataProvider::SampleCpu()
 
 WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
 {
+    performance::Scope performanceScope("shared.system", "SampleMemory");
     WidgetMemoryDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     MEMORYSTATUSEX status{ sizeof(status) };
@@ -1253,6 +1256,7 @@ WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
 WidgetProcessSummaryDataSnapshot
 WidgetSystemDataProvider::SampleProcessSummary()
 {
+    performance::Scope performanceScope("shared.system", "SampleProcessSummary");
     WidgetProcessSummaryDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     const auto sampleTime = Clock::now();
@@ -1365,6 +1369,7 @@ WidgetSystemDataProvider::SampleProcessSummary()
 
 WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
 {
+    performance::Scope performanceScope("shared.system", "SamplePower");
     WidgetPowerDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     SYSTEM_POWER_STATUS status{};
@@ -1400,6 +1405,7 @@ WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
 WidgetNetworkStatusDataSnapshot
 WidgetSystemDataProvider::SampleNetworkStatus()
 {
+    performance::Scope performanceScope("shared.system", "SampleNetworkStatus");
     using namespace winrt::Windows::Networking::Connectivity;
     WidgetNetworkStatusDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
@@ -1451,6 +1457,7 @@ WidgetSystemDataProvider::SampleNetworkStatus()
 WidgetNetworkTrafficDataSnapshot
 WidgetSystemDataProvider::SampleNetworkTraffic()
 {
+    performance::Scope performanceScope("shared.system", "SampleNetworkTraffic");
     WidgetNetworkTrafficDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     const auto sampleTime = Clock::now();
@@ -1575,6 +1582,7 @@ void WidgetSystemDataProvider::CloseGpuQuery()
 
 WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 {
+    performance::Scope performanceScope("shared.system", "SampleGpu");
     struct AdapterEntry
     {
         std::uint64_t luid = 0;
@@ -1746,6 +1754,7 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 WidgetStorageVolumesDataSnapshot
 WidgetSystemDataProvider::SampleStorageVolumes()
 {
+    performance::Scope performanceScope("shared.system", "SampleStorageVolumes");
     WidgetStorageVolumesDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     const DWORD required = GetLogicalDriveStringsW(0, nullptr);
@@ -1877,6 +1886,7 @@ void WidgetSystemDataProvider::CloseStorageIoQuery()
 
 WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
 {
+    performance::Scope performanceScope("shared.system", "SampleStorageIo");
     WidgetStorageIoDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     snapshot.available = true;
@@ -1937,6 +1947,7 @@ WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
 WidgetDisplayTopologyDataSnapshot
 WidgetSystemDataProvider::SampleDisplayTopology()
 {
+    performance::Scope performanceScope("shared.system", "SampleDisplayTopology");
     struct EnumContext
     {
         WidgetDisplayTopologyDataSnapshot* snapshot = nullptr;
@@ -2047,6 +2058,7 @@ WidgetSystemDataProvider::SampleDisplayTopology()
 WidgetAudioOutputDefaultDataSnapshot
 WidgetSystemDataProvider::SampleAudioOutputDefault()
 {
+    performance::Scope performanceScope("shared.system", "SampleAudioOutputDefault");
     WidgetAudioOutputDefaultDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     std::string error;
@@ -2088,6 +2100,7 @@ WidgetSystemDataProvider::SampleAudioOutputDefault()
 WidgetAudioOutputVolumeDataSnapshot
 WidgetSystemDataProvider::SampleAudioOutputVolume()
 {
+    performance::Scope performanceScope("shared.system", "SampleAudioOutputVolume");
     WidgetAudioOutputVolumeDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     std::string error;
@@ -2126,6 +2139,7 @@ WidgetSystemDataProvider::SampleAudioOutputVolume()
 WidgetMediaSessionsDataSnapshot
 WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
 {
+    performance::Scope performanceScope("shared.system", "SampleMediaSessions");
     using namespace winrt::Windows::Media::Control;
     WidgetMediaSessionsDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
