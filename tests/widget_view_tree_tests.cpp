@@ -4688,11 +4688,75 @@ void TestAccessibilityMetadataParsingAndValidation()
 }
 }
 
+// Protect per-parse field discovery from stale table state, false/nil confusion
+// and changes to the existing rejection path for metatables or oversized input.
+void TestLuaFieldPresenceAfterMutation()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "field presence fixture must allocate a Lua state");
+    luaL_openlibs(state);
+    Check(luaL_dostring(state,
+        "return {type='box',key='mutable'}") == LUA_OK,
+        "mutable node fixture must evaluate");
+    std::string error;
+    ViewNode node;
+    Check(ParseLuaViewTree(state, 1, node, error),
+        "a sparse box must parse");
+    lua_pushnumber(state, 72); lua_setfield(state, 1, "width");
+    lua_pushboolean(state, false); lua_setfield(state, 1, "visible");
+    node = {};
+    Check(ParseLuaViewTree(state, 1, node, error) &&
+            node.width.kind == ViewLengthKind::Fixed &&
+            Near(node.width.value, 72) && !node.visible,
+        "reusing a Lua table must observe added fields including false");
+    lua_pushboolean(state, false); lua_setfield(state, 1, "checked");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "a false forbidden property must still reject the node");
+    lua_pushnil(state); lua_setfield(state, 1, "checked");
+    lua_pushnil(state); lua_setfield(state, 1, "width");
+    lua_pushnil(state); lua_setfield(state, 1, "visible");
+    node = {};
+    Check(ParseLuaViewTree(state, 1, node, error) && node.visible &&
+            node.width.kind != ViewLengthKind::Fixed,
+        "removed fields must recover defaults on the next parse");
+    lua_pushliteral(state, "checked\0suffix");
+    lua_pushboolean(state, false);
+    lua_rawset(state, 1);
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) && lua_gettop(state) == 1,
+        "an embedded-NUL unknown key must not masquerade as an absent valid field");
+    lua_pop(state, 1);
+
+    Check(luaL_dostring(state, R"lua(
+        return setmetatable({type='box',key='meta'}, {
+            __index=function(_,key) if key=='checked' then return false end end
+        })
+    )lua") == LUA_OK, "metatable fixture must evaluate");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "metatables must preserve the original lookup and rejection path");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local node={type='box',key='large',checked=false}
+        for i=1,100 do node['unknown-'..i]=i end
+        return node
+    )lua") == LUA_OK, "oversized field fixture must evaluate");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "bounded field discovery must preserve the old oversized-table rejection");
+    lua_close(state);
+}
+
 int main()
 {
     TestLayoutAndRegions();
     TestValidationFailures();
     TestLuaParsing();
+    TestLuaFieldPresenceAfterMutation();
     TestVisualNodeParsing();
     TestDataSeriesParsingAndLimits();
     TestStatusVisualParsing();

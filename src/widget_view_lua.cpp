@@ -136,6 +136,77 @@ bool FieldPresent(lua_State* state, int index, const char* field)
     return present;
 }
 
+constexpr std::uint64_t FieldHash(std::string_view field) noexcept
+{
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const unsigned char character : field)
+    {
+        hash ^= character;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+struct PresenceField
+{
+    const char* name;
+    std::uint64_t first, second;
+    template<std::size_t N>
+    consteval PresenceField(const char (&literal)[N]) noexcept
+        : name(literal), first(1ull << (FieldHash({literal, N - 1}) & 63)),
+          second(1ull << ((FieldHash({literal, N - 1}) >> 6) & 63)) {}
+};
+
+// A per-parse negative filter, never a cached field value. Hash collisions only
+// cause an ordinary Lua lookup; a potentially present field always retains the
+// original nil/false distinction and all subsequent validation.
+class NodeFieldPresence
+{
+public:
+    NodeFieldPresence(lua_State* state, int index)
+        : state_(state), index_(lua_absindex(state, index))
+    {
+        // Do not infer absence through __index. Unsupported/mutable metatables
+        // keep the old lookup/error path; no Lua callbacks run during scanning.
+        if (lua_getmetatable(state_, index_) != 0)
+        {
+            lua_pop(state_, 1);
+            return;
+        }
+        std::size_t count = 0;
+        lua_pushnil(state_);
+        while (lua_next(state_, index_) != 0)
+        {
+            // Bound extra work even for huge malformed tables. Falling back
+            // does not impose a new limit on otherwise valid node properties.
+            if (++count > 64 || lua_type(state_, -2) != LUA_TSTRING)
+            {
+                lua_pop(state_, 2);
+                return;
+            }
+            std::size_t length = 0;
+            const char* key = lua_tolstring(state_, -2, &length);
+            const auto hash = FieldHash({key, length});
+            first_ |= 1ull << (hash & 63);
+            second_ |= 1ull << ((hash >> 6) & 63);
+            lua_pop(state_, 1);
+        }
+        enabled_ = true;
+    }
+
+    bool Present(PresenceField field) const
+    {
+        if (enabled_ && ((first_ & field.first) == 0 ||
+                (second_ & field.second) == 0)) return false;
+        return FieldPresent(state_, index_, field.name);
+    }
+private:
+    lua_State* state_;
+    int index_;
+    std::uint64_t first_ = 0, second_ = 0;
+    bool enabled_ = false;
+};
+
 bool ValidateNodeFields(lua_State* state, int index, ViewNodeType type,
     std::string& error)
 {
@@ -2361,6 +2432,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (error.empty()) error = "unsupported view node type: " + type;
         return false;
     }
+    const NodeFieldPresence fields(state, index);
     const bool buttonNode = node.type == ViewNodeType::Button ||
         node.type == ViewNodeType::IconButton;
     const bool checkControlNode = node.type == ViewNodeType::Toggle ||
@@ -2424,134 +2496,134 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool textResourceNode = textNode || labelNode || radioNode ||
         monthCalendarNode;
     if (labelNode &&
-        (FieldPresent(state, index, "text") ||
-            FieldPresent(state, index, "glyph")))
+        (fields.Present("text") ||
+            fields.Present("glyph")))
     {
         error = "button, link, toggle, and checkbox nodes use 'label', not 'text' or 'glyph'";
         return false;
     }
-    if (iconNode && (FieldPresent(state, index, "text") ||
-            FieldPresent(state, index, "label")))
+    if (iconNode && (fields.Present("text") ||
+            fields.Present("label")))
     {
         error = "icon nodes use 'glyph', not 'text' or 'label'";
         return false;
     }
-    if (!labelNode && FieldPresent(state, index, "label"))
+    if (!labelNode && fields.Present("label"))
     {
         error = "only label-bearing action controls accept 'label'";
         return false;
     }
-    if (!actionNode && FieldPresent(state, index, "action"))
+    if (!actionNode && fields.Present("action"))
     {
         error = "only action-capable nodes accept 'action'";
         return false;
     }
-    if (!listItemNode && FieldPresent(state, index, "sticky"))
+    if (!listItemNode && fields.Present("sticky"))
     {
         error = "only listItem nodes accept sticky";
         return false;
     }
-    if (!styledTextNode && FieldPresent(state, index, "spans"))
+    if (!styledTextNode && fields.Present("spans"))
     {
         error = "only styledText nodes accept spans";
         return false;
     }
-    if (styledTextNode && FieldPresent(state, index, "text"))
+    if (styledTextNode && fields.Present("text"))
     {
         error = "styledText nodes use spans, not text";
         return false;
     }
     if (!textNode && !labelNode && !iconNode &&
-        FieldPresent(state, index, "text"))
+        fields.Present("text"))
     {
         error = "only text nodes accept 'text'";
         return false;
     }
-    if (!iconNode && (FieldPresent(state, index, "glyph") ||
-            FieldPresent(state, index, "iconFont")))
+    if (!iconNode && (fields.Present("glyph") ||
+            fields.Present("iconFont")))
     {
         error = "only icon nodes accept 'glyph' and 'iconFont'";
         return false;
     }
     if (node.type != ViewNodeType::Shape &&
-        FieldPresent(state, index, "shape"))
+        fields.Present("shape"))
     {
         error = "only shape nodes accept 'shape'";
         return false;
     }
     if (!dividerNode && !radioNode && !sliderNode && !scrollNode &&
         node.type != ViewNodeType::List && !virtualListNode &&
-        FieldPresent(state, index, "orientation"))
+        fields.Present("orientation"))
     {
         error = "only divider, radioGroup, slider, scroll, list, and virtualList nodes accept orientation";
         return false;
     }
-    if (!gridNode && FieldPresent(state, index, "columns"))
+    if (!gridNode && fields.Present("columns"))
     {
         error = "only grid, gridList, and virtualGrid nodes accept columns";
         return false;
     }
-    if (!positionedGridNode && FieldPresent(state, index, "rows"))
+    if (!positionedGridNode && fields.Present("rows"))
     {
         error = "only grid and gridList nodes accept rows";
         return false;
     }
     if (!gridNode && !flowNode && !virtualListNode &&
-        (FieldPresent(state, index, "columnGap") ||
-            FieldPresent(state, index, "rowGap")))
+        (fields.Present("columnGap") ||
+            fields.Present("rowGap")))
     {
         error = "only grid, collection-grid, flow, and virtualList nodes accept axis gaps";
         return false;
     }
     if (!flexContainerNode &&
-        (FieldPresent(state, index, "flexDirection") ||
-            FieldPresent(state, index, "flexWrap") ||
-            FieldPresent(state, index, "alignContent")))
+        (fields.Present("flexDirection") ||
+            fields.Present("flexWrap") ||
+            fields.Present("alignContent")))
     {
         error = "flexDirection, flexWrap, and alignContent are reserved for row and column nodes";
         return false;
     }
-    if (gridNode && !FieldPresent(state, index, "columns"))
+    if (gridNode && !fields.Present("columns"))
     {
         error = "grid, gridList, and virtualGrid nodes require columns";
         return false;
     }
-    if (!scrollContainerNode && FieldPresent(state, index, "showScrollbar"))
+    if (!scrollContainerNode && fields.Present("showScrollbar"))
     {
         error = "only scroll and virtual collection nodes accept showScrollbar";
         return false;
     }
-    if (!scrollNode && FieldPresent(state, index, "initialScrollKey"))
+    if (!scrollNode && fields.Present("initialScrollKey"))
     {
         error = "only scroll nodes accept initialScrollKey";
         return false;
     }
     if (!virtualCollectionNode &&
-        FieldPresent(state, index, "initialScrollIndex"))
+        fields.Present("initialScrollIndex"))
     {
         error = "only virtual collection nodes accept initialScrollIndex";
         return false;
     }
     if (!virtualCollectionNode &&
-        (FieldPresent(state, index, "itemCount") ||
-            FieldPresent(state, index, "itemExtent") ||
-            FieldPresent(state, index, "estimatedItemSize") ||
-            FieldPresent(state, index, "layoutRevision") ||
-            FieldPresent(state, index, "sectionHeaderIndices") ||
-            FieldPresent(state, index, "stickyHeaderIndex") ||
-            FieldPresent(state, index, "firstIndex") ||
-            FieldPresent(state, index, "overscan")))
+        (fields.Present("itemCount") ||
+            fields.Present("itemExtent") ||
+            fields.Present("estimatedItemSize") ||
+            fields.Present("layoutRevision") ||
+            fields.Present("sectionHeaderIndices") ||
+            fields.Present("stickyHeaderIndex") ||
+            fields.Present("firstIndex") ||
+            fields.Present("overscan")))
     {
         error = "virtual collection fields are reserved for virtualList and virtualGrid";
         return false;
     }
     const bool itemExtentSpecified =
-        FieldPresent(state, index, "itemExtent");
+        fields.Present("itemExtent");
     const bool estimatedItemSizeSpecified =
-        FieldPresent(state, index, "estimatedItemSize");
+        fields.Present("estimatedItemSize");
     if (virtualCollectionNode &&
-        (!FieldPresent(state, index, "itemCount") ||
-            !FieldPresent(state, index, "firstIndex")))
+        (!fields.Present("itemCount") ||
+            !fields.Present("firstIndex")))
     {
         error = "virtual collection nodes require itemCount and firstIndex";
         return false;
@@ -2565,194 +2637,194 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if ((!virtualListNode || !estimatedItemSizeSpecified) &&
-        FieldPresent(state, index, "layoutRevision"))
+        fields.Present("layoutRevision"))
     {
         error = "layoutRevision is reserved for variable virtualList nodes";
         return false;
     }
     if (!virtualListNode &&
-        (FieldPresent(state, index, "sectionHeaderIndices") ||
-            FieldPresent(state, index, "stickyHeaderIndex")))
+        (fields.Present("sectionHeaderIndices") ||
+            fields.Present("stickyHeaderIndex")))
     {
         error = "virtual section headers are reserved for virtualList";
         return false;
     }
     if (!progressNode && !sliderNode && !inputNode &&
-        FieldPresent(state, index, "value"))
+        fields.Present("value"))
     {
         error = "only progress, slider, and input nodes accept 'value'";
         return false;
     }
-    if (!checkControlNode && FieldPresent(state, index, "checked"))
+    if (!checkControlNode && fields.Present("checked"))
     {
         error = "only toggle and checkbox nodes accept checked";
         return false;
     }
     if (!checkControlNode && !choiceNode &&
-        FieldPresent(state, index, "checkedStyle"))
+        fields.Present("checkedStyle"))
     {
         error = "only selection controls accept checkedStyle";
         return false;
     }
     if (!monthCalendarNode &&
-        (FieldPresent(state, index, "year") ||
-            FieldPresent(state, index, "month") ||
-            FieldPresent(state, index, "firstDayOfWeek") ||
-            FieldPresent(state, index, "selectedDate") ||
-            FieldPresent(state, index, "todayDate") ||
-            FieldPresent(state, index, "eventDates") ||
-            FieldPresent(state, index, "weekdayLabels") ||
-            FieldPresent(state, index, "showAdjacentDates") ||
-            FieldPresent(state, index, "todayStyle") ||
-            FieldPresent(state, index, "adjacentStyle") ||
-            FieldPresent(state, index, "eventStyle")))
+        (fields.Present("year") ||
+            fields.Present("month") ||
+            fields.Present("firstDayOfWeek") ||
+            fields.Present("selectedDate") ||
+            fields.Present("todayDate") ||
+            fields.Present("eventDates") ||
+            fields.Present("weekdayLabels") ||
+            fields.Present("showAdjacentDates") ||
+            fields.Present("todayStyle") ||
+            fields.Present("adjacentStyle") ||
+            fields.Present("eventStyle")))
     {
         error = "calendar fields and styles are reserved for monthCalendar";
         return false;
     }
     if (monthCalendarNode &&
-        (!FieldPresent(state, index, "year") ||
-            !FieldPresent(state, index, "month") ||
-            !FieldPresent(state, index, "selectedDate") ||
-            !FieldPresent(state, index, "weekdayLabels")))
+        (!fields.Present("year") ||
+            !fields.Present("month") ||
+            !fields.Present("selectedDate") ||
+            !fields.Present("weekdayLabels")))
     {
         error = "monthCalendar requires year, month, selectedDate, and weekdayLabels";
         return false;
     }
     if (!slotSurfaceNode &&
-        (FieldPresent(state, index, "binding") ||
-            FieldPresent(state, index, "collection") ||
-            FieldPresent(state, index, "revision")))
+        (fields.Present("binding") ||
+            fields.Present("collection") ||
+            fields.Present("revision")))
     {
         error = "binding, collection, and revision are reserved for slotSurface";
         return false;
     }
     if (!slotSurfaceNode && !slotItemNode &&
-        FieldPresent(state, index, "child"))
+        fields.Present("child"))
     {
         error = "child is reserved for slotSurface and slotItem";
         return false;
     }
     if (!slotItemNode && !referenceIconNode &&
-        FieldPresent(state, index, "reference"))
+        fields.Present("reference"))
     {
         error = "reference is reserved for slotItem and referenceIcon";
         return false;
     }
     if (slotSurfaceNode)
     {
-        const bool hasBinding = FieldPresent(state, index, "binding");
-        const bool hasCollection = FieldPresent(state, index, "collection");
+        const bool hasBinding = fields.Present("binding");
+        const bool hasCollection = fields.Present("collection");
         if (hasBinding == hasCollection)
         {
             error = "slotSurface requires exactly one of binding or collection";
             return false;
         }
-        if (FieldPresent(state, index, "child") &&
-            FieldPresent(state, index, "children"))
+        if (fields.Present("child") &&
+            fields.Present("children"))
         {
             error = "slotSurface cannot provide both child and children";
             return false;
         }
     }
-    if (slotItemNode && FieldPresent(state, index, "child") &&
-        FieldPresent(state, index, "children"))
+    if (slotItemNode && fields.Present("child") &&
+        fields.Present("children"))
     {
         error = "slotItem cannot provide both child and children";
         return false;
     }
-    if (!seriesNode && FieldPresent(state, index, "values"))
+    if (!seriesNode && fields.Present("values"))
     {
         error = "only data-series nodes accept values";
         return false;
     }
     if (!seriesNode && !sliderNode && !numberInputNode &&
-        (FieldPresent(state, index, "min") ||
-            FieldPresent(state, index, "max")))
+        (fields.Present("min") ||
+            fields.Present("max")))
     {
         error = "only data-series, slider, and numberInput nodes accept values, min, and max";
         return false;
     }
-    if (!sliderNode && !numberInputNode && FieldPresent(state, index, "step"))
+    if (!sliderNode && !numberInputNode && fields.Present("step"))
     {
         error = "only slider and numberInput nodes accept step";
         return false;
     }
-    if (!choiceNode && (FieldPresent(state, index, "options") ||
-            FieldPresent(state, index, "selectedValue")))
+    if (!choiceNode && (fields.Present("options") ||
+            fields.Present("selectedValue")))
     {
         error = "only radioGroup and select nodes accept options and selectedValue";
         return false;
     }
-    if (!inputNode && (FieldPresent(state, index, "selectAll") ||
-            FieldPresent(state, index, "liveUpdate") ||
-            FieldPresent(state, index, "maxBytes")))
+    if (!inputNode && (fields.Present("selectAll") ||
+            fields.Present("liveUpdate") ||
+            fields.Present("maxBytes")))
     {
         error = "input fields are reserved for textInput, textArea, searchBox, and numberInput";
         return false;
     }
     if (!inputNode && !selectNode &&
-        FieldPresent(state, index, "placeholder"))
+        fields.Present("placeholder"))
     {
         error = "placeholder is reserved for input and select nodes";
         return false;
     }
-    if (!selectNode && FieldPresent(state, index, "expanded"))
+    if (!selectNode && fields.Present("expanded"))
     {
         error = "expanded is reserved for select nodes";
         return false;
     }
     if (!progressNode && !seriesNode && !dividerNode && (
-            FieldPresent(state, index, "thickness") ||
-            FieldPresent(state, index, "trackOpacity") ||
-            FieldPresent(state, index, "fillOpacity")))
+            fields.Present("thickness") ||
+            fields.Present("trackOpacity") ||
+            fields.Present("fillOpacity")))
     {
         error = "only progress and data-series nodes accept drawing fields";
         return false;
     }
-    if (!imageVisualNode && (FieldPresent(state, index, "fit") ||
-            FieldPresent(state, index, "alignment") ||
-            FieldPresent(state, index, "interpolation") ||
-            FieldPresent(state, index, "alt")))
+    if (!imageVisualNode && (fields.Present("fit") ||
+            fields.Present("alignment") ||
+            fields.Present("interpolation") ||
+            fields.Present("alt")))
     {
         error = "only image and referenceIcon nodes accept image visual fields";
         return false;
     }
-    if (!imageNode && FieldPresent(state, index, "source"))
+    if (!imageNode && fields.Present("source"))
     {
         error = "only image nodes accept an image resource source";
         return false;
     }
-    if (!textResourceNode && FieldPresent(state, index, "font"))
+    if (!textResourceNode && fields.Present("font"))
     {
         error = "only text and label-bearing nodes accept a font resource";
         return false;
     }
-    if (imageVisualNode && !FieldPresent(state, index, "alt"))
+    if (imageVisualNode && !fields.Present("alt"))
     {
         error = "image and referenceIcon nodes require an explicit 'alt' field";
         return false;
     }
-    if (checkControlNode && !FieldPresent(state, index, "checked"))
+    if (checkControlNode && !fields.Present("checked"))
     {
         error = "toggle and checkbox nodes require checked";
         return false;
     }
     if ((sliderNode || inputNode) &&
-        !FieldPresent(state, index, "value"))
+        !fields.Present("value"))
     {
         error = "slider and input nodes require value";
         return false;
     }
-    if (choiceNode && !FieldPresent(state, index, "selectedValue"))
+    if (choiceNode && !fields.Present("selectedValue"))
     {
         error = "radioGroup and select nodes require selectedValue";
         return false;
     }
     if (!ValidateNodeFields(state, index, node.type, error)) return false;
     const bool debugNameSpecified =
-        FieldPresent(state, index, "debugName");
-    const bool testIdSpecified = FieldPresent(state, index, "testId");
+        fields.Present("debugName");
+    const bool testIdSpecified = fields.Present("testId");
     if (!ReadStringField(state, index, "key", node.key, true, error) ||
         !ReadStringField(state, index, "debugName",
             node.debugName, false, error) ||
@@ -2767,7 +2839,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
     if (slotSurfaceNode)
     {
-        const bool binding = FieldPresent(state, index, "binding");
+        const bool binding = fields.Present("binding");
         node.logicalSlotKind = binding
             ? LogicalSlotKind::Binding : LogicalSlotKind::Collection;
         std::size_t revision = 0;
@@ -2788,30 +2860,30 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.itemReference, true, error))
         return false;
     if (node.type == ViewNodeType::Badge &&
-        !FieldPresent(state, index, "padding"))
+        !fields.Present("padding"))
         node.padding = 4.0f;
-    if (radioNode && !FieldPresent(state, index, "gap"))
+    if (radioNode && !fields.Present("gap"))
         node.gap = 8.0f;
-    if (inputNode && !FieldPresent(state, index, "padding"))
+    if (inputNode && !fields.Present("padding"))
         node.padding = 8.0f;
-    if (styledTextNode && !FieldPresent(state, index, "textWrap"))
+    if (styledTextNode && !fields.Present("textWrap"))
         node.textWrap = ViewTextWrap::Wrap;
-    if (styledTextNode && !FieldPresent(state, index, "overflowText"))
+    if (styledTextNode && !fields.Present("overflowText"))
         node.overflowText = ViewTextOverflow::Clip;
     const char* contentField = iconNode ? "glyph" :
         (labelNode ? "label" : "text");
-    const bool clipSpecified = FieldPresent(state, index, "clip");
-    const bool overflowSpecified = FieldPresent(state, index, "overflow");
-    const bool visibleSpecified = FieldPresent(state, index, "visible");
-    const bool visibilitySpecified = FieldPresent(state, index, "visibility");
-    const bool focusableSpecified = FieldPresent(state, index, "focusable");
-    const bool tabIndexSpecified = FieldPresent(state, index, "tabIndex");
+    const bool clipSpecified = fields.Present("clip");
+    const bool overflowSpecified = fields.Present("overflow");
+    const bool visibleSpecified = fields.Present("visible");
+    const bool visibilitySpecified = fields.Present("visibility");
+    const bool focusableSpecified = fields.Present("focusable");
+    const bool tabIndexSpecified = fields.Present("tabIndex");
     bool focusable = false;
     int tabIndex = 0;
     std::size_t rowTrackCount = 0;
     std::size_t virtualLayoutRevision = 0;
     const bool initialScrollKeySpecified =
-        FieldPresent(state, index, "initialScrollKey");
+        fields.Present("initialScrollKey");
     std::string initialScrollKey;
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
@@ -3011,10 +3083,10 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
 
     if (virtualListNode)
     {
-        const bool horizontal = FieldPresent(state, index, "orientation") &&
+        const bool horizontal = fields.Present("orientation") &&
             node.orientation == ViewOrientation::Horizontal;
-        if ((horizontal && FieldPresent(state, index, "rowGap")) ||
-            (!horizontal && FieldPresent(state, index, "columnGap")))
+        if ((horizontal && fields.Present("rowGap")) ||
+            (!horizontal && fields.Present("columnGap")))
         {
             error = horizontal
                 ? "horizontal virtualList uses columnGap, not rowGap"
@@ -3135,17 +3207,17 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             return false;
     }
 
-    if (scrollContainerNode && !FieldPresent(state, index, "orientation"))
+    if (scrollContainerNode && !fields.Present("orientation"))
         node.orientation = ViewOrientation::Vertical;
     if (node.type == ViewNodeType::List &&
-        !FieldPresent(state, index, "orientation"))
+        !fields.Present("orientation"))
         node.orientation = ViewOrientation::Vertical;
 
     if (dividerNode && node.orientation == ViewOrientation::Vertical)
     {
-        if (!FieldPresent(state, index, "width"))
+        if (!fields.Present("width"))
             node.width = { ViewLengthKind::Auto, 0.0f };
-        if (!FieldPresent(state, index, "height"))
+        if (!fields.Present("height"))
             node.height = { ViewLengthKind::Fill, 0.0f };
     }
 
@@ -3157,9 +3229,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             return false;
         if (sliderNode && node.orientation == ViewOrientation::Vertical)
         {
-            if (!FieldPresent(state, index, "width"))
+            if (!fields.Present("width"))
                 node.width = { ViewLengthKind::Auto, 0.0f };
-            if (!FieldPresent(state, index, "height"))
+            if (!fields.Present("height"))
                 node.height = { ViewLengthKind::Fill, 0.0f };
         }
     }
@@ -3177,8 +3249,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         if (!ReadNumberArrayField(state, index, "values",
                 node.values, true, error))
             return false;
-        const bool hasMinimum = FieldPresent(state, index, "min");
-        const bool hasMaximum = FieldPresent(state, index, "max");
+        const bool hasMinimum = fields.Present("min");
+        const bool hasMaximum = fields.Present("max");
         if (hasMinimum != hasMaximum)
         {
             error = "data-series nodes must provide both min and max";
@@ -3312,7 +3384,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     }
 
     const bool singleSlotChild = (slotSurfaceNode || slotItemNode) &&
-        FieldPresent(state, index, "child");
+        fields.Present("child");
     lua_getfield(state, index, singleSlotChild ? "child" : "children");
     if (singleSlotChild && !lua_isnil(state, -1))
     {
