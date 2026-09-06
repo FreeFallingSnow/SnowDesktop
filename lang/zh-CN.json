@@ -1368,5 +1368,8 @@
     "settings.backup.error.missing": "请求的备份已不存在。",
     "settings.backup.error.restoreServiceUnavailable": "应用布局恢复服务不可用。",
     "settings.home.widgets.unknown": "状态不可用",
-    "app.settings.lua_widget_row_height": "Lua 组件行高"
+    "app.settings.lua_widget_row_height": "Lua 组件行高",
+    "settings.process.connectionLost": "与桌面主进程的连接已断开。请重新打开设置。",
+    "settings.process.stale": "设置已发生变化，已载入最新状态。请检查后重新修改。",
+    "settings.process.startFailed": "无法启动设置进程。请重新打开设置；若仍失败，请重启 SnowDesktop。"
 }

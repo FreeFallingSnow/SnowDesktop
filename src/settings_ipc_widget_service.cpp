@@ -17,6 +17,7 @@ public:
         channel_.Bind<void, WidgetSettingSearchCompleted>("widget.search", [this](auto value) {
             if (searched_) searched_(std::move(value));
         });
+        channel_.Call<void>("widget.subscribe");
     }
     ~WidgetServiceProxy() override
     {
@@ -72,12 +73,12 @@ public:
     }
     WidgetSettingMutationResult ChooseFilesystemHandle(const WidgetSettingMutationGuard& guard, std::string_view key) override
     {
-        try { return channel_.Call<WidgetSettingMutationResult>("widget.ChooseFilesystemHandle", guard, std::string(key)); }
+        try { return channel_.CallWithTimeout<WidgetSettingMutationResult>(INFINITE, "widget.ChooseFilesystemHandle", guard, std::string(key)); }
         catch (...) { return {}; }
     }
     WidgetSettingMutationResult OpenEntityReferencePicker(const WidgetSettingMutationGuard& guard, std::string_view key) override
     {
-        try { return channel_.Call<WidgetSettingMutationResult>("widget.OpenEntityReferencePicker", guard, std::string(key)); }
+        try { return channel_.CallWithTimeout<WidgetSettingMutationResult>(INFINITE, "widget.OpenEntityReferencePicker", guard, std::string(key)); }
         catch (...) { return {}; }
     }
     WidgetSettingMutationResult ClearOpaque(const WidgetSettingMutationGuard& guard, std::string_view key) override
@@ -149,6 +150,7 @@ private:
 
 void BindWidgetService(Channel& channel, IWidgetSettingsService& service)
 {
+    service.SetEventCallbacks({}, {});
     channel.Bind<WidgetSettingsLoadResult, std::wstring>("widget.Load", [&](std::wstring widgetId) {
         return service.Load(widgetId);
     });
@@ -219,13 +221,19 @@ void BindWidgetService(Channel& channel, IWidgetSettingsService& service)
         return service.SearchSnapshot(widgetId, key);
     });
     const auto post = channel.Poster();
-    service.SetEventCallbacks([post, &channel](WidgetSettingsSnapshotChanged value) {
-        (void)post([&channel, value = std::move(value)] {
-            try { if (channel.Connected()) channel.Notify("widget.changed", value); } catch (...) {}
-        });
-    }, [post, &channel](WidgetSettingSearchCompleted value) {
-        (void)post([&channel, value = std::move(value)] {
-            try { if (channel.Connected()) channel.Notify("widget.search", value); } catch (...) {}
+    // Rebinding expires the previous token, including notifications already
+    // queued by a search worker during the previous UI process lifetime.
+    const auto token = std::make_shared<int>(0);
+    channel.Bind<void>("widget.subscribe", [post, &channel, &service, token] {
+        const std::weak_ptr<int> weak = token;
+        service.SetEventCallbacks([post, &channel, weak](WidgetSettingsSnapshotChanged value) {
+            (void)post([&channel, weak, value = std::move(value)] {
+                try { if (!weak.expired() && channel.Connected()) channel.Notify("widget.changed", value); } catch (...) {}
+            });
+        }, [post, &channel, weak](WidgetSettingSearchCompleted value) {
+            (void)post([&channel, weak, value = std::move(value)] {
+                try { if (!weak.expired() && channel.Connected()) channel.Notify("widget.search", value); } catch (...) {}
+            });
         });
     });
 }

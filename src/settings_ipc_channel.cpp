@@ -384,7 +384,7 @@ Bytes Channel::Request(std::string_view name, Bytes arguments, DWORD timeoutMs)
     {
         impl_->Send(Kind::Request, id, Pack(std::string(name), std::string(
             reinterpret_cast<const char*>(arguments.data()), arguments.size())));
-        const auto deadline = GetTickCount64() + timeoutMs;
+        const auto deadline = timeoutMs == INFINITE ? UINT64_MAX : GetTickCount64() + timeoutMs;
         for (;;)
         {
             impl_->Dispatch();
@@ -402,7 +402,7 @@ Bytes Channel::Request(std::string_view name, Bytes arguments, DWORD timeoutMs)
             if (now >= deadline) throw ProtocolError("settings IPC response timed out: " + std::string(name));
             HANDLE handles[] = {impl_->ready, impl_->peerProcess};
             const DWORD wait = MsgWaitForMultipleObjectsEx(2, handles,
-                static_cast<DWORD>(deadline - now), QS_SENDMESSAGE,
+                timeoutMs == INFINITE ? INFINITE : static_cast<DWORD>(deadline - now), QS_SENDMESSAGE,
                 MWMO_INPUTAVAILABLE);
             if (wait == WAIT_OBJECT_0 + 1 || wait == WAIT_FAILED)
                 throw ProtocolError("settings process exited");

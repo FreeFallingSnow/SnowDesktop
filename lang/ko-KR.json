@@ -1368,5 +1368,8 @@
   "settings.backup.error.missing": "요청한 백업이 더 이상 존재하지 않습니다.",
   "settings.backup.error.restoreServiceUnavailable": "애플리케이션 레이아웃 복원 서비스를 사용할 수 없습니다.",
   "settings.home.widgets.unknown": "상태를 확인할 수 없음",
-  "app.settings.lua_widget_row_height": "Lua 위젯 행 높이"
+  "app.settings.lua_widget_row_height": "Lua 위젯 행 높이",
+    "settings.process.connectionLost": "데스크톱 프로세스와의 연결이 끊어졌습니다. 설정을 다시 열어 주세요.",
+    "settings.process.stale": "설정이 변경되어 최신 상태를 불러왔습니다. 내용을 확인한 후 다시 변경해 주세요.",
+    "settings.process.startFailed": "설정 프로세스를 시작할 수 없습니다. 설정을 다시 열어 주세요. 문제가 계속되면 SnowDesktop을 다시 시작해 주세요."
 }

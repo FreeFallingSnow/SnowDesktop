@@ -1368,5 +1368,8 @@
   "settings.backup.error.missing": "La sauvegarde demandée n’existe plus.",
   "settings.backup.error.restoreServiceUnavailable": "Le service de restauration de la disposition de l’application est indisponible.",
   "settings.home.widgets.unknown": "État indisponible",
-  "app.settings.lua_widget_row_height": "Hauteur de ligne des widgets Lua"
+  "app.settings.lua_widget_row_height": "Hauteur de ligne des widgets Lua",
+    "settings.process.connectionLost": "La connexion au processus du bureau a été perdue. Veuillez rouvrir les paramètres.",
+    "settings.process.stale": "Les paramètres ont changé. Le dernier état a été chargé ; vérifiez-le et réessayez votre modification.",
+    "settings.process.startFailed": "Impossible de démarrer le processus des paramètres. Rouvrez les paramètres ou redémarrez SnowDesktop si le problème persiste."
 }

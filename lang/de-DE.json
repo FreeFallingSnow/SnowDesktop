@@ -1368,5 +1368,8 @@
   "settings.backup.error.missing": "Die angeforderte Sicherung ist nicht mehr vorhanden.",
   "settings.backup.error.restoreServiceUnavailable": "Der Dienst zum Wiederherstellen des Anwendungslayouts ist nicht verfügbar.",
   "settings.home.widgets.unknown": "Status nicht verfügbar",
-  "app.settings.lua_widget_row_height": "Zeilenhöhe der Lua-Widgets"
+  "app.settings.lua_widget_row_height": "Zeilenhöhe der Lua-Widgets",
+    "settings.process.connectionLost": "Die Verbindung zum Desktop-Prozess wurde unterbrochen. Bitte öffnen Sie die Einstellungen erneut.",
+    "settings.process.stale": "Die Einstellungen wurden geändert. Der aktuelle Stand wurde geladen. Prüfen Sie ihn und wiederholen Sie Ihre Änderung.",
+    "settings.process.startFailed": "Der Einstellungsprozess konnte nicht gestartet werden. Öffnen Sie die Einstellungen erneut oder starten Sie SnowDesktop neu, falls das Problem weiterhin besteht."
 }

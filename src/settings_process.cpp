@@ -116,7 +116,10 @@ void SettingsProcess::Start(Channel& channel)
 
     Handle job{CreateJobObjectW(nullptr, nullptr)};
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // Browser and document applications launched by user-selected links must
+    // survive closing settings. Only this explicitly assigned UI is owned.
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
     if (!job.value || !SetInformationJobObject(job.value, JobObjectExtendedLimitInformation,
         &limits, sizeof(limits))) throw ProtocolError("cannot supervise settings process");
 

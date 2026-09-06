@@ -59,6 +59,12 @@ public:
         if constexpr (!std::is_void_v<R>) return Unpack<R>(reply);
         else Reader(reply).Finish();
     }
+    template<class R, class... A> R CallWithTimeout(DWORD timeout, std::string_view name, const A&... args)
+    {
+        auto reply = Request(name, Pack(args...), timeout);
+        if constexpr (!std::is_void_v<R>) return Unpack<R>(reply);
+        else Reader(reply).Finish();
+    }
     template<class... A> void Notify(std::string_view name, const A&... args)
     {
         NotifyRaw(name, Pack(args...));

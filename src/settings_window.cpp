@@ -25,10 +25,16 @@ struct SettingsWindow::Impl
     bool closing = false;
     std::wstring lastError;
 
+    std::wstring LocalizedError(const char* key) const
+    {
+        return options.localize ? options.localize(key) : L"Settings process unavailable";
+    }
+
     void EndSession() noexcept
     {
         window = nullptr;
         closing = false;
+        if (channel) channel->Close();
         if (backends) backends->ClosePages();
         if (widgetSettingsService) widgetSettingsService->CloseAll();
         try { if (controller) (void)controller->CloseSession(); } catch (...) {}
@@ -47,8 +53,6 @@ struct SettingsWindow::Impl
             if (!channel)
             {
                 channel = std::make_unique<ipc::Channel>();
-                ipc::BindController(*channel, *controller);
-                if (widgetSettingsService) ipc::BindWidgetService(*channel, *widgetSettingsService);
                 backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
                 channel->Bind<void>("ui.closed", [this] { closing = true; window = nullptr; });
                 channel->SetDisconnected([this] { EndSession(); });
@@ -56,6 +60,8 @@ struct SettingsWindow::Impl
             // A normal close has acknowledged durable commits. An immediate
             // reopen can finish teardown before launching the next UI.
             if (process.Running()) { channel->Close(); EndSession(); }
+            ipc::BindController(*channel, *controller, options.localize);
+            if (widgetSettingsService) ipc::BindWidgetService(*channel, *widgetSettingsService);
             process.Start(*channel);
             auto [initialized, handle, error] = channel->Call<
                 std::tuple<bool, std::uint64_t, std::wstring>>("ui.initialize", ipc::ExecutableIdentity());
@@ -64,7 +70,8 @@ struct SettingsWindow::Impl
             GetWindowThreadProcessId(candidate, &owner);
             if (!initialized || !candidate || owner != process.ProcessId())
             {
-                lastError = error.empty() ? L"Settings process initialization failed" : error;
+                if (!error.empty()) OutputDebugStringW(error.c_str());
+                lastError = LocalizedError("settings.process.startFailed");
                 channel->Close();
                 EndSession();
                 return false;
@@ -77,7 +84,8 @@ struct SettingsWindow::Impl
         catch (const std::exception& error)
         {
             const std::string message(error.what());
-            lastError.assign(message.begin(), message.end());
+            OutputDebugStringA(message.c_str());
+            lastError = LocalizedError("settings.process.startFailed");
             if (channel) channel->Close();
             EndSession();
             return false;
@@ -144,7 +152,7 @@ bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
         impl_->lastError = std::move(error);
         return opened;
     }
-    catch (...) { impl_->lastError = L"Settings process disconnected"; return false; }
+    catch (...) { impl_->lastError = impl_->LocalizedError("settings.process.connectionLost"); return false; }
 }
 bool SettingsWindow::Show()
 { return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General)); }

@@ -1368,5 +1368,8 @@
     "settings.backup.error.missing": "The requested backup no longer exists.",
     "settings.backup.error.restoreServiceUnavailable": "The application layout restore service is unavailable.",
     "settings.home.widgets.unknown": "Status unavailable",
-    "app.settings.lua_widget_row_height": "Lua Widget Row Height"
+    "app.settings.lua_widget_row_height": "Lua Widget Row Height",
+    "settings.process.connectionLost": "The connection to the desktop process was lost. Please reopen settings.",
+    "settings.process.stale": "Settings have changed. The latest state has been loaded; review it and try your edit again.",
+    "settings.process.startFailed": "Could not start the settings process. Reopen settings, or restart SnowDesktop if the problem persists."
 }

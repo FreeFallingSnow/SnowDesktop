@@ -40,7 +40,9 @@ int RunSettingsProcess(HINSTANCE instance)
             const auto directory = std::filesystem::path(executable).parent_path() / L"lang";
             Locale::Instance().Init(directory.c_str());
             loadLanguage();
-            controller = CreateControllerProxy(channel);
+            controller = CreateControllerProxy(channel, [](std::string_view key) {
+                return std::wstring(Locale::Instance().TrW(std::string(key).c_str()));
+            });
             widgets = CreateWidgetServiceProxy(channel);
             auto options = CreateRemoteHostOptions(channel);
             options.sessionClosed = [&] {

@@ -1368,5 +1368,8 @@
   "settings.backup.error.missing": "要求されたバックアップは存在しません。",
   "settings.backup.error.restoreServiceUnavailable": "アプリケーション レイアウトの復元サービスを使用できません。",
   "settings.home.widgets.unknown": "状態を取得できません",
-  "app.settings.lua_widget_row_height": "Lua ウィジェットの行の高さ"
+  "app.settings.lua_widget_row_height": "Lua ウィジェットの行の高さ",
+    "settings.process.connectionLost": "デスクトッププロセスとの接続が切断されました。設定を開き直してください。",
+    "settings.process.stale": "設定が変更されたため、最新の状態を読み込みました。内容を確認してから、もう一度変更してください。",
+    "settings.process.startFailed": "設定プロセスを起動できませんでした。設定を開き直してください。問題が解消しない場合は、SnowDesktop を再起動してください。"
 }

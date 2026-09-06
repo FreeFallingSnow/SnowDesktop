@@ -1368,5 +1368,8 @@
   "settings.backup.error.missing": "要求的備份已不存在。",
   "settings.backup.error.restoreServiceUnavailable": "應用程式版面配置還原服務無法使用。",
   "settings.home.widgets.unknown": "狀態無法使用",
-  "app.settings.lua_widget_row_height": "Lua 元件列高"
+  "app.settings.lua_widget_row_height": "Lua 元件列高",
+    "settings.process.connectionLost": "與桌面主程序的連線已中斷。請重新開啟設定。",
+    "settings.process.stale": "設定已發生變更，已載入最新狀態。請檢查後重新修改。",
+    "settings.process.startFailed": "無法啟動設定程序。請重新開啟設定；若仍失敗，請重新啟動 SnowDesktop。"
 }
