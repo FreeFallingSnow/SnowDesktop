@@ -1439,6 +1439,8 @@ if (BUILD_TESTING)
         settings_controller
         SOURCES
             tests/settings_controller_tests.cpp
+            tests/settings_ipc_tests.cpp
+            src/settings_ipc_channel.cpp
             src/settings_controller.cpp
             src/settings_route.cpp
         INCLUDE_DIRECTORIES src

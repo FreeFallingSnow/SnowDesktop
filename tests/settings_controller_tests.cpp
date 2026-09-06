@@ -983,8 +983,11 @@ void TestExternalReplacementDuringCommitPreventsLateSave()
 
 } // namespace
 
+int RunSettingsIpcTests();
+
 int main()
 {
+    failures += RunSettingsIpcTests();
     TestRoutes();
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
