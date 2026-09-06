@@ -161,7 +161,7 @@ void RunWidgetTextLayoutCacheTests()
     options.fontStyle = ViewFontStyle::Italic; changed("font style invalidates");
     options.alignment = DWRITE_TEXT_ALIGNMENT_TRAILING; changed("alignment invalidates");
     options.direction = ViewTextDirection::RightToLeft; changed("direction invalidates");
-    options.lineHeight = 21; changed("line spacing invalidates");
+    options.lineHeight = 21.0f; changed("line spacing invalidates");
     options.letterSpacing = 1.5f; changed("character spacing invalidates");
     options.underline = true; changed("link underline invalidates");
     options.overflow = ViewTextOverflow::Clip; changed("trimming invalidates");
