@@ -416,26 +416,67 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             hwnd, msg, wp, lp, +[](void* context) {
                 auto* app = static_cast<DesktopApp*>(context);
                 snowdesktop::performance::Scope sample("profiler", "sample.widgets");
-                if (!app->widgetEngine_) return;
-                app->widgetEngine_->RecordPerformanceResources();
-                for (const auto& widget : app->widgetEngine_->GetWidgets())
+                using snowdesktop::performance::Value;
+                if (app->widgetEngine_)
                 {
-                    using snowdesktop::performance::Value;
-                    if (widget.quota)
-                        Value("widget.memory", "lua_bytes", widget.widgetId,
-                            static_cast<double>(widget.quota->memoryBytes));
-                    Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
-                    Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
-                    Value("widget.state", "timers", widget.widgetId,
-                        static_cast<double>(widget.namedTimers.Size()));
-                    Value("widget.state", "animation_requests", widget.widgetId,
-                        static_cast<double>(widget.animationFrames.Size()));
-                    Value("widget.package", widget.packageId, widget.widgetId, 1);
+                    app->widgetEngine_->RecordPerformanceResources();
+                    for (const auto& widget : app->widgetEngine_->GetWidgets())
+                    {
+                        if (widget.quota)
+                            Value("widget.memory", "lua_bytes", widget.widgetId,
+                                static_cast<double>(widget.quota->memoryBytes));
+                        Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
+                        Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
+                        Value("widget.state", "timers", widget.widgetId,
+                            static_cast<double>(widget.namedTimers.Size()));
+                        Value("widget.state", "animation_requests", widget.widgetId,
+                            static_cast<double>(widget.animationFrames.Size()));
+                        Value("widget.package", widget.packageId, widget.widgetId, 1);
+                    }
                 }
+                double hiddenBytes = 0;
+                std::size_t hiddenResident = 0;
                 for (const auto& [id, item] : app->desktopWidgetCompositionItems_)
-                    snowdesktop::performance::Value("widget.memory",
-                        "surface_bgra_bytes_estimate", id,
-                        static_cast<double>(item.width) * item.height * 4);
+                {
+                    const double mainBytes = item.surface
+                        ? static_cast<double>(item.width) * item.height * 4 : 0;
+                    const double totalBytes = static_cast<double>(
+                        app->GetDesktopWidgetSurfaceBytes(id));
+                    Value("widget.memory", "surface_bgra_bytes_estimate", id, mainBytes);
+                    Value("widget.memory", "marquee_surface_bgra_bytes_estimate", id,
+                        totalBytes - mainBytes);
+                    Value("widget.composition", "surface_visible", id, item.visible ? 1 : 0);
+                    Value("widget.composition", "surface_resident", id, item.surface ? 1 : 0);
+                    Value("widget.memory", "hidden_surface_bgra_bytes_estimate", id,
+                        item.visible ? 0 : totalBytes);
+                    if (!item.visible)
+                    {
+                        hiddenBytes += totalBytes;
+                        if (totalBytes != 0) ++hiddenResident;
+                    }
+                }
+                Value("composition.memory", "hidden_surface_bgra_bytes_estimate", {}, hiddenBytes);
+                Value("composition.memory", "hidden_surface_instance_count", {},
+                    static_cast<double>(hiddenResident));
+                Value("composition.memory", "surface_reclaim_count", {},
+                    static_cast<double>(app->widgetSurfaceReclaimCount_));
+                Value("composition.memory", "surface_reclaimed_bytes", {},
+                    static_cast<double>(app->widgetSurfaceReclaimedBytes_));
+                const auto recordBackdrop = [](const DesktopBackdropCompositor& backdrop,
+                    const std::wstring& owner) {
+                    Value("backdrop.state", "available", owner, backdrop.IsAvailable() ? 1 : 0);
+                    Value("backdrop.state", "panels", owner,
+                        static_cast<double>(backdrop.PanelCount()));
+                    Value("backdrop.state", "blur_factories", owner,
+                        static_cast<double>(backdrop.BlurFactoryCount()));
+                };
+                recordBackdrop(app->desktopBackdropCompositor_, L"desktop");
+                recordBackdrop(app->collectionPopupBackdropCompositor_, L"collection_popup");
+                recordBackdrop(app->quickNavBackdropCompositor_, L"quick_navigation");
+                for (const auto& host : app->persistentDockHosts_)
+                    if (host)
+                        recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
+                            reinterpret_cast<std::uintptr_t>(host.get())));
             }, this);
     }
     if (msg == WM_DESTROY)

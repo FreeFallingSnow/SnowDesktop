@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../performance_trace.h"
+#include "../widget_surface_retention.h"
 
 namespace
 {
@@ -270,6 +271,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.surface = std::move(surface);
             item.width = width;
             item.height = height;
+            snowdesktop::performance::Value(
+                "widget.composition", "surface_created", widgetId, 1);
         }
 
         ID2D1DeviceContext* rawContext = nullptr;
@@ -477,6 +480,17 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     if (item.visible == visible)
         return;
     item.visible = visible;
+    item.hiddenSince = visible ? 0 : GetTickCount64();
+    if (visible)
+    {
+        // Ownership survives eviction. Rebuild even when this widget lies
+        // outside the current dirty rectangle; hidden data may have changed.
+        pendingDesktopWidgetCompositions_.insert(widgetId);
+    }
+    else if (GetDesktopWidgetSurfaceBytes(widgetId) != 0)
+    {
+        hiddenWidgetSurfaceMaintenancePending_ = true;
+    }
     if (!visible && item.backdropRegistered)
     {
         (void)desktopBackdropCompositor_.RemovePanel(item.bounds);
@@ -497,6 +511,115 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
     {
         if (item.visible && item.backdropRegistered)
             (void)desktopBackdropCompositor_.KeepPanel(item.bounds);
+    }
+}
+
+std::uint64_t DesktopApp::GetDesktopWidgetSurfaceBytes(
+    const std::wstring& widgetId) const
+{
+    std::uint64_t bytes = 0;
+    const auto parent = desktopWidgetCompositionItems_.find(widgetId);
+    if (parent != desktopWidgetCompositionItems_.end() && parent->second.surface)
+        bytes = static_cast<std::uint64_t>(parent->second.width) *
+            parent->second.height * 4;
+    const auto marquees = widgetMarqueeCompositionItems_.find(widgetId);
+    if (marquees != widgetMarqueeCompositionItems_.end())
+    {
+        for (const auto& [_, item] : marquees->second)
+            if (item.surface)
+                bytes += static_cast<std::uint64_t>(item.surfaceWidth) *
+                    item.surfaceHeight * 4;
+    }
+    return bytes;
+}
+
+void DesktopApp::TrimHiddenDesktopWidgetSurfaces()
+{
+    if (!hiddenWidgetSurfaceMaintenancePending_ || !dcompDevice_ ||
+        snowdesktop::widget_composition_layer_rules::ShouldDeferWidgetSurfaceDraw(
+            compositionPaintInProgress_, IsAnyPersistentDockHostPainting(),
+            floatingPopupCompositionPaintInProgress_))
+        return;
+
+    namespace retention = snowdesktop::widget_surface_retention;
+    std::vector<std::wstring> owners;
+    std::vector<retention::Candidate> candidates;
+    for (const auto& [id, item] : desktopWidgetCompositionItems_)
+    {
+        if (item.visible)
+            continue;
+        const auto bytes = GetDesktopWidgetSurfaceBytes(id);
+        if (bytes == 0)
+            continue;
+        owners.push_back(id);
+        candidates.push_back({false, item.hiddenSince, bytes});
+    }
+    const auto releases = retention::SelectReleases(candidates, GetTickCount64());
+    hiddenWidgetSurfaceMaintenancePending_ = candidates.size() > releases.size();
+    bool changed = false;
+    for (const auto& release : releases)
+    {
+        const auto& id = owners[release.index];
+        auto& item = desktopWidgetCompositionItems_.at(id);
+        HRESULT hr = S_OK;
+        if (item.surface)
+        {
+            // Resetting our ComPtr alone leaves the visual's reference alive.
+            hr = item.visual->SetContent(nullptr);
+            if (SUCCEEDED(hr))
+            {
+                item.surface.Reset();
+                item.width = item.height = 0;
+                changed = true;
+            }
+        }
+        const auto marquees = widgetMarqueeCompositionItems_.find(id);
+        if (SUCCEEDED(hr) && marquees != widgetMarqueeCompositionItems_.end())
+        {
+            for (auto& [_, marquee] : marquees->second)
+            {
+                if (!marquee.surface)
+                    continue;
+                hr = marquee.textVisual->SetContent(nullptr);
+                if (SUCCEEDED(hr))
+                    hr = marquee.textVisual->SetOffsetX(0.0f);
+                if (FAILED(hr))
+                    break;
+                marquee.surface.Reset();
+                marquee.surfaceWidth = marquee.surfaceHeight = 0;
+                // Keep phase/time and the lightweight visual hierarchy so a
+                // fresh text draw resumes at the current logical position.
+                changed = true;
+            }
+        }
+        const auto remaining = GetDesktopWidgetSurfaceBytes(id);
+        const auto freed = candidates[release.index].bytes - remaining;
+        widgetSurfaceReclaimedBytes_ += freed;
+        if (remaining == 0)
+        {
+            ++widgetSurfaceReclaimCount_;
+            pendingDesktopWidgetCompositions_.erase(id);
+            pendingWidgetMarqueeCompositions_.erase(id);
+        }
+        snowdesktop::performance::Value("widget.composition",
+            release.reason == retention::Reason::Expired
+                ? "surface_reclaimed_expired_bytes" : "surface_reclaimed_budget_bytes",
+            id, static_cast<double>(freed));
+        if (FAILED(hr))
+        {
+            hiddenWidgetSurfaceMaintenancePending_ = true;
+            desktopWidgetCompositionFailurePending_ = true;
+            const auto message = L"[WidgetComposition] Hidden surface detach failed: " +
+                id + L" hr=" + std::to_wstring(hr);
+            WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
+    if (changed)
+    {
+        (void)CommitCompositionAnimationFrame();
+        (void)FlushPendingCompositionCommit();
     }
 }
 
@@ -604,6 +727,7 @@ void DesktopApp::ResetDesktopWidgetComposition()
     }
     desktopWidgetCompositionLayer_.Reset();
     desktopWidgetCompositionDrawInProgress_ = false;
+    hiddenWidgetSurfaceMaintenancePending_ = false;
     desktopWidgetBackdropRequestedDuringDraw_ = false;
     desktopWidgetCompositionFailurePending_ = false;
 }

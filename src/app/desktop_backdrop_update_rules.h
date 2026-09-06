@@ -3,9 +3,26 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <algorithm>
 
 namespace snowdesktop::desktop_backdrop_update_rules
 {
+
+// Call after the final panel collection, so a remove/add pair in one frame
+// can reuse its factory. Brushes and backdrop sources remain panel-owned.
+template<class Factories, class Panels>
+void PruneUnusedBlurFactories(Factories& factories, const Panels& panels)
+{
+    for (auto factory = factories.begin(); factory != factories.end();)
+    {
+        const bool used = std::any_of(panels.begin(), panels.end(),
+            [&](const auto& panel) { return panel.blurRadius == factory->first; });
+        if (used)
+            ++factory;
+        else
+            factory = factories.erase(factory);
+    }
+}
 
 inline bool PanelIdentityMatches(
     std::uintptr_t existingOwnerKey,

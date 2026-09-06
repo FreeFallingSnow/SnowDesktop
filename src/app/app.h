@@ -408,6 +408,8 @@ struct WidgetMarqueeCompositionItem
     ComPtr<IDCompositionVisual2> textVisual;
     ComPtr<IDCompositionRectangleClip> clip;
     ComPtr<IDCompositionSurface> surface;
+    UINT surfaceWidth = 0;
+    UINT surfaceHeight = 0;
     float cycle = 0.0f;
     float speed = 0.0f;
     float phase = 0.0f;
@@ -432,6 +434,7 @@ struct DesktopWidgetCompositionItem
     RECT bounds{};
     UINT width = 0;
     UINT height = 0;
+    std::uint64_t hiddenSince = 0;
     bool visible = false;
     bool backdropRegistered = false;
     int backdropCornerRadius = 0;
@@ -2571,6 +2574,9 @@ private:
         const std::wstring& widgetId,
         bool invalidateRoot = true);
     void PruneDesktopWidgetCompositions();
+    void TrimHiddenDesktopWidgetSurfaces();
+    std::uint64_t GetDesktopWidgetSurfaceBytes(
+        const std::wstring& widgetId) const;
     bool SyncDesktopWidgetCompositionZOrder();
     void ResetDesktopWidgetComposition();
     bool CommitCompositionAnimationFrame();
@@ -3124,6 +3130,9 @@ private:
     bool compositionPaintInProgress_ = false;
     bool desktopWidgetCompositionFailurePending_ = false;
     bool desktopWidgetCompositionDrawInProgress_ = false;
+    bool hiddenWidgetSurfaceMaintenancePending_ = false;
+    std::uint64_t widgetSurfaceReclaimCount_ = 0;
+    std::uint64_t widgetSurfaceReclaimedBytes_ = 0;
     bool desktopWidgetBackdropRequestedDuringDraw_ = false;
     float desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
     float desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;

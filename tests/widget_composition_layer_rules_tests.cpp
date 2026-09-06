@@ -1,4 +1,5 @@
 #include "widget_composition_layer_rules.h"
+#include "widget_surface_retention.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -29,6 +30,49 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
+    namespace retention = snowdesktop::widget_surface_retention;
+    constexpr std::uint64_t mib = 1024 * 1024;
+    std::vector<retention::Candidate> surfaces{
+        {true, 0, 100 * mib}, {false, 1000, 6 * mib}, {false, 2000, 8 * mib}};
+    Check(retention::SelectReleases(surfaces, 10999).empty(),
+        "short page visits must reuse hidden surfaces and exclude visible memory from the budget");
+    auto released = retention::SelectReleases(surfaces, 11000);
+    Check(released.size() == 1 && released[0].index == 1 &&
+            released[0].reason == retention::Reason::Expired,
+        "a hidden surface must expire at the retention boundary even below budget");
+    surfaces[1].bytes = 0;
+    Check(retention::SelectReleases(surfaces, 11001).empty(),
+        "an already reclaimed surface must not be selected again");
+    released = retention::SelectReleases(surfaces, 12000);
+    Check(released.size() == 1 && released[0].index == 2,
+        "each page surface must have its own expiry time");
+    surfaces = {{false, 3000, 8 * mib}, {false, 1000, 6 * mib},
+        {true, 0, 100 * mib}, {false, 2000, 8 * mib}};
+    released = retention::SelectReleases(surfaces, 4000);
+    Check(released.size() == 1 && released[0].index == 1 &&
+            released[0].reason == retention::Reason::Budget,
+        "memory pressure must release the oldest hidden surface first and stop at budget");
+    surfaces[1].bytes = 0;
+    Check(retention::SelectReleases(surfaces, 4000).empty(),
+        "exactly reaching the hidden budget must not evict another page");
+    surfaces[1] = {false, 1000, 20 * mib};
+    released = retention::SelectReleases(surfaces, 4000);
+    Check(released.size() == 1 && released[0].index == 1,
+        "one oversized hidden surface must be reclaimable without touching visible surfaces");
+    surfaces = {{false, 1000, 6 * mib}, {false, 2000, 8 * mib}};
+    released = retention::SelectReleases(surfaces, 3000, 10000, 0);
+    Check(released.size() == 2 && released[0].index == 0 && released[1].index == 1,
+        "zero budget must release all resident hidden surfaces in age order");
+    surfaces[0] = {true, 0, 6 * mib};
+    released = retention::SelectReleases(surfaces, 20000);
+    Check(released.size() == 1 && released[0].index == 1,
+        "returning to a page must exempt its live surface from an old expiry");
+    surfaces[0] = {false, 19500, 6 * mib};
+    surfaces[1].bytes = 0;
+    Check(retention::SelectReleases(surfaces, 20000).empty() &&
+            retention::SelectReleases(surfaces, 19000).empty(),
+        "hiding again must restart retention and an earlier clock sample must not underflow");
+
     using rules::DesktopLayer;
     Check(rules::IsAbove(
             DesktopLayer::Widget, DesktopLayer::Background),

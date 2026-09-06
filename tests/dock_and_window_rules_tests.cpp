@@ -50,6 +50,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
@@ -831,6 +832,25 @@ int main(int argc, char** argv)
         "an invalidated drag scene must fully reconcile backdrop panels");
 
     const RECT firstBackdropFrame{100, 900, 600, 980};
+    struct RetainedBackdropPanel { int blurRadius; };
+    std::vector<RetainedBackdropPanel> retainedPanels{{24}, {24}, {12}};
+    std::unordered_map<int, int> retainedFactories{{12, 1}, {24, 2}, {48, 3}};
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.size() == 2 && retainedFactories.contains(12) &&
+            retainedFactories.contains(24),
+        "unused blur radii must be released while factories with consumers remain");
+    retainedPanels.erase(retainedPanels.begin());
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.size() == 2 && retainedFactories.at(24) == 2,
+        "removing one panel must preserve the factory shared by another panel");
+    retainedPanels[0].blurRadius = 12;
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.size() == 1 && retainedFactories.contains(12),
+        "changing the last consumer's radius must retire its old factory");
+    retainedPanels.clear();
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.empty(),
+        "turning off every glass panel must leave no unused blur factories");
     const RECT shiftedBackdropFrame{96, 870, 608, 980};
     constexpr std::uintptr_t firstBackdropOwner = 0x101;
     constexpr std::uintptr_t secondBackdropOwner = 0x202;

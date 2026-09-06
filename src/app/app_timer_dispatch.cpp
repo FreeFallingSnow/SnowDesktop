@@ -478,6 +478,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         PollDisplayTopology();
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
+        TrimHiddenDesktopWidgetSurfaces();
         PollSettingsUpdateCheck();
         if (uiAnimationScheduler_.DiagnosticsEnabled())
             PublishSettingsUpdateStatus();

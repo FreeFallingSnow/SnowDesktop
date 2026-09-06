@@ -236,6 +236,8 @@ struct DesktopBackdropCompositor::Impl
     std::vector<PanelVisual> panels;
     std::wstring lastError;
     bool completeCollection = true;
+    bool collectingFrame = false;
+    bool blurFactoriesDirty = false;
     bool available = false;
     bool popupMode = false;
     bool popupTopmost = false;
@@ -554,6 +556,7 @@ struct DesktopBackdropCompositor::Impl
         blur->blurAmount = static_cast<float>(blurRadius);
         auto factory = compositor.CreateEffectFactory(*blur);
         blurFactories.emplace(blurRadius, factory);
+        blurFactoriesDirty = true;
         return factory;
     }
 
@@ -570,11 +573,22 @@ struct DesktopBackdropCompositor::Impl
         return brush;
     }
 
+    void PruneUnusedBlurFactories()
+    {
+        if (collectingFrame || !blurFactoriesDirty)
+            return;
+        snowdesktop::desktop_backdrop_update_rules::PruneUnusedBlurFactories(
+            blurFactories, panels);
+        blurFactoriesDirty = false;
+    }
+
     void Reset()
     {
         available = false;
         panels.clear();
         blurFactories.clear();
+        collectingFrame = false;
+        blurFactoriesDirty = false;
         try
         {
             if (target)
@@ -1116,6 +1130,7 @@ void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
     if (!impl_->available)
         return;
     impl_->completeCollection = completeCollection;
+    impl_->collectingFrame = true;
     if (completeCollection)
     {
         for (auto& panel : impl_->panels)
@@ -1166,6 +1181,7 @@ bool DesktopBackdropCompositor::AddPanel(
 
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {
+            impl_->blurFactoriesDirty = true;
             existing->blurRadius = blurKey;
             existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
         }
@@ -1188,6 +1204,7 @@ bool DesktopBackdropCompositor::AddPanel(
         // commit is introduced here.
         existing->visual.Opacity(1.0f);
         existing->seen = true;
+        impl_->PruneUnusedBlurFactories();
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -1211,7 +1228,10 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
     try
     {
         impl_->root.Children().Remove(existing->visual);
+        existing->visual.Brush(nullptr);
         impl_->panels.erase(existing);
+        impl_->blurFactoriesDirty = true;
+        impl_->PruneUnusedBlurFactories();
         impl_->SyncPanelWindowRegion();
         impl_->RequestCommit();
         return true;
@@ -1301,6 +1321,7 @@ CommitVisualChangesAndNotify(
 void DesktopBackdropCompositor::EndFrame(
     bool requestCommit)
 {
+    impl_->collectingFrame = false;
     if (!impl_->available)
         return;
     try
@@ -1317,9 +1338,12 @@ void DesktopBackdropCompositor::EndFrame(
                     continue;
                 }
                 children.Remove(iterator->visual);
+                iterator->visual.Brush(nullptr);
                 iterator = impl_->panels.erase(iterator);
+                impl_->blurFactoriesDirty = true;
             }
         }
+        impl_->PruneUnusedBlurFactories();
         impl_->SyncPanelWindowRegion();
         if (requestCommit)
             impl_->RequestCommit();
@@ -1349,6 +1373,11 @@ bool DesktopBackdropCompositor::IsBackdropWindow(HWND window) const
 std::size_t DesktopBackdropCompositor::PanelCount() const
 {
     return impl_ ? impl_->panels.size() : 0;
+}
+
+std::size_t DesktopBackdropCompositor::BlurFactoryCount() const
+{
+    return impl_ ? impl_->blurFactories.size() : 0;
 }
 
 const std::wstring& DesktopBackdropCompositor::LastError() const
