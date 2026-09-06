@@ -1,6 +1,7 @@
 #include "widget_text_input_rules.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <dwrite.h>
 #include <limits>
@@ -99,6 +100,18 @@ bool HostInputCaretVisibilityRequest::Consume() noexcept
     const bool pending = pending_;
     pending_ = false;
     return pending;
+}
+
+HostInputVerticalExtents ResolveHostInputVerticalExtents(
+    float viewportHeight, float measuredContentHeight) noexcept
+{
+    const int viewport = std::max(
+        1, static_cast<int>(std::lround(viewportHeight)));
+    const int content = measuredContentHeight > viewportHeight
+        ? std::max(viewport,
+            static_cast<int>(std::ceil(measuredContentHeight)))
+        : viewport;
+    return {content, viewport};
 }
 
 std::optional<std::size_t> ResolveHostInputVerticalCaretPosition(

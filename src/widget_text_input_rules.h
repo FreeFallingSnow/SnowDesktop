@@ -35,6 +35,15 @@ private:
     bool pending_ = false;
 };
 
+struct HostInputVerticalExtents
+{
+    int content = 1;
+    int viewport = 1;
+};
+
+HostInputVerticalExtents ResolveHostInputVerticalExtents(
+    float viewportHeight, float measuredContentHeight) noexcept;
+
 enum class HostInputVerticalDirection
 {
     Up,

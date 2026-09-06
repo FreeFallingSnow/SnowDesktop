@@ -7834,9 +7834,9 @@ static int lua_UiTextArea(lua_State* L)
     DWRITE_TEXT_METRICS textMetrics{};
     if (textLayout)
         textLayout->GetMetrics(&textMetrics);
-    const int contentHeight = std::max(
-        static_cast<int>(std::ceil(textMetrics.height + padding * 2.0f)),
-        static_cast<int>(std::ceil(height)));
+    const auto verticalExtents = snowdesktop::widget_runtime::
+        ResolveHostInputVerticalExtents(
+            height, textMetrics.height + padding * 2.0f);
 
     if (s && s->engine && id && *id &&
         storageKey && *storageKey)
@@ -7857,9 +7857,8 @@ static int lua_UiTextArea(lua_State* L)
         control.placeholder = placeholder;
         control.fontSize = fontSize;
         control.padding = padding;
-        control.contentHeight = contentHeight;
-        control.viewportHeight =
-            std::max(1, static_cast<int>(std::lround(height)));
+        control.contentHeight = verticalExtents.content;
+        control.viewportHeight = verticalExtents.viewport;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
         std::string error;
         if (!s->engine->RuntimeRegisterV2HostControl(
