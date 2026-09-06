@@ -4748,6 +4748,15 @@ void TestLuaFieldPresenceAfterMutation()
     Check(!ParseLuaViewTree(state, 1, node, error) &&
             error.find("checked") != std::string::npos && lua_gettop(state) == 1,
         "bounded field discovery must preserve the old oversized-table rejection");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return {type='box',key='long-key',checked=false,
+            [string.rep('x',16384)]=true}
+    )lua") == LUA_OK, "long field-name fixture must evaluate");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "long names must retain the normal lookup and rejection path");
     lua_close(state);
 }
 

@@ -186,6 +186,11 @@ public:
             }
             std::size_t length = 0;
             const char* key = lua_tolstring(state_, -2, &length);
+            if (length > 64)
+            {
+                lua_pop(state_, 2);
+                return;
+            }
             const auto hash = FieldHash({key, length});
             first_ |= 1ull << (hash & 63);
             second_ |= 1ull << ((hash >> 6) & 63);
