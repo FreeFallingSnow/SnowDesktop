@@ -36,6 +36,7 @@
 #include "widget_runtime_health.h"
 #include "widget_host_state.h"
 #include "widget_runtime_scheduler.h"
+#include "widget_invalidation_batch.h"
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
@@ -1788,6 +1789,7 @@ private:
     WidgetPanelOpenCallback openWidgetPanelCallback_;
     WidgetPanelCloseCallback closeWidgetPanelCallback_;
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
+    snowdesktop::widget_runtime::WidgetInvalidationBatch invalidationBatch_;
     NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
     DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调

@@ -235,6 +235,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   RGB 亮度或材质名称反推前景主题。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
+- `widget.invalidate()` 请求刷新当前 surface。同一宿主事件/计时器回调内的重复请求
+  可合并，宿主在回调结束、Lua 上下文恢复后绘制最终状态；不要依赖回调中途立即绘制。
+  事件成功执行后的自动刷新仍保留，主动请求与自动刷新可以同时使用。
 - v2 不暴露旧 `widget.setTimer/cancelTimer`；周期、延迟和绝对时间调度统一使用
   `schedule.every/after/at/timeline`。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`、

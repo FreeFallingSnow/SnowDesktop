@@ -15096,6 +15096,8 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
         "widget.event", kind ? kind : "unknown", widget.widgetId);
     if (!widget.state || !kind || !*kind)
         return false;
+    snowdesktop::widget_runtime::WidgetInvalidationBatch::Scope
+        invalidationScope(invalidationBatch_, invalidateCallback_);
     PreviewExecutionScope previewScope(
         widget.preview ? &widget.previewStorage : nullptr);
     WidgetExecutionContextGuard contextGuard(d2dState_, widget.widgetId);
@@ -20818,6 +20820,8 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
     lua_State* state = widget.state;
     if (!state) return;
     const std::wstring activeWidgetId = widget.widgetId;
+    snowdesktop::widget_runtime::WidgetInvalidationBatch::Scope
+        invalidationScope(invalidationBatch_, invalidateCallback_);
     WidgetExecutionContextGuard contextGuard(
         d2dState_, activeWidgetId);
     snowdesktop::lua_runtime::StackGuard stackGuard(state);
@@ -24106,8 +24110,8 @@ void WidgetEngine::RuntimeInvalidateHost(const std::wstring& widgetId,
         if (surface.empty() || IsPanelSurface(surface))
             widget.panelMarquee.requiresLuaRender = true;
     }
-    if (invalidateCallback_)
-        invalidateCallback_(widgetId, dirtyRect, surface);
+    invalidationBatch_.Invalidate(
+        invalidateCallback_, widgetId, dirtyRect, surface);
 }
 
 bool WidgetEngine::RuntimeNotifySettingsChanged(
