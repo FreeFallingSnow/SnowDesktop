@@ -2005,7 +2005,7 @@ if (BUILD_TESTING)
             tests/shell_launch_worker_tests.cpp
             src/shell_launch_worker.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 user32
+        LINK_LIBRARIES ole32 shell32 shlwapi user32
         LABELS integration shell interaction)
 
     snowdesktop_add_test(

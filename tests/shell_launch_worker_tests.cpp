@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <shlwapi.h>
 #include <wrl/client.h>
 
 namespace
@@ -346,6 +347,20 @@ void TestShellContextMenuOpenLaunchesShortcut()
         Check(
             WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
             "the shortcut must launch through its Shell context menu");
+
+        ResetEvent(launchedEvent);
+        Check(
+            snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                nullptr, linkPath, absolutePidl),
+            "interactive Shell context-menu Open must accept the shortcut");
+        Microsoft::WRL::ComPtr<IUnknown> threadReference;
+        Check(
+            SUCCEEDED(SHGetThreadRef(threadReference.GetAddressOf())) &&
+                threadReference,
+            "interactive Shell activation must publish the thread reference required for asynchronous invocation");
+        Check(
+            WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
+            "the shortcut must launch through asynchronous Shell context-menu Open");
     }
 
     if (absolutePidl)

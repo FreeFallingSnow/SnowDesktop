@@ -4,6 +4,7 @@
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shlwapi.h>
 #include <wrl/client.h>
 
 #include <cstring>
@@ -16,6 +17,49 @@ namespace
 {
 
 using Microsoft::WRL::ComPtr;
+
+class ShellAsyncThreadReference
+{
+public:
+    ~ShellAsyncThreadReference()
+    {
+        if (installed_)
+            SHSetThreadRef(nullptr);
+    }
+
+    bool Ensure()
+    {
+        if (installed_)
+            return true;
+
+        ComPtr<IUnknown> existing;
+        if (SUCCEEDED(SHGetThreadRef(existing.GetAddressOf())) && existing)
+            return true;
+
+        if (FAILED(SHCreateThreadRef(
+                &referenceCount_, reference_.GetAddressOf())) ||
+            !reference_ ||
+            FAILED(SHSetThreadRef(reference_.Get())))
+        {
+            reference_.Reset();
+            referenceCount_ = 0;
+            return false;
+        }
+        installed_ = true;
+        return true;
+    }
+
+private:
+    LONG referenceCount_ = 0;
+    ComPtr<IUnknown> reference_;
+    bool installed_ = false;
+};
+
+bool EnsureShellAsyncThreadReference()
+{
+    thread_local ShellAsyncThreadReference reference;
+    return reference.Ensure();
+}
 
 bool SafeInvokeContextMenu(
     IContextMenu* contextMenu,
@@ -35,9 +79,18 @@ bool SafeInvokeContextMenu(
 bool InvokeShellItemOpen(
     HWND owner,
     PCIDLIST_ABSOLUTE absolutePidl,
-    int showCommand)
+    int showCommand,
+    bool asynchronous)
 {
     if (!absolutePidl)
+        return false;
+
+    // Since Windows Vista, CMIC_MASK_ASYNCOK is effective only when the
+    // calling thread publishes a Shell thread reference. The desktop UI STA
+    // is process-lifetime, so keeping one reference in thread-local storage
+    // lets the built-in shortcut handler return while an elevation broker or
+    // execution delegate finishes, instead of freezing desktop rendering.
+    if (asynchronous && !EnsureShellAsyncThreadReference())
         return false;
 
     ComPtr<IShellFolder> parentFolder;
@@ -113,7 +166,8 @@ bool InvokeShellItemOpen(
 
     CMINVOKECOMMANDINFOEX invoke{};
     invoke.cbSize = sizeof(invoke);
-    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE;
+    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE |
+        (asynchronous ? CMIC_MASK_ASYNCOK : CMIC_MASK_NOASYNC);
     invoke.hwnd = validOwner;
     if (openOffset != static_cast<UINT_PTR>(-1))
     {
@@ -144,13 +198,16 @@ bool ExecuteShellOpen(
     const std::wstring& path,
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand,
-    ULONG launchMask)
+    ULONG launchMask,
+    bool asynchronousShellItem)
 {
     if (path.empty())
         return false;
 
     if (absolutePidl &&
-        InvokeShellItemOpen(owner, absolutePidl, showCommand))
+        InvokeShellItemOpen(
+            owner, absolutePidl, showCommand,
+            asynchronousShellItem))
     {
         return true;
     }
@@ -316,7 +373,8 @@ bool ShellLaunchWorker::Execute(
     constexpr ULONG launchMask =
         SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE;
     return ExecuteShellOpen(
-        owner, path, absolutePidl, showCommand, launchMask);
+        owner, path, absolutePidl, showCommand,
+        launchMask, false);
 }
 
 bool ShellLaunchWorker::ExecuteInteractive(
@@ -328,7 +386,8 @@ bool ShellLaunchWorker::ExecuteInteractive(
     constexpr ULONG launchMask =
         SEE_MASK_ASYNCOK | SEE_MASK_FLAG_LOG_USAGE;
     return ExecuteShellOpen(
-        owner, path, absolutePidl, showCommand, launchMask);
+        owner, path, absolutePidl, showCommand,
+        launchMask, true);
 }
 
 void ShellLaunchWorker::Run(const std::shared_ptr<State>& state)

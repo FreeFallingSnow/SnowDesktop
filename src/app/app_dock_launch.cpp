@@ -220,12 +220,14 @@ bool DesktopApp::LaunchDesktopItem(
     const bool launchAccepted =
         !animateDockLaunch && item.absolutePidl.get()
         ? snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-            hwnd_, item.parsingName, item.absolutePidl.get())
+            ShellDialogOwnerHwnd(), item.parsingName,
+            item.absolutePidl.get())
         : useShellItemActivation && item.absolutePidl.get()
             ? shellLaunchWorker_.EnqueueShellItem(
-                hwnd_, item.parsingName, item.absolutePidl.get())
+                ShellDialogOwnerHwnd(), item.parsingName,
+                item.absolutePidl.get())
             : shellLaunchWorker_.Enqueue(
-                hwnd_, item.parsingName);
+                ShellDialogOwnerHwnd(), item.parsingName);
     if (!launchAccepted)
         return false;
     RecordDockItemUsage(itemIndex);
