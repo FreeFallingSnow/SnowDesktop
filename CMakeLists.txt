@@ -289,6 +289,12 @@ set(SNOWDESKTOP_SOURCES
     src/settings_search_index.h
     src/settings_store_native.cpp
     src/settings_window.cpp
+    src/settings_ipc_channel.cpp
+    src/settings_ipc_services.cpp
+    src/settings_ipc_widget_service.cpp
+    src/settings_process.cpp
+    src/winui/settings_ipc_backends.cpp
+    src/winui/settings_process_entry.cpp
     src/winui/App.idl
     src/winui/App.xaml
     src/winui/App.xaml.cpp
@@ -1441,6 +1447,10 @@ if (BUILD_TESTING)
             tests/settings_controller_tests.cpp
             tests/settings_ipc_tests.cpp
             src/settings_ipc_channel.cpp
+            src/settings_ipc_services.cpp
+            src/settings_ipc_widget_service.cpp
+            src/settings_process.cpp
+            src/widget_setting_rules.cpp
             src/settings_controller.cpp
             src/settings_route.cpp
         INCLUDE_DIRECTORIES src

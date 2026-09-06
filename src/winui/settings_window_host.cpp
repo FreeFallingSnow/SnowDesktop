@@ -601,7 +601,7 @@ std::wstring FormatWin32Error(const wchar_t* operation, DWORD error)
 }
 
 bool IsUsableControllerSnapshot(
-    const SettingsController::SnapshotPtr& snapshot) noexcept
+    const ISettingsController::SnapshotPtr& snapshot) noexcept
 {
     return snapshot && snapshot->initialized;
 }
@@ -723,7 +723,7 @@ struct SettingsWindowHost::Impl
         std::atomic<bool> snapshotQueued{false};
         std::atomic<bool> flushQueued{false};
         std::mutex snapshotMutex;
-        SettingsController::SnapshotPtr latestSnapshot;
+        ISettingsController::SnapshotPtr latestSnapshot;
         mud::DispatcherQueue dispatcher{nullptr};
         Impl* owner = nullptr;
     };
@@ -731,8 +731,8 @@ struct SettingsWindowHost::Impl
     DWORD ownerThreadId = 0;
     HINSTANCE instance = nullptr;
     HWND window = nullptr;
-    SettingsController* controller = nullptr;
-    widget_runtime::WidgetSettingsService* widgetSettingsService = nullptr;
+    ISettingsController* controller = nullptr;
+    widget_runtime::IWidgetSettingsService* widgetSettingsService = nullptr;
     WidgetEngine* widgetEngine = nullptr;
     SettingsWindowHostOptions options;
     WinUiRuntime runtime;
@@ -741,8 +741,8 @@ struct SettingsWindowHost::Impl
     muw::AppWindowTitleBar appWindowTitleBar{nullptr};
     SettingsSearchIndex searchIndex;
     std::shared_ptr<CallbackState> callbacks;
-    std::unique_ptr<WidgetsPageBackend> widgetsPageBackend;
-    std::unique_ptr<BackupDataPageBackend> backupDataPageBackend;
+    std::unique_ptr<IWidgetsPageBackend> widgetsPageBackend;
+    std::unique_ptr<IBackupDataPageBackend> backupDataPageBackend;
     std::uint64_t viewEpoch = 0;
     bool widgetsPageActive = false;
     SettingsPage widgetsBackendPage = SettingsPage::Home;
@@ -1254,7 +1254,7 @@ struct SettingsWindowHost::Impl
         }
     }
 
-    void QueueSnapshot(SettingsController::SnapshotPtr snapshot)
+    void QueueSnapshot(ISettingsController::SnapshotPtr snapshot)
     {
         if (!callbacks || !snapshot)
             return;
@@ -1280,7 +1280,7 @@ struct SettingsWindowHost::Impl
                         // coalesced snapshot after a visible-window Open.
                         if (!state->alive.load() || !state->owner)
                             return;
-                        SettingsController::SnapshotPtr latest;
+                        ISettingsController::SnapshotPtr latest;
                         {
                             std::lock_guard lock(state->snapshotMutex);
                             latest = std::move(state->latestSnapshot);
@@ -1297,7 +1297,7 @@ struct SettingsWindowHost::Impl
         }
     }
 
-    void ApplySnapshotNow(SettingsController::SnapshotPtr snapshot)
+    void ApplySnapshotNow(ISettingsController::SnapshotPtr snapshot)
     {
         performance::Scope performanceScope("settings", "snapshot.apply");
         if (!shell || !snapshot || shuttingDown)
@@ -1442,7 +1442,7 @@ struct SettingsWindowHost::Impl
 
     void ConfigureWidgetsPageBackend()
     {
-        if (!shell || !callbacks || !widgetEngine || widgetsPageBackend)
+        if (!shell || !callbacks || (!widgetEngine && !options.createWidgetsBackend) || widgetsPageBackend)
             return;
         const std::weak_ptr<CallbackState> weak = callbacks;
         auto configured = options.widgetsPage;
@@ -1524,8 +1524,9 @@ struct SettingsWindowHost::Impl
                 std::move(completed));
         };
 
-        widgetsPageBackend = std::make_unique<WidgetsPageBackend>(
-            *widgetEngine, std::move(configured));
+        widgetsPageBackend = options.createWidgetsBackend
+            ? options.createWidgetsBackend(std::move(configured))
+            : std::make_unique<WidgetsPageBackend>(*widgetEngine, std::move(configured));
         WidgetsPageActions actions;
         actions.invoke = [weak](std::uint64_t generation,
                              WidgetsPageRequest request) {
@@ -1730,8 +1731,9 @@ struct SettingsWindowHost::Impl
                 done(std::move(selected));
         };
 
-        backupDataPageBackend = std::make_unique<BackupDataPageBackend>(
-            *controller, std::move(configured));
+        backupDataPageBackend = options.createBackupBackend
+            ? options.createBackupBackend(std::move(configured))
+            : std::make_unique<BackupDataPageBackend>(*controller, std::move(configured));
         backupDataPageBackend->SetSnapshotChangedCallback(
             [weak](const BackupDataPageSnapshot& snapshot) {
                 const auto state = weak.lock();
@@ -1763,7 +1765,7 @@ struct SettingsWindowHost::Impl
         }
         if (backupDataPageBackend)
         {
-            // Must precede SettingsController::CloseSession: a completed
+            // Must precede ISettingsController::CloseSession: a completed
             // replacement can discard dirty state or reload the layout here.
             backupDataPageBackend->Close();
             backupDataPageBackend.reset();
@@ -3138,6 +3140,7 @@ struct SettingsWindowHost::Impl
         // DispatcherQueue turn. A newer Open advances viewEpoch and cancels
         // this stale release safely.
         QueueViewRelease();
+        if (options.sessionClosed) options.sessionClosed();
         return true;
     }
 };
@@ -3154,8 +3157,8 @@ SettingsWindowHost::~SettingsWindowHost()
 
 bool SettingsWindowHost::Initialize(
     HINSTANCE instance,
-    SettingsController& controller,
-    widget_runtime::WidgetSettingsService* widgetSettingsService,
+    ISettingsController& controller,
+    widget_runtime::IWidgetSettingsService* widgetSettingsService,
     SettingsWindowHostOptions options)
 {
     if (impl_->initialized)
@@ -3199,7 +3202,7 @@ bool SettingsWindowHost::Initialize(
 
         const std::weak_ptr<Impl::CallbackState> weak = impl_->callbacks;
         controller.SetSnapshotChangedCallback(
-            [weak](SettingsController::SnapshotPtr snapshot) {
+            [weak](ISettingsController::SnapshotPtr snapshot) {
                 if (const auto state = weak.lock();
                     state && state->alive.load() && state->owner)
                 {
@@ -3384,7 +3387,7 @@ bool SettingsWindowHost::FlushPendingChanges()
 }
 
 void SettingsWindowHost::SetWidgetSettingsService(
-    widget_runtime::WidgetSettingsService* service) noexcept
+    widget_runtime::IWidgetSettingsService* service) noexcept
 {
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(service);

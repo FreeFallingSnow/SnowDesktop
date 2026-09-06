@@ -872,7 +872,7 @@ bool SettingsShell::ApplyHomeAboutStatusPatch(
 }
 
 void SettingsShell::SetWidgetSettingsService(
-    snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
+    snowdesktop::widget_runtime::IWidgetSettingsService* service) noexcept
 {
     if (closed_)
         return;

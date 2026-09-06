@@ -44,6 +44,12 @@ bool Transfer(HANDLE pipe, void* data, std::size_t size, bool writing)
 
 struct Channel::Impl
 {
+    struct Gate
+    {
+        std::mutex mutex;
+        Channel* owner = nullptr;
+    };
+    std::shared_ptr<Gate> gate = std::make_shared<Gate>();
     struct Frame
     {
         Kind kind{};
@@ -287,8 +293,12 @@ struct Channel::Impl
     }
 };
 
-Channel::Channel() : impl_(std::make_unique<Impl>()) {}
-Channel::~Channel() = default;
+Channel::Channel() : impl_(std::make_unique<Impl>()) { impl_->gate->owner = this; }
+Channel::~Channel()
+{
+    std::lock_guard lock(impl_->gate->mutex);
+    impl_->gate->owner = nullptr;
+}
 void Channel::Open(HANDLE readPipe, HANDLE writePipe, HANDLE peerProcess)
 {
     impl_->Close();
@@ -327,6 +337,26 @@ bool Channel::Post(std::function<void()> task)
     }
     impl_->Signal();
     return true;
+}
+std::function<bool(std::function<void()>)> Channel::Poster()
+{
+    std::weak_ptr<Impl::Gate> weak = impl_->gate;
+    return [weak](std::function<void()> task) {
+        const auto gate = weak.lock();
+        if (!gate) return false;
+        std::lock_guard lock(gate->mutex);
+        return gate->owner && gate->owner->Post(std::move(task));
+    };
+}
+std::function<HWND()> Channel::WindowProvider()
+{
+    std::weak_ptr<Impl::Gate> weak = impl_->gate;
+    return [weak]() -> HWND {
+        const auto gate = weak.lock();
+        if (!gate) return nullptr;
+        std::lock_guard lock(gate->mutex);
+        return gate->owner ? gate->owner->Window() : nullptr;
+    };
 }
 void Channel::SetDisconnected(std::function<void()> callback)
 {

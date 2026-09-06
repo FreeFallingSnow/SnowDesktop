@@ -1,256 +1,205 @@
 #include "settings_window.h"
 
 #include "settings_controller.h"
+#include "settings_ipc_services.h"
+#include "settings_process.h"
+#include "widget_settings_service.h"
+#include "winui/settings_ipc_backends.h"
+#include "winui/settings_ipc_values.h"
 
 #include <utility>
+
+namespace ipc = snowdesktop::settings_ipc;
 
 struct SettingsWindow::Impl
 {
     HINSTANCE instance = nullptr;
     snowdesktop::SettingsController* controller = nullptr;
-    snowdesktop::widget_runtime::WidgetSettingsService*
-        widgetSettingsService = nullptr;
+    snowdesktop::widget_runtime::WidgetSettingsService* widgetSettingsService = nullptr;
     WidgetEngine* widgetEngine = nullptr;
     snowdesktop::winui::SettingsWindowHostOptions options;
-    std::unique_ptr<snowdesktop::winui::SettingsWindowHost> host;
+    std::unique_ptr<ipc::Channel> channel;
+    std::unique_ptr<ipc::BackendServer> backends;
+    ipc::SettingsProcess process;
+    HWND window = nullptr;
+    bool closing = false;
     std::wstring lastError;
 
+    void EndSession() noexcept
+    {
+        window = nullptr;
+        closing = false;
+        if (backends) backends->ClosePages();
+        if (widgetSettingsService) widgetSettingsService->CloseAll();
+        try { if (controller) (void)controller->CloseSession(); } catch (...) {}
+        process.Stop();
+    }
     bool EnsureInitialized()
     {
-        if (host && host->IsInitialized())
-            return true;
+        if (channel && channel->Connected() && process.Running() && !closing) return true;
         if (!instance || !controller)
         {
             lastError = L"Settings window has not been configured";
             return false;
         }
-
-        // A failed WinUI/XAML initialization can leave its runtime object in
-        // a terminal state. Always retry with a fresh host while retaining
-        // the application-lifetime dependencies and callbacks.
-        auto candidate =
-            std::make_unique<snowdesktop::winui::SettingsWindowHost>();
-        if (!candidate->Initialize(instance, *controller,
-                widgetSettingsService, options))
+        try
         {
-            lastError = candidate->LastError();
-            candidate->Shutdown();
+            if (!channel)
+            {
+                channel = std::make_unique<ipc::Channel>();
+                ipc::BindController(*channel, *controller);
+                if (widgetSettingsService) ipc::BindWidgetService(*channel, *widgetSettingsService);
+                backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
+                channel->Bind<void>("ui.closed", [this] { closing = true; window = nullptr; });
+                channel->SetDisconnected([this] { EndSession(); });
+            }
+            // A normal close has acknowledged durable commits. An immediate
+            // reopen can finish teardown before launching the next UI.
+            if (process.Running()) { channel->Close(); EndSession(); }
+            process.Start(*channel);
+            auto [initialized, handle, error] = channel->Call<
+                std::tuple<bool, std::uint64_t, std::wstring>>("ui.initialize", ipc::ExecutableIdentity());
+            HWND candidate = reinterpret_cast<HWND>(handle);
+            DWORD owner = 0;
+            GetWindowThreadProcessId(candidate, &owner);
+            if (!initialized || !candidate || owner != process.ProcessId())
+            {
+                lastError = error.empty() ? L"Settings process initialization failed" : error;
+                channel->Close();
+                EndSession();
+                return false;
+            }
+            window = candidate;
+            closing = false;
+            lastError.clear();
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            const std::string message(error.what());
+            lastError.assign(message.begin(), message.end());
+            if (channel) channel->Close();
+            EndSession();
             return false;
         }
-        candidate->SetWidgetEngine(widgetEngine);
-        lastError.clear();
-        host = std::move(candidate);
-        return true;
+    }
+    template<class... A> void Notify(const char* name, const A&... arguments) noexcept
+    {
+        try { if (channel && channel->Connected() && !closing) channel->Notify(name, arguments...); }
+        catch (...) {}
     }
 };
 
-SettingsWindow::SettingsWindow()
-    : impl_(std::make_unique<Impl>())
-{
-}
-
-SettingsWindow::~SettingsWindow()
-{
-    Shutdown();
-}
-
-bool SettingsWindow::Init(
-    HINSTANCE instance,
-    snowdesktop::SettingsController& controller,
-    snowdesktop::widget_runtime::WidgetSettingsService* widgetSettingsService,
+SettingsWindow::SettingsWindow() : impl_(std::make_unique<Impl>()) {}
+SettingsWindow::~SettingsWindow() { Shutdown(); }
+bool SettingsWindow::Init(HINSTANCE instance, snowdesktop::SettingsController& controller,
+    snowdesktop::widget_runtime::WidgetSettingsService* service,
     snowdesktop::winui::SettingsWindowHostOptions options)
 {
-    if (!instance)
-    {
-        impl_->lastError =
-            L"Settings window initialization requires HINSTANCE";
-        return false;
-    }
-    if (impl_->host)
-        impl_->host->Shutdown();
-    impl_->host.reset();
+    if (!instance) return false;
+    Shutdown();
     impl_->instance = instance;
     impl_->controller = &controller;
-    impl_->widgetSettingsService = widgetSettingsService;
+    impl_->widgetSettingsService = service;
     impl_->options = std::move(options);
     impl_->lastError.clear();
-
-    // The WinUI runtime and top-level HWND are intentionally created on the
-    // first Open. Besides reducing startup work, this lets every failed Open
-    // retry construct a pristine XAML runtime rather than reusing a failed
-    // host object.
     return true;
 }
-
 void SettingsWindow::Shutdown() noexcept
 {
-    if (impl_->host)
-        impl_->host->Shutdown();
-    impl_->host.reset();
+    if (impl_->channel) impl_->channel->SetDisconnected({});
+    impl_->window = nullptr;
+    if (impl_->backends) impl_->backends->ClosePages();
+    if (impl_->controller)
+    {
+        impl_->controller->SetSnapshotChangedCallback({});
+        impl_->controller->SetPendingWorkCallback({});
+    }
+    if (impl_->widgetSettingsService)
+    {
+        impl_->widgetSettingsService->SetEventCallbacks({}, {});
+        impl_->widgetSettingsService->CloseAll();
+    }
+    if (impl_->channel) impl_->channel->Close();
+    impl_->process.Stop();
+    impl_->backends.reset();
+    impl_->channel.reset();
     impl_->instance = nullptr;
     impl_->controller = nullptr;
     impl_->widgetSettingsService = nullptr;
     impl_->widgetEngine = nullptr;
     impl_->options = {};
+    impl_->closing = false;
 }
-
 bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 {
-    snowdesktop::SettingsRoute canonical =
-        snowdesktop::CanonicalizeSettingsRoute(route);
+    auto canonical = snowdesktop::CanonicalizeSettingsRoute(route);
     if (canonical.page == snowdesktop::SettingsPage::Home)
-    {
         canonical.page = snowdesktop::SettingsPage::General;
-    }
-    if (!impl_->EnsureInitialized())
-        return false;
-    if (impl_->host->Open(canonical))
+    if (!impl_->EnsureInitialized()) return false;
+    AllowSetForegroundWindow(impl_->process.ProcessId());
+    try
     {
-        impl_->lastError.clear();
-        return true;
+        auto [opened, error] = impl_->channel->Call<std::pair<bool, std::wstring>>("ui.open", canonical);
+        impl_->lastError = std::move(error);
+        return opened;
     }
-
-    impl_->lastError = impl_->host->LastError();
-    if (impl_->lastError.empty())
-        impl_->lastError = L"Settings window open failed";
-    return false;
+    catch (...) { impl_->lastError = L"Settings process disconnected"; return false; }
 }
-
 bool SettingsWindow::Show()
-{
-    return Open(snowdesktop::SettingsRoute::ForPage(
-        snowdesktop::SettingsPage::General));
-}
-
+{ return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General)); }
 bool SettingsWindow::ShowDockSettings()
-{
-    return Open(snowdesktop::SettingsRoute::ForPage(
-        snowdesktop::SettingsPage::Dock, "dock.enable"));
-}
-
+{ return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, "dock.enable")); }
 bool SettingsWindow::ShowAppearanceSettings()
-{
-    return Open(snowdesktop::SettingsRoute::ForPage(
-        snowdesktop::SettingsPage::Personalization));
-}
-
-void SettingsWindow::ShowWidgetEditor(
-    std::size_t,
-    const wchar_t* widgetId,
-    const wchar_t*,
-    const wchar_t*)
-{
-    if (widgetId && *widgetId)
-        (void)Open(snowdesktop::SettingsRoute::ForWidget(widgetId));
-}
-
+{ return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Personalization)); }
+void SettingsWindow::ShowWidgetEditor(std::size_t, const wchar_t* id, const wchar_t*, const wchar_t*)
+{ if (id && *id) (void)Open(snowdesktop::SettingsRoute::ForWidget(id)); }
 bool SettingsWindow::ShowExitConfirm()
 {
-    if (!impl_->controller)
-        return false;
-    if (!IsVisible() && !Show())
-        return false;
-
-    impl_->host->ShowExitConfirmation([this,
-                                         controller = impl_->controller](
-                                         bool confirmed) {
-        if (!confirmed || !controller)
-            return;
-        if (!FlushPendingChanges())
-            return;
-        snowdesktop::SettingsHostActions::Request request;
-        request.action = snowdesktop::SettingsHostActions::Action::
-            ExitApplication;
-        (void)controller->InvokeHostAction(request);
-    });
-    return true;
+    if (!impl_->controller || (!IsVisible() && !Show())) return false;
+    try { impl_->channel->Call<void>("ui.exitConfirmation"); return true; } catch (...) { return false; }
 }
-
 bool SettingsWindow::FlushPendingChanges()
 {
-    return impl_->host && impl_->host->FlushPendingChanges();
+    if (!impl_->channel || !impl_->process.Running() || impl_->closing)
+        return !impl_->controller || impl_->controller->FlushAll().Succeeded();
+    try { return impl_->channel->Call<bool>("ui.flush"); } catch (...) { return false; }
 }
-
-void SettingsWindow::SetWidgetSettingsService(
-    snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
+void SettingsWindow::SetWidgetSettingsService(snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
 {
+    if (impl_->widgetSettingsService && impl_->widgetSettingsService != service)
+        impl_->widgetSettingsService->SetEventCallbacks({}, {});
     impl_->widgetSettingsService = service;
-    if (impl_->host)
-        impl_->host->SetWidgetSettingsService(service);
+    try { if (impl_->channel && service) ipc::BindWidgetService(*impl_->channel, *service); } catch (...) {}
 }
-
-void SettingsWindow::SetWidgetEngine(WidgetEngine* engine)
-{
-    impl_->widgetEngine = engine;
-    if (impl_->host)
-        impl_->host->SetWidgetEngine(engine);
-}
-
-void SettingsWindow::RefreshWidgetsPage()
-{
-    if (impl_->host)
-        impl_->host->RefreshWidgetsPage();
-}
-
-void SettingsWindow::RefreshGeneralRuntimeState()
-{
-    if (impl_->host)
-        impl_->host->RefreshGeneralRuntimeState();
-}
-
+void SettingsWindow::SetWidgetEngine(WidgetEngine* engine) { impl_->widgetEngine = engine; }
+void SettingsWindow::RefreshWidgetsPage() { impl_->Notify("ui.refreshWidgets"); }
+void SettingsWindow::RefreshGeneralRuntimeState() { impl_->Notify("ui.refreshGeneral"); }
 bool SettingsWindow::PrepareLanguageChange()
 {
-    return !impl_->host || impl_->host->PrepareLanguageChange();
+    if (!impl_->channel || !impl_->process.Running() || impl_->closing) return true;
+    try { return impl_->channel->Call<bool>("ui.prepareLanguage"); } catch (...) { return false; }
 }
-
-void SettingsWindow::ApplyLanguageChange(bool widgetRuntimeReloaded)
+void SettingsWindow::ApplyLanguageChange(bool reloaded) { impl_->Notify("ui.applyLanguage", reloaded); }
+bool SettingsWindow::PublishHomeAboutStatus(snowdesktop::winui::HomeAboutStatusPatch patch)
 {
-    if (impl_->host)
-        impl_->host->ApplyLanguageChange(widgetRuntimeReloaded);
+    if (!impl_->channel || !impl_->channel->Connected() || impl_->closing) return false;
+    try { return impl_->channel->Call<bool>("ui.homeStatus", patch); } catch (...) { return false; }
 }
-
-bool SettingsWindow::PublishHomeAboutStatus(
-    snowdesktop::winui::HomeAboutStatusPatch patch)
-{
-    return impl_->host &&
-        impl_->host->PublishHomeAboutStatus(std::move(patch));
-}
-
-bool SettingsWindow::PreTranslateMessage(MSG* message) noexcept
-{
-    return impl_->host && impl_->host->PreTranslateMessage(message);
-}
-
-bool SettingsWindow::ProcessTabNavigation(MSG* message) noexcept
-{
-    return impl_->host && impl_->host->ProcessTabNavigation(message);
-}
-
-bool SettingsWindow::IsVisible() const noexcept
-{
-    return impl_->host && impl_->host->IsVisible();
-}
-
+bool SettingsWindow::PreTranslateMessage(MSG*) noexcept { return false; }
+bool SettingsWindow::ProcessTabNavigation(MSG*) noexcept { return false; }
 HWND SettingsWindow::Window() const noexcept
 {
-    return impl_->host ? impl_->host->Window() : nullptr;
+    if (!impl_->window || !impl_->process.Running() || impl_->closing) return nullptr;
+    DWORD owner = 0;
+    GetWindowThreadProcessId(impl_->window, &owner);
+    return owner == impl_->process.ProcessId() ? impl_->window : nullptr;
 }
-
+bool SettingsWindow::IsVisible() const noexcept { const HWND window = Window(); return window && IsWindowVisible(window); }
 bool SettingsWindow::IsHotkeyCaptureActive() const noexcept
 {
-    return impl_->host && impl_->host->IsHotkeyCaptureActive();
+    if (!IsVisible() || !impl_->channel || !impl_->channel->Connected()) return false;
+    try { return impl_->channel->Call<bool>("ui.hotkeyCapture"); } catch (...) { return false; }
 }
-
-void SettingsWindow::CaptureRegisteredHotkey(
-    UINT modifiers, UINT virtualKey)
-{
-    if (impl_->host)
-        impl_->host->CaptureRegisteredHotkey(modifiers, virtualKey);
-}
-
-const std::wstring& SettingsWindow::LastError() const noexcept
-{
-    return impl_->host && !impl_->host->LastError().empty()
-        ? impl_->host->LastError()
-        : impl_->lastError;
-}
+void SettingsWindow::CaptureRegisteredHotkey(UINT modifiers, UINT key) { impl_->Notify("ui.captureHotkey", modifiers, key); }
+const std::wstring& SettingsWindow::LastError() const noexcept { return impl_->lastError; }

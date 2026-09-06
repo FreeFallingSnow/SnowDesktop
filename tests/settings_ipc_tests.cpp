@@ -1,4 +1,6 @@
 #include "settings_ipc_channel.h"
+#include "settings_ipc_values.h"
+#include "settings_process.h"
 
 #include <atomic>
 #include <future>
@@ -55,14 +57,55 @@ void TestCodec()
         "embedded null paths cannot change the filesystem operation target");
     Reject([] { (void)Unpack<std::map<std::string, int>>(Pack(std::uint32_t{2},
         std::string("a"), 1, std::string("a"), 2)); }, "duplicate metadata keys rejected");
+
+    snowdesktop::SettingsSnapshot settings;
+    settings.generation = 17;
+    settings.revision = UINT64_MAX;
+    settings.externalReplacementPending = true;
+    settings.values.general.language[0] = 'z';
+    settings.values.general.language[1] = 'h';
+    settings.values.general.language[2] = '\0';
+    settings.values.dock.systemTaskbarShellUi.enabled = true;
+    settings.values.dock.systemTaskbarShellUi.appearance.widgetEdgeHighlightWidth = 3.5f;
+    settings.values.desktop.iconBeautify.filterTintR = 0.123f;
+    settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
+    const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.externalReplacementPending && restored.revision == UINT64_MAX &&
+        restored.values.dock == settings.values.dock &&
+        restored.values.desktop.iconBeautify.filterTintR == 0.123f &&
+        restored.values.category.rules.front().customLabel == L"文档" &&
+        std::string(restored.values.general.language) == "zh",
+        "controller IPC preserves replacement marker, draft fields and language array");
+
+    using namespace snowdesktop::widget_runtime;
+    WidgetSettingsSnapshot widget;
+    widget.widgetId = L"music-1";
+    widget.generation = 3;
+    widget.revision = 9;
+    WidgetSettingFieldState field;
+    field.schema.rawType = "password";
+    field.schema.key = "secret";
+    field.currentValue = MakeWidgetSettingString("must-not-leave-host");
+    field.defaultValue = field.currentValue;
+    field.opaque.configured = true;
+    field.opaque.displayLabel = "must-not-leave-host";
+    widget.fields.push_back(field);
+    PrepareWidgetSettingsSnapshot(widget);
+    const auto wire = Pack(widget);
+    const std::string serialized(reinterpret_cast<const char*>(wire.data()), wire.size());
+    Check(serialized.find("must-not-leave-host") == std::string::npos &&
+        Unpack<WidgetSettingsSnapshot>(wire) == widget,
+        "prepared secret fields retain only opaque status across IPC");
 }
 
 void TestChannel()
 {
     DWORD handlesBefore = 0;
-    GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
-    for (int iteration = 0; iteration < 12; ++iteration)
+    // Creating the first USER message queue can lazily initialize shared
+    // Windows/CRT resources. Compare equal, warmed process states.
+    for (int iteration = -1; iteration < 12; ++iteration)
     {
+        if (iteration == 0) GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
         HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
         if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) ||
             !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
@@ -120,13 +163,81 @@ void TestChannel()
     }
     DWORD handlesAfter = 0;
     GetProcessHandleCount(GetCurrentProcess(), &handlesAfter);
-    Check(handlesAfter <= handlesBefore + 2, "repeated IPC sessions release pipes, threads, events and process handles");
+    if (handlesAfter > handlesBefore)
+        std::cerr << "IPC handles: " << handlesBefore << " -> " << handlesAfter << '\n';
+    Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
 }
+
+void TestStalledPeer()
+{
+    HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+    if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) ||
+        !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+        throw std::runtime_error("test pipe creation failed");
+    const auto started = GetTickCount64();
+    {
+        Channel channel;
+        channel.Open(mainRead, mainWrite, CurrentProcessHandle());
+        // No peer reader: this exceeds pipe capacity and stalls its writer.
+        Reject([&] { (void)channel.Request("ui.flush", Pack(std::string(1024 * 1024, 'x')), 100); },
+            "unresponsive peer fails instead of acknowledging an edit");
+    }
+    Check(GetTickCount64() - started < 3000,
+        "a stalled pipe writer cannot block timeout or endpoint destruction");
+    CloseHandle(uiWrite);
+    CloseHandle(uiRead);
+}
+
+void TestProcessLifecycle()
+{
+    for (int iteration = 0; iteration < 3; ++iteration)
+    {
+        Channel channel;
+        SettingsProcess process;
+        process.Start(channel);
+        Check(process.Running() && process.ProcessId() != GetCurrentProcessId(),
+            "settings UI runs in a distinct supervised process");
+        Check(channel.Call<bool>("test.identity", ExecutableIdentity()),
+            "child validates inherited channel and exact executable identity");
+        snowdesktop::SettingsRoute route = snowdesktop::SettingsRoute::ForWidget(L"组件-42");
+        Check(channel.Call<snowdesktop::SettingsRoute>("test.route", route) == route,
+            "real child receives component route without sharing pointers");
+        channel.Notify("test.exit");
+        const auto deadline = GetTickCount64() + 5000;
+        while (process.Running() && GetTickCount64() < deadline) Sleep(10);
+        Check(!process.Running(), "settings child exits after close, without a resident UI process");
+        channel.Close();
+        process.Stop();
+    }
+}
+}
+
+int RunSettingsIpcChildIfRequested()
+{
+    using namespace snowdesktop::settings_ipc;
+    if (!IsSettingsProcessCommand()) return -1;
+    try
+    {
+        Channel channel;
+        OpenInheritedSettingsChannel(channel);
+        channel.Bind<bool, std::string>("test.identity", [](const std::string& identity) {
+            return identity == ExecutableIdentity();
+        });
+        channel.Bind<snowdesktop::SettingsRoute, snowdesktop::SettingsRoute>("test.route", [](auto route) { return route; });
+        channel.Bind<void>("test.exit", [] { PostQuitMessage(0); });
+        channel.SetDisconnected([] { PostQuitMessage(ERROR_BROKEN_PIPE); });
+        MSG message{};
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        return 0;
+    }
+    catch (...) { return 1; }
 }
 
 int RunSettingsIpcTests()
 {
     TestCodec();
     TestChannel();
+    TestStalledPeer();
+    TestProcessLifecycle();
     return failures;
 }

@@ -388,7 +388,7 @@ void QueueServiceHint(
 
 struct WidgetSettingsPresenter::Impl
 {
-    Impl(wr::WidgetSettingsService& settingsService,
+    Impl(wr::IWidgetSettingsService& settingsService,
         LocalizeCallback callback,
         const mux::Style& style)
         : service(settingsService), localize(std::move(callback)),
@@ -410,7 +410,7 @@ struct WidgetSettingsPresenter::Impl
         RefreshLocalizedText();
     }
 
-    wr::WidgetSettingsService& service;
+    wr::IWidgetSettingsService& service;
     LocalizeCallback localize;
     WidgetSettingsPresenterCallbacks callbacks;
     mux::Style cardStyle{nullptr};
@@ -3200,7 +3200,7 @@ struct WidgetSettingsPresenter::Impl
 };
 
 WidgetSettingsPresenter::WidgetSettingsPresenter(
-    wr::WidgetSettingsService& service,
+    wr::IWidgetSettingsService& service,
     LocalizeCallback localize,
     const mux::Style& cardStyle)
     : impl_(std::make_unique<Impl>(

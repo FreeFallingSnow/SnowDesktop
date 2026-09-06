@@ -1,4 +1,6 @@
 #include "settings_controller.h"
+#include "settings_ipc_services.h"
+#include "settings_ipc_values.h"
 
 #include <array>
 #include <cstring>
@@ -6,6 +8,8 @@
 #include <iostream>
 #include <memory>
 #include <utility>
+#include <future>
+#include <thread>
 
 // The controller tests intentionally avoid linking the native persistence
 // implementations. Supply only the value factories used by aggregate default
@@ -981,12 +985,79 @@ void TestExternalReplacementDuringCommitPreventsLateSave()
         "from being saved afterward");
 }
 
+void TestRemoteSaveFailureKeepsSessionOpen()
+{
+    using namespace snowdesktop::settings_ipc;
+    auto store = std::make_shared<FakeStore>();
+    SettingsController controller(store);
+    HANDLE hostRead = nullptr, uiWrite = nullptr, uiRead = nullptr, hostWrite = nullptr;
+    Check(CreatePipe(&hostRead, &uiWrite, nullptr, 0) &&
+        CreatePipe(&uiRead, &hostWrite, nullptr, 0), "create remote controller test pipes");
+    const auto processHandle = [] {
+        HANDLE handle = nullptr;
+        (void)DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(),
+            &handle, SYNCHRONIZE, FALSE, 0);
+        return handle;
+    };
+    Channel host;
+    host.Open(hostRead, hostWrite, processHandle());
+    BindController(host, controller);
+    std::promise<DWORD> started;
+    std::thread peer([&] {
+        Channel ui;
+        ui.Open(uiRead, uiWrite, processHandle());
+        std::unique_ptr<ISettingsController> proxy;
+        ui.Bind<bool, int>("test.edit", [&](int phase) {
+            if (!proxy) proxy = CreateControllerProxy(ui);
+            if (phase == 0)
+            {
+                if (!proxy->Initialize().Succeeded() ||
+                    !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded()) return false;
+                auto general = proxy->Snapshot()->values.general;
+                general.demoModeEnabled = true;
+                proxy->UpdateGeneral(general, SettingsUpdateMode::Commit);
+                return !proxy->FlushAll().Succeeded() && !proxy->CloseSession().Succeeded() &&
+                    proxy->Snapshot()->sessionActive &&
+                    HasSettingsDomain(proxy->Snapshot()->dirtyDomains, SettingsDomain::General);
+            }
+            return proxy->RetryPending() && proxy->CloseSession().Succeeded() &&
+                !proxy->Snapshot()->sessionActive;
+        });
+        ui.Bind<void>("test.quit", [] { PostQuitMessage(0); });
+        started.set_value(GetCurrentThreadId());
+        MSG message{};
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+    });
+    const DWORD thread = started.get_future().get();
+    store->failingDomains = SettingsDomain::General;
+    try
+    {
+        Check(host.Call<bool>("test.edit", 0),
+            "remote save failure preserves dirty state and refuses close acknowledgement");
+        store->failingDomains = SettingsDomain::None;
+        Check(host.Call<bool>("test.edit", 1) && store->lastSavedGeneral.demoModeEnabled,
+            "remote retry closes only after authoritative host persistence succeeds");
+        host.Notify("test.quit");
+    }
+    catch (const std::exception& error)
+    {
+        Check(false, error.what());
+        PostThreadMessageW(thread, WM_QUIT, 0, 0);
+    }
+    peer.join();
+    controller.SetSnapshotChangedCallback({});
+    controller.SetPendingWorkCallback({});
+}
+
 } // namespace
 
 int RunSettingsIpcTests();
+int RunSettingsIpcChildIfRequested();
 
 int main()
 {
+    const int childResult = RunSettingsIpcChildIfRequested();
+    if (childResult >= 0) return childResult;
     failures += RunSettingsIpcTests();
     TestRoutes();
     TestLoadRouteAndImmutableSnapshots();
@@ -1004,6 +1075,7 @@ int main()
     TestReentrantCommitKeepsNewerValuePending();
     TestExternalReplacementDiscardsWithoutStorageIo();
     TestExternalReplacementDuringCommitPreventsLateSave();
+    TestRemoteSaveFailureKeepsSessionOpen();
 
     if (failures == 0)
         std::cout << "All settings controller tests passed.\n";

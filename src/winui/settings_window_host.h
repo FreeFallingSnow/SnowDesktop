@@ -19,7 +19,7 @@
 
 namespace snowdesktop::widget_runtime
 {
-class WidgetSettingsService;
+class IWidgetSettingsService;
 }
 
 class WidgetEngine;
@@ -61,6 +61,14 @@ struct SettingsWindowHostOptions
     BackupDataPageBackendOptions backupDataPage;
     PageLayoutPageActions pageLayoutPage;
 
+    // The settings child supplies IPC adapters; the application supplies the
+    // concrete backends. UI callbacks in the configured options stay local.
+    std::function<std::unique_ptr<IWidgetsPageBackend>(WidgetsPageBackendOptions)>
+        createWidgetsBackend;
+    std::function<std::unique_ptr<IBackupDataPageBackend>(BackupDataPageBackendOptions)>
+        createBackupBackend;
+    std::function<void()> sessionClosed;
+
     /** Reconcile host-owned system state after a persisted-state reload. */
     std::function<void()> refreshExternalState;
     std::function<bool()> developerToolsVisible;
@@ -92,8 +100,8 @@ public:
 
     [[nodiscard]] bool Initialize(
         HINSTANCE instance,
-        SettingsController& controller,
-        widget_runtime::WidgetSettingsService* widgetSettingsService,
+        ISettingsController& controller,
+        widget_runtime::IWidgetSettingsService* widgetSettingsService,
         SettingsWindowHostOptions options = {});
     void Shutdown() noexcept;
 
@@ -110,7 +118,7 @@ public:
     [[nodiscard]] bool FlushPendingChanges();
 
     void SetWidgetSettingsService(
-        widget_runtime::WidgetSettingsService* service) noexcept;
+        widget_runtime::IWidgetSettingsService* service) noexcept;
     /** Attach/detach the application-lifetime component engine. */
     void SetWidgetEngine(WidgetEngine* engine);
     /** Re-capture the component page after an external subscription change. */

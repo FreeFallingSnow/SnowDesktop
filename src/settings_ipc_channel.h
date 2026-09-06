@@ -31,6 +31,10 @@ public:
     bool Connected() const noexcept;
     HWND Window() const noexcept;
     bool Post(std::function<void()> task);
+    // Weak lifetime-safe callbacks for backend workers that can outlive UI
+    // close. They stop accepting work before the owner endpoint is destroyed.
+    std::function<bool(std::function<void()>)> Poster();
+    std::function<HWND()> WindowProvider();
     void SetDisconnected(std::function<void()> callback);
     void BindRaw(std::string name, Handler handler);
     void Unbind(std::string_view name);

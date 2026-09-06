@@ -192,7 +192,29 @@ namespace widgets_page_backend_detail
  * publication only; search, Workshop, and source-sync operations retain their
  * mutation gate until the exact terminal callback arrives.
  */
-class WidgetsPageBackend final
+/** Internal value/service boundary used by the settings UI process. */
+class IWidgetsPageBackend
+{
+public:
+    virtual ~IWidgetsPageBackend() = default;
+    virtual void SetSnapshotChangedCallback(
+        WidgetsPageBackendOptions::SnapshotChangedCallback callback) = 0;
+    virtual bool Activate(
+        std::uint64_t generation, bool discoverSources = true) = 0;
+    virtual void Deactivate() noexcept = 0;
+    virtual bool Refresh() = 0;
+    virtual bool Invoke(
+        std::uint64_t generation,
+        WidgetsPageRequest request) = 0;
+    virtual std::shared_ptr<const WidgetsPageSnapshot>
+        Snapshot() const noexcept = 0;
+    virtual std::uint64_t Generation() const noexcept = 0;
+    virtual bool IsGenerationCurrent(
+        std::uint64_t generation) const noexcept = 0;
+    virtual void Close() noexcept = 0;
+};
+
+class WidgetsPageBackend final : public IWidgetsPageBackend
 {
 public:
     WidgetsPageBackend(

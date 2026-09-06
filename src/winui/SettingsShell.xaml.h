@@ -118,7 +118,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
-        snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
+        snowdesktop::widget_runtime::IWidgetSettingsService* service) noexcept;
     /** Bind a current component snapshot; replaying the bound revision is safe. */
     [[nodiscard]] bool ApplyWidgetSettingsSnapshot(
         const snowdesktop::widget_runtime::WidgetSettingsSnapshot& snapshot);
@@ -290,7 +290,7 @@ private:
         homeAboutPage_;
     std::unique_ptr<snowdesktop::winui::PageLayoutPagePresenter>
         pageLayoutPage_;
-    snowdesktop::widget_runtime::WidgetSettingsService*
+    snowdesktop::widget_runtime::IWidgetSettingsService*
         widgetSettingsService_ = nullptr;
     std::unique_ptr<snowdesktop::winui::WidgetSettingsPresenter>
         widgetSettingsPage_;
