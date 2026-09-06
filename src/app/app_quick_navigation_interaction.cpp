@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../menu_fluent_glyphs.h"
 #include "../shortcut_application_rules.h"
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
@@ -387,11 +388,20 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         }
         const std::wstring launchPath =
             everythingEntry.path;
-        CloseQuickNavigationThen(
-            [this, launchPath]() {
-                shellLaunchWorker_.Enqueue(
-                    nullptr, launchPath);
-            });
+        if (snowdesktop::ShellLaunchWorker::
+                ShortcutRequestsAdministrator(launchPath))
+        {
+            if (RunPathAsAdministrator(launchPath))
+                CloseQuickNavigation();
+        }
+        else
+        {
+            CloseQuickNavigationThen(
+                [this, launchPath]() {
+                    shellLaunchWorker_.Enqueue(
+                        nullptr, launchPath);
+                });
+        }
         return true;
     }
 
@@ -419,19 +429,38 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
             const size_t itemIndex = entry.itemIndex;
-            CloseQuickNavigationThen(
-                [this, itemIndex]() {
-                    LaunchDesktopItem(itemIndex, true);
-                });
+            if (snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(
+                        items_[itemIndex].parsingName))
+            {
+                if (LaunchDesktopItem(itemIndex, true))
+                    CloseQuickNavigation();
+            }
+            else
+            {
+                CloseQuickNavigationThen(
+                    [this, itemIndex]() {
+                        LaunchDesktopItem(itemIndex, true);
+                    });
+            }
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
         {
             const std::wstring launchPath = entry.path;
-            CloseQuickNavigationThen(
-                [this, launchPath]() {
-                    shellLaunchWorker_.Enqueue(
-                        nullptr, launchPath);
-                });
+            if (snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(launchPath))
+            {
+                if (RunPathAsAdministrator(launchPath))
+                    CloseQuickNavigation();
+            }
+            else
+            {
+                CloseQuickNavigationThen(
+                    [this, launchPath]() {
+                        shellLaunchWorker_.Enqueue(
+                            nullptr, launchPath);
+                    });
+            }
         }
         return true;
     }
@@ -834,13 +863,25 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
         kAppOpen = 1,
         kAppCreateShortcut = 2,
         kAppReveal = 3,
+        kAppRunAsAdministrator = 4,
     };
+
+    const bool administratorShortcut =
+        snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(entry.parsingName);
 
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return;
 
-    AppendMenuW(menu, MF_STRING, kAppOpen, _LW("app.nav.open"));
+    AppendMenuW(menu,
+        administratorShortcut ? MF_STRING | MF_GRAYED : MF_STRING,
+        kAppOpen, _LW("app.nav.open"));
+    if (administratorShortcut)
+    {
+        AppendMenuW(menu, MF_STRING, kAppRunAsAdministrator,
+            _LW("app.menu.run_as_administrator"));
+    }
     AppendMenuW(menu,
         snowdesktop::item_location::CanReveal(entry.parsingName)
             ? MF_STRING
@@ -849,6 +890,9 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     AppendMenuW(menu, MF_STRING, kAppCreateShortcut, _LW("app.nav.send_to_desktop"));
 
     SetMenuItemIcon(menu, kAppOpen, L"");
+    SetMenuItemIcon(menu, kAppRunAsAdministrator,
+        snowdesktop::menu_fluent_glyphs::kShield,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kAppReveal, L"");
     SetMenuItemIcon(menu, kAppCreateShortcut, L"");
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
@@ -864,9 +908,15 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     {
     case kAppOpen:
     {
-        CloseQuickNavigationThenLaunchApp(entry);
+        if (!administratorShortcut)
+            CloseQuickNavigationThenLaunchApp(entry);
         break;
     }
+    case kAppRunAsAdministrator:
+        if (administratorShortcut &&
+            RunPathAsAdministrator(entry.parsingName))
+            CloseQuickNavigation();
+        break;
     case kAppCreateShortcut:
         CreateDesktopShortcutForApp(entry);
         break;
@@ -892,13 +942,25 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         kEverythingReveal = 2,
         kEverythingCopyPath = 3,
         kEverythingCreateShortcut = 4,
+        kEverythingRunAsAdministrator = 5,
     };
+
+    const bool administratorShortcut =
+        snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(entry.path);
 
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return;
 
-    AppendMenuW(menu, MF_STRING, kEverythingOpen, _LW("app.nav.open"));
+    AppendMenuW(menu,
+        administratorShortcut ? MF_STRING | MF_GRAYED : MF_STRING,
+        kEverythingOpen, _LW("app.nav.open"));
+    if (administratorShortcut)
+    {
+        AppendMenuW(menu, MF_STRING, kEverythingRunAsAdministrator,
+            _LW("app.menu.run_as_administrator"));
+    }
     AppendMenuW(menu,
         snowdesktop::item_location::CanReveal(entry.path)
             ? MF_STRING
@@ -909,6 +971,9 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     AppendMenuW(menu, MF_STRING, kEverythingCopyPath, _LW("app.nav.copy_path"));
 
     SetMenuItemIcon(menu, kEverythingOpen, L"");
+    SetMenuItemIcon(menu, kEverythingRunAsAdministrator,
+        snowdesktop::menu_fluent_glyphs::kShield,
+        MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kEverythingReveal, L"");
     SetMenuItemIcon(menu, kEverythingCreateShortcut, L"");
     SetMenuItemIcon(menu, kEverythingCopyPath, L"");
@@ -925,6 +990,8 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     {
     case kEverythingOpen:
     {
+        if (administratorShortcut)
+            break;
         const std::wstring launchPath = entry.path;
         CloseQuickNavigationThen(
             [this, launchPath]() {
@@ -933,6 +1000,11 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
             });
         break;
     }
+    case kEverythingRunAsAdministrator:
+        if (administratorShortcut &&
+            RunPathAsAdministrator(entry.path))
+            CloseQuickNavigation();
+        break;
     case kEverythingReveal:
         snowdesktop::item_location::Reveal(
             hwnd_, entry.path);

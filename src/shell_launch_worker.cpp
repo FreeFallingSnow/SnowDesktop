@@ -188,11 +188,9 @@ bool InvokeShellItemOpen(
 
     if (asynchronous)
     {
-        // The interaction thread received the double-click/keyboard input,
-        // but the asynchronous execution delegate or elevation broker owns
-        // the window that must become foreground. Transfer that short-lived
-        // foreground eligibility immediately before dispatch; Windows revokes
-        // ASFW_ANY on the next unrelated user input.
+        // Preserve foreground-input eligibility for ordinary asynchronous
+        // Shell handlers. Elevated shortcuts bypass this Open path and use
+        // the explicit runas route instead.
         AllowSetForegroundWindow(ASFW_ANY);
     }
     const bool opened = SafeInvokeContextMenu(
@@ -397,6 +395,42 @@ bool ShellLaunchWorker::ExecuteInteractive(
     return ExecuteShellOpen(
         owner, path, absolutePidl, showCommand,
         launchMask, true);
+}
+
+bool ShellLaunchWorker::ShortcutRequestsAdministrator(
+    const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (!extension || _wcsicmp(extension, L".lnk") != 0)
+        return false;
+
+    constexpr CLSID shellLinkClsid{
+        0x00021401, 0x0000, 0x0000,
+        { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 }
+    };
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(
+            shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(shellLink.GetAddressOf()))) ||
+        !shellLink)
+    {
+        return false;
+    }
+
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) || !persistFile ||
+        FAILED(persistFile->Load(path.c_str(), STGM_READ)))
+    {
+        return false;
+    }
+
+    ComPtr<IShellLinkDataList> dataList;
+    DWORD flags = 0;
+    return SUCCEEDED(shellLink.As(&dataList)) && dataList &&
+        SUCCEEDED(dataList->GetFlags(&flags)) &&
+        (flags & SLDF_RUNAS_USER) != 0;
 }
 
 void ShellLaunchWorker::Run(const std::shared_ptr<State>& state)

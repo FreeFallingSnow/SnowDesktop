@@ -1219,6 +1219,9 @@ private:
         size_t insertIndex);
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false);
+    /** @brief Open a path, redirecting run-as-user shortcuts to elevation. */
+    bool LaunchPathWithShortcutPolicy(
+        HWND owner, const std::wstring& path);
     bool StartDockLaunchBounce(size_t itemIndex);
     float GetDockLaunchBounceOffset(
         size_t itemIndex, int iconSize) const;
@@ -1881,7 +1884,7 @@ private:
         const std::wstring& path) const;
     void CopyPathsToClipboard(
         const std::vector<std::wstring>& paths);
-    void RunPathAsAdministrator(
+    bool RunPathAsAdministrator(
         const std::wstring& path);
     void ShowPathProperties(
         const std::wstring& path);

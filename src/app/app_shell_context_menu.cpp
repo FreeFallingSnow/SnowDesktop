@@ -43,6 +43,18 @@ void DesktopApp::ShowFolderEntryContextMenu(
         GetSelectedFolderEntryPaths();
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
+    bool administratorShortcutSelected = false;
+    for (const auto& path : selectedPaths)
+    {
+        if (snowdesktop::ShellLaunchWorker::
+                ShortcutRequestsAdministrator(path))
+        {
+            administratorShortcutSelected = true;
+            break;
+        }
+    }
+    const bool canOpen =
+        hasSelection && !administratorShortcutSelected;
     const bool canRunAsAdministrator =
         singleSelection &&
         IsAdministratorRunnablePath(selectedPaths.front());
@@ -56,7 +68,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
     if (!menu) return;
 
     AppendMenuW(menu,
-        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
     AppendMenuW(menu,
         hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -130,9 +142,10 @@ void DesktopApp::ShowFolderEntryContextMenu(
     switch (command)
     {
     case kContextOpenCommand:
+        if (!canOpen)
+            break;
         for (const auto& path : selectedPaths)
-            shellLaunchWorker_.Enqueue(
-                hwnd_, path);
+            LaunchPathWithShortcutPolicy(hwnd_, path);
         break;
     case kContextRevealLocationCommand:
         if (singleSelection)

@@ -83,6 +83,10 @@ public:
         PCIDLIST_ABSOLUTE absolutePidl,
         int showCommand = SW_SHOWNORMAL);
 
+    /** @brief Whether a .lnk stores the Shell "Run as administrator" flag. */
+    static bool ShortcutRequestsAdministrator(
+        const std::wstring& path);
+
 private:
     struct Task
     {

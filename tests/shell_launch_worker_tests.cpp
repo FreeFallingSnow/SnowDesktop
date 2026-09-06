@@ -263,6 +263,92 @@ void TestShellItemPidlIsCopiedBeforeExecution()
     worker.Stop();
 }
 
+void TestAdministratorShortcutMetadataIsDetected()
+{
+    const HRESULT comResult = CoInitializeEx(
+        nullptr, COINIT_APARTMENTTHREADED);
+    Check(
+        SUCCEEDED(comResult),
+        "the administrator shortcut test must initialize COM");
+    if (FAILED(comResult))
+        return;
+
+    wchar_t modulePath[32768]{};
+    wchar_t tempPath[MAX_PATH]{};
+    GUID identifier{};
+    wchar_t identifierText[64]{};
+    const bool pathsReady = GetModuleFileNameW(
+            nullptr, modulePath,
+            static_cast<DWORD>(std::size(modulePath))) > 0 &&
+        GetTempPathW(
+            static_cast<DWORD>(std::size(tempPath)), tempPath) > 0 &&
+        SUCCEEDED(CoCreateGuid(&identifier)) &&
+        StringFromGUID2(
+            identifier, identifierText,
+            static_cast<int>(std::size(identifierText))) > 0;
+    Check(pathsReady,
+        "the administrator shortcut test paths must be available");
+
+    std::wstring linkPath;
+    Microsoft::WRL::ComPtr<IShellLinkW> shellLink;
+    Microsoft::WRL::ComPtr<IPersistFile> persistFile;
+    Microsoft::WRL::ComPtr<IShellLinkDataList> dataList;
+    constexpr CLSID shellLinkClsid{
+        0x00021401, 0x0000, 0x0000,
+        { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 }
+    };
+    if (pathsReady)
+    {
+        linkPath = std::wstring(tempPath) +
+            L"SnowDesktopAdministratorShortcut-" +
+            identifierText + L".lnk";
+        const bool ordinaryLinkCreated = SUCCEEDED(CoCreateInstance(
+                shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(shellLink.GetAddressOf()))) &&
+            shellLink &&
+            SUCCEEDED(shellLink->SetPath(modulePath)) &&
+            SUCCEEDED(shellLink.As(&persistFile)) && persistFile &&
+            SUCCEEDED(persistFile->Save(linkPath.c_str(), TRUE));
+        Check(ordinaryLinkCreated,
+            "an ordinary shortcut fixture must be created");
+        if (ordinaryLinkCreated)
+        {
+            Check(
+                !snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(linkPath),
+                "ordinary shortcuts must keep normal Open behavior");
+        }
+
+        DWORD flags = 0;
+        const bool runAsFlagSaved = ordinaryLinkCreated &&
+            SUCCEEDED(shellLink.As(&dataList)) && dataList &&
+            SUCCEEDED(dataList->GetFlags(&flags)) &&
+            SUCCEEDED(dataList->SetFlags(flags | SLDF_RUNAS_USER)) &&
+            SUCCEEDED(persistFile->Save(linkPath.c_str(), TRUE));
+        Check(runAsFlagSaved,
+            "the run-as-user flag must be saved to the shortcut fixture");
+        if (runAsFlagSaved)
+        {
+            Check(
+                snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(linkPath),
+                "the SLDF_RUNAS_USER flag must select administrator launch");
+        }
+    }
+
+    Check(
+        !snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(L"C:\\Temp\\ordinary.txt"),
+        "non-shortcut paths must not select administrator launch");
+
+    dataList.Reset();
+    persistFile.Reset();
+    shellLink.Reset();
+    if (!linkPath.empty())
+        DeleteFileW(linkPath.c_str());
+    CoUninitialize();
+}
+
 void TestShellContextMenuOpenLaunchesShortcut()
 {
     const HRESULT comResult = CoInitializeEx(
@@ -394,6 +480,7 @@ int wmain(int argc, wchar_t** argv)
     TestStopDoesNotJoinABlockedShellHandler();
     TestInvalidRequestsAreRejected();
     TestShellItemPidlIsCopiedBeforeExecution();
+    TestAdministratorShortcutMetadataIsDetected();
     TestShellContextMenuOpenLaunchesShortcut();
     if (failures != 0)
     {

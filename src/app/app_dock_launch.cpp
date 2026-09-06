@@ -181,6 +181,17 @@ void DesktopApp::InvalidateDockLaunchBounceRects()
         InvalidateFloatingDockWindow(false);
 }
 
+bool DesktopApp::LaunchPathWithShortcutPolicy(
+    HWND owner, const std::wstring& path)
+{
+    if (snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(path))
+    {
+        return RunPathAsAdministrator(path);
+    }
+    return shellLaunchWorker_.Enqueue(owner, path);
+}
+
 bool DesktopApp::LaunchDesktopItem(
     size_t itemIndex, bool animateDockLaunch)
 {
@@ -218,7 +229,10 @@ bool DesktopApp::LaunchDesktopItem(
     // queue can otherwise leave later document opens behind a blocked legacy
     // handler on Windows 10. Dock launches keep their existing isolation.
     const bool launchAccepted =
-        !animateDockLaunch && item.absolutePidl.get()
+        snowdesktop::ShellLaunchWorker::
+                ShortcutRequestsAdministrator(item.parsingName)
+        ? RunPathAsAdministrator(item.parsingName)
+        : !animateDockLaunch && item.absolutePidl.get()
         ? snowdesktop::ShellLaunchWorker::ExecuteInteractive(
             ShellDialogOwnerHwnd(), item.parsingName,
             item.absolutePidl.get())

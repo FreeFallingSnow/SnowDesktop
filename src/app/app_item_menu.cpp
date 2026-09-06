@@ -68,11 +68,11 @@ void DesktopApp::CopyPathsToClipboard(
     CloseClipboard();
 }
 
-void DesktopApp::RunPathAsAdministrator(
+bool DesktopApp::RunPathAsAdministrator(
     const std::wstring& path)
 {
     if (!IsAdministratorRunnablePath(path))
-        return;
+        return false;
 
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
@@ -81,7 +81,7 @@ void DesktopApp::RunPathAsAdministrator(
     executeInfo.lpVerb = L"runas";
     executeInfo.lpFile = path.c_str();
     executeInfo.nShow = SW_SHOWNORMAL;
-    ShellExecuteExW(&executeInfo);
+    return ShellExecuteExW(&executeInfo) != FALSE;
 }
 
 void DesktopApp::ShowPathProperties(
@@ -174,6 +174,12 @@ void DesktopApp::ShowItemContextMenu(
     const bool canRunAsAdministrator =
         selectedCount == 1 &&
         IsAdministratorRunnablePath(itemPath);
+    const bool administratorShortcut =
+        selectedCount == 1 &&
+        snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(itemPath);
+    const bool canOpen =
+        selectedCount == 1 && !administratorShortcut;
     const bool canShowProperties =
         selectedCount == 1 && canFile && !itemPath.empty();
     const auto removalAction =
@@ -197,7 +203,8 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
-    AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
+    AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextOpenCommand, _LW("app.menu.open"));
     AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextCopyPathCommand, _LW("app.menu.copy_path"));
     AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -412,6 +419,8 @@ void DesktopApp::ShowItemContextMenu(
     {
     case kContextOpenCommand:
     {
+        if (!canOpen)
+            break;
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (items_[i].selected)

@@ -837,6 +837,12 @@ bool DesktopApp::LaunchQuickNavigationAppEntry(
     if (!entry.absolutePidl.get())
         return false;
 
+    if (snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(entry.parsingName))
+    {
+        return RunPathAsAdministrator(entry.parsingName);
+    }
+
     Pidl launchPidl;
     launchPidl.reset(
         ILClone(entry.absolutePidl.get()));
@@ -872,6 +878,16 @@ bool DesktopApp::CloseQuickNavigationThenLaunchApp(
 {
     if (!entry.absolutePidl.get())
         return false;
+
+    if (snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(entry.parsingName))
+    {
+        const bool launched =
+            RunPathAsAdministrator(entry.parsingName);
+        if (launched)
+            CloseQuickNavigation();
+        return launched;
+    }
 
     auto pending =
         std::make_shared<QuickNavigationAppEntry>();

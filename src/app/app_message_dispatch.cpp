@@ -761,7 +761,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.
                             folderEntries[i].fullPath;
-                    if (shellLaunchWorker_.Enqueue(
+                    if (LaunchPathWithShortcutPolicy(
                             hwnd_, path))
                         CloseCollectionPopup();
                     return 0;
@@ -851,7 +851,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     if (entry)
                     {
                         clearSelectionAfterAcceptedOpen(
-                            shellLaunchWorker_.Enqueue(
+                            LaunchPathWithShortcutPolicy(
                                 hwnd_, entry->fullPath));
                         return 0;
                     }

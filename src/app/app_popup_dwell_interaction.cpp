@@ -627,6 +627,18 @@ ShowDockFolderPopupContextMenu(
         selectedPaths.size() == 1;
     const bool hasSelection =
         !selectedPaths.empty();
+    bool administratorShortcutSelected = false;
+    for (const auto& path : selectedPaths)
+    {
+        if (snowdesktop::ShellLaunchWorker::
+                ShortcutRequestsAdministrator(path))
+        {
+            administratorShortcutSelected = true;
+            break;
+        }
+    }
+    const bool canOpen =
+        hasSelection && !administratorShortcutSelected;
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
@@ -639,7 +651,7 @@ ShowDockFolderPopupContextMenu(
     {
         AppendMenuW(
             menu,
-            hasSelection
+            canOpen
                 ? MF_STRING
                 : MF_STRING | MF_GRAYED,
             kContextOpenCommand,
@@ -936,10 +948,11 @@ ShowDockFolderPopupContextMenu(
     switch (command)
     {
     case kContextOpenCommand:
+        if (!canOpen)
+            break;
         for (const auto& path :
              GetSelectedFolderEntryPaths())
-            shellLaunchWorker_.Enqueue(
-                hwnd_, path);
+            LaunchPathWithShortcutPolicy(hwnd_, path);
         break;
     case kContextRevealLocationCommand:
         if (selectedPaths.size() == 1)
