@@ -5,6 +5,7 @@
 #include "single_instance.h"
 
 #include <windows.h>
+#include <objbase.h>
 
 #include <algorithm>
 #include <atomic>
@@ -222,12 +223,25 @@ PackagePaths TestPaths(const std::filesystem::path& root)
 
 int main()
 {
+    // PIDs are reused across runs, and a previous interrupted cleanup can
+    // leave an installed version behind. Never reuse or delete that tree.
+    GUID runId{};
+    wchar_t runIdText[39]{};
+    if (FAILED(CoCreateGuid(&runId)) ||
+        StringFromGUID2(runId, runIdText, 39) == 0)
+    {
+        std::cerr << "FAILED: cannot create an isolated test run ID\n";
+        return 1;
+    }
     const auto root = std::filesystem::temp_directory_path() /
-        (L"SnowDesktopApplicationDataLifecycleTests-" +
-            std::to_wstring(GetCurrentProcessId()));
+        (L"SDDataTest-" + std::wstring(runIdText + 1, 36));
     std::error_code ec;
-    std::filesystem::remove_all(root, ec);
-    std::filesystem::create_directories(root);
+    if (!std::filesystem::create_directory(root, ec))
+    {
+        std::cerr << "FAILED: cannot create an isolated test directory: "
+            << ec.message() << '\n';
+        return 1;
+    }
 
     const auto hashInput = root / L"sha256-input.bin";
     Write(hashInput, "abc");
@@ -1052,10 +1066,13 @@ int main()
     Expect(nestedManager.Initialize(error),
         "nested-entry package manager initializes");
     InstalledPackage nestedInstalled;
-    Expect(nestedManager.InstallDirectory(nestedSource,
+    if (!nestedManager.InstallDirectory(nestedSource,
             { "local", "nested-entry" }, false,
-            nestedInstalled, report, error),
-        "nested-entry package installs");
+            nestedInstalled, report, error))
+    {
+        std::cerr << "FAILED: nested-entry package installs: " << error << '\n';
+        return 1;
+    }
     Expect(nestedInstalled.permissionState ==
             PermissionDecisionState::Granted,
         "new package records an explicit granted permission state");
