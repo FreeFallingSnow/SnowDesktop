@@ -594,78 +594,109 @@ void TestAnimationEffects()
 void TestGenieTranslucentContentCoverage()
 {
     namespace genie = snowdesktop::dock_genie;
-    using snowdesktop::quick_navigation_animation_rules::GenieContentClip;
-    const double sizes[][2] = {{481.375, 613.625}, {96.125, 47.875}, {1281.2, 721.6}};
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
+    const double sizes[][2] = {{481.375, 613.625}, {96.125, 47.875},
+        {1281.2, 721.6}, {3840.5, 2160.25}};
     const genie::Edge edges[] = {genie::Edge::Bottom, genie::Edge::Top,
         genie::Edge::Left, genie::Edge::Right};
     for (const auto& size : sizes)
     {
         const double width = static_cast<float>(size[0]);
         const double height = static_cast<float>(size[1]);
-        const genie::Rect window{140.25, 200.75, 140.25 + width, 200.75 + height};
+        const genie::Rect window{-2840.25, -1200.75, -2840.25 + width, -1200.75 + height};
         const genie::Rect docks[] = {
-            {325.5, window.bottom + 200.125, 376.75, window.bottom + 242.625},
-            {325.5, window.top - 242.625, 376.75, window.top - 200.125},
-            {window.left - 242.625, 325.5, window.left - 200.125, 376.75},
-            {window.right + 200.125, 325.5, window.right + 242.625, 376.75}};
+            {-725.5, window.bottom + 200.125, -674.25, window.bottom + 242.625},
+            {-725.5, window.top - 242.625, -674.25, window.top - 200.125},
+            {window.left - 242.625, -325.5, window.left - 200.125, -274.25},
+            {window.right + 200.125, -325.5, window.right + 242.625, -274.25}};
         for (std::size_t direction = 0; direction < std::size(edges); ++direction)
         {
             const auto edge = edges[direction];
             const bool vertical = genie::Vertical(edge);
-            const auto& dock = docks[direction];
-            for (double collapsed : {0.0, 0.12, 0.33, 0.55, 0.81, 1.0})
+            // Also cover a Dock on another monitor, physically opposite to
+            // its configured edge. Geometry must not fold during transit.
+            for (const auto& dock : {docks[direction], docks[direction ^ 1]})
+            for (double collapsed : {0.0, 0.08, 0.12, 0.20, 0.33, 0.45,
+                    0.55, 0.70, 0.81, 0.94, 1.0})
             {
                 struct Interval { double begin, end; };
                 std::vector<Interval> coverage;
-                double coveredLength = 0.0;
+                navigation::GenieStripProjection previous;
+                // DComp consumes float matrices. Compare well below a pixel,
+                // allowing the rounding of homogeneous coordinates.
+                constexpr double tolerance = 0.002;
                 for (std::size_t index = 0; index < genie::StripCount; ++index)
                 {
-                    const auto clip = GenieContentClip(index, width, height, edge);
-                    const auto matrix = genie::StripMatrix(window, dock, edge, collapsed,
-                        width, height, static_cast<double>(index) / genie::StripCount,
-                        static_cast<double>(index + 1) / genie::StripCount, -30.25, 50.75);
-                    // Match the renderer's float clip coordinates, then test the
-                    // transformed coverage instead of repeating the clip formula.
+                    const auto matrix = navigation::GenieProjection(window, dock, edge,
+                        collapsed, width, height, index, -3200.25, -1500.75);
+                    const auto band = navigation::GenieBandClip(matrix, index, edge);
+                    // Intersect the parent clip with the child bitmap, matching
+                    // the actual renderer, including its float clip coordinates.
+                    const double left = std::max(0.0,
+                        matrix.sourceX + static_cast<double>(static_cast<float>(band.left)));
+                    const double top = std::max(0.0,
+                        matrix.sourceY + static_cast<double>(static_cast<float>(band.top)));
+                    const double right = std::min(width,
+                        matrix.sourceX + static_cast<double>(static_cast<float>(band.right)));
+                    const double bottom = std::min(height,
+                        matrix.sourceY + static_cast<double>(static_cast<float>(band.bottom)));
                     const auto mapAxis = [vertical, &matrix](double x, double y) {
-                        return vertical
-                            ? static_cast<float>(x) * static_cast<double>(matrix.m12) +
-                                static_cast<float>(y) * static_cast<double>(matrix.m22) + matrix.dy
-                            : static_cast<float>(x) * static_cast<double>(matrix.m11) +
-                                static_cast<float>(y) * static_cast<double>(matrix.m21) + matrix.dx;
+                        const auto point = matrix.Map(x, y);
+                        return vertical ? point.y : point.x;
                     };
-                    const Interval strip{mapAxis(clip.left, clip.top),
-                        mapAxis(clip.right, clip.bottom)};
+                    const Interval strip{mapAxis(left, top), mapAxis(right, bottom)};
                     Check(strip.end > strip.begin,
                         "each transformed Genie strip must retain positive axial coverage");
                     if (!coverage.empty())
-                        Check(std::fabs(strip.begin - coverage.back().end) < 0.00001,
+                    {
+                        Check(std::fabs(strip.begin - coverage.back().end) < tolerance,
                             "adjacent translucent Genie strips must meet without overlap or a gap");
+                        for (double across : {0.0, 0.25, 0.5, 0.75, 1.0})
+                        {
+                            const double x = vertical ? width * across : matrix.sourceX;
+                            const double y = vertical ? matrix.sourceY : height * across;
+                            const auto before = previous.Map(x, y);
+                            const auto after = matrix.Map(x, y);
+                            Check(std::hypot(before.x - after.x, before.y - after.y) < tolerance,
+                                "the entire shared edge must meet, preventing staircase sides and displaced text");
+                        }
+                    }
                     coverage.push_back(strip);
-                    coveredLength += strip.end - strip.begin;
-                    Check(vertical ? clip.left == 0.0 && clip.right == width
-                                   : clip.top == 0.0 && clip.bottom == height,
-                        "Genie content clips must retain the complete perpendicular source extent");
+                    previous = matrix;
+                    for (const double x : {left, right})
+                    for (const double y : {top, bottom})
+                    {
+                        const double w = (x - matrix.sourceX) * matrix.m14 +
+                            (y - matrix.sourceY) * matrix.m24 + matrix.m44;
+                        const auto point = matrix.Map(x, y);
+                        Check(w > 0.0 && std::isfinite(point.x) && std::isfinite(point.y),
+                            "projected Genie content must stay finite and in front of the camera");
+                        if (collapsed == 0.0 || collapsed == 1.0)
+                        {
+                            const auto& extent = collapsed == 0.0 ? window : dock;
+                            const double expectedX = extent.left + 3200.25 +
+                                (extent.right - extent.left) * x / width;
+                            const double expectedY = extent.top + 1500.75 +
+                                (extent.bottom - extent.top) * y / height;
+                            Check(std::hypot(point.x - expectedX, point.y - expectedY) < tolerance,
+                                "Genie endpoints must preserve the complete panel and Dock geometry");
+                        }
+                    }
                 }
-                Check(std::fabs(coveredLength - (coverage.back().end - coverage.front().begin)) < 0.00001,
-                    "the warped content extent must be fully covered exactly once");
                 for (std::size_t index = 1; index < coverage.size(); ++index)
                 {
                     const double seam = (coverage[index - 1].end + coverage[index].begin) * 0.5;
-                    double alpha = 0.0;
-                    for (const auto& strip : coverage)
-                        if (seam >= strip.begin && seam < strip.end)
-                            alpha += 0.4 * (1.0 - alpha);
-                    Check(std::fabs(alpha - 0.4) < 0.00001,
-                        "source-over at a warped seam must not darken translucent content or reveal a gap");
-                }
-                if (collapsed == 0.0 || collapsed == 1.0)
-                {
-                    const auto& extent = collapsed == 0.0 ? window : dock;
-                    const double begin = vertical ? extent.top - 50.75 : extent.left + 30.25;
-                    const double end = vertical ? extent.bottom - 50.75 : extent.right + 30.25;
-                    Check(std::fabs(coverage.front().begin - begin) < 0.001 &&
-                            std::fabs(coverage.back().end - end) < 0.001,
-                        "Genie content must cover the complete window and Dock at its endpoints");
+                    // Probe either side outside float rounding uncertainty;
+                    // even a small overlap of translucent strips must fail.
+                    for (double offset : {-0.01, 0.01})
+                    {
+                        double alpha = 0.0;
+                        for (const auto& strip : coverage)
+                            if (seam + offset >= strip.begin && seam + offset < strip.end)
+                                alpha += 0.4 * (1.0 - alpha);
+                        Check(std::fabs(alpha - 0.4) < 0.00001,
+                            "source-over beside a warped seam must not darken content or reveal a gap");
+                    }
                 }
             }
         }

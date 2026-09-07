@@ -15,6 +15,7 @@
 #include "desktop_backdrop_update_rules.h"
 #include "popup_window_pair_z_order.h"
 #include "../dock_genie_rules.h"
+#include "../quick_navigation_genie_rules.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -279,8 +280,8 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
         }
         appendLowSide(index, end);
     }
-    // Walk back along the opposite side. Keeping both strip endpoints joins
-    // their small width steps into one silhouette without internal clip edges.
+    // Walk back along the opposite side. Adjacent projections share their
+    // boundary, keeping the glass outline continuous with the live content.
     for (std::size_t remaining = outline.size(); remaining > 0; --remaining)
     {
         auto point = outline[remaining - 1];
@@ -1365,19 +1366,16 @@ bool DesktopBackdropCompositor::SetGenieTransform(
         const genie::Rect target{static_cast<double>(dockFrame.left),
             static_cast<double>(dockFrame.top), static_cast<double>(dockFrame.right),
             static_cast<double>(dockFrame.bottom)};
-        std::array<genie::Matrix, genie::StripCount> matrices;
+        namespace navigation = snowdesktop::quick_navigation_animation_rules;
+        std::array<navigation::GenieStripProjection, genie::StripCount> matrices;
         for (std::size_t index = 0; index < matrices.size(); ++index)
         {
-            matrices[index] = genie::StripMatrix(source, target, direction,
-                std::clamp(collapsed, 0.0f, 1.0f), width, height,
-                static_cast<double>(index) / genie::StripCount,
-                static_cast<double>(index + 1) / genie::StripCount, 0.0, 0.0);
+            matrices[index] = navigation::GenieProjection(source, target, direction,
+                std::clamp(collapsed, 0.0f, 1.0f), width, height, index);
         }
         const auto transformPoint = [&matrices](const GenieOutlinePoint& point) {
-            const auto& matrix = matrices[point.strip];
-            return D2D1_POINT_2F{
-                point.source.x * matrix.m11 + point.source.y * matrix.m21 + matrix.dx,
-                point.source.x * matrix.m12 + point.source.y * matrix.m22 + matrix.dy};
+            const auto mapped = matrices[point.strip].Map(point.source.x, point.source.y);
+            return D2D1_POINT_2F{static_cast<float>(mapped.x), static_cast<float>(mapped.y)};
         };
         // D2D paths are immutable once closed. Replace only the path value;
         // retain the Composition geometry, clip, visual and brush throughout

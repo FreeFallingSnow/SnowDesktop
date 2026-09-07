@@ -25,6 +25,7 @@ void DesktopApp::ClearQuickNavigationGenie()
 bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
 {
     namespace genie = snowdesktop::dock_genie;
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
     if (!quickNavDcompDevice_ || !quickNavDcompVisual_ ||
         !quickNavDcompSurface_ || !quickNavDcompEffect_)
         return false;
@@ -34,6 +35,15 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
     const auto edge = static_cast<genie::Edge>(quickNavigationAnimationDockEdge_);
     const float width = static_cast<float>(quickNavCompWidth_);
     const float height = static_cast<float>(quickNavCompHeight_);
+    const auto rect = [](const RECT& value) {
+        return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
+            static_cast<double>(value.right), static_cast<double>(value.bottom)};
+    };
+    const auto projectionFor = [&](size_t index) {
+        return navigation::GenieProjection(rect(quickNavigationRect_),
+            rect(quickNavigationAnimationDockRect_), edge, collapsed, width, height,
+            index, quickNavigationHostRect_.left, quickNavigationHostRect_.top);
+    };
     HRESULT hr = S_OK;
     if (quickNavGenieStrips_.empty())
     {
@@ -45,18 +55,25 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
             hr = quickNavDcompDevice_->CreateVisual(&strip);
             if (FAILED(hr)) break;
             quickNavGenieStrips_.push_back(strip);
-            // This live panel contains translucent fill. Overlapping slices
-            // would composite that fill twice and produce dark seam lines.
-            const auto bounds = snowdesktop::quick_navigation_animation_rules::
-                GenieContentClip(i, width, height, edge);
+            // Hard band clips partition the translucent content exactly once.
+            // A separate soft-edged bitmap preserves antialiasing around the
+            // outside silhouette without blending the internal joins twice.
+            const auto projection = projectionFor(i);
+            const auto bounds = navigation::GenieBandClip(projection, i, edge);
             const D2D1_RECT_F clip = D2D1::RectF(
                 static_cast<float>(bounds.left), static_cast<float>(bounds.top),
                 static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
-            hr = strip->SetContent(quickNavDcompSurface_.Get());
-            if (SUCCEEDED(hr)) hr = strip->SetClip(clip);
+            hr = strip->SetClip(clip);
             if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
-            if (SUCCEEDED(hr)) hr = strip->SetBitmapInterpolationMode(
+            ComPtr<IDCompositionVisual2> content;
+            if (SUCCEEDED(hr)) hr = quickNavDcompDevice_->CreateVisual(&content);
+            if (SUCCEEDED(hr)) hr = content->SetContent(quickNavDcompSurface_.Get());
+            if (SUCCEEDED(hr)) hr = content->SetOffsetX(-projection.sourceX);
+            if (SUCCEEDED(hr)) hr = content->SetOffsetY(-projection.sourceY);
+            if (SUCCEEDED(hr)) hr = content->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
+            if (SUCCEEDED(hr)) hr = content->SetBitmapInterpolationMode(
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+            if (SUCCEEDED(hr)) hr = strip->AddVisual(content.Get(), TRUE, nullptr);
             if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->AddVisual(strip.Get(), TRUE, nullptr);
         }
         if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetContent(nullptr);
@@ -70,19 +87,16 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         }
         quickNavGenieStripEdge_ = quickNavigationAnimationDockEdge_;
     }
-    const auto rect = [](const RECT& value) {
-        return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
-            static_cast<double>(value.right), static_cast<double>(value.bottom)};
-    };
     for (size_t i = 0; i < quickNavGenieStrips_.size() && SUCCEEDED(hr); ++i)
     {
-        const auto matrix = genie::StripMatrix(rect(quickNavigationRect_),
-            rect(quickNavigationAnimationDockRect_), edge, collapsed, width, height,
-            static_cast<double>(i) / genie::StripCount,
-            static_cast<double>(i + 1) / genie::StripCount,
-            quickNavigationHostRect_.left, quickNavigationHostRect_.top);
-        hr = quickNavGenieStrips_[i]->SetTransform(D2D1_MATRIX_3X2_F{
-            matrix.m11, matrix.m12, matrix.m21, matrix.m22, matrix.dx, matrix.dy});
+        const auto matrix = projectionFor(i);
+        ComPtr<IDCompositionVisual3> projectedStrip;
+        hr = quickNavGenieStrips_[i].As(&projectedStrip);
+        if (SUCCEEDED(hr)) hr = projectedStrip->SetTransform(D2D1_MATRIX_4X4_F{
+            matrix.m11, matrix.m12, 0.0f, matrix.m14,
+            matrix.m21, matrix.m22, 0.0f, matrix.m24,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            matrix.m41, matrix.m42, 0.0f, matrix.m44});
     }
     if (SUCCEEDED(hr)) hr = quickNavDcompEffect_->SetOpacity(opacity);
     if (FAILED(hr)) return false;
