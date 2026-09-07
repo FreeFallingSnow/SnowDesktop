@@ -31,9 +31,9 @@ struct Queue
     std::condition_variable changed;
     bool ready = false;
     snowdesktop::LargeIconAssets assets;
-    explicit Queue(const std::filesystem::path& directory) : assets(directory, [this] {
+    explicit Queue(const std::filesystem::path& directory, snowdesktop::LargeIconAssetLimits limits = {}) : assets(directory, [this] {
         std::lock_guard lock(mutex); ready = true; changed.notify_one();
-    }, directory.parent_path() / L"steam") {}
+    }, directory.parent_path() / L"steam", limits) {}
     ~Queue() { assets.Stop(); }
     std::vector<snowdesktop::LargeIconAssetResult> Wait(size_t count)
     {
@@ -266,6 +266,38 @@ int RunLargeIconAssetTests()
         auto batch = queue.Wait(5);
         Check(requests == beforeBatch + 4, "the same AppID, artwork type and language share one metadata request");
 
+        fs::copy_file(input, directory / L"fallback-a.png");
+        fs::copy_file(input, directory / L"fallback-b.png");
+        { std::lock_guard lock(networkMutex); networkBlocked = true; }
+        LargeIconAssetRequest ownFallback;
+        ownFallback.itemKey = L"fallback-a"; ownFallback.content = 2; ownFallback.appId = 95001;
+        ownFallback.generation = 501; ownFallback.lastGood = "fallback-a.png";
+        const int beforeFallback = requests;
+        queue.assets.Request(ownFallback);
+        {
+            std::unique_lock lock(networkMutex);
+            Check(networkChanged.wait_for(lock, std::chrono::seconds(10), [] { return activeRequests == 1; }),
+                "shared artwork acquisition starts before the second fallback listener joins");
+        }
+        ownFallback.itemKey = L"fallback-b"; ownFallback.generation = 502; ownFallback.lastGood = "fallback-b.png";
+        queue.assets.Request(ownFallback);
+        { std::lock_guard lock(networkMutex); networkBlocked = false; }
+        networkChanged.notify_all();
+        auto ownCovers = queue.Wait(2);
+        for (const auto& cover : ownCovers)
+            Check(cover.asset && cover.asset->reference == cover.request.lastGood && !cover.error.empty(),
+                "coalesced failures preserve each listener's own last-good image and retry state");
+        Check(requests == beforeFallback + 1, "per-instance fallback does not duplicate the shared metadata request");
+
+        // A cache hit completes synchronously; cancelling before drain must
+        // suppress that already-queued completion as well as pending work.
+        LargeIconAssetRequest cancelled;
+        cancelled.itemKey = L"cancelled-cache-hit"; cancelled.content = 1; cancelled.pixels = 256;
+        cancelled.reference = "fallback-a.png"; cancelled.generation = 503;
+        queue.assets.Request(cancelled);
+        queue.assets.Cancel(cancelled.itemKey);
+        Check(queue.assets.TakeCompleted().empty(), "cancelled queued cache results cannot reach the host");
+
         { std::lock_guard lock(networkMutex); networkBlocked = true; }
         LargeIconAssetRequest stale;
         stale.itemKey = L"superseded"; stale.content = 2; stale.appId = 99999; stale.generation = 201;
@@ -282,6 +314,49 @@ int RunLargeIconAssetTests()
             "a superseded cover callback cannot replace the newer user image request");
         { std::lock_guard lock(networkMutex); networkBlocked = false; }
         networkChanged.notify_all();
+    }
+
+    const auto square = root / L"square.png";
+    Check(preview_png::Save(square, 64, 64, std::vector<std::uint32_t>(64 * 64, 0xff2277aa), error), "create a fixed-size memory-budget fixture");
+    {
+        Queue budget(root / L"memory-budget", {2 * 64 * 64 * 4, 512ull * 1024 * 1024});
+        LargeIconAssetRequest image;
+        image.importPath = square; image.pixels = 64;
+        image.itemKey = L"pinned-1"; image.generation = 1; budget.assets.Request(image);
+        auto first = budget.Wait(1);
+        image.itemKey = L"pinned-2"; image.generation = 2; budget.assets.Request(image);
+        auto second = budget.Wait(1);
+        image.itemKey = L"over-budget"; image.generation = 3; budget.assets.Request(image);
+        auto third = budget.Wait(1);
+        Check(!first.empty() && first[0].asset && !second.empty() && second[0].asset &&
+            !third.empty() && !third[0].asset && !third[0].error.empty(),
+            "live decoded images count against the budget and cannot be evicted to admit another image");
+        first.clear(); second.clear();
+        image.itemKey = L"after-release"; image.generation = 4; budget.assets.Request(image);
+        auto recovered = budget.Wait(1);
+        Check(!recovered.empty() && recovered[0].asset,
+            "releasing live image references permits LRU eviction and subsequent decoding");
+    }
+    {
+        const auto disk = root / L"disk-budget";
+        fs::create_directories(disk);
+        for (const auto* name : {L"steam-old-a.png", L"steam-old-b.png", L"steam-pinned.png", L"import-user.png", L"unrelated.txt"})
+            atomic_file::WriteAll(disk / name, std::string(3000, 'x'));
+        Queue budget(disk, {128ull * 1024 * 1024, 4096});
+        budget.assets.RetainReferences({"steam-pinned.png"});
+        LargeIconAssetRequest image;
+        image.itemKey = L"collect"; image.generation = 1; image.importPath = square; image.pixels = 64;
+        budget.assets.Request(image);
+        {
+            std::unique_lock lock(budget.mutex);
+            Check(budget.changed.wait_for(lock, std::chrono::seconds(10), [&] { return budget.ready; }),
+                "the cache collection worker completes before filesystem assertions");
+        }
+        auto collected = budget.Wait(1);
+        Check(!fs::exists(disk / L"steam-old-a.png") && !fs::exists(disk / L"steam-old-b.png") &&
+            fs::exists(disk / L"steam-pinned.png") && fs::exists(disk / L"import-user.png") && fs::exists(disk / L"unrelated.txt") &&
+            !collected.empty() && collected[0].asset && fs::exists(disk / collected[0].asset->previewReference),
+            "automatic disk eviction preserves retained sources, active previews, user imports and unrelated files");
     }
     if (root.parent_path() == fs::temp_directory_path() && root.filename().wstring().starts_with(L"SnowDesktop-large-icons-"))
         fs::remove_all(root);
@@ -323,6 +398,28 @@ int RunLargeIconShellAssetTests()
         auto missingRaw = queue.Wait(1);
         Check(!missingRaw.empty() && !missingRaw[0].asset && !missingRaw[0].error.empty(),
             "failed original extraction reports a retryable resource failure instead of settling silently");
+
+        const auto otherShellFile = root / L"other-shell-original.txt";
+        atomic_file::WriteAll(otherShellFile, "Independent Shell identity");
+        { std::lock_guard lock(networkMutex); networkBlocked = true; }
+        LargeIconAssetRequest shared;
+        shared.itemKey = L"shell-fallback-a"; shared.parsingName = shellFile.wstring();
+        shared.content = 2; shared.appId = 95002; shared.generation = 601;
+        queue.assets.Request(shared);
+        {
+            std::unique_lock lock(networkMutex);
+            Check(networkChanged.wait_for(lock, std::chrono::seconds(10), [] { return activeRequests == 1; }),
+                "a shared missing game reaches the network before its other Shell listener joins");
+        }
+        shared.itemKey = L"shell-fallback-b"; shared.parsingName = otherShellFile.wstring(); shared.generation = 602;
+        queue.assets.Request(shared);
+        { std::lock_guard lock(networkMutex); networkBlocked = false; }
+        networkChanged.notify_all();
+        auto separateOriginals = queue.Wait(2);
+        Check(separateOriginals.size() == 2 && separateOriginals[0].asset && separateOriginals[1].asset &&
+            separateOriginals[0].asset->source == "original" && separateOriginals[1].asset->source == "original" &&
+            separateOriginals[0].asset->reference != separateOriginals[1].asset->reference,
+            "shared missing Steam artwork falls back to distinct original Shell identities per desktop item");
     }
     if (root.parent_path() == fs::temp_directory_path() && root.filename().wstring().starts_with(L"SnowDesktop-large-icons-shell-"))
         fs::remove_all(root);

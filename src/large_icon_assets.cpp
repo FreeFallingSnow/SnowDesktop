@@ -230,6 +230,8 @@ struct LargeIconAssets::Impl
     std::filesystem::path steamDirectory;
     std::function<void()> ready;
     std::mutex mutex;
+    std::mutex diskCollectionMutex;
+    LargeIconAssetLimits limits;
     std::condition_variable_any condition;
     std::deque<std::string> queue;
     std::unordered_map<std::string, Work> pending;
@@ -246,15 +248,38 @@ struct LargeIconAssets::Impl
     static std::wstring ListenerKey(const LargeIconAssetRequest& r)
     { return r.itemKey + L"\n" + std::to_wstring(r.variant); }
 
+    std::unordered_set<std::string> PinnedReferencesLocked() const
+    {
+        auto pinned = retained;
+        std::unordered_set<const LargeIconAsset*> cacheOnly;
+        for (const auto& [_, c] : cache)
+            if (c.asset.use_count() == 1) cacheOnly.insert(c.asset.get());
+        // Include refreshed/replaced allocations still held by a desktop item,
+        // even when the cache map no longer contains that bitmap.
+        for (const auto& allocation : allocations)
+            if (const auto asset = allocation.lock(); asset && !cacheOnly.contains(asset.get()))
+            { pinned.insert(asset->reference); pinned.insert(asset->previewReference); }
+        for (const auto& [_, work] : pending)
+        {
+            pinned.insert(Reference(work.request));
+            for (const auto& listener : work.listeners) pinned.insert(listener.lastGood);
+        }
+        return pinned;
+    }
+
     void CollectDisk()
     {
-        // Called under mutex after a job completes. Only service-owned cache
-        // names are candidates; user imports and all live references are kept.
-        auto pinned = retained;
-        for (const auto& [_, c] : cache)
-            if (c.asset.use_count() > 1)
-            { pinned.insert(c.asset->reference); pinned.insert(c.asset->previewReference); }
-        for (const auto& [_, work] : pending) pinned.insert(Reference(work.request));
+        std::unique_lock collector(diskCollectionMutex, std::try_to_lock);
+        if (!collector.owns_lock()) return;
+        std::unordered_set<std::string> pinned;
+        decltype(lastUse) touched;
+        {
+            std::lock_guard lock(mutex);
+            if (stopped) return;
+            pinned = PinnedReferencesLocked(); touched = lastUse;
+        }
+        // Scan and sort on the worker without blocking the desktop's request,
+        // cancellation or completion mutex on a large cache directory.
         struct File { std::filesystem::path path; std::uint64_t bytes; std::filesystem::file_time_type touched; };
         std::vector<File> candidates;
         std::uint64_t total = 0;
@@ -262,22 +287,55 @@ struct LargeIconAssets::Impl
         for (std::filesystem::directory_iterator it(directory, ec), end; it != end && !ec; it.increment(ec))
         {
             if (!it->is_regular_file(ec)) continue;
-            const auto name = it->path().filename().string();
-            if (!(name.starts_with("steam-") || name.starts_with("raw-") || name.starts_with("preview-")) ||
+            const auto wideName = it->path().filename().wstring();
+            if (!(wideName.starts_with(L"steam-") || wideName.starts_with(L"raw-") || wideName.starts_with(L"preview-")) ||
                 it->path().extension() != L".png") continue;
+            const std::string name(wideName.begin(), wideName.end());
             const auto bytes = it->file_size(ec);
             if (ec) break;
             total += bytes;
             if (!pinned.contains(name)) candidates.push_back({it->path(), bytes,
-                lastUse.contains(name) ? lastUse.at(name) : it->last_write_time(ec)});
+                touched.contains(name) ? touched.at(name) : it->last_write_time(ec)});
         }
         std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.touched < b.touched; });
-        constexpr std::uint64_t quota = 512ull * 1024 * 1024;
         for (const auto& file : candidates)
         {
-            if (total <= quota) break;
-            if (std::filesystem::remove(file.path, ec)) { total -= file.bytes; lastUse.erase(file.path.filename().string()); }
+            if (total <= limits.automaticDiskBytes) break;
+            const auto name = file.path.filename().string();
+            // Recheck immediately before deletion: an instance may have begun
+            // using this source while the unlocked directory scan was running.
+            std::lock_guard lock(mutex);
+            if (stopped) return;
+            if (PinnedReferencesLocked().contains(name)) continue;
+            if (std::filesystem::remove(file.path, ec)) { total -= file.bytes; lastUse.erase(name); }
         }
+    }
+
+    bool StoreLocked(std::shared_ptr<LargeIconAsset>& asset, const std::string& key, bool reusable)
+    {
+        if (!asset) return false;
+        const bool known = std::any_of(allocations.begin(), allocations.end(), [&](const auto& weak) { return weak.lock() == asset; });
+        const auto bytes = [&] {
+            std::erase_if(allocations, [](const auto& allocation) { return allocation.expired(); });
+            std::uint64_t size = 0;
+            for (const auto& allocation : allocations) if (const auto live = allocation.lock())
+                size += std::uint64_t(live->width) * live->height * 4;
+            return size;
+        };
+        const auto incoming = known ? 0 : std::uint64_t(asset->width) * asset->height * 4;
+        while (bytes() + incoming > limits.decodedBytes)
+        {
+            auto oldest = cache.end();
+            for (auto it = cache.begin(); it != cache.end(); ++it)
+                if (it->second.asset.use_count() == 1 && (oldest == cache.end() || it->second.touched < oldest->second.touched)) oldest = it;
+            if (oldest == cache.end()) break;
+            cache.erase(oldest);
+        }
+        if (bytes() + incoming > limits.decodedBytes) { asset.reset(); return false; }
+        if (!known) allocations.push_back(asset);
+        lastUse[asset->reference] = lastUse[asset->previewReference] = std::filesystem::file_time_type::clock::now();
+        if (reusable) cache[key] = {asset, ++clock};
+        return true;
     }
 
     std::string Reference(const LargeIconAssetRequest& r) const
@@ -301,7 +359,7 @@ struct LargeIconAssets::Impl
         if (stop.stop_requested()) return {};
         const auto output = directory / Wide(reference);
         if (!r.refresh)
-            if (auto cached = Decode(output, r.pixels, {}, reference, "cache")) return cached;
+            if (auto cached = Decode(output, r.pixels, {}, reference, r.content == 0 ? "original" : "cache")) return cached;
         if (!r.importPath.empty())
         {
             auto result = Decode(r.importPath, r.pixels, output, reference, "local");
@@ -351,21 +409,38 @@ struct LargeIconAssets::Impl
                 std::ofstream failed(failure, std::ios::trunc); failed << Now() + (status == 404 ? 86400 : 120);
             }
         }
-        // Refresh failures never remove the last useful cover, including a
-        // previously chosen orientation. Offline loads require no entitlement.
+        // This result is shared by AppID/artwork/language. Instance-specific
+        // last-good images and original icons are resolved after fan-out.
         error = "largeIcon.unavailable";
         if (auto old = Decode(output, r.pixels, {}, reference, "cache")) return old;
-        if (IsManagedLargeIconImage(r.lastGood) && !r.lastGood.empty())
-            if (auto old = Decode(directory / Wide(r.lastGood), r.pixels, {}, r.lastGood, "cache")) return old;
-        if (r.variant == 0 && !r.parsingName.empty())
+        return {};
+    }
+
+    std::shared_ptr<LargeIconAsset> LoadFallback(LargeIconAssetRequest request, std::stop_token stop)
+    {
+        if (request.content != 2 || request.variant != 0 || !request.importPath.empty()) return {};
+        request.refresh = false;
+        for (int content : {1, 0})
         {
-            auto original = r; original.content = 0; original.pixels = std::min(r.pixels, 256);
-            const auto rawReference = Reference(original);
-            const auto rawPath = directory / Wide(rawReference);
-            if (auto raw = Decode(rawPath, original.pixels, {}, rawReference, "original")) return raw;
-            if (auto raw = RawIcon(original, rawPath, rawReference)) return raw;
+            if (stop.stop_requested()) break;
+            if (content == 1 && (!IsManagedLargeIconImage(request.lastGood) || request.lastGood.empty())) continue;
+            if (content == 0 && request.parsingName.empty()) continue;
+            request.content = content; request.reference = request.lastGood;
+            if (content == 0) request.pixels = std::min(request.pixels, 256);
+            const auto key = Reference(request) + ":" + std::to_string(request.pixels) + (request.localOnly ? ":local" : ":online");
+            {
+                std::lock_guard lock(mutex);
+                if (stopped) break;
+                if (auto found = cache.find(key); found != cache.end())
+                { found->second.touched = ++clock; return found->second.asset; }
+            }
+            std::string error;
+            if (auto asset = Load(request, stop, error))
+            {
+                std::lock_guard lock(mutex);
+                if (!stopped && StoreLocked(asset, key, true)) return asset;
+            }
         }
-        error = "largeIcon.unavailable";
         return {};
     }
     void Run(std::stop_token stop)
@@ -382,6 +457,7 @@ struct LargeIconAssets::Impl
             }
             std::string error;
             std::shared_ptr<LargeIconAsset> asset;
+            std::vector<LargeIconAssetRequest> listeners;
             try { if (!requestStop.stop_requested()) asset = Load(request, requestStop, error); }
             catch (...) { error = "largeIcon.unavailable"; }
             {
@@ -405,38 +481,32 @@ struct LargeIconAssets::Impl
                         continue;
                     }
                 }
-                if (asset)
-                {
-                    lastUse[asset->reference] = lastUse[asset->previewReference] = std::filesystem::file_time_type::clock::now();
-                    auto bytes = [&] {
-                        std::erase_if(allocations, [](const auto& allocation) { return allocation.expired(); });
-                        std::uint64_t size = 0;
-                        for (const auto& allocation : allocations) if (const auto live = allocation.lock())
-                            size += std::uint64_t(live->width) * live->height * 4;
-                        return size;
-                    };
-                    const auto incoming = std::uint64_t(asset->width) * asset->height * 4;
-                    while (bytes() + incoming > maxMemory)
-                    {
-                        auto oldest = cache.end();
-                        for (auto it = cache.begin(); it != cache.end(); ++it)
-                            if (it->second.asset.use_count() == 1 && (oldest == cache.end() || it->second.touched < oldest->second.touched)) oldest = it;
-                        if (oldest == cache.end()) break;
-                        cache.erase(oldest);
-                    }
-                    if (bytes() + incoming <= maxMemory)
-                    { allocations.push_back(asset); if (error.empty()) cache[key] = {asset, ++clock}; }
-                    else { asset.reset(); error = "largeIcon.unavailable"; }
-                }
-                for (auto& listener : pending.at(key).listeners)
-                {
-                    const auto current = currentRequests.find(ListenerKey(listener));
-                    if (current != currentRequests.end() && current->second == listener.generation)
-                        completed.push_back({std::move(listener), asset, error});
-                }
+                if (asset && !StoreLocked(asset, key, error.empty())) error = "largeIcon.unavailable";
+                listeners = std::move(pending.at(key).listeners);
                 pending.erase(key);
-                CollectDisk();
             }
+            // Shared acquisition is complete. Resolve each instance's own
+            // fallback outside the request mutex, then recheck its generation.
+            for (auto& listener : listeners)
+            {
+                {
+                    std::lock_guard lock(mutex);
+                    const auto current = currentRequests.find(ListenerKey(listener));
+                    if (stopped || current == currentRequests.end() || current->second != listener.generation) continue;
+                }
+                auto selected = asset;
+                if (!selected && !stop.stop_requested())
+                    try { selected = LoadFallback(listener, stop); }
+                    catch (...) { /* Preserve the primary acquisition error. */ }
+                {
+                    std::lock_guard lock(mutex);
+                    const auto current = currentRequests.find(ListenerKey(listener));
+                    if (!stopped && current != currentRequests.end() && current->second == listener.generation)
+                        completed.push_back({std::move(listener), std::move(selected), error});
+                }
+            }
+            try { CollectDisk(); }
+            catch (...) { /* Cache cleanup must not discard decoded content. */ }
             if (ready) ready();
         }
         if (SUCCEEDED(initialized)) CoUninitialize();
@@ -444,10 +514,12 @@ struct LargeIconAssets::Impl
 };
 
 LargeIconAssets::LargeIconAssets(std::filesystem::path directory, std::function<void()> ready,
-    std::filesystem::path steamDirectory) : impl_(std::make_unique<Impl>())
+    std::filesystem::path steamDirectory, LargeIconAssetLimits limits) : impl_(std::make_unique<Impl>())
 {
     impl_->directory = std::move(directory); impl_->ready = std::move(ready);
     impl_->steamDirectory = std::move(steamDirectory);
+    impl_->limits.decodedBytes = std::clamp<std::uint64_t>(limits.decodedBytes, 1, maxMemory);
+    impl_->limits.automaticDiskBytes = std::clamp<std::uint64_t>(limits.automaticDiskBytes, 1, 512ull * 1024 * 1024);
     for (auto& worker : impl_->workers) worker = std::jthread([this](auto stop) { impl_->Run(stop); });
 }
 LargeIconAssets::~LargeIconAssets() { Stop(); }
@@ -495,6 +567,10 @@ void LargeIconAssets::Request(LargeIconAssetRequest request)
 std::vector<LargeIconAssetResult> LargeIconAssets::TakeCompleted()
 {
     std::lock_guard lock(impl_->mutex);
+    std::erase_if(impl_->completed, [&](const auto& result) {
+        const auto current = impl_->currentRequests.find(Impl::ListenerKey(result.request));
+        return current == impl_->currentRequests.end() || current->second != result.request.generation;
+    });
     return std::exchange(impl_->completed, {});
 }
 void LargeIconAssets::Cancel(const std::wstring& itemKey)

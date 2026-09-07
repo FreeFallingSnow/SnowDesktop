@@ -36,11 +36,16 @@ struct LargeIconAssetResult
     std::shared_ptr<LargeIconAsset> asset;
     std::string error;
 };
+struct LargeIconAssetLimits
+{
+    std::uint64_t decodedBytes = 128ull * 1024 * 1024;
+    std::uint64_t automaticDiskBytes = 512ull * 1024 * 1024;
+};
 class LargeIconAssets
 {
 public:
     explicit LargeIconAssets(std::filesystem::path directory, std::function<void()> ready,
-        std::filesystem::path steamDirectory = {});
+        std::filesystem::path steamDirectory = {}, LargeIconAssetLimits limits = {});
     ~LargeIconAssets();
     void Request(LargeIconAssetRequest request);
     void Cancel(const std::wstring& itemKey);
