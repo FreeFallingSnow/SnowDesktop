@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <shellapi.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
 
@@ -547,6 +548,19 @@ void TestRequestPayloadPreservesPathsAndRejectsInvalidPidls()
 
 bool ExecuteHelperFixture(const snowdesktop::shell_launch_process::Request& request)
 {
+    int argumentCount = 0;
+    wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+    bool privateHandles = arguments && argumentCount == 4;
+    for (int i = 2; privateHandles && i < argumentCount; ++i)
+    {
+        const auto handle = reinterpret_cast<HANDLE>(
+            static_cast<std::uintptr_t>(_wcstoui64(arguments[i], nullptr, 10)));
+        DWORD flags = 0;
+        privateHandles = GetHandleInformation(handle, &flags) &&
+            (flags & HANDLE_FLAG_INHERIT) == 0;
+    }
+    if (arguments) LocalFree(arguments);
+    if (!privateHandles) return false;
     constexpr std::wstring_view blockPrefix = L"test:block:";
     constexpr std::wstring_view signalPrefix = L"test:signal:";
     const std::wstring_view path(request.path);
@@ -560,6 +574,20 @@ bool ExecuteHelperFixture(const snowdesktop::shell_launch_process::Request& requ
     CloseHandle(event);
     if (block)
     {
+        wchar_t executable[32768]{};
+        const DWORD length = GetModuleFileNameW(nullptr, executable, 32768);
+        if (!length || length >= 32768) return false;
+        std::wstring command = L"\"" + std::wstring(executable) +
+            L"\" --shell-open-survivor " + eventName;
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESHOWWINDOW;
+        startup.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION opened{};
+        if (!CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &startup, &opened)) return false;
+        CloseHandle(opened.hThread);
+        CloseHandle(opened.hProcess);
         // Deliberately never finish this one request. Only the supervised
         // helper is blocked; no third-party registration or live desktop UI.
         HANDLE neverSignaled = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -577,9 +605,18 @@ void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
     const auto nextName = UniqueEventName(L"next-");
     HANDLE started = CreateEventW(nullptr, TRUE, FALSE, startedName.c_str());
     HANDLE next = CreateEventW(nullptr, TRUE, FALSE, nextName.c_str());
-    Check(started && next && !startedName.empty() && !nextName.empty(),
+    HANDLE survivor = CreateEventW(nullptr, TRUE, FALSE, (startedName + L"-survivor").c_str());
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, (startedName + L"-release").c_str());
+    HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, (startedName + L"-finished").c_str());
+    Check(started && next && survivor && release && finished &&
+            !startedName.empty() && !nextName.empty(),
         "the helper isolation events must be created");
-    if (!started || !next) return;
+    if (!started || !next || !survivor || !release || !finished)
+    {
+        for (HANDLE event : {started, next, survivor, release, finished})
+            if (event) CloseHandle(event);
+        return;
+    }
     process::Request request;
     request.path = L"test:block:" + startedName;
     const auto blocked = process::Start(request, 8000);
@@ -590,7 +627,9 @@ void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
     if (child)
     {
         Check(WaitForSingleObject(started, 5000) == WAIT_OBJECT_0,
-            "the helper must start executing the blocking fixture");
+            "the helper must start with its private handles made non-inheritable");
+        Check(WaitForSingleObject(survivor, 5000) == WAIT_OBJECT_0,
+            "the helper must start the independent target process before blocking");
         request.path = L"test:signal:" + nextName;
         const auto following = process::Start(request);
         Check(following && following.id != blocked.id,
@@ -604,10 +643,17 @@ void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
         DWORD result = 0;
         Check(GetExitCodeProcess(child, &result) && result == ERROR_TIMEOUT,
             "the deadline must terminate only the stuck helper with a timeout result");
+        SetEvent(release);
+        Check(WaitForSingleObject(finished, 5000) == WAIT_OBJECT_0,
+            "a program opened by the helper must survive timeout cleanup and continue running");
         CloseHandle(child);
     }
+    SetEvent(release);
     CloseHandle(started);
     CloseHandle(next);
+    CloseHandle(survivor);
+    CloseHandle(release);
+    CloseHandle(finished);
 }
 
 } // namespace
@@ -616,6 +662,20 @@ int wmain(int argc, wchar_t** argv)
 {
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand(ExecuteHelperFixture))
         return *result;
+    if (argc == 3 && wcscmp(argv[1], L"--shell-open-survivor") == 0)
+    {
+        const std::wstring name(argv[2]);
+        HANDLE started = OpenEventW(EVENT_MODIFY_STATE, FALSE, (name + L"-survivor").c_str());
+        HANDLE release = OpenEventW(SYNCHRONIZE, FALSE, (name + L"-release").c_str());
+        HANDLE finished = OpenEventW(EVENT_MODIFY_STATE, FALSE, (name + L"-finished").c_str());
+        const bool ready = started && release && finished;
+        if (ready) SetEvent(started);
+        const bool survived = ready && WaitForSingleObject(release, 20000) == WAIT_OBJECT_0;
+        if (survived) SetEvent(finished);
+        for (HANDLE event : {started, release, finished})
+            if (event) CloseHandle(event);
+        return survived ? 0 : 4;
+    }
     if (argc == 3 &&
         wcscmp(argv[1], L"--shell-launch-child") == 0)
     {

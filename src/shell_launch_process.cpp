@@ -300,6 +300,11 @@ std::optional<int> TryRunCommand(Executor executor)
         if (!mappingRaw || !parentRaw || mappingRaw == parentRaw)
             return ERROR_INVALID_HANDLE;
         Handle mapping(mappingRaw), parent(parentRaw);
+        // Shell handlers may create children with handle inheritance enabled.
+        // The request channel belongs only to this helper, never to opened apps.
+        if (!SetHandleInformation(mapping.value, HANDLE_FLAG_INHERIT, 0) ||
+            !SetHandleInformation(parent.value, HANDLE_FLAG_INHERIT, 0))
+            return ERROR_INVALID_HANDLE;
         const DWORD parentId = GetProcessId(parent.value);
         const auto parentPath = ExecutablePath(parent.value);
         const auto executable = ExecutablePath();
