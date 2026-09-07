@@ -795,6 +795,58 @@ void TestDropActionModifiers()
         "reapplying the same action must not invalidate state");
 }
 
+void TestDockPayloadSurvivesPageTurnWithoutSelection()
+{
+    using snowdesktop::drag_source_rebind::ResolveRecordedDockItems;
+    using snowdesktop::slot_contract::SlotSurfaceKind;
+    for (const POINT pointer : { POINT{600, 300}, POINT{2400, 300},
+                                 POINT{-600, 300} })
+    {
+        ContractContainer source(BarStyle::VBar, SlotSurfaceKind::Dock);
+        ContractItem original(RECT{20, 700, 80, 760});
+        DragSourceList list;
+        list.BindRuntimeOrigin(&source);
+        DragSourceEntry entry;
+        entry.fromDock = true;
+        entry.kind = DropSourceKind::Widget;
+        entry.dockReference = L"dragged-widget";
+        entry.dockEntryType = DockEntryType::Collection;
+        entry.originalCell = {L"__dock", 0, 0};
+        list.entries.push_back(entry);
+        list.hasWidgets = true;
+        DragSession session;
+        session.Begin(&source, {&original}, list, POINT{40, 720}, pointer);
+        // Repeated turns must keep the same payload even with no selection,
+        // including after crossing to either side of the source display.
+        for (int turn = 0; turn < 3; ++turn)
+        {
+            session.DetachRuntimeBindings();
+            ContractContainer rebuilt(BarStyle::VBar, SlotSurfaceKind::Dock);
+            ContractItem item(RECT{1920, 900, 1980, 960});
+            auto items = ResolveRecordedDockItems(session.SourceList(),
+                [&](const DragSourceEntry& saved) -> Item* {
+                    return saved.dockReference == L"dragged-widget" &&
+                        saved.dockEntryType == DockEntryType::Collection
+                        ? &item : nullptr;
+                });
+            Check(items.size() == 1 && items.front() == &item,
+                "Dock page turns must restore the pressed widget without selection");
+            auto rebound = session.SourceList();
+            rebound.BindRuntimeOrigin(&rebuilt);
+            rebound.entries.front().item = &item;
+            session.RebindSource(&rebuilt, std::move(items), rebound);
+            const POINT target = session.SourceList().UsesPointerDesktopPlacement()
+                ? pointer : session.ResolveTargetPoint({20, 700}, pointer);
+            Check(session.IsActive() && target.x == pointer.x && target.y == pointer.y &&
+                    session.SourceList().SourceSurfaceKind() == SlotSurfaceKind::Dock,
+                "Dock landing must follow the pointer across displays and repeated page turns");
+            Check(ResolveRecordedDockItems(session.SourceList(),
+                [](const DragSourceEntry&) -> Item* { return nullptr; }).empty(),
+                "A missing Dock entry must not substitute another selected item");
+        }
+    }
+}
+
 void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
 {
     namespace contract = snowdesktop::slot_contract;
@@ -2047,6 +2099,7 @@ int main()
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
+    TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();

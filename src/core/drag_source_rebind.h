@@ -6,6 +6,22 @@
 
 namespace snowdesktop::drag_source_rebind
 {
+// Dock presses need not select the model entry. Restore exactly the recorded
+// payload, in its original order, rather than collecting current selection.
+template <typename ResolveEntry>
+std::vector<Item*> ResolveRecordedDockItems(
+    const DragSourceList& source, ResolveEntry&& resolveEntry)
+{
+    std::vector<Item*> items;
+    for (const auto& entry : source.entries)
+    {
+        Item* item = entry.fromDock ? resolveEntry(entry) : nullptr;
+        if (!item) return {};
+        items.push_back(item);
+    }
+    return items;
+}
+
 inline bool CanRestoreRecordedWidgetMembers(
     const DragSourceList& source)
 {
