@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
@@ -514,7 +515,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         dockWindowTransition_->SetPresentationCallback([this](HWND) {
             ApplyFloatingDockLayerPolicy();
         });
-        dockWindowTransition_->SetDiagnosticCallback([](const wchar_t* message) {
+        dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {
+            snowdesktop::dock_taskbar_diagnostics::Record(message,
+                dockWindowTransition_->GetPresentationWindow());
+            if (std::wcsncmp(message, L"Dock taskbar phase:", 19) == 0)
+                return; // Buffered until the bounded observation ends.
             WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
         });
     }

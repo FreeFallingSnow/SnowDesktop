@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -51,6 +52,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    snowdesktop::dock_taskbar_diagnostics::Stop();
     dockForegroundNotificationWindow_.store(nullptr);
     if (dockForegroundEventHook_)
     {
@@ -126,11 +128,18 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
 
     systemShowDesktopDockLayerGuardActive_ =
         action == GuardAction::Start;
+    wchar_t guardTrace[256]{};
+    swprintf_s(guardTrace,
+        L"System Show Desktop Dock layer guard %ls foreground=%p "
+        L"minimizeFlag=%d evidenceTick=%llu now=%llu",
+        systemShowDesktopDockLayerGuardActive_ ? L"started" : L"completed",
+        static_cast<void*>(dockForegroundWindow_.load()),
+        dockSystemMinimizeActive_.load() ? 1 : 0,
+        dockSystemMinimizeStartedTick_.load(), GetTickCount64());
+    snowdesktop::dock_taskbar_diagnostics::Record(
+        guardTrace, dockForegroundWindow_.load());
     ApplyFloatingDockLayerPolicy();
-    WriteDiagnosticLogEntry(
-        systemShowDesktopDockLayerGuardActive_
-            ? L"System Show Desktop Dock layer guard started"
-            : L"System Show Desktop Dock layer guard completed");
+    WriteDiagnosticLogEntry(guardTrace);
 }
 
 bool DesktopApp::IsSystemTaskbarHookRequired(
@@ -537,7 +546,10 @@ void DesktopApp::UpdateSystemTaskbarRevealGuard()
 
     const int guardedEdgeTop = screen.bottom - kRevealGuardPixels;
     if (cursor.y >= guardedEdgeTop)
+    {
+        snowdesktop::dock_taskbar_diagnostics::Record(L"cursor-edge-guard");
         SetCursorPos(cursor.x, guardedEdgeTop - 1);
+    }
 }
 
 void DesktopApp::ToggleWindowsStartMenu()

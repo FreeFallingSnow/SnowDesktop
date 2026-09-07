@@ -617,7 +617,11 @@ bool DockWindowTransition::Start(
     RefreshOcclusion();
     if (!presenting_)
         return false;
+    if (diagnosticCallback_)
+        diagnosticCallback_(L"Dock taskbar phase: overlay-before-show");
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    if (diagnosticCallback_)
+        diagnosticCallback_(L"Dock taskbar phase: overlay-after-show");
     HRESULT presentationHr = S_OK;
     if (RequiresDockWindowTransitionCompositionBarrier(direction_))
     {
@@ -883,6 +887,7 @@ bool DockWindowTransition::CaptureSnapshot(
     SetStretchBltMode(snapshotDc, HALFTONE);
     SetBrushOrgEx(snapshotDc, 0, 0, nullptr);
     BOOL captured = FALSE;
+    const HWND foregroundBeforeCapture = GetForegroundWindow();
     snowdesktop::dock_capture::IsolationReport isolationReport;
     {
         snowdesktop::dock_capture::ScopedWindowCaptureIsolation isolation(
@@ -910,6 +915,19 @@ bool DockWindowTransition::CaptureSnapshot(
             snapshotResult_ = FAILED(failure.result) ? failure.result :
                 HRESULT_FROM_WIN32(failure.error ? failure.error : ERROR_GEN_FAILURE);
         }
+    }
+    if (diagnosticCallback_)
+    {
+        wchar_t message[320]{};
+        swprintf_s(message,
+            L"Dock taskbar phase: capture target=%p excluded=%zu hidden=%zu "
+            L"foreground=%p/%p captured=%d preparation=%ls",
+            static_cast<void*>(window), isolationReport.excludedWindows,
+            isolationReport.hiddenWindows, static_cast<void*>(foregroundBeforeCapture),
+            static_cast<void*>(GetForegroundWindow()), captured ? 1 : 0,
+            isolationReport.preparationFailure.operation
+                ? isolationReport.preparationFailure.operation : L"ok");
+        diagnosticCallback_(message);
     }
     if (isolationReport.restorationFailure.operation && diagnosticCallback_)
     {
@@ -1817,6 +1835,8 @@ void DockWindowTransition::Finish()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
     HWND transitionWindow = hwnd_;
+    if (presenting_ && diagnosticCallback_)
+        diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)
     {
         ShowWindow(
@@ -1824,12 +1844,16 @@ void DockWindowTransition::Finish()
         SetWindowRgn(
             transitionWindow, nullptr, FALSE);
     }
+    if (presenting_ && diagnosticCallback_)
+        diagnosticCallback_(L"Dock taskbar phase: overlay-after-hide");
     const bool wasPresenting = std::exchange(presenting_, false);
     hasOcclusionRegion_ = false;
     occlusionRects_.clear();
     occlusionHostBounds_ = {};
     if (wasPresenting && presentationCallback_)
         presentationCallback_(nullptr);
+    if (wasPresenting && diagnosticCallback_)
+        diagnosticCallback_(L"Dock taskbar phase: after-dock-layer-restore");
     UnregisterThumbnail();
     const bool hadCompositionSnapshot =
         compositionSnapshotActive_;

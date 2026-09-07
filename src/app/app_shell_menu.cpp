@@ -1,5 +1,6 @@
 #include "app.h"
 #include "popup_window_pair_z_order.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 
@@ -458,6 +459,8 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         return;
     if (dockWindowTransitionLayerUpdateActive_)
         return;
+    const bool wasTopmost =
+        snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd);
     dockWindowTransitionLayerUpdateActive_ = true;
     struct LayerUpdateScope final
     {
@@ -479,6 +482,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         // input or focus state. Always move the content/backdrop as a pair.
         host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd, HWND_TOPMOST, true);
+        if (!wasTopmost)
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                L"dock-promoted-for-animation", host.hwnd);
         const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
         const HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
             ? nextWindow : host.hwnd;
@@ -536,6 +542,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             host.hwnd,
             insertAfter ? insertAfter : HWND_TOP,
             false);
+        if (wasTopmost)
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                L"dock-returned-to-desktop-band", host.hwnd);
         return;
     }
 
@@ -549,6 +558,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         shouldBeTopmost
             ? HWND_TOPMOST : HWND_NOTOPMOST,
         shouldBeTopmost);
+    if (wasTopmost != shouldBeTopmost)
+        snowdesktop::dock_taskbar_diagnostics::Record(
+            systemShowDesktopGuard ? L"dock-show-desktop-band" : L"dock-normal-layer-policy",
+            host.hwnd);
     ApplyDragPreviewLayerPolicy();
 }
 

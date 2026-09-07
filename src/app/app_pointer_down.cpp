@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../quick_navigation_rules.h"
 #include "../widget_scroll_rules.h"
 #include "../animation_settings.h"
@@ -545,6 +546,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     // Paint the pressed state before snapshot capture blocks
                     // this UI thread, then overlap capture with the natural
                     // button-down/button-up interval.
+                    snowdesktop::dock_taskbar_diagnostics::Begin(
+                        dockPressedTargetWindow_, L"dock-snapshot-prime");
                     UpdateWindow(hwnd_);
                     dockWindowTransition_->
                         PrimeMinimizeSnapshot(

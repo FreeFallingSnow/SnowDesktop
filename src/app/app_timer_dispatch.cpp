@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../drag_input_rules.h"
 #include "../ole_drag_rules.h"
 #include "../collection_titleless_rules.h"
@@ -508,6 +509,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
+        snowdesktop::dock_taskbar_diagnostics::Poll();
         UpdateSystemShowDesktopDockLayerGuard();
         UpdateSystemTaskbarRevealGuard();
         const DWORD now = GetTickCount();

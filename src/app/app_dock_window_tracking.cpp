@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../drag_input_rules.h"
 
 // Running-window discovery, visual state and activation behavior.
@@ -847,6 +848,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
                 DockWindowTransitionDirection::Restore;
         const bool shouldMinimize =
             !IsIconic(target) || reverseRestore;
+        if (shouldMinimize)
+            snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
         bool transitionStarted = false;
         if (shouldMinimize &&
             dockWindowTransition_ &&
@@ -868,7 +871,10 @@ bool DesktopApp::ActivateOrToggleDockItem(
         if (shouldMinimize)
         {
             CancelDockWindowActivationObservation(target);
-            RequestDockWindowMinimize(target);
+            snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
+            const bool minimizeAccepted = RequestDockWindowMinimize(target);
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                minimizeAccepted ? L"native-minimize-accepted" : L"native-minimize-rejected", target);
         }
         found->second.minimized = true;
         found->second.foreground = false;
@@ -981,6 +987,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 DockWindowTransitionDirection::Restore;
         const bool shouldMinimize =
             !minimized || reverseRestore;
+        if (shouldMinimize)
+            snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
         bool transitionStarted = false;
         if (shouldMinimize &&
             dockWindowTransition_ &&
@@ -1002,7 +1010,10 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         if (shouldMinimize)
         {
             CancelDockWindowActivationObservation(target);
-            RequestDockWindowMinimize(target);
+            snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
+            const bool minimizeAccepted = RequestDockWindowMinimize(target);
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                minimizeAccepted ? L"native-minimize-accepted" : L"native-minimize-rejected", target);
         }
         nowMinimized = true;
     }
