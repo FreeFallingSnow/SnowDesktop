@@ -21,6 +21,8 @@ struct LargeIconAssetRequest
 {
     std::wstring itemKey, parsingName;
     std::uint64_t generation = 0;
+    std::uint64_t sourceStamp = 0;
+    int sourceIconIndex = -1;
     int variant = 0; // 0: desktop content, 1/2: landscape/portrait chooser
     int content = 0, pixels = 256;
     std::uint32_t appId = 0;

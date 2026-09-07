@@ -88,7 +88,7 @@ inline std::string AssetUrl(const JsonValue& response, std::uint32_t id, bool po
         const std::string prefix = "steam/apps/" + std::to_string(id) + "/";
         if (!format->string.starts_with(prefix)) continue;
         for (const char* key : portrait ? std::initializer_list<const char*>{"library_capsule_2x", "library_capsule"}
-                                       : std::initializer_list<const char*>{"library_header", "header", "main_capsule"})
+                                       : std::initializer_list<const char*>{"library_header_2x", "library_header", "header_2x", "header", "main_capsule"})
         {
             const auto* name = assets->Find(key);
             if (!name || !name->IsString() || !SafeAssetPath(name->string)) continue;

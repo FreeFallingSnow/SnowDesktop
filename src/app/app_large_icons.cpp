@@ -23,6 +23,8 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
     auto& runtime = largeIconRuntime_[item.layoutKey];
     const auto stamp = item.modifiedTime ? (std::uint64_t(item.modifiedTime->dwHighDateTime) << 32) |
         item.modifiedTime->dwLowDateTime : 0;
+    request.sourceStamp = stamp;
+    request.sourceIconIndex = item.sysIconIndex;
     const std::wstring signature = item.parsingName + L":" + std::to_wstring(config.content) + L":" +
         Utf8ToWide(config.image) + L":" + std::to_wstring(request.pixels) +
         L":" + std::to_wstring(request.portrait) + L":" + std::to_wstring(request.localOnly) + L":" + Utf8ToWide(request.language) +

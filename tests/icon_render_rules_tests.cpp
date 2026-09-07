@@ -5,6 +5,7 @@
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
+int RunLargeIconShellAssetTests();
 
 namespace
 {
@@ -19,8 +20,9 @@ void Check(bool condition, const char* message)
 }
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     failures += RunLargeIconAssetTests();
     using namespace snowdesktop::large_icon_render_rules;
     Check(CanRevealTitle(400, 180, 108, 12, 1), "wide large icons can reveal names without resizing content");

@@ -1947,6 +1947,11 @@ if (BUILD_TESTING)
         LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32
         LABELS rules shell ui)
 
+    add_test(NAME large_icon_shell_assets
+        COMMAND SnowDesktopIconRenderRulesTests --large-icon-shell)
+    set_tests_properties(large_icon_shell_assets PROPERTIES
+        TIMEOUT 60 LABELS "integration;shell;icon;resource")
+
     snowdesktop_add_test(
         SnowDesktopIconBeautifyTests
         icon_beautify

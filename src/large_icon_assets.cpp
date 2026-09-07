@@ -64,7 +64,7 @@ std::vector<std::filesystem::path> LocalCovers(const std::filesystem::path& conf
     const auto match = [&](const std::filesystem::path& path) {
         auto filename = path.filename().wstring();
         std::transform(filename.begin(), filename.end(), filename.begin(), towlower);
-        return portrait ? filename.find(L"library_600x900") != filename.npos :
+        return portrait ? (filename.find(L"library_600x900") != filename.npos || filename.find(L"library_capsule") != filename.npos) :
             (filename.find(L"library_header") != filename.npos || filename.find(L"header") != filename.npos || filename.find(L"capsule_616x353") != filename.npos);
     };
     // Legacy flat names and current AppID/hash subdirectories. Do not walk
@@ -82,6 +82,9 @@ std::vector<std::filesystem::path> LocalCovers(const std::filesystem::path& conf
         if (it->is_regular_file(ec) && match(it->path())) result.push_back(it->path());
     }
     std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        const bool largerA = a.filename().wstring().find(L"_2x") != std::wstring::npos;
+        const bool largerB = b.filename().wstring().find(L"_2x") != std::wstring::npos;
+        if (largerA != largerB) return largerA;
         std::error_code ea, eb;
         return std::filesystem::last_write_time(a, ea) > std::filesystem::last_write_time(b, eb);
     });
@@ -282,9 +285,11 @@ struct LargeIconAssets::Impl
         if (!r.importPath.empty()) return r.reference;
         if (r.content == 1 && IsManagedLargeIconImage(r.reference) && !r.reference.empty()) return r.reference;
         if (r.content == 2 && r.appId) return "steam-" + std::to_string(r.appId) + (r.portrait ? "-portrait-" : "-landscape-") + r.language + ".png";
-        std::error_code ec;
-        const auto time = std::filesystem::last_write_time(r.parsingName, ec);
-        return "raw-" + Hash(r.parsingName + (ec ? L"" : std::to_wstring(time.time_since_epoch().count()))) + "-" + std::to_string(r.pixels) + ".png";
+        // Request is called by the desktop paint path. Only inspect the Shell
+        // model here; disk access belongs to the workers. The icon index also
+        // changes when a Shell association changes without touching the file.
+        return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
+            std::to_wstring(r.sourceIconIndex)) + "-" + std::to_string(r.pixels) + ".png";
     }
     std::shared_ptr<LargeIconAsset> Load(const LargeIconAssetRequest& r, std::stop_token stop, std::string& error)
     {
@@ -293,6 +298,7 @@ struct LargeIconAssets::Impl
         if (ec) { error = "largeIcon.saveFailed"; return {}; }
         const auto reference = Reference(r);
         std::lock_guard sourceLock(sourceMutexes[std::hash<std::string>{}(reference) % sourceMutexes.size()]);
+        if (stop.stop_requested()) return {};
         const auto output = directory / Wide(reference);
         if (!r.refresh)
             if (auto cached = Decode(output, r.pixels, {}, reference, "cache")) return cached;
@@ -302,7 +308,12 @@ struct LargeIconAssets::Impl
             if (!result) error = "largeIcon.invalid";
             return result;
         }
-        if (r.content == 0) return RawIcon(r, output, reference);
+        if (r.content == 0)
+        {
+            auto original = RawIcon(r, output, reference);
+            if (!original) error = "largeIcon.unavailable";
+            return original;
+        }
         if (r.content == 1) { error = "largeIcon.unavailable"; return {}; }
         if (r.appId)
         {
