@@ -4,8 +4,30 @@
 #include <iostream>
 #include <string>
 
+namespace
+{
+struct CloseOutputBeforeExit
+{
+    ~CloseOutputBeforeExit()
+    {
+        std::cout.flush();
+        std::cerr.flush();
+        const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+        const HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
+        if (output && output != INVALID_HANDLE_VALUE)
+            CloseHandle(output);
+        if (error && error != INVALID_HANDLE_VALUE && error != output)
+            CloseHandle(error);
+        // Make the normal CRT shutdown race deterministic: the output pipe
+        // is closed while the process still has cleanup to finish.
+        Sleep(50);
+    }
+};
+}
+
 int wmain(int argc, wchar_t** argv)
 {
+    CloseOutputBeforeExit closeOutputBeforeExit;
     std::array<wchar_t, 32768> modulePath{};
     const DWORD length = GetModuleFileNameW(
         nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));

@@ -221,13 +221,19 @@ std::optional<BridgeCommandResult> RunBridgeCommand(
         timeout;
     while (true)
     {
+        // Observe process completion before inspecting its final output. A
+        // child can write and exit between a pipe peek and a process wait.
+        const DWORD processState = WaitForSingleObject(processHandle.Get(), 0);
+        if (processState == WAIT_FAILED)
+            return std::nullopt;
         DWORD available = 0;
         if (!PeekNamedPipe(readPipe.Get(), nullptr, 0, nullptr,
                 &available, nullptr))
         {
-            if (WaitForSingleObject(processHandle.Get(), 0) == WAIT_OBJECT_0)
-                break;
-            return std::nullopt;
+            // Closing stdout can precede process termination. Retain the
+            // bytes already read and wait for the final exit code below.
+            if (GetLastError() != ERROR_BROKEN_PIPE)
+                return std::nullopt;
         }
         if (available > 0)
         {
@@ -246,7 +252,7 @@ std::optional<BridgeCommandResult> RunBridgeCommand(
             result.output.append(buffer.data(), read);
             continue;
         }
-        if (WaitForSingleObject(processHandle.Get(), 0) == WAIT_OBJECT_0)
+        if (processState == WAIT_OBJECT_0)
             break;
         if (stop.stop_requested())
         {
