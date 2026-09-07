@@ -21,6 +21,7 @@
 #include <DispatcherQueue.h>
 #include <dwmapi.h>
 #include <windows.graphics.effects.interop.h>
+#include <windows.graphics.interop.h>
 #include <windows.ui.composition.interop.h>
 
 #include "l10n.h"
@@ -29,6 +30,7 @@
 #undef GetCurrentTime
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Numerics.h>
+#include <winrt/Windows.Graphics.h>
 #include <winrt/Windows.Graphics.Effects.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Composition.h>
@@ -192,6 +194,105 @@ struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
     winrt::hstring effectName = L"SnowDesktopBackdropBlur";
 };
 
+/** @brief CompositionPath 对不可变 D2D 路径的原生适配。 */
+struct BackdropGeometrySource : winrt::implements<BackdropGeometrySource,
+    winrt::Windows::Graphics::IGeometrySource2D,
+    ABI::Windows::Graphics::IGeometrySource2DInterop>
+{
+    explicit BackdropGeometrySource(winrt::com_ptr<ID2D1PathGeometry> geometry)
+        : geometry_(std::move(geometry))
+    {
+    }
+
+    HRESULT STDMETHODCALLTYPE GetGeometry(ID2D1Geometry** value) noexcept override
+    {
+        if (!value) return E_INVALIDARG;
+        geometry_.copy_to(value);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE TryGetGeometryUsingFactory(
+        ID2D1Factory*, ID2D1Geometry** value) noexcept override
+    {
+        if (!value) return E_INVALIDARG;
+        *value = nullptr;
+        // Composition can consume the original immutable geometry through
+        // GetGeometry; no factory-specific copy is supplied by this adapter.
+        return E_NOTIMPL;
+    }
+
+private:
+    winrt::com_ptr<ID2D1Geometry> geometry_;
+};
+
+struct GenieOutlinePoint
+{
+    D2D1_POINT_2F source{};
+    std::size_t strip = 0;
+};
+
+std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
+    float width, float height, float cornerRadius, bool vertical)
+{
+    namespace genie = snowdesktop::dock_genie;
+    const float axisLength = vertical ? height : width;
+    const float crossLength = vertical ? width : height;
+    const float radius = std::clamp(cornerRadius, 0.0f,
+        std::min(width, height) * 0.5f);
+    // Uniform angle samples preserve the rounded corners even when a whole
+    // corner falls inside one strip. Cache source points until geometry changes.
+    constexpr std::size_t cornerSamples = 12;
+    constexpr double halfPi = 1.57079632679489661923;
+    std::array<float, cornerSamples * 2> cornerAxes{};
+    for (std::size_t index = 0; index < cornerSamples; ++index)
+    {
+        const double angle = halfPi * static_cast<double>(index + 1) /
+            static_cast<double>(cornerSamples);
+        const float offset = radius * static_cast<float>(1.0 - std::cos(angle));
+        cornerAxes[index] = offset;
+        cornerAxes[cornerAxes.size() - 1 - index] = axisLength - offset;
+    }
+
+    std::vector<GenieOutlinePoint> outline;
+    outline.reserve(genie::StripCount * 4 + cornerAxes.size() * 2);
+    const auto appendLowSide = [&](std::size_t strip, float axis) {
+        const float distance = std::max(0.0f,
+            radius - std::min(axis, axisLength - axis));
+        const float inset = radius > 0.0f
+            ? radius - std::sqrt(std::max(0.0f,
+                radius * radius - distance * distance))
+            : 0.0f;
+        outline.push_back({vertical ? D2D1_POINT_2F{inset, axis}
+                                   : D2D1_POINT_2F{axis, inset}, strip});
+    };
+    for (std::size_t index = 0; index < genie::StripCount; ++index)
+    {
+        const float begin = static_cast<float>(
+            static_cast<double>(axisLength) * index / genie::StripCount);
+        const float end = static_cast<float>(
+            static_cast<double>(axisLength) * (index + 1) / genie::StripCount);
+        appendLowSide(index, begin);
+        for (const float axis : cornerAxes)
+        {
+            if (axis > begin && axis < end)
+                appendLowSide(index, axis);
+        }
+        appendLowSide(index, end);
+    }
+    // Walk back along the opposite side. Keeping both strip endpoints joins
+    // their small width steps into one silhouette without internal clip edges.
+    for (std::size_t remaining = outline.size(); remaining > 0; --remaining)
+    {
+        auto point = outline[remaining - 1];
+        if (vertical)
+            point.source.x = crossLength - point.source.x;
+        else
+            point.source.y = crossLength - point.source.y;
+        outline.push_back(point);
+    }
+    return outline;
+}
+
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
     ABI::Windows::System::IDispatcherQueueController**);
 
@@ -235,10 +336,14 @@ struct DesktopBackdropCompositor::Impl
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     std::vector<PanelVisual> panels;
-    wuc::ContainerVisual genieRoot{nullptr};
+    wuc::SpriteVisual genieRoot{nullptr};
     wuc::SpriteVisual genieSource{nullptr};
-    std::vector<wuc::ContainerVisual> genieStrips;
+    wuc::CompositionPathGeometry genieGeometry{nullptr};
+    winrt::com_ptr<ID2D1Factory> genieGeometryFactory;
+    std::vector<GenieOutlinePoint> genieOutline;
     RECT geniePanelFrame{};
+    SIZE genieHostSize{};
+    int genieCornerRadius = 0;
     bool genieVertical = true;
     float genieSourceOpacity = 1.0f;
     float genieOpacity = 1.0f;
@@ -607,8 +712,10 @@ struct DesktopBackdropCompositor::Impl
             genieSource.Opacity(genieSourceOpacity);
         genieRoot = nullptr;
         genieSource = nullptr;
-        genieStrips.clear();
+        genieGeometry = nullptr;
+        genieOutline.clear();
         geniePanelFrame = {};
+        genieHostSize = {};
         genieOpacity = 1.0f;
         SetAnimationPathRegionExpanded(false);
     }
@@ -616,10 +723,13 @@ struct DesktopBackdropCompositor::Impl
     void Reset()
     {
         available = false;
-        genieStrips.clear();
+        genieOutline.clear();
+        genieGeometry = nullptr;
+        genieGeometryFactory = nullptr;
         genieRoot = nullptr;
         genieSource = nullptr;
         geniePanelFrame = {};
+        genieHostSize = {};
         genieOpacity = 1.0f;
         panels.clear();
         blurFactories.clear();
@@ -1199,54 +1309,53 @@ bool DesktopBackdropCompositor::SetGenieTransform(
         }
         const float width = static_cast<float>(panelFrame.right - panelFrame.left);
         const float height = static_cast<float>(panelFrame.bottom - panelFrame.top);
+        RECT hostFrame{};
+        if (!GetClientRect(impl_->contentWindow, &hostFrame) ||
+            hostFrame.right <= 0 || hostFrame.bottom <= 0)
+        {
+            impl_->ClearGenieTransform();
+            return false;
+        }
         if (!impl_->genieRoot || impl_->genieSource != panel->visual ||
             impl_->genieVertical != vertical ||
+            impl_->genieCornerRadius != panel->cornerRadius ||
+            impl_->genieHostSize.cx != hostFrame.right ||
+            impl_->genieHostSize.cy != hostFrame.bottom ||
             !EqualRect(&impl_->geniePanelFrame, &panelFrame))
         {
             impl_->ClearGenieTransform();
-            auto stripRoot = impl_->compositor.CreateContainerVisual();
-            std::vector<wuc::ContainerVisual> strips;
-            strips.reserve(genie::StripCount);
-            for (std::size_t index = 0; index < genie::StripCount; ++index)
+            if (!impl_->genieGeometryFactory)
             {
-                const float begin = static_cast<float>(index) /
-                    static_cast<float>(genie::StripCount);
-                const float end = static_cast<float>(index + 1) /
-                    static_cast<float>(genie::StripCount);
-                auto strip = impl_->compositor.CreateContainerVisual();
-                strip.Size(wfn::float2{width, height});
-                strip.BorderMode(wuc::CompositionBorderMode::Hard);
-                auto slice = vertical
-                    ? impl_->compositor.CreateInsetClip(0.0f,
-                        std::max(0.0f, begin * height - 0.35f), 0.0f,
-                        height - std::min(height, end * height + 0.35f))
-                    : impl_->compositor.CreateInsetClip(
-                        std::max(0.0f, begin * width - 0.35f), 0.0f,
-                        width - std::min(width, end * width + 0.35f), 0.0f);
-                strip.Clip(slice);
-                auto glass = impl_->compositor.CreateSpriteVisual();
-                // Every clone retains the source's complete size. Sharing its
-                // brush therefore cannot resize the backdrop effect surface.
-                // Clip the slice outside the original rounded panel clip.
-                glass.Size(wfn::float2{width, height});
-                glass.Brush(panel->visual.Brush());
-                glass.Clip(panel->visual.Clip());
-                strip.Children().InsertAtTop(glass);
-                stripRoot.Children().InsertAtTop(strip);
-                strips.push_back(std::move(strip));
+                winrt::check_hresult(D2D1CreateFactory(
+                    D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                    impl_->genieGeometryFactory.put()));
             }
+            auto glass = impl_->compositor.CreateSpriteVisual();
+            glass.Size(wfn::float2{static_cast<float>(hostFrame.right),
+                static_cast<float>(hostFrame.bottom)});
+            // Backdrop brushes sample the region behind each consuming visual.
+            // One host-sized visual avoids repeated blur evaluation and does
+            // not resize/share the ordinary panel's smaller effect brush.
+            glass.Brush(impl_->CreateBlurBrush(panel->blurRadius));
+            auto geometry = impl_->compositor.CreatePathGeometry();
+            glass.Clip(impl_->compositor.CreateGeometricClip(geometry));
+            auto outline = BuildGenieSourceOutline(width, height,
+                static_cast<float>(panel->cornerRadius), vertical);
             impl_->root.StopAnimation(L"Scale");
             impl_->root.StopAnimation(L"Opacity");
             impl_->root.Scale(wfn::float3{1.0f, 1.0f, 1.0f});
             impl_->root.CenterPoint(wfn::float3{});
             impl_->root.Opacity(1.0f);
-            impl_->genieRoot = stripRoot;
+            impl_->genieRoot = glass;
             impl_->genieSource = panel->visual;
             impl_->genieSourceOpacity = panel->visual.Opacity();
+            impl_->genieGeometry = geometry;
+            impl_->genieOutline = std::move(outline);
             impl_->geniePanelFrame = panelFrame;
+            impl_->genieHostSize = {hostFrame.right, hostFrame.bottom};
+            impl_->genieCornerRadius = panel->cornerRadius;
             impl_->genieVertical = vertical;
-            impl_->genieStrips = std::move(strips);
-            impl_->root.Children().InsertAtTop(stripRoot);
+            impl_->root.Children().InsertAtTop(glass);
             panel->visual.Opacity(0.0f);
         }
 
@@ -1256,18 +1365,36 @@ bool DesktopBackdropCompositor::SetGenieTransform(
         const genie::Rect target{static_cast<double>(dockFrame.left),
             static_cast<double>(dockFrame.top), static_cast<double>(dockFrame.right),
             static_cast<double>(dockFrame.bottom)};
-        for (std::size_t index = 0; index < impl_->genieStrips.size(); ++index)
+        std::array<genie::Matrix, genie::StripCount> matrices;
+        for (std::size_t index = 0; index < matrices.size(); ++index)
         {
-            const auto matrix = genie::StripMatrix(source, target, direction,
+            matrices[index] = genie::StripMatrix(source, target, direction,
                 std::clamp(collapsed, 0.0f, 1.0f), width, height,
                 static_cast<double>(index) / genie::StripCount,
                 static_cast<double>(index + 1) / genie::StripCount, 0.0, 0.0);
-            impl_->genieStrips[index].TransformMatrix(wfn::float4x4{
-                matrix.m11, matrix.m12, 0.0f, 0.0f,
-                matrix.m21, matrix.m22, 0.0f, 0.0f,
-                0.0f, 0.0f, 1.0f, 0.0f,
-                matrix.dx, matrix.dy, 0.0f, 1.0f});
         }
+        const auto transformPoint = [&matrices](const GenieOutlinePoint& point) {
+            const auto& matrix = matrices[point.strip];
+            return D2D1_POINT_2F{
+                point.source.x * matrix.m11 + point.source.y * matrix.m21 + matrix.dx,
+                point.source.x * matrix.m12 + point.source.y * matrix.m22 + matrix.dy};
+        };
+        // D2D paths are immutable once closed. Replace only the path value;
+        // retain the Composition geometry, clip, visual and brush throughout
+        // the animation. A single outline has no internal antialiased seams.
+        winrt::com_ptr<ID2D1PathGeometry> path;
+        winrt::check_hresult(impl_->genieGeometryFactory->CreatePathGeometry(path.put()));
+        winrt::com_ptr<ID2D1GeometrySink> sink;
+        winrt::check_hresult(path->Open(sink.put()));
+        sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+        sink->BeginFigure(transformPoint(impl_->genieOutline.front()),
+            D2D1_FIGURE_BEGIN_FILLED);
+        for (std::size_t index = 1; index < impl_->genieOutline.size(); ++index)
+            sink->AddLine(transformPoint(impl_->genieOutline[index]));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        winrt::check_hresult(sink->Close());
+        impl_->genieGeometry.Path(wuc::CompositionPath(
+            winrt::make<BackdropGeometrySource>(std::move(path))));
         impl_->genieOpacity = std::clamp(opacity, 0.0f, 1.0f);
         impl_->genieRoot.Opacity(impl_->genieOpacity *
             impl_->genieSourceOpacity);
@@ -1298,7 +1425,7 @@ void DesktopBackdropCompositor::ClearGenieTransform()
     catch (...)
     {
         impl_->lastError = FormatHresult(L"backdrop.clear_genie", winrt::to_hresult());
-        // A failed restore must not strand hidden originals or glass strips.
+        // A failed restore must not strand hidden originals or animated glass.
         impl_->Reset();
     }
 }

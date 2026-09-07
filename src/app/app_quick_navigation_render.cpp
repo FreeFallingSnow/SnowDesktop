@@ -3,6 +3,7 @@
 #include "quick_navigation_rules.h"
 #include "quick_navigation_theme.h"
 #include "dock_genie_rules.h"
+#include "quick_navigation_genie_rules.h"
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
 
@@ -44,13 +45,13 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
             hr = quickNavDcompDevice_->CreateVisual(&strip);
             if (FAILED(hr)) break;
             quickNavGenieStrips_.push_back(strip);
-            const float begin = static_cast<float>(i) / genie::StripCount;
-            const float end = static_cast<float>(i + 1) / genie::StripCount;
-            const D2D1_RECT_F clip = genie::Vertical(edge)
-                ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.35f),
-                    width, std::min(height, end * height + 0.35f))
-                : D2D1::RectF(std::max(0.0f, begin * width - 0.35f), 0,
-                    std::min(width, end * width + 0.35f), height);
+            // This live panel contains translucent fill. Overlapping slices
+            // would composite that fill twice and produce dark seam lines.
+            const auto bounds = snowdesktop::quick_navigation_animation_rules::
+                GenieContentClip(i, width, height, edge);
+            const D2D1_RECT_F clip = D2D1::RectF(
+                static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
             hr = strip->SetContent(quickNavDcompSurface_.Get());
             if (SUCCEEDED(hr)) hr = strip->SetClip(clip);
             if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);

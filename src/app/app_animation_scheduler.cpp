@@ -70,6 +70,7 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
             {
                 quickNavigationAnimation_.ShowImmediately();
                 ApplyQuickNavigationAnimationFrame();
+                ApplyFloatingDockLayerPolicy();
             }
         }
     }
@@ -224,7 +225,10 @@ void DesktopApp::EnsureUiAnimationFrame()
                     const bool keep =
                         quickNavigationAnimation_.IsAnimating();
                     if (!keep)
+                    {
                         quickNavigationAnimationFrameToken_ = 0;
+                        ApplyFloatingDockLayerPolicy();
+                    }
                     return keep;
                 });
     }

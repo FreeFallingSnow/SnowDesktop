@@ -1301,8 +1301,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         }
     }
 
-    ApplyFloatingDockLayerPolicy();
-
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
     {

@@ -1,5 +1,6 @@
 #include "navigation_settings.h"
 #include "quick_navigation_animation_rules.h"
+#include "quick_navigation_genie_rules.h"
 #include "quick_navigation_rules.h"
 
 #include <cmath>
@@ -590,6 +591,87 @@ void TestAnimationEffects()
         "None must open immediately at full opacity");
 }
 
+void TestGenieTranslucentContentCoverage()
+{
+    namespace genie = snowdesktop::dock_genie;
+    using snowdesktop::quick_navigation_animation_rules::GenieContentClip;
+    const double sizes[][2] = {{481.375, 613.625}, {96.125, 47.875}, {1281.2, 721.6}};
+    const genie::Edge edges[] = {genie::Edge::Bottom, genie::Edge::Top,
+        genie::Edge::Left, genie::Edge::Right};
+    for (const auto& size : sizes)
+    {
+        const double width = static_cast<float>(size[0]);
+        const double height = static_cast<float>(size[1]);
+        const genie::Rect window{140.25, 200.75, 140.25 + width, 200.75 + height};
+        const genie::Rect docks[] = {
+            {325.5, window.bottom + 200.125, 376.75, window.bottom + 242.625},
+            {325.5, window.top - 242.625, 376.75, window.top - 200.125},
+            {window.left - 242.625, 325.5, window.left - 200.125, 376.75},
+            {window.right + 200.125, 325.5, window.right + 242.625, 376.75}};
+        for (std::size_t direction = 0; direction < std::size(edges); ++direction)
+        {
+            const auto edge = edges[direction];
+            const bool vertical = genie::Vertical(edge);
+            const auto& dock = docks[direction];
+            for (double collapsed : {0.0, 0.12, 0.33, 0.55, 0.81, 1.0})
+            {
+                struct Interval { double begin, end; };
+                std::vector<Interval> coverage;
+                double coveredLength = 0.0;
+                for (std::size_t index = 0; index < genie::StripCount; ++index)
+                {
+                    const auto clip = GenieContentClip(index, width, height, edge);
+                    const auto matrix = genie::StripMatrix(window, dock, edge, collapsed,
+                        width, height, static_cast<double>(index) / genie::StripCount,
+                        static_cast<double>(index + 1) / genie::StripCount, -30.25, 50.75);
+                    // Match the renderer's float clip coordinates, then test the
+                    // transformed coverage instead of repeating the clip formula.
+                    const auto mapAxis = [vertical, &matrix](double x, double y) {
+                        return vertical
+                            ? static_cast<float>(x) * static_cast<double>(matrix.m12) +
+                                static_cast<float>(y) * static_cast<double>(matrix.m22) + matrix.dy
+                            : static_cast<float>(x) * static_cast<double>(matrix.m11) +
+                                static_cast<float>(y) * static_cast<double>(matrix.m21) + matrix.dx;
+                    };
+                    const Interval strip{mapAxis(clip.left, clip.top),
+                        mapAxis(clip.right, clip.bottom)};
+                    Check(strip.end > strip.begin,
+                        "each transformed Genie strip must retain positive axial coverage");
+                    if (!coverage.empty())
+                        Check(std::fabs(strip.begin - coverage.back().end) < 0.00001,
+                            "adjacent translucent Genie strips must meet without overlap or a gap");
+                    coverage.push_back(strip);
+                    coveredLength += strip.end - strip.begin;
+                    Check(vertical ? clip.left == 0.0 && clip.right == width
+                                   : clip.top == 0.0 && clip.bottom == height,
+                        "Genie content clips must retain the complete perpendicular source extent");
+                }
+                Check(std::fabs(coveredLength - (coverage.back().end - coverage.front().begin)) < 0.00001,
+                    "the warped content extent must be fully covered exactly once");
+                for (std::size_t index = 1; index < coverage.size(); ++index)
+                {
+                    const double seam = (coverage[index - 1].end + coverage[index].begin) * 0.5;
+                    double alpha = 0.0;
+                    for (const auto& strip : coverage)
+                        if (seam >= strip.begin && seam < strip.end)
+                            alpha += 0.4 * (1.0 - alpha);
+                    Check(std::fabs(alpha - 0.4) < 0.00001,
+                        "source-over at a warped seam must not darken translucent content or reveal a gap");
+                }
+                if (collapsed == 0.0 || collapsed == 1.0)
+                {
+                    const auto& extent = collapsed == 0.0 ? window : dock;
+                    const double begin = vertical ? extent.top - 50.75 : extent.left + 30.25;
+                    const double end = vertical ? extent.bottom - 50.75 : extent.right + 30.25;
+                    Check(std::fabs(coverage.front().begin - begin) < 0.001 &&
+                            std::fabs(coverage.back().end - end) < 0.001,
+                        "Genie content must cover the complete window and Dock at its endpoints");
+                }
+            }
+        }
+    }
+}
+
 void TestDeactivateRules()
 {
     Check(!rules::ShouldCloseOnDeactivate(
@@ -660,6 +742,7 @@ int main()
     TestSectionLayout();
     TestAnimationRules();
     TestAnimationEffects();
+    TestGenieTranslucentContentCoverage();
     TestDeactivateRules();
     TestSearchEditKeyboardRouting();
     TestAnimatedPointerHitRules();

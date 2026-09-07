@@ -411,6 +411,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // native animations. This also disconnects a previous animation during a
     // rapid open/close reversal and hides the native search edit until rest.
     ApplyQuickNavigationAnimationFrame();
+    ApplyFloatingDockLayerPolicy();
     if (quickNavigationAnimation_.GetEffect() ==
         snowdesktop::quick_navigation_animation_rules::Effect::Genie)
     {
@@ -517,6 +518,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
                     return;
                 }
                 ApplyQuickNavigationAnimationFrame();
+                ApplyFloatingDockLayerPolicy();
             });
     if (!quickNavigationAnimationCompletionToken_)
     {
