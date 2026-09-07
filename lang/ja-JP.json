@@ -1250,6 +1250,8 @@
   "settings.dock.taskbar": "タスクバー",
   "settings.dock.taskbar.description": "テーマ、動的ルール、配置、自動的に隠す動作を設定します。",
   "settings.dock.floatingShortcut": "フローティング Dock のショートカット",
+  "settings.dock.blockFullscreenSwipe": "全画面アプリ使用時はエッジジェスチャーを無効にする",
+  "settings.dock.blockFullscreenSwipe.description": "アクティブな全画面アプリが表示されている画面では、エッジジェスチャーによる呼び出しを停止します。キーボードショートカットは引き続き使用できます。",
   "settings.dock.edgeSwipe": "フローティング Dock の画面端ジェスチャ",
   "settings.dock.layoutAndPosition": "位置とレイアウト",
   "settings.dock.itemsAndBehavior": "項目と動作",

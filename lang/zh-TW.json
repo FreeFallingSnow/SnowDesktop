@@ -1250,6 +1250,8 @@
   "settings.dock.taskbar": "工作列",
   "settings.dock.taskbar.description": "設定佈景主題、動態規則、對齊和自動隱藏。",
   "settings.dock.floatingShortcut": "浮動 Dock 快速鍵",
+  "settings.dock.blockFullscreenSwipe": "全螢幕應用程式執行時停用手勢喚出",
+  "settings.dock.blockFullscreenSwipe.description": "前景全螢幕應用程式覆蓋的螢幕會暫停邊緣手勢喚出，仍可透過快捷鍵喚出 Dock。",
   "settings.dock.edgeSwipe": "浮動 Dock 邊緣手勢",
   "settings.dock.layoutAndPosition": "位置與版面配置",
   "settings.dock.itemsAndBehavior": "項目與行為",

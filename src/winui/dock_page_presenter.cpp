@@ -356,6 +356,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch floatingShortcutToggle{nullptr};
     muxc::TextBlock floatingShortcutHint{nullptr};
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
+    muxc::ToggleSwitch fullscreenSwipeToggle{nullptr};
     muxc::TextBlock floatingEdgeSwipeHint{nullptr};
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch showFrequentItemsToggle{nullptr};
@@ -388,6 +389,7 @@ struct DockPagePresenter::Impl
     SettingRow layoutRow;
     SettingRow monitorScopeRow;
     SettingRow floatingEdgeSwipeRow;
+    SettingRow fullscreenSwipeRow;
     SettingRow showWindowsButtonRow;
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
@@ -441,6 +443,7 @@ struct DockPagePresenter::Impl
     winrt::event_token monitorScopeToken{};
     winrt::event_token floatingShortcutToken{};
     winrt::event_token floatingEdgeSwipeToken{};
+    winrt::event_token fullscreenSwipeToken{};
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token showFrequentItemsToken{};
     winrt::event_token keepWhenDesktopHiddenToken{};
@@ -535,6 +538,7 @@ struct DockPagePresenter::Impl
         InitializeCard(behaviorCard, cardStyle, dockRoot);
         floatingShortcutToggle = muxc::ToggleSwitch{};
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
+        fullscreenSwipeToggle = muxc::ToggleSwitch{};
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         showFrequentItemsToggle = muxc::ToggleSwitch{};
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
@@ -543,6 +547,7 @@ struct DockPagePresenter::Impl
         for (const auto& toggle : {
                  floatingShortcutToggle,
                  floatingEdgeSwipeToggle,
+                 fullscreenSwipeToggle,
                  showWindowsButtonToggle,
                  showFrequentItemsToggle,
                  keepWhenDesktopHiddenToggle,
@@ -554,6 +559,8 @@ struct DockPagePresenter::Impl
         floatingShortcutHint = NewHint();
         floatingEdgeSwipeHint = NewHint();
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
+        fullscreenSwipeRow.Initialize(fullscreenSwipeToggle);
+        fullscreenSwipeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         showFrequentItemsRow.Initialize(showFrequentItemsToggle);
         allowDesktopContentOverlapRow.Initialize(
@@ -573,6 +580,7 @@ struct DockPagePresenter::Impl
             ContinuousField::FrequentItemCount, 1.0, 8.0, 1.0);
         // Floating shortcut mode/hotkey is rendered once by General.
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
+        edgeSwipeCard.content.Children().Append(fullscreenSwipeRow.root);
         behaviorCard.content.Children().Append(
             allowDesktopContentOverlapRow.root);
         behaviorCard.content.Children().Append(showOnlyWhenSummonedRow.root);
@@ -979,6 +987,8 @@ struct DockPagePresenter::Impl
         floatingEdgeSwipeToken = floatingEdgeSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateEdgeSwipeHintVisibility();
+                fullscreenSwipeRow.SetEnabled(
+                    dockEnabledToggle.IsOn() && floatingEdgeSwipeToggle.IsOn());
                 const bool value = floatingEdgeSwipeToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
@@ -987,6 +997,14 @@ struct DockPagePresenter::Impl
                             DisableSummonOnlyWhenPrerequisiteDisabled(
                                 settings.floatingEdgeSwipeEnabled,
                                 settings.showOnlyWhenSummoned);
+                    });
+            });
+        fullscreenSwipeToken = fullscreenSwipeToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = fullscreenSwipeToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) {
+                        settings.floatingEdgeSwipeBlockFullscreen = value;
                     });
             });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
@@ -1548,6 +1566,7 @@ struct DockPagePresenter::Impl
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
+        fullscreenSwipeToggle.IsOn(settings.floatingEdgeSwipeBlockFullscreen);
         floatingEdgeSwipeToggle.IsOn(
             snowdesktop::dock_settings_rules::
                 IsFloatingEdgeSwipeEnabled(
@@ -1612,6 +1631,7 @@ struct DockPagePresenter::Impl
         // ContentControl host to remove its descendants from keyboard/Tab
         // input. IsHitTestVisible on the card remains the pointer guard.
         floatingEdgeSwipeRow.SetEnabled(dockEnabled);
+        fullscreenSwipeRow.SetEnabled(dockEnabledToggle.IsOn() && floatingEdgeSwipeToggle.IsOn());
         positionRow.SetEnabled(dockEnabled);
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
@@ -2142,6 +2162,12 @@ struct DockPagePresenter::Impl
             L("app.dock.floating_edge_swipe", L"Edge Swipe"),
             L("app.dock.floating_edge_swipe_hint",
                 L"Reveal the floating Dock from a screen edge."));
+        fullscreenSwipeRow.SetText(
+            L("settings.dock.blockFullscreenSwipe", L"Disable edge swipe in fullscreen apps"),
+            L("settings.dock.blockFullscreenSwipe.description",
+                L"Pause edge swipe on the screen covered by the active fullscreen app. Keyboard shortcuts remain available."));
+        muxa::AutomationProperties::SetName(
+            fullscreenSwipeToggle, fullscreenSwipeRow.label.Text());
         allowDesktopContentOverlapRow.SetText(
             L("settings.dock.allowDesktopContentOverlap",
                 L"Allow Dock to overlap desktop content"),
@@ -2360,6 +2386,8 @@ struct DockPagePresenter::Impl
             return thicknessScale.slider;
         if (id == "dock.floatingShortcutMode")
             return floatingShortcutToggle;
+        if (id == "dock.floatingEdgeSwipeBlockFullscreen")
+            return fullscreenSwipeToggle;
         if (id == "dock.floatingEdgeSwipe" ||
             id == "dock.floatingEdgeSwipeEnabled")
             return floatingEdgeSwipeToggle;
@@ -2501,6 +2529,7 @@ struct DockPagePresenter::Impl
             monitorScopeCombo.SelectionChanged(monitorScopeToken);
             floatingShortcutToggle.Toggled(floatingShortcutToken);
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
+            fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
             showFrequentItemsToggle.Toggled(showFrequentItemsToken);
             keepWhenDesktopHiddenToggle.Toggled(keepWhenDesktopHiddenToken);

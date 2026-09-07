@@ -68,6 +68,7 @@ void TestCodec()
     settings.values.general.animationFrameLimit = 120;
     settings.values.general.animationEnergySaver = false;
     settings.values.general.animationOnBattery = true;
+    settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;

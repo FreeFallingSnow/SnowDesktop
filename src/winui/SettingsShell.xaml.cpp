@@ -2284,6 +2284,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.enable", "dock.position", "dock.layout",
                 "dock.monitor", "dock.thickness",
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
+                "dock.floatingEdgeSwipeBlockFullscreen",
                 "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap",

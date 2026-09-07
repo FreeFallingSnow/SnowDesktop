@@ -3038,6 +3038,27 @@ int main(int argc, char** argv)
             DockPosition::Bottom, 4),
         "an inward pointer must not count as an along-edge swipe");
 
+    const RECT fullscreenMonitor{-1920, 0, 0, 1080};
+    Check(floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            true, fullscreenMonitor, fullscreenMonitor),
+        "borderless fullscreen blocks swipes on a negative-coordinate monitor");
+    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            false, fullscreenMonitor, fullscreenMonitor),
+        "fullscreen protection can be disabled");
+    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            true, RECT{-1920, 30, 0, 1040}, fullscreenMonitor),
+        "maximized client areas do not block swipes");
+    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            true, RECT{0, 0, 1920, 1080}, fullscreenMonitor),
+        "fullscreen on another monitor does not block swipes");
+    floatingDock::EdgeSwipeDetector fullscreenSwipe;
+    fullscreenSwipe.Update(POINT{-1500, 1079}, fullscreenMonitor,
+        DockPosition::Bottom, 100, 4, 72);
+    fullscreenSwipe.SuppressUntilEdgeLeave();
+    Check(!fullscreenSwipe.Update(POINT{-1400, 1079}, fullscreenMonitor,
+            DockPosition::Bottom, 200, 4, 72),
+        "exiting fullscreen cannot complete a stale edge gesture");
+
     floatingDock::EdgeSwipeDetector bottomSwipe;
     Check(!bottomSwipe.Update(
             POINT{ -1500, 1079 },

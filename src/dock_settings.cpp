@@ -963,6 +963,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "floatingEdgeSwipeEnabled",
         settings.floatingEdgeSwipeEnabled);
+    ReadBoolField(text, "floatingEdgeSwipeBlockFullscreen",
+        settings.floatingEdgeSwipeBlockFullscreen);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -1080,6 +1082,9 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << settings.floatingHotkeyVirtualKey << ",\n";
     file << "  \"floatingEdgeSwipeEnabled\": "
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"floatingEdgeSwipeBlockFullscreen\": "
+         << (settings.floatingEdgeSwipeBlockFullscreen ? "true" : "false")
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";

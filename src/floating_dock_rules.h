@@ -12,6 +12,15 @@
 namespace snowdesktop::floating_dock_rules
 {
 
+// Use the client area, so maximized windows with title bars are not fullscreen.
+inline bool ShouldBlockFullscreenEdgeSwipe(
+    bool enabled, const RECT& client, const RECT& monitor) noexcept
+{
+    return enabled && monitor.right > monitor.left && monitor.bottom > monitor.top &&
+        client.left <= monitor.left && client.top <= monitor.top &&
+        client.right >= monitor.right && client.bottom >= monitor.bottom;
+}
+
 inline constexpr DWORD kWindowExStyle =
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
 

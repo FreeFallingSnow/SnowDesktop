@@ -1250,6 +1250,8 @@
   "settings.dock.taskbar": "Barra de tareas",
   "settings.dock.taskbar.description": "Define el tema, las reglas dinámicas, la alineación y la ocultación automática.",
   "settings.dock.floatingShortcut": "Método abreviado del Dock flotante",
+  "settings.dock.blockFullscreenSwipe": "Desactivar el gesto del borde en pantalla completa",
+  "settings.dock.blockFullscreenSwipe.description": "Pausa el gesto del borde en la pantalla que ocupa la aplicación activa a pantalla completa. Los atajos de teclado siguen disponibles.",
   "settings.dock.edgeSwipe": "Gesto desde el borde para el Dock flotante",
   "settings.dock.layoutAndPosition": "Posición y diseño",
   "settings.dock.itemsAndBehavior": "Elementos y comportamiento",

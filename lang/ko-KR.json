@@ -1250,6 +1250,8 @@
   "settings.dock.taskbar": "작업 표시줄",
   "settings.dock.taskbar.description": "테마, 동적 규칙, 맞춤 및 자동 숨기기를 설정합니다.",
   "settings.dock.floatingShortcut": "플로팅 Dock 바로 가기 키",
+  "settings.dock.blockFullscreenSwipe": "전체 화면 앱 사용 시 가장자리 제스처 비활성화",
+  "settings.dock.blockFullscreenSwipe.description": "활성 전체 화면 앱이 표시된 화면에서는 가장자리 제스처 호출을 중지합니다. 키보드 단축키는 계속 사용할 수 있습니다.",
   "settings.dock.edgeSwipe": "플로팅 Dock 가장자리 제스처",
   "settings.dock.layoutAndPosition": "위치 및 레이아웃",
   "settings.dock.itemsAndBehavior": "항목 및 동작",

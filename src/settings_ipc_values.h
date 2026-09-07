@@ -26,7 +26,7 @@ SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
-    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.monitorScope, v.showWindowsButton,
+    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.floatingEdgeSwipeBlockFullscreen, v.monitorScope, v.showWindowsButton,
     v.showRunningApps, v.showWindowPreviews, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.frequentItemCount, v.thicknessScale,
     v.systemTaskbarAutoHide, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,

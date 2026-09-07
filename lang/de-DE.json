@@ -1250,6 +1250,8 @@
   "settings.dock.taskbar": "Taskleiste",
   "settings.dock.taskbar.description": "Design, dynamische Regeln, Ausrichtung und automatisches Ausblenden festlegen.",
   "settings.dock.floatingShortcut": "Tastenkürzel für schwebendes Dock",
+  "settings.dock.blockFullscreenSwipe": "Randgesten bei Vollbild-Apps deaktivieren",
+  "settings.dock.blockFullscreenSwipe.description": "Randgesten auf dem Bildschirm der aktiven Vollbild-App aussetzen. Tastenkombinationen bleiben verfügbar.",
   "settings.dock.edgeSwipe": "Randgeste für schwebendes Dock",
   "settings.dock.layoutAndPosition": "Position und Layout",
   "settings.dock.itemsAndBehavior": "Elemente und Verhalten",

@@ -1250,6 +1250,8 @@
     "settings.dock.taskbar": "Taskbar",
     "settings.dock.taskbar.description": "Set theme, dynamic rules, alignment and auto-hide.",
     "settings.dock.floatingShortcut": "Floating Dock shortcut",
+    "settings.dock.blockFullscreenSwipe": "Disable edge swipe in fullscreen apps",
+    "settings.dock.blockFullscreenSwipe.description": "Pause edge swipe on the screen covered by the active fullscreen app. Keyboard shortcuts remain available.",
     "settings.dock.edgeSwipe": "Floating Dock edge gesture",
     "settings.dock.layoutAndPosition": "Position and layout",
     "settings.dock.itemsAndBehavior": "Items and behavior",

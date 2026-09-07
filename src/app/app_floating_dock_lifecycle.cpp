@@ -2,6 +2,32 @@
 
 // Floating-Dock hotkey and edge-swipe lifecycle.
 
+namespace
+{
+bool ForegroundFullscreenBlocksEdgeSwipe(bool enabled, const RECT& monitor)
+{
+    if (!enabled) return false;
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground || !IsWindowVisible(foreground) || IsIconic(foreground))
+        return false;
+    DWORD processId = 0;
+    GetWindowThreadProcessId(foreground, &processId);
+    if (processId == GetCurrentProcessId()) return false;
+    wchar_t className[256]{};
+    GetClassNameW(foreground, className, 256);
+    if (_wcsicmp(className, L"Progman") == 0 ||
+        _wcsicmp(className, L"WorkerW") == 0)
+        return false;
+    RECT client{};
+    if (!GetClientRect(foreground, &client)) return false;
+    POINT origin{};
+    if (!ClientToScreen(foreground, &origin)) return false;
+    OffsetRect(&client, origin.x, origin.y);
+    return snowdesktop::floating_dock_rules::ShouldBlockFullscreenEdgeSwipe(
+        enabled, client, monitor);
+}
+}
+
 LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(
     int code, WPARAM message, LPARAM data)
 {
@@ -541,6 +567,15 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         !GetMonitorInfoW(monitor, &monitorInfo))
     {
         floatingDockEdgeSwipeDetector_.Reset();
+        return;
+    }
+
+    if (ForegroundFullscreenBlocksEdgeSwipe(
+            dockSettings_.floatingEdgeSwipeBlockFullscreen,
+            monitorInfo.rcMonitor))
+    {
+        // A fresh edge entry is required after leaving fullscreen.
+        floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
         return;
     }
 
