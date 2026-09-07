@@ -220,15 +220,19 @@ void UiAnimationScheduler::DispatchDue()
         }
     }
 
+    // Component/deadline callbacks above may take longer than a frame. Sample
+    // again after that work so every animated surface receives the current
+    // time, rather than replaying a pose from before a slow callback.
+    const double frameNow = MonotonicMilliseconds();
     if (!frameEntries_.empty() &&
-        now + 0.05 >= nextFrameMilliseconds_)
+        frameNow + 0.05 >= nextFrameMilliseconds_)
     {
         const double interval = EffectiveFrameIntervalMs();
         std::uint64_t missed = 0;
-        if (nextFrameMilliseconds_ > 0.0 && now > nextFrameMilliseconds_)
+        if (nextFrameMilliseconds_ > 0.0 && frameNow > nextFrameMilliseconds_)
         {
             missed = MissedFrameCount(
-                nextFrameMilliseconds_, now, interval);
+                nextFrameMilliseconds_, frameNow, interval);
             skippedFrames_ += missed;
         }
         requestedFrames_ += missed + 1;
@@ -238,10 +242,10 @@ void UiAnimationScheduler::DispatchDue()
         {
             PushSample(
                 frameIntervalSamples_,
-                now - lastDeliveredFrameMilliseconds_);
+                frameNow - lastDeliveredFrameMilliseconds_);
         }
-        lastDeliveredFrameMilliseconds_ = now;
-        lastPresentationMilliseconds_ = now;
+        lastDeliveredFrameMilliseconds_ = frameNow;
+        lastPresentationMilliseconds_ = frameNow;
 
         std::vector<UiScheduleToken> frameTokens;
         frameTokens.reserve(frameEntries_.size());
@@ -259,7 +263,7 @@ void UiAnimationScheduler::DispatchDue()
             bool keep = false;
             try
             {
-                keep = callback(now);
+                keep = callback(frameNow);
             }
             catch (...)
             {
@@ -284,7 +288,7 @@ void UiAnimationScheduler::DispatchDue()
         {
             const double nextInterval = EffectiveFrameIntervalMs();
             nextFrameMilliseconds_ += nextInterval;
-            while (nextFrameMilliseconds_ <= now)
+            while (nextFrameMilliseconds_ <= frameNow)
                 nextFrameMilliseconds_ += nextInterval;
         }
     }

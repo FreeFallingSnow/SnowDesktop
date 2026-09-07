@@ -145,6 +145,36 @@ int main()
     Check(!scheduler.HasScheduledWork(),
         "completed frame callbacks leave no active request");
 
+    {
+        // Protect against replaying an old pose after a slow component update.
+        // Only event ordering is asserted, with no wall-clock latency ceiling.
+        UiAnimationScheduler busyScheduler;
+        double timerFinished = 0.0;
+        double popupTimestamp = 0.0;
+        double dockTimestamp = 0.0;
+        busyScheduler.StartAnimation(UiAnimationSurface::Popup,
+            [&](double timestamp) {
+                popupTimestamp = timestamp;
+                return false;
+            });
+        busyScheduler.StartAnimation(UiAnimationSurface::FloatingDock,
+            [&](double timestamp) {
+                dockTimestamp = timestamp;
+                return false;
+            });
+        busyScheduler.ScheduleOnce(0, [&](auto) {
+            Sleep(25);
+            timerFinished = UiAnimationScheduler::MonotonicMilliseconds();
+        });
+        busyScheduler.DispatchDue();
+        Check(timerFinished > 0.0 && popupTimestamp >= timerFinished,
+            "animation progress must use a timestamp sampled after slow timer work");
+        Check(popupTimestamp == dockTimestamp,
+            "surfaces must still share one fresh timestamp after slow timer work");
+        Check(!busyScheduler.HasScheduledWork(),
+            "a delayed frame completes in one dispatch without catch-up requests");
+    }
+
     int deferredTrackFrames = 0;
     scheduler.StartAnimation(
         UiAnimationSurface::Popup,
