@@ -87,7 +87,7 @@ struct DockSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
-    bool floatingEdgeSwipeBlockFullscreen = true;
+    bool floatingEdgeSwipeBlockFullscreen = false;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
     // Legacy persisted fields kept for layout compatibility. Running
