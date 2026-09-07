@@ -94,9 +94,11 @@
   try(icon): 尝试调整高分辨率图标加载（编译通过，待验证） / Try adjusting high-resolution icon loading (build passed, validation pending)
   ```
 
-- 纯组件更新不执行宿主编译；尚待 SnowDesktop 实际场景验证时，应使用 `try(widget)` Commit，
-  首行同时包含“组件验证通过，待实机验证”和 `widget checks passed, runtime validation pending`。
-  正文必须写明实际通过的组件级检查、尚未运行的目标场景验证和已知限制，不得声称宿主编译通过。
+- 纯组件更新无需为代码正确性编译宿主；但内置组件在交付实机验证前，必须按“构建与验证”章节将
+  源码更新到目标构建目录。尚待 SnowDesktop 实际场景验证时，应使用 `try(widget)` Commit，首行同时
+  包含“组件验证通过，待实机验证”和 `widget checks passed, runtime validation pending`。正文必须
+  写明实际通过的组件级检查、采用标准构建还是手动临时同步、尚未运行的目标场景验证和已知限制；
+  只有实际运行标准构建后才能声称宿主编译通过，手动同步不得写成编译通过。
 - `try` Commit 正文必须写明：实际通过的编译命令、已运行的测试、尚未运行的目标场景验证、已知
   限制。纯组件更新按上一条记录组件级检查；只通过定向目标编译时必须写出目标名，不得笼统写成
   Release 构建通过。
@@ -162,6 +164,17 @@
   测试。应改用 `snowwidget lint`、组件测试、包校验和打包等组件级入口完成与改动相匹配的验证，
   并在 Commit 和交付说明中如实记录实际执行的命令与结果。只要改动越出组件包边界，仍须遵守
   下列标准构建与完整测试要求。
+- `widgets/<slug>/` 中的内置组件源码不会由现有 `.build/<Configuration>/SnowDesktop.exe` 直接读取。
+  内置组件改动在交付桌面实机验证前，必须二选一：运行 `scripts/build.bat`，由标准构建把组件复制到
+  `.build/<Configuration>/widgets/<slug>/`；或仅为本轮验证，将该组件包手动临时同步到上述精确输出
+  目录。手动同步前必须核对源、目标绝对路径、slug 和清单 UUID，且只允许覆盖对应组件目录，严禁
+  改动或删除 `.build/<Configuration>/data/`、其他组件输出或整个 `.build`。同步后应核对改动文件哈希，
+  并按需要刷新或重启宿主，确认实际加载的是目标构建中的内置来源。手动临时同步不等于宿主编译，
+  不得据此报告 `scripts/build.bat` 通过。
+- 上述手动临时同步只适用于 `widgets/` 内置组件，不是社区组件或用户开发组件流程，不得为此使用
+  `scripts/widget-dev.bat`、写入 `data/widgets/dev/`，或要求启用“开发版本”。位于
+  `developer_assets/workshop_widgets/` 的官方社区组件仍严格使用“仓库内容边界”章节规定的
+  `scripts/widget-dev.bat` 流程。
 - Release 构建的标准验证入口是 `scripts/build.bat`。
 - 在报告构建通过前，必须实际运行 `scripts/build.bat` 并确认 `.build\Release\SnowDesktop.exe` 成功生成。
 - `scripts/build.bat` 默认不得终止 SnowDesktop 或 Explorer。若应用或 Hook DLL 被占用，Agent 可在
