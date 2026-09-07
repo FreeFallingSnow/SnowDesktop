@@ -1,5 +1,6 @@
 #include "shell_launch_worker.h"
 #include "shell_context_menu_invoke.h"
+#include "shell_launch_process.h"
 
 #include <objbase.h>
 #include <shellapi.h>
@@ -17,49 +18,6 @@ namespace
 {
 
 using Microsoft::WRL::ComPtr;
-
-class ShellAsyncThreadReference
-{
-public:
-    ~ShellAsyncThreadReference()
-    {
-        if (installed_)
-            SHSetThreadRef(nullptr);
-    }
-
-    bool Ensure()
-    {
-        if (installed_)
-            return true;
-
-        ComPtr<IUnknown> existing;
-        if (SUCCEEDED(SHGetThreadRef(existing.GetAddressOf())) && existing)
-            return true;
-
-        if (FAILED(SHCreateThreadRef(
-                &referenceCount_, reference_.GetAddressOf())) ||
-            !reference_ ||
-            FAILED(SHSetThreadRef(reference_.Get())))
-        {
-            reference_.Reset();
-            referenceCount_ = 0;
-            return false;
-        }
-        installed_ = true;
-        return true;
-    }
-
-private:
-    LONG referenceCount_ = 0;
-    ComPtr<IUnknown> reference_;
-    bool installed_ = false;
-};
-
-bool EnsureShellAsyncThreadReference()
-{
-    thread_local ShellAsyncThreadReference reference;
-    return reference.Ensure();
-}
 
 bool ExecutableManifestRequestsAdministrator(
     const std::wstring& executablePath)
@@ -113,18 +71,9 @@ bool SafeInvokeContextMenu(
 bool InvokeShellItemOpen(
     HWND owner,
     PCIDLIST_ABSOLUTE absolutePidl,
-    int showCommand,
-    bool asynchronous)
+    int showCommand)
 {
     if (!absolutePidl)
-        return false;
-
-    // Since Windows Vista, CMIC_MASK_ASYNCOK is effective only when the
-    // calling thread publishes a Shell thread reference. The desktop UI STA
-    // is process-lifetime, so keeping one reference in thread-local storage
-    // lets the built-in shortcut handler return while an elevation broker or
-    // execution delegate finishes, instead of freezing desktop rendering.
-    if (asynchronous && !EnsureShellAsyncThreadReference())
         return false;
 
     ComPtr<IShellFolder> parentFolder;
@@ -200,8 +149,9 @@ bool InvokeShellItemOpen(
 
     CMINVOKECOMMANDINFOEX invoke{};
     invoke.cbSize = sizeof(invoke);
-    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE |
-        (asynchronous ? CMIC_MASK_ASYNCOK : CMIC_MASK_NOASYNC);
+    // This STA belongs to a short-lived helper. Finish Shell/DDE handoff
+    // before it exits; the desktop does not wait for this call.
+    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE | CMIC_MASK_NOASYNC;
     invoke.hwnd = validOwner;
     if (openOffset != static_cast<UINT_PTR>(-1))
     {
@@ -220,13 +170,6 @@ bool InvokeShellItemOpen(
         invoke, invocationDirectory, invocationDirectoryA);
     invoke.nShow = showCommand;
 
-    if (asynchronous)
-    {
-        // Preserve foreground-input eligibility for ordinary asynchronous
-        // Shell handlers. Elevated shortcuts bypass this Open path and use
-        // the explicit runas route instead.
-        AllowSetForegroundWindow(ASFW_ANY);
-    }
     const bool opened = SafeInvokeContextMenu(
         contextMenu.Get(),
         reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
@@ -239,16 +182,19 @@ bool ExecuteShellOpen(
     const std::wstring& path,
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand,
-    ULONG launchMask,
-    bool asynchronousShellItem)
+    ULONG launchMask)
 {
     if (path.empty())
         return false;
 
-    if (absolutePidl &&
-        InvokeShellItemOpen(
-            owner, absolutePidl, showCommand,
-            asynchronousShellItem))
+    // Opening an ordinary folder does not require collecting third-party
+    // context-menu entries just to find the Open verb. Attribute lookup also
+    // stays in the helper, since network/removable paths can block here.
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    const bool fileSystemDirectory = attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (!fileSystemDirectory && absolutePidl &&
+        InvokeShellItemOpen(owner, absolutePidl, showCommand))
     {
         return true;
     }
@@ -290,6 +236,35 @@ bool ExecuteShellOpen(
     return ShellExecuteExW(&executeInfo) != FALSE;
 }
 
+} // namespace
+
+namespace
+{
+bool DispatchShellOpen(HWND owner, const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl, int showCommand,
+    shell_launch_process::Action action)
+{
+    try
+    {
+        shell_launch_process::Request request;
+        request.owner = owner;
+        request.path = path;
+        request.showCommand = showCommand;
+        request.action = action;
+        if (absolutePidl)
+        {
+            const UINT size = ILGetSize(absolutePidl);
+            if (!size || size > 65536) return false;
+            const auto* data = reinterpret_cast<const unsigned char*>(absolutePidl);
+            request.absolutePidl.assign(data, data + size);
+        }
+        return static_cast<bool>(shell_launch_process::Start(request));
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
 } // namespace
 
 ShellLaunchWorker::ShellLaunchWorker()
@@ -411,11 +386,8 @@ bool ShellLaunchWorker::Execute(
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand)
 {
-    constexpr ULONG launchMask =
-        SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE;
-    return ExecuteShellOpen(
-        owner, path, absolutePidl, showCommand,
-        launchMask, false);
+    return DispatchShellOpen(owner, path, absolutePidl, showCommand,
+        shell_launch_process::Action::Open);
 }
 
 bool ShellLaunchWorker::ExecuteInteractive(
@@ -424,11 +396,8 @@ bool ShellLaunchWorker::ExecuteInteractive(
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand)
 {
-    constexpr ULONG launchMask =
-        SEE_MASK_ASYNCOK | SEE_MASK_FLAG_LOG_USAGE;
-    return ExecuteShellOpen(
-        owner, path, absolutePidl, showCommand,
-        launchMask, true);
+    return DispatchShellOpen(owner, path, absolutePidl, showCommand,
+        shell_launch_process::Action::OpenWithShortcutPolicy);
 }
 
 bool ShellLaunchWorker::ExecuteRunAsAdministrator(
@@ -437,24 +406,34 @@ bool ShellLaunchWorker::ExecuteRunAsAdministrator(
     PCIDLIST_ABSOLUTE,
     int showCommand)
 {
+    return DispatchShellOpen(owner, path, nullptr, showCommand,
+        shell_launch_process::Action::RunAs);
+}
+
+bool shell_launch_process::ExecuteRequest(const Request& request)
+{
+    const auto& path = request.path;
     if (path.empty())
         return false;
-
-    const HWND validOwner = owner && IsWindow(owner) ? owner : nullptr;
-    if (validOwner)
-        SetForegroundWindow(validOwner);
-    // The elevation broker is a different process. Grant it foreground
-    // eligibility immediately before ShellExecuteEx so another input event
-    // cannot consume a grant made earlier on the enqueueing UI thread.
-    AllowSetForegroundWindow(ASFW_ANY);
-
+    const HWND validOwner = request.owner && IsWindow(request.owner)
+        ? request.owner : nullptr;
+    const bool runAs = request.action == Action::RunAs ||
+        (request.action == Action::OpenWithShortcutPolicy &&
+            ShellLaunchWorker::ShortcutRequestsAdministrator(path));
+    if (!runAs)
+    {
+        const auto pidl = request.absolutePidl.empty() ? nullptr :
+            reinterpret_cast<PCIDLIST_ABSOLUTE>(request.absolutePidl.data());
+        return ExecuteShellOpen(validOwner, path, pidl, request.showCommand,
+            SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
+    }
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
+    executeInfo.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
     executeInfo.hwnd = validOwner;
     executeInfo.lpVerb = L"runas";
     executeInfo.lpFile = path.c_str();
-    executeInfo.nShow = showCommand;
+    executeInfo.nShow = request.showCommand;
     return ShellExecuteExW(&executeInfo) != FALSE;
 }
 

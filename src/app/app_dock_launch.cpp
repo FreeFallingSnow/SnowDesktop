@@ -216,12 +216,8 @@ void DesktopApp::InvalidateDockLaunchBounceRects()
 bool DesktopApp::LaunchPathWithShortcutPolicy(
     HWND owner, const std::wstring& path)
 {
-    if (snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(path))
-    {
-        return RunPathAsAdministrator(path);
-    }
-    return shellLaunchWorker_.Enqueue(owner, path);
+    return snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+        owner, path, nullptr);
 }
 
 bool DesktopApp::LaunchDesktopItem(
@@ -249,31 +245,13 @@ bool DesktopApp::LaunchDesktopItem(
         GetDockWindowVisualState(itemIndex) ==
             DockWindowVisualState::Closed;
     const DesktopItem& item = items_[itemIndex];
-    const wchar_t* extension =
-        PathFindExtensionW(item.parsingName.c_str());
-    const bool useShellItemActivation = item.isShortcut ||
-        (extension &&
-            (_wcsicmp(extension, L".lnk") == 0 ||
-                _wcsicmp(extension, L".url") == 0));
-    // Desktop activation is direct user input. Invoke the Shell item's Open
-    // command on the UI STA, matching the context-menu path and preserving
-    // the input thread's foreground/DDE handoff. A single background launch
-    // queue can otherwise leave later document opens behind a blocked legacy
-    // handler on Windows 10. Dock launches keep their existing isolation.
+    // Resolve shortcuts and invoke Shell handlers in a separate process.
+    // Even a worker-thread loader-lock deadlock can poison the whole host;
+    // one helper per launch also keeps later opens out of a blocked queue.
     const bool launchAccepted =
-        snowdesktop::ShellLaunchWorker::
-                ShortcutRequestsAdministrator(item.parsingName)
-        ? RunPathAsAdministrator(item.parsingName)
-        : !animateDockLaunch && item.absolutePidl.get()
-        ? snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+        snowdesktop::ShellLaunchWorker::ExecuteInteractive(
             ShellDialogOwnerHwnd(), item.parsingName,
-            item.absolutePidl.get())
-        : useShellItemActivation && item.absolutePidl.get()
-            ? shellLaunchWorker_.EnqueueShellItem(
-                ShellDialogOwnerHwnd(), item.parsingName,
-                item.absolutePidl.get())
-            : shellLaunchWorker_.Enqueue(
-                ShellDialogOwnerHwnd(), item.parsingName);
+            item.absolutePidl.get());
     if (!launchAccepted)
         return false;
     RecordDockItemUsage(itemIndex);

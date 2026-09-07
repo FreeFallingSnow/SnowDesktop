@@ -1,4 +1,5 @@
 #include "shell_launch_worker.h"
+#include "shell_launch_process.h"
 
 #include <array>
 #include <chrono>
@@ -387,7 +388,7 @@ void TestAdministratorShortcutMetadataIsDetected()
     CoUninitialize();
 }
 
-void TestShellContextMenuOpenLaunchesShortcut()
+void TestIsolatedOpenLaunchesShortcut()
 {
     const HRESULT comResult = CoInitializeEx(
         nullptr, COINIT_APARTMENTTHREADED);
@@ -477,14 +478,9 @@ void TestShellContextMenuOpenLaunchesShortcut()
             snowdesktop::ShellLaunchWorker::ExecuteInteractive(
                 nullptr, linkPath, absolutePidl),
             "interactive Shell context-menu Open must accept the shortcut");
-        Microsoft::WRL::ComPtr<IUnknown> threadReference;
-        Check(
-            SUCCEEDED(SHGetThreadRef(threadReference.GetAddressOf())) &&
-                threadReference,
-            "interactive Shell activation must publish the thread reference required for asynchronous invocation");
         Check(
             WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
-            "the shortcut must launch through asynchronous Shell context-menu Open");
+            "the shortcut must launch through the isolated interactive Open request");
     }
 
     if (absolutePidl)
@@ -498,10 +494,128 @@ void TestShellContextMenuOpenLaunchesShortcut()
     CoUninitialize();
 }
 
+std::wstring UniqueEventName(const wchar_t* prefix)
+{
+    GUID id{};
+    wchar_t text[64]{};
+    if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, text, 64)) return {};
+    return std::wstring(L"Local\\SnowDesktopShellProcess-") + prefix + text;
+}
+
+void TestRequestPayloadPreservesPathsAndRejectsInvalidPidls()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    process::Request request;
+    request.path = L"C:\\用户目录\\开题答辩\\带 空格 & 引号\".lnk";
+    request.owner = reinterpret_cast<HWND>(std::uintptr_t{0x1234});
+    request.showCommand = SW_SHOWMAXIMIZED;
+    request.action = process::Action::OpenWithShortcutPolicy;
+    request.absolutePidl = {6, 0, 0x2A, 0x11, 0x22, 0x33, 0, 0};
+    const auto encoded = process::Encode(request);
+    const auto decoded = process::Decode(encoded);
+    Check(decoded && decoded->path == request.path &&
+            decoded->absolutePidl == request.absolutePidl &&
+            decoded->owner == request.owner &&
+            decoded->showCommand == request.showCommand && decoded->action == request.action,
+        "the helper transport must preserve Unicode, shell metacharacters and complete PIDL bytes");
+    for (std::size_t size = 0; size < encoded.size(); ++size)
+    {
+        if (process::Decode(std::span(encoded.data(), size)))
+        {
+            Check(false, "a truncated helper payload must never reach Shell code");
+            break;
+        }
+    }
+    auto malformed = encoded;
+    malformed[12] = 0xFF;
+    malformed[13] = 0xFF;
+    malformed[14] = 0xFF;
+    malformed[15] = 0xFF;
+    Check(!process::Decode(malformed), "oversized path lengths must be rejected before allocation");
+    malformed = encoded;
+    malformed[4] = 2;
+    Check(!process::Decode(malformed), "unknown helper protocol versions must be rejected");
+    malformed = encoded;
+    malformed.back() = 1;
+    Check(!process::Decode(malformed), "a PIDL without a complete terminal item must be rejected");
+    request.path.push_back(L'\0');
+    Check(process::Encode(request).empty(), "embedded NUL must not silently truncate an open target");
+    request.path = L"valid";
+    request.absolutePidl = {1, 0, 0, 0};
+    Check(process::Encode(request).empty(), "PIDL items shorter than their size field must be rejected");
+}
+
+bool ExecuteHelperFixture(const snowdesktop::shell_launch_process::Request& request)
+{
+    constexpr std::wstring_view blockPrefix = L"test:block:";
+    constexpr std::wstring_view signalPrefix = L"test:signal:";
+    const std::wstring_view path(request.path);
+    const bool block = path.starts_with(blockPrefix);
+    if (!block && !path.starts_with(signalPrefix))
+        return snowdesktop::shell_launch_process::ExecuteRequest(request);
+    const std::wstring eventName(path.substr(block ? blockPrefix.size() : signalPrefix.size()));
+    HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
+    if (!event) return false;
+    const BOOL signaled = SetEvent(event);
+    CloseHandle(event);
+    if (block)
+    {
+        // Deliberately never finish this one request. Only the supervised
+        // helper is blocked; no third-party registration or live desktop UI.
+        HANDLE neverSignaled = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!neverSignaled) return false;
+        WaitForSingleObject(neverSignaled, INFINITE);
+        CloseHandle(neverSignaled);
+    }
+    return signaled != FALSE;
+}
+
+void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    const auto startedName = UniqueEventName(L"blocked-");
+    const auto nextName = UniqueEventName(L"next-");
+    HANDLE started = CreateEventW(nullptr, TRUE, FALSE, startedName.c_str());
+    HANDLE next = CreateEventW(nullptr, TRUE, FALSE, nextName.c_str());
+    Check(started && next && !startedName.empty() && !nextName.empty(),
+        "the helper isolation events must be created");
+    if (!started || !next) return;
+    process::Request request;
+    request.path = L"test:block:" + startedName;
+    const auto blocked = process::Start(request, 8000);
+    Check(static_cast<bool>(blocked), "the blocked helper must be dispatched");
+    HANDLE child = blocked ? OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE, blocked.id) : nullptr;
+    Check(child != nullptr, "the exact blocked helper process must be observable");
+    if (child)
+    {
+        Check(WaitForSingleObject(started, 5000) == WAIT_OBJECT_0,
+            "the helper must start executing the blocking fixture");
+        request.path = L"test:signal:" + nextName;
+        const auto following = process::Start(request);
+        Check(following && following.id != blocked.id,
+            "a later open must use an independent helper process");
+        Check(WaitForSingleObject(next, 5000) == WAIT_OBJECT_0,
+            "a later open must complete while the previous Shell handler is blocked");
+        Check(WaitForSingleObject(child, 0) == WAIT_TIMEOUT,
+            "the successor must run before the blocked request reaches its deadline");
+        Check(WaitForSingleObject(child, 10000) == WAIT_OBJECT_0,
+            "a blocked helper must be reaped within its bounded deadline");
+        DWORD result = 0;
+        Check(GetExitCodeProcess(child, &result) && result == ERROR_TIMEOUT,
+            "the deadline must terminate only the stuck helper with a timeout result");
+        CloseHandle(child);
+    }
+    CloseHandle(started);
+    CloseHandle(next);
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
 {
+    if (const auto result = snowdesktop::shell_launch_process::TryRunCommand(ExecuteHelperFixture))
+        return *result;
     if (argc == 3 &&
         wcscmp(argv[1], L"--shell-launch-child") == 0)
     {
@@ -519,7 +633,9 @@ int wmain(int argc, wchar_t** argv)
     TestInvalidRequestsAreRejected();
     TestShellItemPidlIsCopiedBeforeExecution();
     TestAdministratorShortcutMetadataIsDetected();
-    TestShellContextMenuOpenLaunchesShortcut();
+    TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
+    TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();
+    TestIsolatedOpenLaunchesShortcut();
     if (failures != 0)
     {
         std::cerr << failures

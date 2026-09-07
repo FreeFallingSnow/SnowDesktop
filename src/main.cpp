@@ -13,6 +13,7 @@
 
 #include "app.h"
 #include "settings_process.h"
+#include "shell_launch_process.h"
 #include "crashlog.h"
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
@@ -362,6 +363,9 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (const auto result = snowdesktop::shell_launch_process::TryRunCommand())
+        return *result;
+
     if (snowdesktop::settings_ipc::IsSettingsProcessCommand())
         return snowdesktop::settings_ipc::RunSettingsProcess(instance);
 
