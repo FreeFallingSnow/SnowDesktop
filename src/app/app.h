@@ -159,6 +159,7 @@ class AsyncHttpService;
 
 namespace snowdesktop
 {
+class ShellContextMenuSite;
 struct AutoStartQueryResult
 {
     bool packaged = false;
@@ -1937,6 +1938,9 @@ private:
             onTextChanged = {});
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
+    BOOL InvokeShellMenuCommand(IContextMenu* menu,
+        CMINVOKECOMMANDINFOEX& invoke,
+        snowdesktop::ShellContextMenuSite* site = nullptr);
     void PreserveModernMenuHostZOrder(HWND host, WINDOWPOS& position);
     /** @brief 清除当前菜单使用的图标映射。 */
     void ClearMenuIcons();

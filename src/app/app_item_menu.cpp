@@ -860,12 +860,12 @@ void DesktopApp::ShowShellContextMenu(
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
         RequestShellRefresh();
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
-    if (!keepQuickNavigationOpen)
+    if (!keepQuickNavigationOpen && cmd == 0)
         RestoreInteractionInputFocus();
 }
 

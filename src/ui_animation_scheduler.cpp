@@ -37,6 +37,71 @@ BOOL CALLBACK AccumulateMonitorRefreshRate(
 }
 } // namespace
 
+UiAnimationScheduler::MessagePumpScope::MessagePumpScope(
+    UiAnimationScheduler& scheduler,
+    std::function<void()> flushPresentation)
+    : scheduler_(scheduler),
+      flushPresentation_(std::move(flushPresentation))
+{
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    constexpr wchar_t className[] = L"SnowDesktopShellAnimationPump";
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = instance;
+    windowClass.lpfnWndProc = WindowProc;
+    windowClass.lpszClassName = className;
+    if (!RegisterClassW(&windowClass) &&
+        GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        return;
+    window_ = CreateWindowExW(0, className, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, this);
+    if (window_ && !SetTimer(window_, 1, USER_TIMER_MINIMUM, nullptr))
+    {
+        DestroyWindow(window_);
+        window_ = nullptr;
+    }
+}
+
+UiAnimationScheduler::MessagePumpScope::~MessagePumpScope()
+{
+    if (window_)
+        DestroyWindow(window_);
+}
+
+LRESULT CALLBACK UiAnimationScheduler::MessagePumpScope::WindowProc(
+    HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    auto* scope = reinterpret_cast<MessagePumpScope*>(
+        GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE)
+    {
+        scope = static_cast<MessagePumpScope*>(
+            reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        SetWindowLongPtrW(window, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(scope));
+    }
+    if (scope && message == WM_TIMER && wParam == 1)
+    {
+        // Do not consume a signal from a callback's own nested message loop.
+        // The outer dispatch will rearm it after completing its snapshot.
+        const HANDLE timer = scope->scheduler_.WaitHandle();
+        if (!scope->scheduler_.dispatching_ && timer &&
+            WaitForSingleObject(timer, 0) == WAIT_OBJECT_0)
+        {
+            try
+            {
+                scope->scheduler_.DispatchDue();
+                if (scope->flushPresentation_)
+                    scope->flushPresentation_();
+            }
+            catch (...) {}
+        }
+        return 0;
+    }
+    if (message == WM_NCDESTROY)
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
 UiAnimationScheduler::~UiAnimationScheduler()
 {
     Shutdown();
@@ -177,8 +242,15 @@ void UiAnimationScheduler::CancelAll()
 
 void UiAnimationScheduler::DispatchDue()
 {
-    if (!timer_)
+    if (!timer_ || dispatching_)
         return;
+
+    dispatching_ = true;
+    struct DispatchGuard
+    {
+        bool& active;
+        ~DispatchGuard() { active = false; }
+    } guard{dispatching_};
 
     const double now = MonotonicMilliseconds();
     std::vector<UiScheduleToken> dueTimers;

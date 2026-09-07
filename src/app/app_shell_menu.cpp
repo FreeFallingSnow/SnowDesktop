@@ -291,6 +291,44 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     return command;
 }
 
+BOOL DesktopApp::InvokeShellMenuCommand(
+    IContextMenu* menu, CMINVOKECOMMANDINFOEX& invoke,
+    snowdesktop::ShellContextMenuSite* site)
+{
+    if (!menu)
+        return FALSE;
+
+    // The tracker has already destroyed its foreground window. The tray
+    // control is hidden and NOACTIVATE; reuse the persistent input proxy so
+    // elevation/extension dialogs have an activatable owner that outlives
+    // InvokeCommand, including verbs that open a modeless window.
+    const HWND owner = inputHwnd_ && IsWindow(inputHwnd_)
+        ? inputHwnd_ : ShellDialogOwnerHwnd();
+    invoke.hwnd = owner;
+    if (site)
+        site->SetInvocationOwner(owner);
+
+    snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+        uiAnimationScheduler_, [this]() {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
+    if (!pump.IsAvailable())
+        WriteDiagnosticLogEntry(L"Shell invocation animation pump unavailable");
+
+    const bool foregroundReady = FocusKeyboardWindow(
+        owner, true, L"Shell command owner");
+    wchar_t message[224]{};
+    swprintf_s(message,
+        L"Shell command begin owner=%p foregroundReady=%d animationPump=%d verb=%p",
+        owner, foregroundReady, pump.IsAvailable(), invoke.lpVerb);
+    WriteDiagnosticLogEntry(message);
+    const BOOL result = SafeInvokeCommand(
+        menu, reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+    WriteDiagnosticLogEntry(L"Shell command returned");
+    return result;
+}
+
 void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
 {
     ComPtr<IContextMenu> ctxMenu;
@@ -343,7 +381,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
         snowdesktop::SetShellInvocationDirectory(
             invoke, targetDir, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
-        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        InvokeShellMenuCommand(ctxMenu.Get(), invoke);
     }
 
     for (int i = GetMenuItemCount(tmpMenu) - 1; i >= 0; --i)
@@ -412,12 +450,13 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
         RequestShellRefresh();
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    if (cmd == 0)
+        RestoreInteractionInputFocus();
 }
 
 /**
@@ -742,13 +781,14 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
             invoke, folderPath, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        SafeInvokeCommand(contextMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
         RequestShellRefresh();
     }
 
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    if (command == 0)
+        RestoreInteractionInputFocus();
     ILFree(pidl);
 }
 
@@ -886,11 +926,7 @@ ShowShellItemContextMenuForPath(
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        SafeInvokeCommand(
-            contextMenu.Get(),
-            reinterpret_cast<
-                LPCMINVOKECOMMANDINFO>(
-                    &invoke));
+        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
         for (size_t i = 0;
             i < widgets_.size(); ++i)
         {
@@ -906,6 +942,7 @@ ShowShellItemContextMenuForPath(
 
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    if (command == 0)
+        RestoreInteractionInputFocus();
     ILFree(pidl);
 }

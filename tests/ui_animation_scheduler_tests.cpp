@@ -1,6 +1,7 @@
 #include "ui_animation_scheduler.h"
 #include "ui_animation_scheduler_rules.h"
 #include "animation_settings.h"
+#include "popup_animation_rules.h"
 
 #include <windows.h>
 
@@ -28,6 +29,27 @@ void WaitAndDispatch(
             WAIT_OBJECT_0,
         "scheduled deadline becomes signaled");
     scheduler.DispatchDue();
+}
+
+template <typename Predicate>
+bool PumpMessagesUntil(Predicate done, DWORD timeoutMilliseconds = 3000)
+{
+    const ULONGLONG deadline = GetTickCount64() + timeoutMilliseconds;
+    while (!done() && GetTickCount64() < deadline)
+    {
+        // Model a Shell/modal loop: it dispatches messages but knows nothing
+        // about the application's waitable animation timer.
+        MsgWaitForMultipleObjectsEx(0, nullptr, 10,
+            QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{};
+        unsigned count = 0;
+        while (++count <= 64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    return done();
 }
 }
 
@@ -243,6 +265,77 @@ int main()
     Check(!scheduler.HasScheduledWork(),
         "cancel-all clears animations and timer deadlines");
     scheduler.Shutdown();
+
+    {
+        // Regression: the native shrink reaches its endpoint while a Shell
+        // elevation wait starves the callback that hides the popup HWND.
+        UiAnimationScheduler modalScheduler;
+        snowdesktop::popup_animation_rules::State popup;
+        popup.ShowImmediately();
+        popup.Close(static_cast<std::uint64_t>(
+            UiAnimationScheduler::MonotonicMilliseconds()));
+        int completions = 0;
+        int presented = 0;
+        int frames = 0;
+        modalScheduler.ScheduleOnce(90, [&](auto) {
+            popup.Advance(static_cast<std::uint64_t>(
+                UiAnimationScheduler::MonotonicMilliseconds()));
+            ++completions;
+        });
+        modalScheduler.StartAnimation(UiAnimationSurface::FloatingDock,
+            [&](double) { return ++frames < 2; });
+        {
+            UiAnimationScheduler::MessagePumpScope pump(
+                modalScheduler, [&]() { ++presented; });
+            Check(pump.IsAvailable(), "Shell message-loop bridge initializes");
+            UiAnimationScheduler::MessagePumpScope nestedPump(modalScheduler, {});
+            Check(nestedPump.IsAvailable(), "nested Shell invocation bridge initializes");
+            Check(PumpMessagesUntil([&]() { return !modalScheduler.HasScheduledWork(); }),
+                "popup completion and frame callbacks run inside a message-only Shell loop");
+        }
+        modalScheduler.DispatchDue();
+        Check(popup.IsHidden() && completions == 1 && frames == 2 && presented > 0,
+            "a closing popup reaches hidden exactly once and its presentation is flushed");
+    }
+
+    {
+        UiAnimationScheduler modalScheduler;
+        int laterCalls = 0;
+        bool insideCallback = false;
+        bool reentered = false;
+        modalScheduler.ScheduleOnce(0, [&](auto) {
+            insideCallback = true;
+            modalScheduler.ScheduleOnce(0, [&](auto) {
+                reentered = insideCallback;
+                ++laterCalls;
+            });
+            modalScheduler.DispatchDue();
+            const ULONGLONG end = GetTickCount64() + 40;
+            PumpMessagesUntil([&]() { return GetTickCount64() >= end; });
+            Check(laterCalls == 0,
+                "a callback's nested modal loop cannot reenter the scheduler snapshot");
+            insideCallback = false;
+        });
+        {
+            UiAnimationScheduler::MessagePumpScope pump(modalScheduler, {});
+            Check(PumpMessagesUntil([&]() { return laterCalls == 1; }),
+                "a deadline deferred by reentrancy runs after the outer callback returns");
+        }
+        Check(!reentered, "nested Shell loops never reenter an active scheduler callback");
+
+        int afterScopeCalls = 0;
+        {
+            UiAnimationScheduler::MessagePumpScope pump(modalScheduler, {});
+            modalScheduler.ScheduleOnce(15, [&](auto) { ++afterScopeCalls; });
+        }
+        const ULONGLONG end = GetTickCount64() + 40;
+        PumpMessagesUntil([&]() { return GetTickCount64() >= end; });
+        Check(afterScopeCalls == 0,
+            "leaving a Shell command removes its message-loop bridge");
+        WaitAndDispatch(modalScheduler);
+        Check(afterScopeCalls == 1,
+            "leaving a Shell command preserves deadlines for the normal host loop");
+    }
 
     std::cout << "ui animation scheduler tests passed\n";
     return 0;

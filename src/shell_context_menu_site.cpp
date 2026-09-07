@@ -19,6 +19,7 @@ public:
     explicit BrowserSite(HWND window) : window_(window) {}
 
     void SetView(IShellView* view) { view_ = view; }
+    void SetWindow(HWND window) { window_ = window; }
 
     IFACEMETHODIMP GetWindow(HWND* window) override
     {
@@ -113,6 +114,8 @@ struct ShellContextMenuSite::Impl
         if (attachedMenu)
             attachedMenu->SetSite(nullptr);
         attachedMenu.Reset();
+        if (browser)
+            browser->SetWindow(hostWindow);
         if (view && viewWindow)
             view->DestroyViewWindow();
         viewWindow = nullptr;
@@ -212,6 +215,12 @@ bool ShellContextMenuSite::Attach(IContextMenu* contextMenu)
 HWND ShellContextMenuSite::HostWindow() const
 {
     return impl_->hostWindow;
+}
+
+void ShellContextMenuSite::SetInvocationOwner(HWND owner)
+{
+    if (impl_->browser && owner && IsWindow(owner))
+        impl_->browser->SetWindow(owner);
 }
 
 } // namespace snowdesktop
