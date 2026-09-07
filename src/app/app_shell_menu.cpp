@@ -466,8 +466,14 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
+    RECT transitionBounds{}, dockBounds{}, overlap{};
+    const bool intersectsTransition = transitionWindow &&
+        GetWindowRect(transitionWindow, &transitionBounds) &&
+        GetWindowRect(host.hwnd, &dockBounds) &&
+        IntersectRect(&overlap, &transitionBounds, &dockBounds);
     if (transitionWindow && IsWindow(transitionWindow) &&
-        ShouldShowPersistentDockHost(host) && IsWindowVisible(host.hwnd))
+        intersectsTransition && ShouldShowPersistentDockHost(host) &&
+        IsWindowVisible(host.hwnd))
     {
         // Borrow the presentation band without changing the Dock's summon,
         // input or focus state. Always move the content/backdrop as a pair.

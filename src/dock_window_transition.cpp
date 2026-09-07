@@ -1608,6 +1608,10 @@ bool DockWindowTransition::ApplyFrame(double progress)
                     SWP_NOZORDER |
                     SWP_NOSENDCHANGING |
                     SWP_NOCOPYBITS);
+            // Live thumbnails move their HWND every frame. Re-evaluate the
+            // participating Docks so unrelated monitors keep their usual layer.
+            if (presenting_ && presentationCallback_)
+                presentationCallback_(hwnd_);
             if (!ApplyOcclusion(frame, cornerRadius))
                 return false;
         }
