@@ -94,8 +94,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto mix = [&](int shift) { return static_cast<unsigned>(((neutral >> shift) & 255) * (1 - draft.colorMix) + ((snapshot.accent >> shift) & 255) * draft.colorMix); };
         const auto background = draft.autoColor ? (mix(16) << 16) | (mix(8) << 8) | mix(0) : draft.manualColor;
         preview.Background(m::SolidColorBrush(Color(background, hovered && draft.hoverFrame == 1 ? draft.hoverOpacity : draft.opacity)));
-        preview.BorderBrush(m::SolidColorBrush(Color(draft.borderColor, std::min(1., draft.borderOpacity + (hovered && draft.hoverFrame == 2 ? .4 : 0)))));
-        preview.BorderThickness(x::Thickness{draft.border ? draft.borderWidth : 0});
+        preview.BorderBrush(m::SolidColorBrush(Color(draft.borderColor, std::min(1., (draft.border ? draft.borderOpacity : 0) + (hovered && draft.hoverFrame == 2 ? .4 : 0)))));
+        preview.BorderThickness(x::Thickness{draft.border || (hovered && draft.hoverFrame == 2) ? draft.borderWidth : 0});
         auto visual = x::Hosting::ElementCompositionPreview::GetElementVisual(previewCanvas);
         auto geometry = visual.Compositor().CreateRoundedRectangleGeometry();
         geometry.Size({static_cast<float>(preview.Width()), static_cast<float>(preview.Height())});

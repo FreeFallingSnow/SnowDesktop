@@ -218,6 +218,9 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     PersistentDockHost* const rightButtonPressDockHost =
         std::exchange(rightButtonDownDockHost_, nullptr);
+    // A right click cancels placement as one complete press/release gesture.
+    // Preserve surface ownership on press, then consume release without a menu.
+    if (largeIconGesture_) { CancelLargeIconGesture(); return; }
     if (renameEdit_ != nullptr) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
