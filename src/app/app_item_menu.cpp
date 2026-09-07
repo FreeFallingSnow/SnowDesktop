@@ -693,7 +693,8 @@ void DesktopApp::ShowItemContextMenu(
         break;
     }
     RestoreDesktopWindowLayer();
-    if (snowdesktop::right_click_contract::
+    if (command != kContextMoreCommand &&
+        snowdesktop::right_click_contract::
             ShouldRestoreInteractionFocusAfterMenu(
                 keepQuickNavigationOpen,
                 inlineEditorStarted))

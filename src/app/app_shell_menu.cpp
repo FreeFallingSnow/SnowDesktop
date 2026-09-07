@@ -663,7 +663,13 @@ void DesktopApp::EndShellPopupMenuLayer()
         shellHoverTraceMenuEndTick_ = GetTickCount64();
     ApplyFloatingDockLayerPolicy();
     ApplyFloatingPopupLayerPolicy();
-    RefocusFloatingDockKeyboardSession();
+    // A verb may have activated an external dialog or application. Restore
+    // Dock keyboard ownership only while the foreground still belongs to us.
+    DWORD foregroundProcess = 0;
+    if (const HWND foreground = GetForegroundWindow())
+        GetWindowThreadProcessId(foreground, &foregroundProcess);
+    if (foregroundProcess == GetCurrentProcessId())
+        RefocusFloatingDockKeyboardSession();
     if (shellPopupMenuLayerDepth_ == 0)
     {
         ReconcileDesktopHoverState(

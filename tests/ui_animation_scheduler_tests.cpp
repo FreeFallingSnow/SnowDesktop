@@ -288,14 +288,18 @@ int main()
             UiAnimationScheduler::MessagePumpScope pump(
                 modalScheduler, [&]() { ++presented; });
             Check(pump.IsAvailable(), "Shell message-loop bridge initializes");
-            UiAnimationScheduler::MessagePumpScope nestedPump(modalScheduler, {});
+            UiAnimationScheduler::MessagePumpScope nestedPump(
+                modalScheduler, [&]() { ++presented; });
             Check(nestedPump.IsAvailable(), "nested Shell invocation bridge initializes");
             Check(PumpMessagesUntil([&]() { return !modalScheduler.HasScheduledWork(); }),
                 "popup completion and frame callbacks run inside a message-only Shell loop");
         }
         modalScheduler.DispatchDue();
-        Check(popup.IsHidden() && completions == 1 && frames == 2 && presented > 0,
-            "a closing popup reaches hidden exactly once and its presentation is flushed");
+        Check(popup.IsHidden() && completions == 1,
+            "a closing popup reaches hidden exactly once inside the Shell loop");
+        Check(frames == 2, "independent frame callbacks also finish inside the Shell loop");
+        Check(presented > 0,
+            "whichever nested invocation delivers work also flushes its presentation");
     }
 
     {
