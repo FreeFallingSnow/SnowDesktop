@@ -250,6 +250,7 @@ local function drawCard(x, y, width, height, info, palette)
             math.min(layout.fontCu(24), math.floor(height * 0.18)))
         local valueWidth = width - inset * 2
         if info.wrapValue then
+            valueFont = layout.fontCu(15)
             local valueTop = y + height * 0.28
             local valueHeight = math.max(layout.cu(1),
                 height - (valueTop - y) - layout.cu(6))
