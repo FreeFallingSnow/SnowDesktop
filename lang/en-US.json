@@ -1378,7 +1378,7 @@
     "settings.animation.dock": "Dock effects",
     "settings.animation.performance": "Performance",
     "settings.animation.mode": "Animation mode",
-    "settings.animation.mode.description": "Follow Windows, or turn SnowDesktop animations on or off.",
+    "settings.animation.mode.description": "Follow Windows, or turn animations on or off separately.",
     "settings.animation.popup": "Popup animation",
     "settings.animation.popup.description": "Effects when opening and closing popups.",
     "settings.animation.speed": "Animation speed",
