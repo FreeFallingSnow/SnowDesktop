@@ -1418,11 +1418,5 @@
     "settings.animation.option.fps120": "120 / seconde",
     "settings.animation.restore": "Rétablir la valeur par défaut",
     "settings.animation.dockDisabled": "Activez le Dock pour régler ses effets.",
-    "settings.animation.openDock": "Ouvrir les paramètres du Dock",
-    "settings.animation.preview": "Essayer les effets",
-    "settings.animation.preview.description": "Ce schéma illustre vos choix. Survolez une icône ou sélectionnez-la au clavier pour tester le grossissement. Vérifiez les effets réels sur votre bureau.",
-    "settings.animation.preview.popup": "Aperçu d’une fenêtre contextuelle",
-    "settings.animation.preview.launch": "Aperçu du lancement",
-    "settings.animation.preview.window": "Aperçu de réduction et restauration",
-    "settings.animation.preview.icon": "Icône d’aperçu"
+    "settings.animation.openDock": "Ouvrir les paramètres du Dock"
 }

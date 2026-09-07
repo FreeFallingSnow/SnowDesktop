@@ -3848,6 +3848,48 @@ int main(int argc, char** argv)
             DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
             DockWindowTransitionSurface::None,
         "floating minimize must reject a screen snapshot when no DWM thumbnail is available");
+    const auto genieCapture = ResolveDockWindowCapturePolicy(
+        3, DockWindowTransitionCapturePolicy::LiveThumbnailOnly);
+    Check(genieCapture == DockWindowTransitionCapturePolicy::SnapshotPreferred &&
+            ResolveDockWindowTransitionSurface(true, true, genieCapture) ==
+                DockWindowTransitionSurface::Snapshot,
+        "floating Genie must try an isolated snapshot instead of silently selecting DWM scale");
+    Check(ResolveDockWindowTransitionSurface(false, true, genieCapture) ==
+            DockWindowTransitionSurface::LiveThumbnail &&
+            snowdesktop::dock_genie::EffectiveEffect(3, false) == 1 &&
+            ResolveDockWindowTransitionSurface(false, false, genieCapture) ==
+                DockWindowTransitionSurface::None,
+        "real snapshot failure must retain live scale and native-operation fallbacks");
+    Check(ResolveDockWindowCapturePolicy(
+            1, DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
+                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
+            ResolveDockWindowCapturePolicy(
+                2, DockWindowTransitionCapturePolicy::SnapshotPreferred) ==
+                DockWindowTransitionCapturePolicy::SnapshotPreferred,
+        "non-deforming effects must retain their requested capture policy");
+    Check(PreferDockSnapshotEviction(false, 300, true, 100) &&
+            !PreferDockSnapshotEviction(true, 100, false, 300) &&
+            PreferDockSnapshotEviction(true, 100, true, 200),
+        "cache pressure must evict recapturable windows before minimized ones, then use LRU");
+    const RECT occlusionHost{-1920, -200, 0, 880};
+    const std::vector<RECT> dockOccluders{
+        {-1600, 760, -320, 850}, // panel
+        {-1010, 700, -910, 810}, // magnified icon protruding above panel
+        {-1090, 650, -840, 685}, // title
+        {100, 100, 200, 200}}; // different monitor, outside the host
+    HRGN occlusion = CreateDockWindowTransitionOcclusionRegion(
+        occlusionHost, 0, dockOccluders);
+    Check(occlusion && PtInRegion(occlusion, 600, 600) &&
+            !PtInRegion(occlusion, 600, 1000) &&
+            !PtInRegion(occlusion, 960, 940) &&
+            !PtInRegion(occlusion, 960, 860) &&
+            PtInRegion(occlusion, 800, 910),
+        "overlay clipping must preserve the window while excluding panel, raised icon and title on a negative-origin monitor");
+    if (occlusion) DeleteObject(occlusion);
+    HRGN restoredRegion = CreateDockWindowTransitionOcclusionRegion(occlusionHost, 0, {});
+    Check(restoredRegion && PtInRegion(restoredRegion, 960, 940),
+        "leaving Dock hover must release the former magnified-icon cutout");
+    if (restoredRegion) DeleteObject(restoredRegion);
     Check(rules::ResolveDockWindowIconSource(
             true, true, false, true) ==
             rules::DockWindowIconSource::AppUserModel,

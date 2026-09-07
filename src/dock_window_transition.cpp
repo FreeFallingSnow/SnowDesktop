@@ -1,9 +1,11 @@
 #include "dock_window_transition.h"
 #include "dock_window_rules.h"
 #include "animation_settings.h"
+#include "dock_window_capture_isolation.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
 
 namespace
 {
@@ -71,6 +73,95 @@ HRGN CreateDockWindowTransitionRegion(
 }
 
 } // namespace
+
+HRGN CreateDockWindowTransitionOcclusionRegion(
+    const RECT& hostBounds, int cornerRadius,
+    const std::vector<RECT>& occluders)
+{
+    const RECT localBounds{0, 0,
+        hostBounds.right - hostBounds.left,
+        hostBounds.bottom - hostBounds.top};
+    HRGN region = CreateDockWindowTransitionRegion(localBounds, cornerRadius);
+    if (!region)
+        return nullptr;
+    for (const RECT& occluder : occluders)
+    {
+        RECT intersection{};
+        if (!IntersectRect(&intersection, &hostBounds, &occluder))
+            continue;
+        OffsetRect(&intersection, -hostBounds.left, -hostBounds.top);
+        HRGN excluded = CreateRectRgnIndirect(&intersection);
+        const bool succeeded = excluded &&
+            CombineRgn(region, region, excluded, RGN_DIFF) != ERROR;
+        if (excluded)
+            DeleteObject(excluded);
+        if (!succeeded)
+        {
+            DeleteObject(region);
+            return nullptr;
+        }
+    }
+    return region;
+}
+
+bool DockWindowTransition::ApplyOcclusion(
+    const RECT& hostBounds, int cornerRadius)
+{
+    const auto occluders = occlusionRectsProvider_
+        ? occlusionRectsProvider_() : std::vector<RECT>{};
+    if (hasOcclusionRegion_ && cornerRadius == occlusionCornerRadius_ &&
+        EqualRect(&hostBounds, &occlusionHostBounds_) &&
+        occluders.size() == occlusionRects_.size() &&
+        std::equal(occluders.begin(), occluders.end(), occlusionRects_.begin(),
+            [](const RECT& a, const RECT& b) { return EqualRect(&a, &b) != FALSE; }))
+        return true;
+
+    HRGN region = CreateDockWindowTransitionOcclusionRegion(
+        hostBounds, cornerRadius, occluders);
+    if (!region)
+        return false;
+    if (!SetWindowRgn(hwnd_, region, FALSE))
+    {
+        DeleteObject(region);
+        return false;
+    }
+    occlusionHostBounds_ = hostBounds;
+    occlusionCornerRadius_ = cornerRadius;
+    occlusionRects_ = occluders;
+    hasOcclusionRegion_ = true;
+    return true;
+}
+
+void DockWindowTransition::RefreshOcclusion()
+{
+    if (!presenting_ || !hwnd_)
+        return;
+    const RECT bounds = surface_ == DockWindowTransitionSurface::Snapshot
+        ? snapshotHostRect_ : lastFrameRect_;
+    const int radius = surface_ == DockWindowTransitionSurface::Snapshot
+        ? 0 : ResolveDockWindowTransitionCornerRadius(bounds, dockRect_);
+    if (!ApplyOcclusion(bounds, radius))
+        CompleteImmediately();
+}
+
+void DockWindowTransition::LogPresentation(int requestedEffect,
+    DockWindowTransitionCapturePolicy requestedPolicy,
+    DockWindowTransitionCapturePolicy actualPolicy,
+    const wchar_t* fallbackStage)
+{
+    if (!diagnosticCallback_)
+        return;
+    wchar_t message[512]{};
+    swprintf_s(message,
+        L"Dock transition: hwnd=%p direction=%ls requested=%d effective=%d "
+        L"policy=%d/%d snapshot=%ls surface=%d fallback=%ls result=0x%08lX",
+        static_cast<void*>(sourceWindow_),
+        direction_ == DockWindowTransitionDirection::Minimize ? L"minimize" : L"restore",
+        requestedEffect, effect_, static_cast<int>(requestedPolicy),
+        static_cast<int>(actualPolicy), snapshotSource_, static_cast<int>(surface_),
+        fallbackStage, static_cast<unsigned long>(snapshotResult_));
+    diagnosticCallback_(message);
+}
 
 double EaseDockWindowTransition(double progress) noexcept
 {
@@ -368,6 +459,11 @@ bool DockWindowTransition::Start(
     direction_ = direction;
     restoreCallback_ = std::move(restoreCallback);
     effect_ = snowdesktop::animation::RuntimeWindowEffect();
+    const int requestedEffect = effect_;
+    const auto requestedPolicy = capturePolicy;
+    capturePolicy = ResolveDockWindowCapturePolicy(effect_, capturePolicy);
+    snapshotSource_ = L"policy-skip";
+    snapshotResult_ = S_OK;
     genieEdge_ = static_cast<snowdesktop::dock_genie::Edge>(
         std::clamp(snowdesktop::animation::RuntimeDockPosition(), 0, 3));
 
@@ -429,9 +525,18 @@ bool DockWindowTransition::Start(
     }
 
     bool snapshotAvailable = false;
+    const wchar_t* fallbackStage = L"none";
     if (snapshot)
+    {
         snapshotAvailable =
             CreateCompositionSnapshot(*snapshot);
+        if (!snapshotAvailable)
+            fallbackStage = L"snapshot-upload";
+    }
+    else
+    {
+        fallbackStage = snapshotSource_;
+    }
 
     bool liveThumbnailAvailable = false;
     if (!snapshotAvailable)
@@ -449,6 +554,7 @@ bool DockWindowTransition::Start(
     if (surface_ ==
         DockWindowTransitionSurface::None)
     {
+        LogPresentation(requestedEffect, requestedPolicy, capturePolicy, L"no-surface");
         Cancel();
         return false;
     }
@@ -459,7 +565,9 @@ bool DockWindowTransition::Start(
         // Keep the selected preference. Only this presentation falls back.
         ClearGenieStrips();
         effect_ = 1;
+        fallbackStage = L"genie-strips";
     }
+    LogPresentation(requestedEffect, requestedPolicy, capturePolicy, fallbackStage);
     animationDurationMs_ = TransitionDuration(effect_);
 
     snapshotHostRect_ =
@@ -474,13 +582,11 @@ bool DockWindowTransition::Start(
     const int hostHeight = std::max(
         1L, snapshotHostRect_.bottom -
             snapshotHostRect_.top);
-    const HWND insertAfter =
+    // The host callback keeps entire Dock content/backdrop pairs above us.
+    // Only legacy callers without that callback use the single-window anchor.
+    const HWND insertAfter = !presentationCallback_ &&
         keepBelowWindow && IsWindow(keepBelowWindow)
         ? keepBelowWindow : HWND_TOPMOST;
-    // A topmost HWND used as hWndInsertAfter keeps the transition in the
-    // topmost band but directly behind that window. This lets the floating
-    // Dock and its owned preview remain readable while the application image
-    // travels to or from the Dock icon.
     SetWindowPos(
         hwnd_, insertAfter,
         snapshotHostRect_.left,
@@ -505,6 +611,12 @@ bool DockWindowTransition::Start(
         return false;
     }
     nativeTransitionsDisabled_ = true;
+    presenting_ = true;
+    if (presentationCallback_)
+        presentationCallback_(hwnd_);
+    RefreshOcclusion();
+    if (!presenting_)
+        return false;
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     HRESULT presentationHr = S_OK;
     if (RequiresDockWindowTransitionCompositionBarrier(direction_))
@@ -716,8 +828,9 @@ bool DockWindowTransition::ResolveRestoreWindowRect(
 
 bool DockWindowTransition::CaptureSnapshot(
     HWND window, const RECT& sourceRect,
-    CachedSnapshot& snapshot) const
+    CachedSnapshot& snapshot)
 {
+    snapshotResult_ = E_FAIL;
     if (!window || !IsWindow(window) ||
         !IsUsableRect(sourceRect))
         return false;
@@ -769,14 +882,45 @@ bool DockWindowTransition::CaptureSnapshot(
         SelectObject(snapshotDc, bitmap);
     SetStretchBltMode(snapshotDc, HALFTONE);
     SetBrushOrgEx(snapshotDc, 0, 0, nullptr);
-    const BOOL captured = StretchBlt(
-        snapshotDc,
-        0, 0, pixelSize.cx, pixelSize.cy,
-        screenDc,
-        sourceRect.left, sourceRect.top,
-        sourceSize.cx, sourceSize.cy,
-        SRCCOPY | CAPTUREBLT);
-    GdiFlush();
+    BOOL captured = FALSE;
+    snowdesktop::dock_capture::IsolationReport isolationReport;
+    {
+        snowdesktop::dock_capture::ScopedWindowCaptureIsolation isolation(
+            window, sourceRect, &isolationReport);
+        if (isolation.Ready())
+        {
+            captured = StretchBlt(
+                snapshotDc,
+                0, 0, pixelSize.cx, pixelSize.cy,
+                screenDc,
+                sourceRect.left, sourceRect.top,
+                sourceSize.cx, sourceSize.cy,
+                SRCCOPY | CAPTUREBLT);
+            if (!captured)
+            {
+                const DWORD error = GetLastError();
+                snapshotResult_ = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
+            }
+            GdiFlush();
+        }
+        else
+        {
+            snapshotSource_ = L"capture-isolation-failed";
+            const auto& failure = isolationReport.preparationFailure;
+            snapshotResult_ = FAILED(failure.result) ? failure.result :
+                HRESULT_FROM_WIN32(failure.error ? failure.error : ERROR_GEN_FAILURE);
+        }
+    }
+    if (isolationReport.restorationFailure.operation && diagnosticCallback_)
+    {
+        const auto& failure = isolationReport.restorationFailure;
+        wchar_t message[256]{};
+        swprintf_s(message,
+            L"Dock capture isolation: restore=%ls hwnd=%p error=%lu result=0x%08lX",
+            failure.operation, static_cast<void*>(failure.window), failure.error,
+            static_cast<unsigned long>(failure.result));
+        diagnosticCallback_(message);
+    }
 
     if (previousBitmap)
         SelectObject(snapshotDc, previousBitmap);
@@ -785,6 +929,7 @@ bool DockWindowTransition::CaptureSnapshot(
         DWORD processId = 0;
         GetWindowThreadProcessId(
             window, &processId);
+        snapshotResult_ = S_OK;
         snapshot.processId = processId;
         snapshot.pixelSize = pixelSize;
         snapshot.sourceRect = sourceRect;
@@ -843,6 +988,8 @@ DockWindowTransition::PrepareSnapshot(
     bool allowFreshMinimizeSnapshot)
 {
     PurgeSnapshotCache();
+    snapshotSource_ = L"capture-failed";
+    snapshotResult_ = S_OK;
     if (direction ==
         DockWindowTransitionDirection::Minimize)
     {
@@ -860,6 +1007,7 @@ DockWindowTransition::PrepareSnapshot(
                 kPrimedSnapshotLifetimeMs)
         {
             primed->second.lastUsedTick = now;
+            snapshotSource_ = L"primed-cache";
             return &primed->second;
         }
 
@@ -897,12 +1045,12 @@ DockWindowTransition::PrepareSnapshot(
             {
                 if (iterator->first == window)
                     continue;
-                if (oldest ==
-                        snapshotCache_.end() ||
-                    iterator->second.
-                            lastUsedTick <
-                        oldest->second.
-                            lastUsedTick)
+                if (oldest == snapshotCache_.end() ||
+                    PreferDockSnapshotEviction(
+                        IsIconic(iterator->first) != FALSE,
+                        iterator->second.lastUsedTick,
+                        IsIconic(oldest->first) != FALSE,
+                        oldest->second.lastUsedTick))
                     oldest = iterator;
             }
             if (oldest == snapshotCache_.end())
@@ -918,6 +1066,7 @@ DockWindowTransition::PrepareSnapshot(
             snapshotCache_.insert_or_assign(
                 window, std::move(captured));
         (void)inserted;
+        snapshotSource_ = L"fresh-capture";
         return &iterator->second;
     }
 
@@ -925,9 +1074,13 @@ DockWindowTransition::PrepareSnapshot(
         snapshotCache_.find(window);
     if (cached == snapshotCache_.end() ||
         cached->second.pixels.empty())
+    {
+        snapshotSource_ = L"restore-cache-miss";
         return nullptr;
+    }
     cached->second.lastUsedTick =
         GetTickCount64();
+    snapshotSource_ = L"restore-cache";
     return &cached->second;
 }
 
@@ -942,7 +1095,10 @@ bool DockWindowTransition::CreateCompositionSnapshot(
         snapshot.pixelSize.cx <= 0 ||
         snapshot.pixelSize.cy <= 0 ||
         snapshot.pixels.empty())
+    {
+        snapshotResult_ = E_UNEXPECTED;
         return false;
+    }
 
     HRESULT hr = S_OK;
     if (!compositionTarget_)
@@ -975,6 +1131,7 @@ bool DockWindowTransition::CreateCompositionSnapshot(
                 compositionVisual_.Get());
         if (FAILED(hr))
         {
+            snapshotResult_ = hr;
             compositionClip_.Reset();
             compositionEffect_.Reset();
             compositionScaleTransform_.Reset();
@@ -992,7 +1149,10 @@ bool DockWindowTransition::CreateCompositionSnapshot(
         DXGI_ALPHA_MODE_PREMULTIPLIED,
         &compositionSurface_);
     if (FAILED(hr) || !compositionSurface_)
+    {
+        snapshotResult_ = FAILED(hr) ? hr : E_FAIL;
         return false;
+    }
 
     ID2D1DeviceContext* rawContext = nullptr;
     POINT updateOffset{};
@@ -1002,6 +1162,7 @@ bool DockWindowTransition::CreateCompositionSnapshot(
         &updateOffset);
     if (FAILED(hr) || !rawContext)
     {
+        snapshotResult_ = FAILED(hr) ? hr : E_FAIL;
         compositionSurface_.Reset();
         return false;
     }
@@ -1047,6 +1208,7 @@ bool DockWindowTransition::CreateCompositionSnapshot(
         compositionSurface_->EndDraw();
     if (FAILED(hr) || FAILED(endDrawHr))
     {
+        snapshotResult_ = FAILED(hr) ? hr : endDrawHr;
         compositionSurface_.Reset();
         return false;
     }
@@ -1083,7 +1245,10 @@ void DockWindowTransition::ClearGenieStrips()
 bool DockWindowTransition::CreateGenieStrips()
 {
     if (!compositionVisual_ || !compositionSurface_ || !compositionDevice_)
+    {
+        snapshotResult_ = E_UNEXPECTED;
         return false;
+    }
     const float width = static_cast<float>(compositionSnapshotSize_.cx);
     const float height = static_cast<float>(compositionSnapshotSize_.cy);
     const bool vertical = snowdesktop::dock_genie::Vertical(genieEdge_);
@@ -1093,7 +1258,10 @@ bool DockWindowTransition::CreateGenieStrips()
         Microsoft::WRL::ComPtr<IDCompositionVisual2> strip;
         HRESULT hr = compositionDevice_->CreateVisual(&strip);
         if (FAILED(hr) || !strip)
+        {
+            snapshotResult_ = FAILED(hr) ? hr : E_FAIL;
             return false;
+        }
         genieStrips_.push_back(strip);
         hr = strip->SetContent(compositionSurface_.Get());
         const float begin = static_cast<float>(i) /
@@ -1113,13 +1281,17 @@ bool DockWindowTransition::CreateGenieStrips()
             DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
         if (SUCCEEDED(hr)) hr = compositionVisual_->AddVisual(strip.Get(), TRUE, nullptr);
         if (FAILED(hr))
+        {
+            snapshotResult_ = hr;
             return false;
+        }
     }
     HRESULT hr = compositionVisual_->SetContent(nullptr);
     if (SUCCEEDED(hr)) hr = compositionVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
     if (SUCCEEDED(hr)) hr = compositionVisual_->SetClip(static_cast<IDCompositionClip*>(nullptr));
     if (SUCCEEDED(hr)) hr = compositionVisual_->SetOffsetX(0.0f);
     if (SUCCEEDED(hr)) hr = compositionVisual_->SetOffsetY(0.0f);
+    snapshotResult_ = hr;
     return SUCCEEDED(hr);
 }
 
@@ -1314,6 +1486,9 @@ bool DockWindowTransition::ApplyFrame(double progress)
     const int width = std::max(1L, frame.right - frame.left);
     const int height =
         std::max(1L, frame.bottom - frame.top);
+    if (surface_ == DockWindowTransitionSurface::Snapshot &&
+        !ApplyOcclusion(snapshotHostRect_, 0))
+        return false;
     const double eased =
         EaseDockWindowTransition(progress);
     BYTE frameOpacity =
@@ -1433,20 +1608,8 @@ bool DockWindowTransition::ApplyFrame(double progress)
                     SWP_NOZORDER |
                     SWP_NOSENDCHANGING |
                     SWP_NOCOPYBITS);
-            const RECT localFrame{
-                0, 0, width, height
-            };
-            HRGN visibleRegion =
-                CreateDockWindowTransitionRegion(
-                    localFrame, cornerRadius);
-            if (!visibleRegion)
+            if (!ApplyOcclusion(frame, cornerRadius))
                 return false;
-            if (!SetWindowRgn(
-                    hwnd_, visibleRegion, FALSE))
-            {
-                DeleteObject(visibleRegion);
-                return false;
-            }
         }
         DWM_THUMBNAIL_PROPERTIES properties{};
         properties.dwFlags =
@@ -1657,6 +1820,12 @@ void DockWindowTransition::Finish()
         SetWindowRgn(
             transitionWindow, nullptr, FALSE);
     }
+    const bool wasPresenting = std::exchange(presenting_, false);
+    hasOcclusionRegion_ = false;
+    occlusionRects_.clear();
+    occlusionHostBounds_ = {};
+    if (wasPresenting && presentationCallback_)
+        presentationCallback_(nullptr);
     UnregisterThumbnail();
     const bool hadCompositionSnapshot =
         compositionSnapshotActive_;

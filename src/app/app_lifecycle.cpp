@@ -34,6 +34,12 @@ DesktopApp::~DesktopApp()
     UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
         ResolveSystemTaskbarAppearance(dockSettings_));
+    if (dockWindowTransition_)
+    {
+        dockWindowTransition_->SetPresentationCallback({});
+        dockWindowTransition_->SetOcclusionRectsProvider({});
+        dockWindowTransition_->SetDiagnosticCallback({});
+    }
     dockWindowTransition_.reset();
     dockWindowPreview_.reset();
     UnregisterFloatingDockHotkey();

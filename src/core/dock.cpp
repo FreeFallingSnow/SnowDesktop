@@ -1276,6 +1276,163 @@ RECT DockContainer::GetAnimationVisualBounds() const
         bounds, app_->dockSettings_.position, padding, 2.0f);
 }
 
+std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
+{
+    std::vector<RECT> result;
+    if (!app_ || !app_->IsDockContainerInteractionVisible(this))
+        return result;
+    const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+    const RECT panel = GetVisualPanelBounds(pointer);
+    if (IsRectEmpty(&panel))
+        return result;
+    result.push_back(panel);
+    const RECT focus = ResolveMagnificationFocusRect(pointer);
+    const RECT viewport = GetVisualScrollViewport(pointer);
+    const bool hasOverflow = GetMaxScrollOffset(GetBounds()) > 0;
+    const float renderScale = GetMaximumMagnificationScale() +
+        static_cast<float>(GetLaunchAnimationPadding()) /
+            static_cast<float>(std::max(1, ItemIconSize()));
+    const RECT visualViewport = snowdesktop::dock_magnification::
+        ExpandPerpendicularBounds(viewport, app_->dockSettings_.position,
+            ItemIconSize(), renderScale);
+    const RECT windowsButton = GetWindowsButtonRect();
+    const RECT search = GetSearchRect();
+    RECT recycleBin{};
+    if (entries_ && !entries_->empty() &&
+        app_->IsRecycleBinDockEntry(entries_->back()) &&
+        entries_->size() <= slots.size() && slots[entries_->size() - 1])
+        recycleBin = slots[entries_->size() - 1]->GetBounds();
+
+    for (const RECT& base : GetElementBaseRects())
+    {
+        const bool control = EqualRect(&base, &windowsButton) ||
+            EqualRect(&base, &search);
+        const bool fixed = control || EqualRect(&base, &recycleBin) ||
+            (IsEdgeAttached() &&
+                GetMagnificationZone(base) == MagnificationZone::Trailing);
+        RECT intersection{};
+        if (!fixed && !IntersectRect(&intersection, &base, &viewport))
+            continue;
+        const float scale = GetMagnificationScale(base, focus, pointer);
+        const RECT visual = snowdesktop::dock_magnification::MagnifyRect(
+            base, app_->dockSettings_.position, scale, ItemIconSize(),
+            GetMagnificationAxisShift(base, focus, pointer));
+        const int iconSize = control
+            ? std::max(1, static_cast<int>(std::round(ItemIconSize() * scale)))
+            : std::max(1, static_cast<int>(std::min(
+                visual.right - visual.left, visual.bottom - visual.top)) -
+                ScaledSpacing());
+        RECT icon{
+            visual.left + (visual.right - visual.left - iconSize) / 2,
+            visual.top + (visual.bottom - visual.top - iconSize) / 2,
+            visual.left + (visual.right - visual.left + iconSize) / 2,
+            visual.top + (visual.bottom - visual.top + iconSize) / 2};
+        size_t launchIndex = static_cast<size_t>(-1);
+        for (const auto& item : entryItems_)
+        {
+            if (!item || item->GetEntryType() != DockEntryType::DesktopItem)
+                continue;
+            const RECT bounds = item->GetBounds();
+            if (EqualRect(&bounds, &base))
+            {
+                launchIndex = app_->FindItemIndexByKey(item->GetReference());
+                break;
+            }
+        }
+        if (launchIndex == static_cast<size_t>(-1))
+        {
+            for (const auto& item : frequentItems_)
+            {
+                if (!item) continue;
+                const RECT bounds = item->GetBounds();
+                if (EqualRect(&bounds, &base))
+                {
+                    launchIndex = item->GetItemIndex();
+                    break;
+                }
+            }
+        }
+        if (launchIndex != static_cast<size_t>(-1))
+        {
+            const float pulse = app_->GetDockLaunchPulseScale(launchIndex);
+            const float centerX = (icon.left + icon.right) * 0.5f;
+            const float centerY = (icon.top + icon.bottom) * 0.5f;
+            const float offset = app_->GetDockLaunchBounceOffset(launchIndex, iconSize);
+            const float offsetX = app_->dockSettings_.position == DockPosition::Left
+                ? offset : app_->dockSettings_.position == DockPosition::Right ? -offset : 0.0f;
+            const float offsetY = app_->dockSettings_.position == DockPosition::Top
+                ? offset : app_->dockSettings_.position == DockPosition::Bottom ? -offset : 0.0f;
+            icon = RECT{
+                static_cast<LONG>(std::floor(centerX + (icon.left - centerX) * pulse + offsetX)),
+                static_cast<LONG>(std::floor(centerY + (icon.top - centerY) * pulse + offsetY)),
+                static_cast<LONG>(std::ceil(centerX + (icon.right - centerX) * pulse + offsetX)),
+                static_cast<LONG>(std::ceil(centerY + (icon.bottom - centerY) * pulse + offsetY))};
+        }
+        if (!fixed && hasOverflow)
+        {
+            if (!IntersectRect(&intersection, &icon, &visualViewport))
+                continue;
+            icon = intersection;
+        }
+        if (!IsRectEmpty(&icon))
+            result.push_back(icon);
+    }
+    const RECT title = GetHoveredTitleBounds(pointer);
+    if (!IsRectEmpty(&title))
+        result.push_back(title);
+    return result;
+}
+
+RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
+{
+    RECT viewport = GetScrollViewport(GetBounds());
+    if (GetMaxScrollOffset(GetBounds()) <= 0)
+        return viewport;
+    const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+    const size_t fixedCount = SortableEntryCount();
+    const size_t folderBegin = FolderEntryBegin();
+    const size_t folderCount = FolderEntryCount();
+    const size_t folderEnd = folderBegin + folderCount;
+    RECT firstScrollable{};
+    RECT lastScrollable{};
+    const auto includeScrollable = [&](const RECT& bounds) {
+        if (IsRectEmpty(&bounds)) return;
+        if (IsRectEmpty(&firstScrollable)) firstScrollable = bounds;
+        lastScrollable = bounds;
+    };
+    for (size_t index = 0; index < fixedCount && index < slots.size(); ++index)
+        if (slots[index]) includeScrollable(slots[index]->GetBounds());
+    for (const auto& item : runningItems_)
+        if (item) includeScrollable(item->GetBounds());
+    for (const auto& item : frequentItems_)
+        if (item) includeScrollable(item->GetBounds());
+    if (!IsEdgeAttached())
+        for (size_t index = folderBegin; index < folderEnd && index < slots.size(); ++index)
+            if (slots[index]) includeScrollable(slots[index]->GetBounds());
+
+    const RECT focus = ResolveMagnificationFocusRect(pointer);
+    const bool scrollWaveControlsViewport = !IsEdgeAttached() ||
+        GetMagnificationZone(focus) == MagnificationZone::Leading;
+    if (scrollWaveControlsViewport && !IsRectEmpty(&firstScrollable) &&
+        !IsRectEmpty(&lastScrollable))
+    {
+        return snowdesktop::dock_magnification::MoveOverflowViewportWithScrollableVisuals(
+            viewport, app_->dockSettings_.position,
+            firstScrollable, GetElementVisualRect(firstScrollable, pointer),
+            lastScrollable, GetElementVisualRect(lastScrollable, pointer));
+    }
+    const RECT windowsButton = GetWindowsButtonRect();
+    const RECT leadingVisual = IsRectEmpty(&windowsButton)
+        ? RECT{} : GetElementVisualRect(windowsButton, pointer);
+    RECT trailingFixed = GetSearchRect();
+    if (IsEdgeAttached() && folderCount > 0 &&
+        folderBegin < slots.size() && slots[folderBegin])
+        trailingFixed = slots[folderBegin]->GetBounds();
+    return snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
+        viewport, app_->dockSettings_.position, leadingVisual,
+        GetElementVisualRect(trailingFixed, pointer), ScaledSeparatorGap());
+}
+
 RECT DockContainer::GetScrollViewport(const RECT& bounds) const
 {
     RECT viewport = bounds;
@@ -1869,84 +2026,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const RECT search = GetSearchRect();
     const int maxScrollOffset = GetMaxScrollOffset(GetBounds());
     const bool hasOverflow = maxScrollOffset > 0;
-    RECT scrollViewport = GetScrollViewport(GetBounds());
-    if (hasOverflow)
-    {
-        RECT firstScrollable{};
-        RECT lastScrollable{};
-        auto includeScrollable = [&](const RECT& bounds) {
-            if (IsRectEmpty(&bounds))
-                return;
-            if (IsRectEmpty(&firstScrollable))
-                firstScrollable = bounds;
-            lastScrollable = bounds;
-        };
-        for (size_t index = 0;
-            index < fixedCount && index < slots.size(); ++index)
-        {
-            if (slots[index])
-                includeScrollable(slots[index]->GetBounds());
-        }
-        for (const auto& item : runningItems_)
-        {
-            if (item)
-                includeScrollable(item->GetBounds());
-        }
-        for (const auto& item : frequentItems_)
-        {
-            if (item)
-                includeScrollable(item->GetBounds());
-        }
-        if (!IsEdgeAttached())
-        {
-            for (size_t index = folderBegin;
-                index < folderEnd && index < slots.size(); ++index)
-            {
-                if (slots[index])
-                    includeScrollable(
-                        slots[index]->GetBounds());
-            }
-        }
-
-        const MagnificationZone focusZone =
-            GetMagnificationZone(magnificationFocus);
-        const bool scrollWaveControlsViewport =
-            !IsEdgeAttached() ||
-            focusZone == MagnificationZone::Leading;
-        if (scrollWaveControlsViewport &&
-            !IsRectEmpty(&firstScrollable) &&
-            !IsRectEmpty(&lastScrollable))
-        {
-            scrollViewport = snowdesktop::dock_magnification::
-                MoveOverflowViewportWithScrollableVisuals(
-                    scrollViewport, app_->dockSettings_.position,
-                    firstScrollable,
-                    visualRectFor(firstScrollable),
-                    lastScrollable,
-                    visualRectFor(lastScrollable));
-        }
-        else
-        {
-            const RECT leadingVisual =
-                IsRectEmpty(&windowsButton)
-                ? RECT{}
-                : visualRectFor(windowsButton);
-            RECT trailingFixed = search;
-            if (IsEdgeAttached() && folderCount > 0 &&
-                folderBegin < slots.size() && slots[folderBegin])
-            {
-                trailingFixed = slots[folderBegin]->GetBounds();
-            }
-            const RECT trailingVisual =
-                visualRectFor(trailingFixed);
-            scrollViewport = snowdesktop::dock_magnification::
-                FitOverflowViewportToFixedVisuals(
-                    scrollViewport,
-                    app_->dockSettings_.position,
-                    leadingVisual, trailingVisual,
-                    ScaledSeparatorGap());
-        }
-    }
+    const RECT scrollViewport = GetVisualScrollViewport(app_->lastMousePoint_);
     const float renderScale = GetMaximumMagnificationScale() +
         static_cast<float>(GetLaunchAnimationPadding()) /
             static_cast<float>(std::max(1, ItemIconSize()));

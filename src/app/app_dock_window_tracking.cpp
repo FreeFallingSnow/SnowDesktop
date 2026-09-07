@@ -1104,6 +1104,12 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
                     window, action, nullptr, anchor,
                     capturePolicy))
                 return true;
+            // Propagate an isolated live attempt's failure so the caller can
+            // retry after removing the floating layer. Native activation here
+            // used to consume that signal and could invert a minimize click.
+            if (capturePolicy ==
+                DockWindowTransitionCapturePolicy::LiveThumbnailOnly)
+                return false;
             ActivateDockWindowFromPreview(window);
             return true;
         };

@@ -216,6 +216,8 @@ void DesktopApp::DrawDesktopForeground(
         DrawHiddenHintOverlay(ctx);
     if (showWidgetAddedHint_)
         DrawWidgetAddedHintOverlay(ctx);
+    if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
+        dockWindowTransition_->RefreshOcclusion();
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──

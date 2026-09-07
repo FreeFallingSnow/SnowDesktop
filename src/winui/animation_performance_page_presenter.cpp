@@ -2,13 +2,8 @@
 #include "animation_performance_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "../animation_settings.h"
-#include "../dock_genie_rules.h"
-#include "../dock_launch_animation.h"
-#include "../dock_magnification.h"
-#include "../popup_animation_rules.h"
 #include "../l10n.h"
 
-#include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -20,9 +15,7 @@ namespace snowdesktop::winui
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
-namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 using presenter_controls::SettingRow;
-using Clock = std::chrono::steady_clock;
 
 namespace
 {
@@ -84,15 +77,6 @@ muxc::Grid EditorWithReset(const mux::UIElement& editor, muxc::Button& reset)
     return grid;
 }
 
-muxc::Border PreviewSlice()
-{
-    // ThemeResource remains live across light, dark and contrast switches.
-    return mux::Markup::XamlReader::Load(LR"(<Border
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Width="150" Height="6.1"
-        Background="{ThemeResource AccentFillColorDefaultBrush}"
-        IsHitTestVisible="False" />)").as<muxc::Border>();
-}
 }
 
 struct AnimationPerformancePagePresenter::Impl
@@ -158,7 +142,6 @@ struct AnimationPerformancePagePresenter::Impl
             scalePreview.Queue(hoverScale.Value());
             scaleIdle.Stop();
             scaleIdle.Start();
-            UpdateHover(hoveredIcon);
         });
         revoke.push_back([control = hoverScale, token]() { control.ValueChanged(token); });
         token = hoverScale.PointerCaptureLost([this](const auto&, const auto&) { CommitScale(); });
@@ -192,7 +175,6 @@ struct AnimationPerformancePagePresenter::Impl
         HookGeneral(frameLimit, &GeneralSettings::animationFrameLimit, true);
         AddSwitch(energySaver, "energySaver", &GeneralSettings::animationEnergySaver, true);
         AddSwitch(onBattery, "onBattery", &GeneralSettings::animationOnBattery, false);
-        BuildPreview();
         RefreshLocalizedText();
     }
 
@@ -206,20 +188,11 @@ struct AnimationPerformancePagePresenter::Impl
     SettingRow scaleRow;
     muxc::Slider hoverScale{nullptr};
     muxc::Button scaleReset{nullptr};
-    muxc::TextBlock dockNotice{nullptr}, previewTitle{nullptr}, previewHint{nullptr};
+    muxc::TextBlock dockNotice{nullptr};
     muxc::HyperlinkButton dockLink{nullptr};
-    muxc::Canvas previewCanvas{nullptr};
-    std::array<muxc::Border, 12> slices;
-    std::array<muxm::CompositeTransform, 12> sliceTransforms;
-    std::array<muxm::MatrixTransform, 12> genieTransforms;
-    std::array<muxc::Button, 5> previewIcons;
-    std::array<muxm::CompositeTransform, 5> iconTransforms;
-    std::array<muxc::Button, 3> playButtons;
     std::vector<std::function<void()>> revoke;
     presenter_controls::CoalescedPreviewTimer<double> scalePreview;
-    mux::DispatcherTimer scaleIdle{nullptr}, previewTimer{nullptr};
-    Clock::time_point previewStart{};
-    int previewKind = -1, hoveredIcon = -1;
+    mux::DispatcherTimer scaleIdle{nullptr};
     bool dockEnabled = false, scaleDirty = false, updating = false;
     bool active = false, closed = false, hasSnapshot = false;
     std::uint64_t generation = 0, generalRevision = 0, dockRevision = 0;
@@ -327,11 +300,6 @@ struct AnimationPerformancePagePresenter::Impl
         PublishScale(hoverScale.Value(), SettingsUpdateMode::PreviewAndCommit);
     }
 
-    bool AnimationsEnabled() const
-    {
-        return animation::ResolveEnabled(mode.combo.SelectedIndex(), animation::SystemAnimationsEnabled());
-    }
-
     void UpdateEnabled()
     {
         const bool enabled = mode.combo.SelectedIndex() != animation::Disabled;
@@ -341,220 +309,6 @@ struct AnimationPerformancePagePresenter::Impl
             choice->row.SetEnabled(enabled && dockEnabled);
         scaleRow.SetEnabled(enabled && dockEnabled && hover.combo.SelectedIndex() != 0);
         dockNotice.Visibility(dockEnabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        if (!AnimationsEnabled()) StopPreview();
-        for (std::size_t i = 0; i < playButtons.size(); ++i)
-            if (playButtons[i]) playButtons[i].IsEnabled(AnimationsEnabled() && (i == 0 || dockEnabled));
-        for (const auto& icon : previewIcons)
-            if (icon) icon.IsEnabled(enabled && dockEnabled);
-        UpdateHover(hoveredIcon);
-    }
-
-    void BuildPreview()
-    {
-        previewTitle = muxc::TextBlock{};
-        previewTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        dockCard.content.Children().Append(previewTitle);
-        previewHint = muxc::TextBlock{};
-        previewHint.TextWrapping(mux::TextWrapping::Wrap);
-        dockCard.content.Children().Append(previewHint);
-        previewCanvas = muxc::Canvas{};
-        previewCanvas.Width(280);
-        previewCanvas.Height(112);
-        previewCanvas.HorizontalAlignment(mux::HorizontalAlignment::Center);
-        for (std::size_t i = 0; i < slices.size(); ++i)
-        {
-            slices[i] = PreviewSlice();
-            sliceTransforms[i] = muxm::CompositeTransform{};
-            genieTransforms[i] = muxm::MatrixTransform{};
-            sliceTransforms[i].CenterX(75);
-            slices[i].RenderTransform(sliceTransforms[i]);
-            muxc::Canvas::SetLeft(slices[i], 65);
-            muxc::Canvas::SetTop(slices[i], 12 + i * 6.0);
-            previewCanvas.Children().Append(slices[i]);
-        }
-        dockCard.content.Children().Append(previewCanvas);
-        muxc::StackPanel icons{};
-        icons.Orientation(muxc::Orientation::Horizontal);
-        icons.Spacing(12);
-        icons.Margin({0, 16, 0, 16});
-        icons.HorizontalAlignment(mux::HorizontalAlignment::Center);
-        constexpr std::array glyphs{L"\xE8B7", L"\xE774", L"\xE8A5", L"\xE721", L"\xE713"};
-        for (int i = 0; i < 5; ++i)
-        {
-            auto& button = previewIcons[i];
-            button = muxc::Button{};
-            button.Width(38);
-            button.Height(38);
-            button.Padding({0, 0, 0, 0});
-            muxc::FontIcon icon{};
-            icon.Glyph(glyphs[i]);
-            icon.FontSize(18);
-            button.Content(icon);
-            iconTransforms[i] = muxm::CompositeTransform{};
-            iconTransforms[i].CenterX(19);
-            iconTransforms[i].CenterY(38);
-            button.RenderTransform(iconTransforms[i]);
-            icons.Children().Append(button);
-            auto token = button.PointerEntered([this, i](const auto&, const auto&) { UpdateHover(i); });
-            revoke.push_back([button, token]() { button.PointerEntered(token); });
-            token = button.PointerExited([this](const auto&, const auto&) { UpdateHover(-1); });
-            revoke.push_back([button, token]() { button.PointerExited(token); });
-            token = button.GotFocus([this, i](const auto&, const auto&) { UpdateHover(i); });
-            revoke.push_back([button, token]() { button.GotFocus(token); });
-            token = button.LostFocus([this](const auto&, const auto&) { UpdateHover(-1); });
-            revoke.push_back([button, token]() { button.LostFocus(token); });
-        }
-        dockCard.content.Children().Append(icons);
-        // Vertical commands remain readable with long translations at narrow widths.
-        for (int i = 0; i < 3; ++i)
-        {
-            playButtons[i] = muxc::Button{};
-            playButtons[i].HorizontalAlignment(mux::HorizontalAlignment::Left);
-            dockCard.content.Children().Append(playButtons[i]);
-            const auto token = playButtons[i].Click([this, i](const auto&, const auto&) { StartPreview(i); });
-            revoke.push_back([button = playButtons[i], token]() { button.Click(token); });
-        }
-        previewTimer = mux::DispatcherTimer{};
-        previewTimer.Interval(std::chrono::milliseconds(16));
-        const auto token = previewTimer.Tick([this](const auto&, const auto&) { RenderPreview(); });
-        revoke.push_back([timer = previewTimer, token]() { timer.Tick(token); });
-    }
-
-    void UpdateHover(int index)
-    {
-        hoveredIcon = index;
-        const bool enabled = active && dockEnabled && AnimationsEnabled();
-        const int effect = hover.combo.SelectedIndex();
-        const float focusScale = static_cast<float>(hoverScale ? hoverScale.Value() / 100.0 : 1.28);
-        for (int i = 0; i < 5; ++i)
-        {
-            if (!iconTransforms[i]) continue;
-            const int distance = (i - index) * 50;
-            const float scale = enabled && index >= 0 ? dock_magnification::ScaleForEffect(
-                effect, i == index, static_cast<float>(distance), 50, focusScale) : 1.0f;
-            iconTransforms[i].CenterY(38);
-            iconTransforms[i].ScaleX(scale);
-            iconTransforms[i].ScaleY(scale);
-            iconTransforms[i].TranslateX(!enabled || index < 0 || effect == 0 ? 0 :
-                effect == 1 ? dock_magnification::SingleFocusAxisShift(distance, 38, focusScale) :
-                dock_magnification::AxisShiftForDistance(distance, 50, 38, focusScale));
-            iconTransforms[i].TranslateY(0);
-        }
-    }
-
-    void StartPreview(int kind)
-    {
-        if (!CanEdit() || !AnimationsEnabled() || (kind != 0 && !dockEnabled)) return;
-        StopPreview();
-        previewKind = kind;
-        previewStart = Clock::now();
-        SYSTEM_POWER_STATUS power{};
-        const bool available = GetSystemPowerStatus(&power) != FALSE;
-        const int requested = std::array{0, 30, 60, 120}[std::clamp(frameLimit.combo.SelectedIndex(), 0, 3)];
-        const int limit = animation::ResolveFrameLimit(requested, energySaver.toggle.IsOn(),
-            onBattery.toggle.IsOn(), available && power.SystemStatusFlag != 0,
-            available && power.ACLineStatus == 0);
-        previewTimer.Interval(std::chrono::milliseconds(limit == 0 ? 16 :
-            static_cast<int>(std::ceil(1000.0 / limit))));
-        RenderPreview();
-        previewTimer.Start();
-    }
-
-    void RenderPreview()
-    {
-        if (!active || !AnimationsEnabled()) { StopPreview(); return; }
-        const double elapsed = std::chrono::duration<double>(Clock::now() - previewStart).count();
-        const double phase = elapsed / animation::DurationScale(speed.combo.SelectedIndex());
-        if (previewKind == 1)
-        {
-            const double elapsedMs = phase * 1000.0;
-            if (elapsedMs >= dock_launch_animation::kMinimumDurationMs) { StopPreview(); return; }
-            const int effect = launch.combo.SelectedIndex();
-            iconTransforms[2].CenterY(19);
-            iconTransforms[2].TranslateY(effect == 1 ? -dock_launch_animation::OffsetPixels(elapsedMs, 38) : 0);
-            iconTransforms[2].ScaleX(effect == 2 ? dock_launch_animation::PulseScale(elapsedMs) : 1);
-            iconTransforms[2].ScaleY(iconTransforms[2].ScaleX());
-            return;
-        }
-        const int selected = previewKind == 0 ? popup.combo.SelectedIndex() : window.combo.SelectedIndex();
-        const double closeDuration = previewKind == 0 ?
-            popup_animation_rules::kCloseDurationMs / 1000.0 :
-            selected == 3 ? 0.36 : selected == 2 ? 0.18 : 0.24;
-        const double openDuration = previewKind == 0 ?
-            popup_animation_rules::kOpenDurationMs / 1000.0 : closeDuration;
-        constexpr double pause = 0.20;
-        const double reopen = closeDuration + pause;
-        const double finish = reopen + openDuration;
-        if (phase >= finish + 0.15) { StopPreview(); return; }
-        // Actual transition durations, separated by a brief illustrative pause.
-        const double progress = phase < closeDuration ? phase / closeDuration :
-            phase < reopen ? 1.0 : phase < finish ? 1.0 - (phase - reopen) / openDuration : 0.0;
-        const double t = popup_animation_rules::EaseInOutSmooth(static_cast<float>(progress));
-        const bool noEffect = selected == 0;
-        const bool fade = previewKind == 0 ? selected == 1 : selected == 2;
-        const bool genie = previewKind == 2 && selected == 3;
-        for (std::size_t i = 0; i < slices.size(); ++i)
-        {
-            if (previewKind == 0)
-            {
-                const float visibleProgress = static_cast<float>(1.0 - progress);
-                const double scale = noEffect || fade ? 1.0 :
-                    popup_animation_rules::ScaleForProgress(visibleProgress);
-                slices[i].RenderTransform(sliceTransforms[i]);
-                sliceTransforms[i].ScaleX(scale);
-                sliceTransforms[i].ScaleY(scale);
-                // Each strip shares the popup's center; the popup never travels to the Dock.
-                sliceTransforms[i].TranslateY((36.0 - i * 6.0) * (1.0 - scale));
-                slices[i].Opacity(noEffect ? (progress > 0.5 ? 0.0 : 1.0) :
-                    fade ? popup_animation_rules::EaseInOutSmooth(visibleProgress) :
-                    visibleProgress > 0.0f ? 1.0 : 0.0);
-                continue;
-            }
-            if (genie)
-            {
-                const double begin = static_cast<double>(i) / slices.size();
-                const double end = static_cast<double>(i + 1) / slices.size();
-                const auto matrix = dock_genie::StripMatrix({65, 12, 215, 84},
-                    {131, 103, 149, 111}, dock_genie::Edge::Bottom, t, 150, 72,
-                    begin, end, 0, 0);
-                genieTransforms[i].Matrix(muxm::Matrix{matrix.m11, matrix.m12,
-                    matrix.m21, matrix.m22,
-                    matrix.dx + i * 6.0 * matrix.m21 - 65,
-                    matrix.dy + i * 6.0 * matrix.m22 - 12 - i * 6.0});
-                slices[i].RenderTransform(genieTransforms[i]);
-                slices[i].Opacity(dock_genie::Opacity(t));
-                continue;
-            }
-            slices[i].RenderTransform(sliceTransforms[i]);
-            auto& transform = sliceTransforms[i];
-            transform.ScaleX(noEffect || fade ? 1.0 : 1.0 - 0.88 * t);
-            transform.ScaleY(noEffect || fade ? 1.0 : 1.0 - (1.0 - 8.0 / 72.0) * t);
-            transform.TranslateY(noEffect || fade ? 0.0 : t * (91.0 - i * 6.0));
-            slices[i].Opacity(noEffect ? (progress > 0.5 ? 0.0 : 1.0) : 1.0 - t);
-        }
-    }
-
-    void StopPreview()
-    {
-        if (previewTimer) previewTimer.Stop();
-        previewKind = -1;
-        for (std::size_t i = 0; i < slices.size(); ++i)
-        {
-            if (!slices[i]) continue;
-            slices[i].Opacity(1);
-            slices[i].RenderTransform(sliceTransforms[i]);
-            sliceTransforms[i].ScaleX(1);
-            sliceTransforms[i].ScaleY(1);
-            sliceTransforms[i].TranslateY(0);
-        }
-        for (const auto& transform : iconTransforms)
-        {
-            if (!transform) continue;
-            transform.ScaleX(1);
-            transform.ScaleY(1);
-            transform.TranslateX(0);
-            transform.TranslateY(0);
-        }
     }
 
     void RefreshLocalizedText()
@@ -590,17 +344,6 @@ struct AnimationPerformancePagePresenter::Impl
         }
         dockNotice.Text(L("settings.animation.dockDisabled"));
         dockLink.Content(winrt::box_value(L("settings.animation.openDock")));
-        previewTitle.Text(L("settings.animation.preview"));
-        previewHint.Text(L("settings.animation.preview.description"));
-        constexpr std::array playKeys{"popup", "launch", "window"};
-        for (std::size_t i = 0; i < playButtons.size(); ++i)
-            playButtons[i].Content(winrt::box_value(L(std::string("settings.animation.preview.") + playKeys[i])));
-        for (int i = 0; i < 5; ++i)
-        {
-            const std::wstring name = L("settings.animation.preview.icon") + L" " + std::to_wstring(i + 1);
-            muxa::AutomationProperties::SetName(previewIcons[i], name);
-            muxc::ToolTipService::SetToolTip(previewIcons[i], winrt::box_value(name));
-        }
         updating = wasUpdating;
         UpdateEnabled();
     }
@@ -614,7 +357,6 @@ struct AnimationPerformancePagePresenter::Impl
             scalePreview.Cancel();
             scaleIdle.Stop();
             scaleDirty = false;
-            StopPreview();
         }
         generation = snapshot.generation;
         updating = true;
@@ -648,9 +390,8 @@ struct AnimationPerformancePagePresenter::Impl
 
     void Deactivate() noexcept
     {
-        try { CommitScale(); StopPreview(); } catch (...) {}
+        try { CommitScale(); } catch (...) {}
         active = false;
-        hoveredIcon = -1;
     }
     void Close() noexcept
     {

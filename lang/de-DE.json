@@ -1418,11 +1418,5 @@
     "settings.animation.option.fps120": "120 / Sekunde",
     "settings.animation.restore": "Standard wiederherstellen",
     "settings.animation.dockDisabled": "Aktivieren Sie das Dock, um seine Effekte einzustellen.",
-    "settings.animation.openDock": "Dock-Einstellungen öffnen",
-    "settings.animation.preview": "Effekte ausprobieren",
-    "settings.animation.preview.description": "Diese Darstellung veranschaulicht Ihre Auswahl. Zeigen Sie auf ein Symbol oder fokussieren Sie es, um die Vergrößerung zu testen. Prüfen Sie die tatsächlichen Effekte auf Ihrem Desktop.",
-    "settings.animation.preview.popup": "Popup-Vorschau",
-    "settings.animation.preview.launch": "App-Start-Vorschau",
-    "settings.animation.preview.window": "Minimieren und Wiederherstellen testen",
-    "settings.animation.preview.icon": "Vorschau-Symbol"
+    "settings.animation.openDock": "Dock-Einstellungen öffnen"
 }

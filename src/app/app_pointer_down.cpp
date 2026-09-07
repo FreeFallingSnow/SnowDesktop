@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../quick_navigation_rules.h"
 #include "../widget_scroll_rules.h"
+#include "../animation_settings.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -532,7 +533,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             const auto primeDockMinimizeSnapshot =
                 [this, dock]() {
-                    if (IsDockContainerEffectivelyFloating(dock) ||
+                    if ((IsDockContainerEffectivelyFloating(dock) &&
+                            snowdesktop::animation::RuntimeWindowEffect() != 3) ||
                         dockPressedWindowAction_ !=
                             snowdesktop::dock_window_rules::
                                 DockClickAction::Minimize ||

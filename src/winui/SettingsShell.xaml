@@ -153,9 +153,7 @@
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="GeneralItem" Tag="general" />
-                <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE768;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />
                 <NavigationViewItem x:Name="PersonalizationItem"
                                     Tag="appearance"
                                     IsExpanded="True"

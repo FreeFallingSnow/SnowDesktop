@@ -146,6 +146,11 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     host.frameReady = true;
     host.compositionRenderRecoveryPending =
         false;
+    if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
+    {
+        ApplyFloatingDockLayerPolicy(host);
+        dockWindowTransition_->RefreshOcclusion();
+    }
     return true;
 }
 

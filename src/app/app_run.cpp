@@ -506,6 +506,18 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             instance_, &uiAnimationScheduler_,
             d2dDevice_.Get(), dcompDevice_.Get()))
         dockWindowTransition_.reset();
+    if (dockWindowTransition_)
+    {
+        dockWindowTransition_->SetOcclusionRectsProvider([this] {
+            return GetDockWindowTransitionOcclusionRects();
+        });
+        dockWindowTransition_->SetPresentationCallback([this](HWND) {
+            ApplyFloatingDockLayerPolicy();
+        });
+        dockWindowTransition_->SetDiagnosticCallback([](const wchar_t* message) {
+            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+        });
+    }
 
     // Create control window for tray icon ownership
     {

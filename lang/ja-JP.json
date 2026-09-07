@@ -1418,11 +1418,5 @@
     "settings.animation.option.fps120": "毎秒 120 回",
     "settings.animation.restore": "既定値に戻す",
     "settings.animation.dockDisabled": "Dock を有効にすると効果を調整できます。",
-    "settings.animation.openDock": "Dock 設定を開く",
-    "settings.animation.preview": "効果を試す",
-    "settings.animation.preview.description": "選択した効果の模式図です。アイコンにポインターを合わせるかキーボードでフォーカスして拡大を試せます。実際の効果はデスクトップで確認してください。",
-    "settings.animation.preview.popup": "ポップアップをプレビュー",
-    "settings.animation.preview.launch": "アプリ起動をプレビュー",
-    "settings.animation.preview.window": "最小化と復元をプレビュー",
-    "settings.animation.preview.icon": "プレビューアイコン"
+    "settings.animation.openDock": "Dock 設定を開く"
 }

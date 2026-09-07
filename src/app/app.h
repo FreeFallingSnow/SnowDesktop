@@ -1227,6 +1227,7 @@ private:
         size_t itemIndex, int iconSize) const;
     float GetDockLaunchPulseScale(size_t itemIndex) const;
     void ApplyAnimationPreferences(bool systemChanged = false);
+    std::vector<RECT> GetDockWindowTransitionOcclusionRects() const;
     void OnDockLaunchBounceTimer();
     void InvalidateDockLaunchBounceRects();
     bool ActivateOrToggleDockItem(size_t itemIndex,
@@ -3318,6 +3319,7 @@ private:
     std::unique_ptr<DockWindowPreview> dockWindowPreview_;
     std::unique_ptr<DockWindowTransition>
         dockWindowTransition_;
+    bool dockWindowTransitionLayerUpdateActive_ = false;
     struct DockLaunchBounceState
     {
         double startTimeMs = 0.0;

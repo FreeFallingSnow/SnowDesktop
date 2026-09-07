@@ -1418,11 +1418,5 @@
     "settings.animation.option.fps120": "每秒 120 次",
     "settings.animation.restore": "還原預設值",
     "settings.animation.dockDisabled": "啟用 Dock 後即可設定其動畫。",
-    "settings.animation.openDock": "開啟 Dock 設定",
-    "settings.animation.preview": "體驗動畫",
-    "settings.animation.preview.description": "此處為效果示意。將游標移至圖示或用鍵盤聚焦即可體驗放大效果，實際動畫請在桌面上查看。",
-    "settings.animation.preview.popup": "預覽彈出視窗動畫",
-    "settings.animation.preview.launch": "預覽啟動回饋",
-    "settings.animation.preview.window": "預覽最小化與還原",
-    "settings.animation.preview.icon": "預覽圖示"
+    "settings.animation.openDock": "開啟 Dock 設定"
 }

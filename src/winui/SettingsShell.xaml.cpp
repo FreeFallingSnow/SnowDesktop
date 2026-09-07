@@ -1844,6 +1844,8 @@ void SettingsShell::ApplyNavigationIcons()
     const std::array descriptors{
         IconDescriptor{GeneralItem(),
             L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
+        IconDescriptor{AnimationItem(),
+            L"ms-appx:///Assets/Settings/Icons/animation-performance.svg", L"\xE768"},
         IconDescriptor{PersonalizationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance.svg", L"\xE771"},
         IconDescriptor{AppearanceThemeItem(),

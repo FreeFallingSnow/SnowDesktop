@@ -1418,11 +1418,5 @@
     "settings.animation.option.fps120": "120 / second",
     "settings.animation.restore": "Restore default",
     "settings.animation.dockDisabled": "Enable the Dock to adjust its effects.",
-    "settings.animation.openDock": "Open Dock settings",
-    "settings.animation.preview": "Try the effects",
-    "settings.animation.preview.description": "This diagram illustrates your choices. Hover or focus an icon to try magnification. Check the actual effects on your desktop.",
-    "settings.animation.preview.popup": "Preview popup",
-    "settings.animation.preview.launch": "Preview app launch",
-    "settings.animation.preview.window": "Preview minimize and restore",
-    "settings.animation.preview.icon": "Preview icon"
+    "settings.animation.openDock": "Open Dock settings"
 }

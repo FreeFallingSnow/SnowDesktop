@@ -1,4 +1,5 @@
 #include "app.h"
+#include "popup_window_pair_z_order.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 
@@ -455,6 +456,40 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     if (!host.active || !host.hwnd ||
         !IsWindow(host.hwnd))
         return;
+    if (dockWindowTransitionLayerUpdateActive_)
+        return;
+    dockWindowTransitionLayerUpdateActive_ = true;
+    struct LayerUpdateScope final
+    {
+        bool& active;
+        ~LayerUpdateScope() { active = false; }
+    } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
+    const HWND transitionWindow = dockWindowTransition_
+        ? dockWindowTransition_->GetPresentationWindow() : nullptr;
+    if (transitionWindow && IsWindow(transitionWindow) &&
+        ShouldShowPersistentDockHost(host) && IsWindowVisible(host.hwnd))
+    {
+        // Borrow the presentation band without changing the Dock's summon,
+        // input or focus state. Always move the content/backdrop as a pair.
+        host.backdrop.SetPopupWindowPairZOrder(
+            host.hwnd, HWND_TOPMOST, true);
+        const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
+        const HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
+            ? nextWindow : host.hwnd;
+        // An already-topmost pair deliberately does not raise itself above
+        // menus on policy refresh. Lower the transition below its complete
+        // pair instead of inserting it between the content and glass helper.
+        if (snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
+            !snowdesktop::popup_window_pair_z_order::IsAbove(
+                pairEnd, transitionWindow))
+        {
+            SetWindowPos(transitionWindow, pairEnd, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                    SWP_NOOWNERZORDER);
+        }
+        ApplyDragPreviewLayerPolicy();
+        return;
+    }
     const bool promoted =
         IsPersistentDockHostEffectivelyFloating(host);
     const bool systemShowDesktopGuard =

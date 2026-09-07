@@ -1418,11 +1418,5 @@
     "settings.animation.option.fps120": "120 次/秒",
     "settings.animation.restore": "恢复默认值",
     "settings.animation.dockDisabled": "开启 Dock 后可设置其动效。",
-    "settings.animation.openDock": "打开 Dock 设置",
-    "settings.animation.preview": "体验动效",
-    "settings.animation.preview.description": "此处为效果示意。将鼠标移入图标或用键盘聚焦可体验放大效果，实际动效请在桌面上查看。",
-    "settings.animation.preview.popup": "预览弹窗动画",
-    "settings.animation.preview.launch": "预览启动反馈",
-    "settings.animation.preview.window": "预览最小化与还原",
-    "settings.animation.preview.icon": "预览图标"
+    "settings.animation.openDock": "打开 Dock 设置"
 }
