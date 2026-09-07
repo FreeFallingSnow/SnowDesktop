@@ -15,6 +15,8 @@
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
 #include "dock_genie_rules.h"
+#include "dock_snapshot_warmup.h"
+#include "dock_snapshot_warmup_rules.h"
 #include "dock_app_identity_rules.h"
 #include "page_navigation_rules.h"
 #include "page_layout_settings.h"
@@ -3837,6 +3839,27 @@ int main(int argc, char** argv)
     Check(compactSnapshot.cx == 800 &&
             compactSnapshot.cy == 600,
         "small window snapshots must not be enlarged");
+    const RECT largeWarmupWindows[] = {
+        {0, 0, 7680, 4320}, {0, 0, 4320, 32000}, {0, 0, 32000, 32000}};
+    for (const auto& bounds : largeWarmupWindows)
+    {
+        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
+        Check(pixels.cx > 0 && pixels.cy > 0 && pixels.cx <= 1600 && pixels.cy <= 1600 &&
+                static_cast<std::uint64_t>(pixels.cx) * pixels.cy <= 1600000,
+            "background capture must bound both the longest edge and allocated pixel count for huge windows");
+    }
+    const SIZE smallWarmup = snowdesktop::dock_snapshot_warmup::detail::PixelSize(
+        {-300, -200, 500, 400});
+    Check(smallWarmup.cx == 800 && smallWarmup.cy == 600,
+        "background capture must preserve small-window dimensions without enlargement");
+    const RECT invalidWarmupWindows[] = {
+        {}, {10, 0, 0, 20}, {0, 20, 10, 0}, {LONG_MIN, 0, LONG_MAX, 10}};
+    for (const auto& bounds : invalidWarmupWindows)
+    {
+        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
+        Check(pixels.cx == 0 && pixels.cy == 0,
+            "invalid or overflowing source bounds must not allocate a background snapshot");
+    }
     Check(kDockWindowSnapshotRenderDpi == 96.0f,
         "snapshot render coordinates must remain physical pixels at every monitor DPI");
     Check(kDockWindowSnapshotUsesComposition,
@@ -3902,6 +3925,70 @@ int main(int argc, char** argv)
             !PreferDockSnapshotEviction(true, 100, false, 300) &&
             PreferDockSnapshotEviction(true, 100, true, 200),
         "cache pressure must evict recapturable windows before minimized ones, then use LRU");
+    namespace warmup = snowdesktop::dock_snapshot_warmup_rules;
+    Check(warmup::ShouldStart(true, false, true, false, 1000, 0, 250),
+        "the first eligible warmup may start after foreground has settled");
+    Check(!warmup::ShouldStart(false, false, true, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, true, true, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, false, false, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, false, true, true, 5000, 3000, 250),
+        "disabled, active-transition, ineligible or already-pending states must not start background capture");
+    Check(!warmup::ShouldStart(true, false, true, false, 5000, 3000, 249) &&
+            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250),
+        "foreground must settle for the complete 250ms before warmup");
+    Check(!warmup::ShouldStart(true, false, true, false, 4999, 3000, 250) &&
+            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, false, true, false, 2999, 3000, 250),
+        "warmup attempts must stay at least 2000ms apart and reject clock rollback");
+    constexpr auto maximumTick = std::numeric_limits<std::uint64_t>::max();
+    Check(!warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 1999, 250) &&
+            warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 2000, 250),
+        "warmup throttling must not overflow when the monotonic timestamp is near its limit");
+    Check(warmup::ShouldAccept(1000, 1000, false, 0) &&
+            warmup::ShouldAccept(1000, 4000, false, 0) &&
+            !warmup::ShouldAccept(1000, 4001, false, 0) &&
+            !warmup::ShouldAccept(1000, 999, false, 0),
+        "asynchronous captures may be accepted for at most 3000ms and never from a future timestamp");
+    Check(!warmup::ShouldAccept(1000, 2000, true, 1001) &&
+            !warmup::ShouldAccept(1000, 2000, true, 1000) &&
+            warmup::ShouldAccept(1001, 2000, true, 1000) &&
+            warmup::ShouldAccept(1000, 2000, false, 1001),
+        "late or duplicate background results must not replace a newer Dock capture");
+    Check(!warmup::CanEvict(true, true) && warmup::CanEvict(false, true) &&
+            warmup::CanEvict(true, false) && warmup::CanEvict(false, false),
+        "background warmup must preserve minimized windows' only restore images without blocking foreground cache eviction");
+    WINDOWPLACEMENT capturedPlacement{};
+    capturedPlacement.length = sizeof(WINDOWPLACEMENT);
+    capturedPlacement.showCmd = SW_SHOWNORMAL;
+    capturedPlacement.rcNormalPosition = {100, 200, 900, 700};
+    WINDOWPLACEMENT minimizedPlacement = capturedPlacement;
+    minimizedPlacement.showCmd = SW_SHOWMINIMIZED;
+    Check(warmup::HasSameRestorePlacement(capturedPlacement, minimizedPlacement),
+        "minimizing a normal window must retain its matching cached restore placement");
+    WINDOWPLACEMENT maximizedPlacement = capturedPlacement;
+    maximizedPlacement.showCmd = SW_SHOWMAXIMIZED;
+    WINDOWPLACEMENT restoreMaximizedPlacement = minimizedPlacement;
+    restoreMaximizedPlacement.flags = WPF_RESTORETOMAXIMIZED;
+    Check(warmup::HasSameRestorePlacement(maximizedPlacement, restoreMaximizedPlacement),
+        "a minimized window that will restore maximized must match its maximized capture");
+    Check(!warmup::HasSameRestorePlacement(capturedPlacement, restoreMaximizedPlacement) &&
+            !warmup::HasSameRestorePlacement(maximizedPlacement, minimizedPlacement),
+        "a change in the effective maximized restore state must invalidate cached placement");
+    const RECT changedBounds[] = {
+        {120, 200, 920, 700}, {100, 220, 900, 720}, // Moved without resizing.
+        {120, 200, 900, 700}, {100, 220, 900, 700}, // Resized from left or top.
+        {100, 200, 920, 700}, {100, 200, 900, 720}}; // Resized from right or bottom.
+    for (const auto& bounds : changedBounds)
+    {
+        WINDOWPLACEMENT changedPlacement = minimizedPlacement;
+        changedPlacement.rcNormalPosition = bounds;
+        Check(!warmup::HasSameRestorePlacement(capturedPlacement, changedPlacement),
+            "moving or resizing any window edge must invalidate the old snapshot endpoint");
+    }
+    const WINDOWPLACEMENT missingPlacement{};
+    Check(!warmup::HasSameRestorePlacement(missingPlacement, minimizedPlacement) &&
+            !warmup::HasSameRestorePlacement(capturedPlacement, missingPlacement),
+        "missing captured or current placement must never validate an old snapshot");
     const RECT occlusionHost{-1920, -200, 0, 880};
     const std::vector<RECT> dockOccluders{
         {-1600, 760, -320, 850}, // panel

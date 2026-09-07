@@ -498,6 +498,21 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
             RefreshDockRunningWindows();
+        if (dockWindowTransition_)
+        {
+            const HWND foreground = GetForegroundWindow();
+            const bool tracked = generalSettings_.dockEnabled &&
+                !dragSession_.HasContext() &&
+                !quickNavigationAnimation_.IsAnimating() &&
+                (std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
+                    [foreground](const auto& entry) {
+                        return entry.second.running && entry.second.window == foreground;
+                    }) ||
+                 std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
+                    [foreground](const auto& entry) { return entry.window == foreground; }));
+            dockWindowTransition_->UpdateSnapshotWarmup(
+                tracked ? foreground : nullptr, now - foregroundTick);
+        }
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {

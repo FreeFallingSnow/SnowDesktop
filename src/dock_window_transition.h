@@ -9,12 +9,18 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "ui_animation_scheduler.h"
 #include "dock_genie_rules.h"
+
+namespace snowdesktop::dock_snapshot_warmup
+{
+struct Request;
+}
 
 enum class DockWindowTransitionDirection
 {
@@ -159,6 +165,8 @@ constexpr DockWindowTransitionSurface ResolveDockWindowTransitionSurface(
  * 动画期间由 GPU 变换静态位图。抓取期间临时排除自身上层窗口，避免把
  * Dock 写入快照；神奇效果优先快照，其余效果可使用目标 HWND 的 DWM
  * 缩略图。该窗口不抢焦点且鼠标穿透，呈现期由宿主维护 Dock 遮挡层级。
+ * 神奇还原也可复用正常前台窗口的低频后台快照，覆盖应用自身最小化入口；
+ * 后台捕获不隐藏、激活或重排窗口，缺少可靠画面时仍回退系统缩略图。
  */
 class DockWindowTransition
 {
@@ -178,6 +186,8 @@ public:
         ID2D1Device* d2dDevice,
         IDCompositionDesktopDevice* compositionDevice);
     bool PrimeMinimizeSnapshot(HWND sourceWindow);
+    // Called by the existing maintenance timer, never by an animation frame.
+    void UpdateSnapshotWarmup(HWND foregroundWindow, DWORD foregroundAge);
     bool StartMinimize(
         HWND sourceWindow, RECT dockRect,
         DockWindowTransitionCapturePolicy capturePolicy =
@@ -234,8 +244,11 @@ private:
     struct CachedSnapshot
     {
         DWORD processId = 0;
+        DWORD threadId = 0;
         SIZE pixelSize{};
         RECT sourceRect{};
+        WINDOWPLACEMENT placement{};
+        bool background = false;
         ULONGLONG capturedTick = 0;
         ULONGLONG lastUsedTick = 0;
         std::vector<std::uint32_t> pixels;
@@ -264,6 +277,8 @@ private:
         DockWindowTransitionDirection direction,
         bool allowFreshMinimizeSnapshot);
     void PurgeSnapshotCache();
+    void CollectSnapshotWarmup();
+    const CachedSnapshot* StoreSnapshot(HWND window, CachedSnapshot snapshot);
     bool CreateCompositionSnapshot(
         const CachedSnapshot& snapshot);
     bool CreateGenieStrips();
@@ -351,4 +366,6 @@ private:
     std::unordered_map<HWND, RECT> lastVisibleRects_;
     std::unordered_map<HWND, CachedSnapshot>
         snapshotCache_;
+    std::shared_ptr<snowdesktop::dock_snapshot_warmup::Request> snapshotWarmup_;
+    ULONGLONG lastSnapshotWarmupAttempt_ = 0;
 };

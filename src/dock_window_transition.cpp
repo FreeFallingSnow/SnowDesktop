@@ -2,6 +2,8 @@
 #include "dock_window_rules.h"
 #include "animation_settings.h"
 #include "dock_window_capture_isolation.h"
+#include "dock_snapshot_warmup.h"
+#include "dock_snapshot_warmup_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -267,6 +269,8 @@ SIZE ConstrainDockWindowSnapshotSize(
 
 DockWindowTransition::~DockWindowTransition()
 {
+    if (snapshotWarmup_)
+        snapshotWarmup_->cancelled.store(true, std::memory_order_relaxed);
     Cancel();
     if (compositionTarget_)
         compositionTarget_->SetRoot(nullptr);
@@ -372,6 +376,8 @@ bool DockWindowTransition::PrimeMinimizeSnapshot(
 
     HWND root = GetAncestor(sourceWindow, GA_ROOT);
     sourceWindow = root ? root : sourceWindow;
+    if (snapshotWarmup_)
+        snapshotWarmup_->cancelled.store(true, std::memory_order_relaxed);
     RECT windowRect{};
     if (!ResolveVisibleWindowRect(
             sourceWindow, windowRect))
@@ -381,6 +387,68 @@ bool DockWindowTransition::PrimeMinimizeSnapshot(
         sourceWindow, windowRect,
         DockWindowTransitionDirection::Minimize,
         false) != nullptr;
+}
+
+void DockWindowTransition::UpdateSnapshotWarmup(
+    HWND foregroundWindow, DWORD foregroundAge)
+{
+    const bool enabled = SystemWindowAnimationsEnabled() &&
+        snowdesktop::animation::RuntimeWindowEffect() == 3;
+    if (!enabled && snapshotWarmup_)
+        snapshotWarmup_->cancelled.store(true, std::memory_order_relaxed);
+    CollectSnapshotWarmup();
+    PurgeSnapshotCache();
+
+    DWORD processId = 0;
+    if (foregroundWindow)
+        GetWindowThreadProcessId(foregroundWindow, &processId);
+    const bool eligible = processId && processId != GetCurrentProcessId() &&
+        GetForegroundWindow() == foregroundWindow &&
+        IsWindowVisible(foregroundWindow) && !IsIconic(foregroundWindow);
+    const ULONGLONG now = GetTickCount64();
+    if (!snowdesktop::dock_snapshot_warmup_rules::ShouldStart(
+            enabled, IsActive(), eligible, snapshotWarmup_ != nullptr,
+            now, lastSnapshotWarmupAttempt_, foregroundAge))
+        return;
+
+    lastSnapshotWarmupAttempt_ = now;
+    snapshotWarmup_ = snowdesktop::dock_snapshot_warmup::Begin(foregroundWindow);
+}
+
+void DockWindowTransition::CollectSnapshotWarmup()
+{
+    if (!snapshotWarmup_ ||
+        !snapshotWarmup_->ready.load(std::memory_order_acquire))
+        return;
+    auto completed = std::move(snapshotWarmup_);
+    auto& frame = completed->frame;
+    if (completed->cancelled.load(std::memory_order_relaxed) ||
+        frame.pixels.empty() ||
+        !snowdesktop::dock_snapshot_warmup::IsCurrent(frame, false))
+        return;
+
+    WINDOWPLACEMENT placement{sizeof(placement)};
+    if (!GetWindowPlacement(frame.window, &placement) ||
+        !snowdesktop::dock_snapshot_warmup_rules::HasSameRestorePlacement(
+            frame.placement, placement))
+        return;
+    const auto existing = snapshotCache_.find(frame.window);
+    if (!snowdesktop::dock_snapshot_warmup_rules::ShouldAccept(
+            frame.capturedTick, GetTickCount64(), existing != snapshotCache_.end(),
+            existing != snapshotCache_.end() ? existing->second.capturedTick : 0))
+        return;
+
+    CachedSnapshot snapshot;
+    snapshot.processId = frame.processId;
+    snapshot.threadId = frame.threadId;
+    snapshot.pixelSize = frame.pixelSize;
+    snapshot.sourceRect = frame.sourceRect;
+    snapshot.placement = frame.placement;
+    snapshot.background = true;
+    snapshot.capturedTick = frame.capturedTick;
+    snapshot.lastUsedTick = frame.capturedTick;
+    snapshot.pixels = std::move(frame.pixels);
+    StoreSnapshot(frame.window, std::move(snapshot));
 }
 
 bool DockWindowTransition::StartRestore(
@@ -412,6 +480,12 @@ bool DockWindowTransition::Start(
 
     HWND root = GetAncestor(sourceWindow, GA_ROOT);
     sourceWindow = root ? root : sourceWindow;
+    // A completed background frame can be used on the very first restore,
+    // without waiting for the next maintenance tick. Never wait for capture.
+    CollectSnapshotWarmup();
+    if (snapshotWarmup_)
+        snapshotWarmup_->cancelled.store(true, std::memory_order_relaxed);
+    PurgeSnapshotCache();
     const auto startAction =
         ResolveDockWindowTransitionStartAction(
             IsActive(),
@@ -836,6 +910,7 @@ bool DockWindowTransition::CaptureSnapshot(
 {
     snapshotResult_ = E_FAIL;
     if (!window || !IsWindow(window) ||
+        IsIconic(window) ||
         !IsUsableRect(sourceRect))
         return false;
 
@@ -945,12 +1020,15 @@ bool DockWindowTransition::CaptureSnapshot(
     if (captured)
     {
         DWORD processId = 0;
-        GetWindowThreadProcessId(
+        snapshot.threadId = GetWindowThreadProcessId(
             window, &processId);
         snapshotResult_ = S_OK;
         snapshot.processId = processId;
         snapshot.pixelSize = pixelSize;
         snapshot.sourceRect = sourceRect;
+        snapshot.placement.length = sizeof(snapshot.placement);
+        if (!GetWindowPlacement(window, &snapshot.placement))
+            snapshot.placement = {};
         snapshot.capturedTick =
             GetTickCount64();
         snapshot.lastUsedTick =
@@ -986,10 +1064,15 @@ void DockWindowTransition::PurgeSnapshotCache()
             iterator = snapshotCache_.erase(iterator);
             continue;
         }
-        GetWindowThreadProcessId(
+        const DWORD threadId = GetWindowThreadProcessId(
             iterator->first, &processId);
+        WINDOWPLACEMENT placement{sizeof(placement)};
         if (!processId ||
-            processId != iterator->second.processId)
+            processId != iterator->second.processId ||
+            threadId != iterator->second.threadId ||
+            !GetWindowPlacement(iterator->first, &placement) ||
+            !snowdesktop::dock_snapshot_warmup_rules::HasSameRestorePlacement(
+                iterator->second.placement, placement))
         {
             lastVisibleRects_.erase(iterator->first);
             iterator = snapshotCache_.erase(iterator);
@@ -997,6 +1080,51 @@ void DockWindowTransition::PurgeSnapshotCache()
         }
         ++iterator;
     }
+    std::erase_if(lastVisibleRects_, [](const auto& entry) {
+        return !IsWindow(entry.first);
+    });
+}
+
+const DockWindowTransition::CachedSnapshot*
+DockWindowTransition::StoreSnapshot(HWND window, CachedSnapshot snapshot)
+{
+    std::size_t cachedBytes = 0;
+    for (const auto& [cachedWindow, entry] : snapshotCache_)
+    {
+        if (cachedWindow != window)
+            cachedBytes += entry.pixels.size() * sizeof(std::uint32_t);
+    }
+    const std::size_t capturedBytes = snapshot.pixels.size() * sizeof(std::uint32_t);
+    if (capturedBytes > kMaximumCachedSnapshotBytes)
+        return nullptr;
+    while ((!snapshotCache_.contains(window) &&
+            snapshotCache_.size() >= kMaximumCachedSnapshots) ||
+           cachedBytes + capturedBytes > kMaximumCachedSnapshotBytes)
+    {
+        auto oldest = snapshotCache_.end();
+        for (auto iterator = snapshotCache_.begin();
+             iterator != snapshotCache_.end(); ++iterator)
+        {
+            if (iterator->first == window ||
+                !snowdesktop::dock_snapshot_warmup_rules::CanEvict(
+                    IsIconic(iterator->first) != FALSE, snapshot.background))
+                continue;
+            if (oldest == snapshotCache_.end() || PreferDockSnapshotEviction(
+                    IsIconic(iterator->first) != FALSE, iterator->second.lastUsedTick,
+                    IsIconic(oldest->first) != FALSE, oldest->second.lastUsedTick))
+                oldest = iterator;
+        }
+        // Background work must not take a minimized window's only restore image.
+        if (oldest == snapshotCache_.end())
+            return nullptr;
+        cachedBytes -= oldest->second.pixels.size() * sizeof(std::uint32_t);
+        lastVisibleRects_.erase(oldest->first);
+        snapshotCache_.erase(oldest);
+    }
+    lastVisibleRects_[window] = snapshot.sourceRect;
+    auto [iterator, inserted] = snapshotCache_.insert_or_assign(window, std::move(snapshot));
+    (void)inserted;
+    return &iterator->second;
 }
 
 const DockWindowTransition::CachedSnapshot*
@@ -1016,6 +1144,7 @@ DockWindowTransition::PrepareSnapshot(
             snapshotCache_.find(window);
         if (allowFreshMinimizeSnapshot &&
             primed != snapshotCache_.end() &&
+            !primed->second.background &&
             !primed->second.pixels.empty() &&
             EqualRect(
                 &primed->second.sourceRect,
@@ -1034,58 +1163,8 @@ DockWindowTransition::PrepareSnapshot(
                 window, sourceRect, captured))
             return nullptr;
 
-        std::size_t cachedBytes = 0;
-        for (const auto& [cachedWindow, entry] :
-             snapshotCache_)
-        {
-            if (cachedWindow != window)
-                cachedBytes +=
-                    entry.pixels.size() *
-                    sizeof(std::uint32_t);
-        }
-        const std::size_t capturedBytes =
-            captured.pixels.size() *
-            sizeof(std::uint32_t);
-        while (!snapshotCache_.empty() &&
-            ((!snapshotCache_.contains(window) &&
-              snapshotCache_.size() >=
-                  kMaximumCachedSnapshots) ||
-             cachedBytes + capturedBytes >
-                 kMaximumCachedSnapshotBytes))
-        {
-            auto oldest =
-                snapshotCache_.end();
-            for (auto iterator =
-                     snapshotCache_.begin();
-                 iterator !=
-                     snapshotCache_.end();
-                 ++iterator)
-            {
-                if (iterator->first == window)
-                    continue;
-                if (oldest == snapshotCache_.end() ||
-                    PreferDockSnapshotEviction(
-                        IsIconic(iterator->first) != FALSE,
-                        iterator->second.lastUsedTick,
-                        IsIconic(oldest->first) != FALSE,
-                        oldest->second.lastUsedTick))
-                    oldest = iterator;
-            }
-            if (oldest == snapshotCache_.end())
-                break;
-            cachedBytes -=
-                oldest->second.pixels.size() *
-                sizeof(std::uint32_t);
-            lastVisibleRects_.erase(
-                oldest->first);
-            snapshotCache_.erase(oldest);
-        }
-        auto [iterator, inserted] =
-            snapshotCache_.insert_or_assign(
-                window, std::move(captured));
-        (void)inserted;
         snapshotSource_ = L"fresh-capture";
-        return &iterator->second;
+        return StoreSnapshot(window, std::move(captured));
     }
 
     const auto cached =
@@ -1098,7 +1177,8 @@ DockWindowTransition::PrepareSnapshot(
     }
     cached->second.lastUsedTick =
         GetTickCount64();
-    snapshotSource_ = L"restore-cache";
+    snapshotSource_ = cached->second.background
+        ? L"restore-warm-cache" : L"restore-cache";
     return &cached->second;
 }
 
