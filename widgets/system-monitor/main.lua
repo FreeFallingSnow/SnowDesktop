@@ -248,12 +248,26 @@ local function drawCard(x, y, width, height, info, palette)
     else
         local valueFont = math.max(layout.fontCu(15),
             math.min(layout.fontCu(24), math.floor(height * 0.18)))
-        local metrics = nil
-        valueFont, metrics = fitFontSize(info.value, valueFont,
-            layout.fontCu(10), width - inset * 2, true)
-        draw.text(x + (width - metrics.width) / 2,
-            y + height * 0.42 - metrics.height / 2,
-            info.value, valueFont, palette.cardText, 0, true)
+        local valueWidth = width - inset * 2
+        if info.wrapValue then
+            local valueTop = y + height * 0.28
+            local valueHeight = math.max(layout.cu(1),
+                height - (valueTop - y) - layout.cu(6))
+            local metrics = draw.measureText(info.value, valueFont,
+                valueWidth, true)
+            local visibleHeight = math.min(metrics.height, valueHeight)
+            draw.text(x + inset,
+                valueTop + (valueHeight - visibleHeight) / 2,
+                info.value, valueFont, palette.cardText,
+                valueWidth, true, false, valueHeight)
+        else
+            local metrics = nil
+            valueFont, metrics = fitFontSize(info.value, valueFont,
+                layout.fontCu(10), valueWidth, true)
+            draw.text(x + (width - metrics.width) / 2,
+                y + height * 0.42 - metrics.height / 2,
+                info.value, valueFont, palette.cardText, 0, true)
+        end
     end
 
     local barY = nil
@@ -545,6 +559,7 @@ local function buildCards()
             id = "uptime",
             title = l10n.tr("lua_widget.system_monitor.uptime"),
             value = formatUptime(uptime.milliseconds),
+            wrapValue = true,
             color = palette.usageLow,
         }
     end
