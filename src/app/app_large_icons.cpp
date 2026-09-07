@@ -2,6 +2,7 @@
 #include "../animation_settings.h"
 #include "../large_icon_steam.h"
 #include "../large_icon_render_rules.h"
+#include "../large_icon_renderer.h"
 
 void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant)
 {
@@ -195,6 +196,15 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.available = true;
     result.editable = CanEditLargeIcons();
     result.name = item.name;
+    const auto frame = GetLargeIconFrameRect(item);
+    result.frameWidth = std::max<LONG>(1, frame.right - frame.left);
+    result.frameHeight = std::max<LONG>(1, frame.bottom - frame.top);
+    result.frameColumns = item.gridSpan.columns; result.frameRows = item.gridSpan.rows;
+    result.unitScale = GetItemLayoutScale(item.bounds);
+    result.durationScale = snowdesktop::animation::RuntimeDurationScale();
+    result.frameLimit = snowdesktop::animation::RuntimeFrameLimit();
+    result.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
+    result.neutral = result.accent = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
     wchar_t steamUrl[2048]{};
     GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), item.parsingName.c_str());
     result.steam = snowdesktop::large_icon_steam::AppId(steamUrl).has_value();
@@ -204,6 +214,20 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     {
         result.maxColumns = page->columns - item.gridCell.column;
         result.maxRows = page->rows - item.gridCell.row;
+        for (int columns = 1; columns <= result.maxColumns; ++columns)
+        {
+            DesktopWidget geometry; geometry.gridCell = item.gridCell;
+            geometry.bounds = GetGridRect(gridPages_, item.gridCell, {columns, 1});
+            const auto rect = GetStandaloneWidgetFrameRect(geometry);
+            result.frameWidths.push_back(rect.right - rect.left);
+        }
+        for (int rows = 1; rows <= result.maxRows; ++rows)
+        {
+            DesktopWidget geometry; geometry.gridCell = item.gridCell;
+            geometry.bounds = GetGridRect(gridPages_, item.gridCell, {1, rows});
+            const auto rect = GetStandaloneWidgetFrameRect(geometry);
+            result.frameHeights.push_back(rect.bottom - rect.top);
+        }
     }
     if (!result.editable)
     {
@@ -318,133 +342,37 @@ RECT DesktopApp::GetLargeIconFrameRect(const DesktopItem& item) const
 void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state)
 {
     RequestLargeIconAsset(FindItemIndexByKey(item.layoutKey));
-    const auto& c = EffectiveLargeIconConfig(item);
-    DesktopWidget geometry;
-    geometry.bounds = bounds;
-    geometry.gridCell = item.gridCell;
-    const auto frame = GetStandaloneWidgetFrameRect(geometry);
-    const float scale = GetItemLayoutScale(bounds);
-    const float radius = std::min(static_cast<float>(c.radius) * scale,
-        static_cast<float>(std::min(frame.right - frame.left, frame.bottom - frame.top)) / 2);
-    const auto runtime = largeIconRuntime_.find(item.layoutKey);
-    const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
-    const float hover = runtime != largeIconRuntime_.end() ? runtime->second.hover : 0;
-    const bool cover = c.content != 0 && asset && !asset->reference.starts_with("raw-");
-    const float alpha = item.isCut ? .4f : (state == 3 ? .6f : 1.f);
-    auto color = [](std::uint32_t rgb, double opacity) { return D2D1::ColorF(rgb, static_cast<float>(opacity)); };
-    const auto neutral = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
-    const auto accent = asset ? asset->accent : neutral;
-    const auto mixChannel = [&](int shift) { return static_cast<UINT>(((neutral >> shift) & 255) * (1 - c.colorMix) + ((accent >> shift) & 255) * c.colorMix); };
-    const auto background = c.autoColor ? (mixChannel(16) << 16) | (mixChannel(8) << 8) | mixChannel(0) : c.manualColor;
-    if (c.shadow || (c.hoverFrame == 3 && hover > 0))
-        for (int spread = 5; spread >= 1; --spread)
-        {
-            RECT shadow = frame; InflateRect(&shadow, spread, spread); OffsetRect(&shadow, 0, 2);
-            DrawD2DRoundedRectangle(context, shadow, radius + spread, color(0,
-                c.shadowStrength * (c.shadow ? .06 : 0) + (c.hoverFrame == 3 ? hover * .035 : 0)), color(0, 0));
-        }
-    DrawD2DRoundedRectangle(context, frame, radius,
-        color(background, alpha * (c.opacity + (c.hoverFrame == 1 ? (c.hoverOpacity - c.opacity) * hover : 0))), color(0, 0));
-    const int edge = std::max(1, static_cast<int>(std::min(frame.right - frame.left, frame.bottom - frame.top) * c.contentScale));
-    RECT icon = { (frame.left + frame.right - edge) / 2, (frame.top + frame.bottom - edge) / 2, 0, 0 };
-    icon.right = icon.left + edge;
-    icon.bottom = icon.top + edge;
-    const bool animate = snowdesktop::animation::RuntimeAnimationsEnabled();
-    const bool leftReveal = animate && !cover && c.content == 0 && (c.titleMode == 1 || c.hoverContent == 1) &&
-        snowdesktop::large_icon_render_rules::CanRevealTitle(static_cast<float>(frame.right - frame.left),
-            static_cast<float>(frame.bottom - frame.top), static_cast<float>(edge), static_cast<float>(c.titleSize) * scale, scale);
-    float contentZoom = 1;
-    if (animate && ((cover && c.coverHover == 1) || (!cover && c.hoverContent == 2))) contentZoom += .06f * hover * static_cast<float>(c.amplitude);
-    const auto* pressedIcon = dynamic_cast<const DesktopIcon*>(mouseDownHit_);
-    if (c.press && animate && mouseDown_ && pressedIcon && pressedIcon->GetDesktopItem() == &item &&
-        PtInRect(&frame, lastMousePoint_) && !dragSession_.IsActive()) contentZoom *= .96f;
-    if (leftReveal) OffsetRect(&icon, static_cast<int>((frame.left + 12 * scale - icon.left) * hover), 0);
-    else if (animate && !cover && c.hoverContent == 3) OffsetRect(&icon, 0, static_cast<int>(-6 * scale * hover * c.amplitude));
-    float launchOffset = 0;
-    if (animate && runtime != largeIconRuntime_.end() && runtime->second.launchStart > 0 && c.launch == 1)
+    const auto& config = EffectiveLargeIconConfig(item);
+    DesktopWidget geometry; geometry.bounds = bounds; geometry.gridCell = item.gridCell;
+    snowdesktop::large_icon_renderer::View view;
+    view.frame = GetStandaloneWidgetFrameRect(geometry);
+    view.scale = GetItemLayoutScale(bounds);
+    view.opacity = (item.isCut ? .4f : 1.f) * (state == 3 ? .6f : 1.f);
+    view.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
+    view.neutral = view.accent = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
+    const bool demo = ShouldUseDemoIdentity(item);
+    const auto name = demo ? GetDemoIdentityTitle(item.layoutKey) : item.name;
+    view.name = name; view.selected = item.selected;
+    const auto* pressed = dynamic_cast<const DesktopIcon*>(mouseDownHit_);
+    view.pressed = mouseDown_ && pressed && pressed->GetDesktopItem() == &item &&
+        PtInRect(&view.frame, lastMousePoint_) && !dragSession_.IsActive();
+    if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
-        const double progress = std::clamp((snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - runtime->second.launchStart) / 450., 0., 1.);
-        launchOffset = static_cast<float>(-std::sin(progress * 3.141592653589793) * 9 * scale * c.amplitude);
-        OffsetRect(&icon, 0, static_cast<int>(launchOffset));
-    }
-    InflateRect(&icon, static_cast<int>(edge * (contentZoom - 1) / 2), static_cast<int>(edge * (contentZoom - 1) / 2));
-    ComPtr<ID2D1Factory> factory; context->GetFactory(&factory);
-    ComPtr<ID2D1RoundedRectangleGeometry> clip;
-    const auto target = D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top), static_cast<float>(frame.right), static_cast<float>(frame.bottom));
-    if (factory) factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(target, radius, radius), &clip);
-    if (clip) context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), clip.Get()), nullptr);
-    if (ShouldUseDemoIdentity(item))
-        DrawDemoIdentityIcon(context, item.layoutKey, icon, alpha);
-    else if (auto* bitmap = GetOrCreateD2DBitmap(context, asset ? asset->bitmap : nullptr, false))
-    {
-        if (!cover) DrawIconBitmap(context, bitmap, icon, alpha);
-        else
+        view.hover = runtime->second.motion.hover;
+        view.launchWave = runtime->second.motion.LaunchWave(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
+            snowdesktop::animation::RuntimeDurationScale());
+        if (const auto& asset = runtime->second.asset; asset && !demo)
         {
-            const auto size = bitmap->GetSize();
-            const float fw = target.right - target.left, fh = target.bottom - target.top;
-            if (c.fit == 0)
-            {
-                const float factor = std::min(fw / size.width, fh / size.height) * contentZoom;
-                const float w = size.width * factor, h = size.height * factor;
-                const auto destination = D2D1::RectF((target.left + target.right - w) / 2, (target.top + target.bottom - h) / 2 + launchOffset,
-                    (target.left + target.right + w) / 2, (target.top + target.bottom + h) / 2 + launchOffset);
-                context->DrawBitmap(bitmap, destination, alpha);
-            }
-            else
-            {
-                const float factor = std::max(fw / size.width, fh / size.height) * contentZoom;
-                const float w = std::min(size.width, fw / factor), h = std::min(size.height, fh / factor);
-                const float left = static_cast<float>((size.width - w) * c.focusX), top = static_cast<float>((size.height - h) * c.focusY);
-                const auto source = D2D1::RectF(left, top, left + w, top + h);
-                auto destination = target;
-                destination.top += launchOffset; destination.bottom += launchOffset;
-                context->DrawBitmap(bitmap, destination, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &source);
-            }
+            view.bitmap = GetOrCreateD2DBitmap(context, asset->bitmap, false);
+            view.original = config.content == 0 || asset->reference.starts_with("raw-");
+            view.accent = asset->accent;
         }
     }
-    else DrawPlaceholderIcon(context, item.sysIconIndex, icon, alpha, false);
-    if ((leftReveal || (cover && c.coverHover == 2)) && hover > 0)
-    {
-        RECT title = frame;
-        title.left = leftReveal ? static_cast<LONG>(frame.left + edge + 24 * scale) : frame.left;
-        title.right -= static_cast<LONG>(12 * scale);
-        if (cover) title.top = static_cast<LONG>(frame.bottom - c.titleSize * scale * 3.2);
-        DrawD2DRoundedRectangle(context, title, 4 * scale,
-            color(snowdesktop::large_icon_render_rules::TitleBackdrop(c.autoTitleColor ? 0xffffff : c.titleColor), .88 * hover), color(0, 0));
-        ComPtr<IDWriteTextFormat> format;
-        dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(c.titleSize) * scale, L"", &format);
-        ComPtr<ID2D1SolidColorBrush> brush;
-        context->CreateSolidColorBrush(color(c.autoTitleColor ? 0xffffff : c.titleColor, hover), &brush);
-        if (format && brush)
-        {
-            format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-            ComPtr<IDWriteInlineObject> ellipsis; dwriteFactory_->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
-            format->SetTrimming(&trimming, ellipsis.Get());
-            const auto name = ShouldUseDemoIdentity(item) ? GetDemoIdentityTitle(item.layoutKey) : item.name;
-            const float middle = static_cast<float>(title.top + title.bottom) / 2;
-            context->DrawText(name.c_str(), static_cast<UINT32>(name.size()), format.Get(),
-                D2D1::RectF(static_cast<float>(title.left + 6 + (1 - hover) * 6), middle - static_cast<float>(c.titleSize) * scale * 1.35f,
-                    static_cast<float>(title.right - 6), middle + static_cast<float>(c.titleSize) * scale * 1.35f), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        }
-    }
-    if (clip) context->PopLayer();
-    if (c.border || (c.hoverFrame == 2 && hover > 0))
-        DrawD2DRoundedRectangle(context, frame, radius, color(0, 0), color(c.borderColor,
-            alpha * std::min(1., (c.border ? c.borderOpacity : 0) + (c.hoverFrame == 2 ? hover * .4 : 0))), static_cast<float>(c.borderWidth) * scale);
-    if (animate && runtime != largeIconRuntime_.end() && runtime->second.launchStart > 0 && c.launch == 2)
-    {
-        const double progress = std::clamp((snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - runtime->second.launchStart) / 450., 0., 1.);
-        DrawD2DRoundedRectangle(context, frame, radius, color(0, 0), color(0xffffff, std::sin(progress * 3.141592653589793) * .65), 2 * scale);
-    }
-    if (item.selected)
-    {
-        DrawD2DRoundedRectangle(context, frame, radius,
-            D2D1::ColorF(0, 0.f), D2D1::ColorF(0x75baff, .95f));
-        RECT marker{frame.left + 5, frame.top + 5, frame.left + 13, frame.top + 13};
-        DrawD2DRoundedRectangle(context, marker, 4, D2D1::ColorF(0x75baff), D2D1::ColorF(0x75baff));
-    }
+    view.placeholder = [&](RECT rect, float opacity) {
+        if (demo) DrawDemoIdentityIcon(context, item.layoutKey, rect, opacity);
+        else DrawPlaceholderIcon(context, item.sysIconIndex, rect, opacity, false);
+    };
+    snowdesktop::large_icon_renderer::DrawFrame(context, dwriteFactory_.Get(), config, view);
 }
 
 void DesktopApp::DrawLargeIconTitles(ID2D1RenderTarget* context)
@@ -453,54 +381,23 @@ void DesktopApp::DrawLargeIconTitles(ID2D1RenderTarget* context)
     for (const auto& item : items_)
     {
         if (!item.largeIcon || IsItemInAnyWidget(item) || IsRectEmptyRect(item.bounds)) continue;
-        const RECT frame = GetLargeIconFrameRect(item);
+        const auto runtime = largeIconRuntime_.find(item.layoutKey);
+        if (runtime == largeIconRuntime_.end() || runtime->second.motion.hover <= .01f) continue;
         const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (!page) continue;
-        const auto& c = EffectiveLargeIconConfig(item);
-        const auto runtime = largeIconRuntime_.find(item.layoutKey);
-        const float hover = runtime != largeIconRuntime_.end() ? runtime->second.hover : 0;
-        if (hover <= .01f) continue;
-        const float scale = GetItemLayoutScale(item.bounds);
-        const int width = std::min<int>(page->bounds.right - page->bounds.left, std::max(160, static_cast<int>(260 * scale)));
-        ComPtr<IDWriteTextFormat> format;
-        if (FAILED(dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(c.titleSize) * scale, L"", &format))) continue;
-        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        format->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
-        const auto name = ShouldUseDemoIdentity(item) ? GetDemoIdentityTitle(item.layoutKey) : item.name;
-        const float edge = std::min(frame.right - frame.left, frame.bottom - frame.top) * static_cast<float>(c.contentScale);
-        if (snowdesktop::animation::RuntimeAnimationsEnabled() && c.content == 0 && (c.titleMode == 1 || c.hoverContent == 1) &&
-            snowdesktop::large_icon_render_rules::CanRevealTitle(static_cast<float>(frame.right - frame.left),
-                static_cast<float>(frame.bottom - frame.top), edge, static_cast<float>(c.titleSize) * scale, scale))
+        const auto& config = EffectiveLargeIconConfig(item);
+        snowdesktop::large_icon_renderer::View view;
+        view.frame = GetLargeIconFrameRect(item); view.scale = GetItemLayoutScale(item.bounds);
+        view.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
+        view.hover = runtime->second.motion.hover;
+        const bool demo = ShouldUseDemoIdentity(item);
+        const auto name = demo ? GetDemoIdentityTitle(item.layoutKey) : item.name;
+        view.name = name;
+        if (const auto& asset = runtime->second.asset; asset && !demo)
         {
-            ComPtr<IDWriteTextLayout> inner;
-            DWRITE_TEXT_METRICS metrics{};
-            const float available = static_cast<float>(frame.right - frame.left) - edge - 48 * scale;
-            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()), format.Get(),
-                available, 100000.f, &inner)) && SUCCEEDED(inner->GetMetrics(&metrics)) && metrics.lineCount <= 2) continue;
+            view.bitmap = GetOrCreateD2DBitmap(context, asset->bitmap, false);
+            view.original = config.content == 0 || asset->reference.starts_with("raw-");
         }
-        ComPtr<IDWriteTextLayout> text;
-        if (FAILED(dwriteFactory_->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()), format.Get(),
-            static_cast<float>(width - 12), 100000.f, &text))) continue;
-        DWRITE_TEXT_METRICS metrics{};
-        if (FAILED(text->GetMetrics(&metrics))) continue;
-        const int height = std::min(static_cast<int>(page->bounds.bottom - page->bounds.top), static_cast<int>(std::ceil(metrics.height)) + 12);
-        const int left = std::clamp(static_cast<int>((frame.left + frame.right - width) / 2),
-            static_cast<int>(page->bounds.left), static_cast<int>(page->bounds.right - width));
-        int top = frame.bottom + 5;
-        if (top + height > page->bounds.bottom) top = frame.top - height - 5;
-        top = std::clamp(top, static_cast<int>(page->bounds.top), static_cast<int>(page->bounds.bottom - height));
-        RECT title{left, top, left + width, top + height};
-        DrawD2DRoundedRectangle(context, title, 6 * scale,
-            D2D1::ColorF(snowdesktop::large_icon_render_rules::TitleBackdrop(c.autoTitleColor ? 0xffffff : c.titleColor), .96f * hover),
-            D2D1::ColorF(0xffffff, .18f * hover));
-        ComPtr<ID2D1SolidColorBrush> brush;
-        context->CreateSolidColorBrush(D2D1::ColorF(c.autoTitleColor ? 0xffffff : c.titleColor, hover), &brush);
-        if (brush)
-        {
-            context->PushAxisAlignedClip(ToD2DRect(title), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            context->DrawTextLayout(D2D1::Point2F(static_cast<float>(title.left + 6), static_cast<float>(title.top + 6)), text.Get(), brush.Get());
-            context->PopAxisAlignedClip();
-        }
+        snowdesktop::large_icon_renderer::DrawFloatingTitle(context, dwriteFactory_.Get(), config, view, page->bounds);
     }
 }

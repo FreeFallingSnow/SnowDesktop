@@ -160,26 +160,11 @@ void DesktopApp::UpdateLargeIconHover()
         auto& state = it->second;
         const auto frame = GetLargeIconFrameRect(item);
         const bool visible = !desktopIconsHidden_ && !IsRectEmptyRect(frame) && FindGridPage(gridPages_, item.gridCell.pageId);
-        const bool hover = visible && !dragSession_.IsActive() && !marqueeActive_ && !largeIconGesture_ &&
-            widgetAction_ == WidgetAction::None && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(lastMousePoint_) &&
-            (PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected));
-        const float target = hover ? 1.f : 0.f;
-        if (target != state.target)
-        {
-            state.from = state.hover; state.target = target;
-            state.transitionStart = now + (hover && state.hover == 0 ? config.delayMs : 0);
-        }
-        if (!visible || !snowdesktop::animation::RuntimeAnimationsEnabled())
-        { state.hover = target; state.launchStart = 0; }
-        else
-        {
-            const double duration = (target ? config.enterMs : config.exitMs) * snowdesktop::animation::RuntimeDurationScale();
-            const double t = duration <= 0 ? 1 : std::clamp((now - state.transitionStart) / duration, 0., 1.);
-            state.hover = static_cast<float>(state.from + (target - state.from) * (t * t * (3 - 2 * t)));
-            if (state.hover != state.target || now < state.transitionStart) moving = true;
-            if (state.launchStart > 0 && now - state.launchStart < 450) moving = true;
-            else state.launchStart = 0;
-        }
+        const bool interactive = !dragSession_.IsActive() && !marqueeActive_ && !largeIconGesture_ &&
+            widgetAction_ == WidgetAction::None && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(lastMousePoint_);
+        const bool hover = PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected);
+        moving = state.motion.Advance(now, hover, visible && interactive, snowdesktop::animation::RuntimeAnimationsEnabled(),
+            snowdesktop::animation::RuntimeDurationScale(), config) || moving;
         ++it;
     }
     if (moving && !largeIconAnimationToken_)
@@ -198,7 +183,8 @@ void DesktopApp::TriggerLargeIconLaunch(size_t index)
 {
     if (index >= items_.size() || !items_[index].largeIcon || items_[index].largeIcon->launch == 0 ||
         !snowdesktop::animation::RuntimeAnimationsEnabled()) return;
-    largeIconRuntime_[items_[index].layoutKey].launchStart = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    largeIconRuntime_[items_[index].layoutKey].motion.Launch(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
+        true, *items_[index].largeIcon);
     UpdateLargeIconHover();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

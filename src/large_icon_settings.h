@@ -23,6 +23,11 @@ struct LargeIconSettingsSnapshot
     std::uint64_t session = 0, revision = 0;
     bool available = false, editable = false, succeeded = false;
     int maxColumns = 1, maxRows = 1;
+    int frameWidth = 192, frameHeight = 192, frameColumns = 2, frameRows = 2, frameLimit = 60;
+    double unitScale = 1, durationScale = 1;
+    std::vector<int> frameWidths, frameHeights;
+    bool animations = true;
+    std::uint32_t neutral = 0x414751;
     std::string config, error;
 };
 

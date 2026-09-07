@@ -192,6 +192,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_large_icons.cpp
     src/app/app_large_icon_interaction.cpp
     src/large_icon_assets.cpp
+    src/large_icon_renderer.cpp
     src/app/app_lifecycle.cpp
     src/app/app_lua_panel.cpp
     src/app/app_lua_panel_render.cpp
@@ -1939,18 +1940,25 @@ if (BUILD_TESTING)
         SOURCES
             tests/icon_render_rules_tests.cpp
             tests/large_icon_assets_tests.cpp
+            tests/large_icon_rendering_tests.cpp
+            src/large_icon_renderer.cpp
             src/large_icon_assets.cpp
             src/icon_beautify.cpp
             src/preview_png_writer.cpp
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets
         COMMAND SnowDesktopIconRenderRulesTests --large-icon-shell)
     set_tests_properties(large_icon_shell_assets PROPERTIES
         TIMEOUT 60 LABELS "integration;shell;icon;resource")
+
+    add_test(NAME large_icon_rendering
+        COMMAND SnowDesktopIconRenderRulesTests --large-icon-rendering)
+    set_tests_properties(large_icon_rendering PROPERTIES
+        TIMEOUT 60 LABELS "integration;icon;ui;rendering")
 
     snowdesktop_add_test(
         SnowDesktopIconBeautifyTests

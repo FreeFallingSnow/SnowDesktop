@@ -41,6 +41,35 @@ std::int64_t Now()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
+bool AutomaticImageName(std::wstring_view name)
+{
+    if (name.size() > 160 || !name.ends_with(L".png") ||
+        std::any_of(name.begin(), name.end(), [](wchar_t c) { return c > 0x7f; })) return false;
+    name.remove_suffix(4);
+    const auto decimal = [](std::wstring_view token) {
+        return !token.empty() && std::all_of(token.begin(), token.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+    };
+    if (name.starts_with(L"steam-"))
+    {
+        name.remove_prefix(6);
+        const auto separator = name.find(L'-');
+        if (separator == name.npos || !decimal(name.substr(0, separator))) return false;
+        name.remove_prefix(separator + 1);
+        if (name.starts_with(L"portrait-")) name.remove_prefix(9);
+        else if (name.starts_with(L"landscape-")) name.remove_prefix(10);
+        else return false;
+        return !name.empty() && std::all_of(name.begin(), name.end(), [](wchar_t c) { return c >= L'a' && c <= L'z'; });
+    }
+    if (name.starts_with(L"raw-")) name.remove_prefix(4);
+    else if (name.starts_with(L"preview-")) name.remove_prefix(8);
+    else return false;
+    const auto separator = name.find(L'-');
+    if (separator == name.npos || separator == 0 || separator > 16) return false;
+    const auto hash = name.substr(0, separator);
+    return std::all_of(hash.begin(), hash.end(), [](wchar_t c) {
+        return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
+    }) && decimal(name.substr(separator + 1));
+}
 std::filesystem::path SteamDirectory()
 {
     wchar_t buffer[32768]{};
@@ -288,9 +317,10 @@ struct LargeIconAssets::Impl
         {
             if (!it->is_regular_file(ec)) continue;
             const auto wideName = it->path().filename().wstring();
-            if (!(wideName.starts_with(L"steam-") || wideName.starts_with(L"raw-") || wideName.starts_with(L"preview-")) ||
-                it->path().extension() != L".png") continue;
-            const std::string name(wideName.begin(), wideName.end());
+            if (!AutomaticImageName(wideName)) continue;
+            std::string name;
+            name.reserve(wideName.size());
+            for (wchar_t c : wideName) name.push_back(static_cast<char>(c));
             const auto bytes = it->file_size(ec);
             if (ec) break;
             total += bytes;

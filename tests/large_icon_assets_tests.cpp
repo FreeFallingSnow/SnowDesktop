@@ -340,10 +340,11 @@ int RunLargeIconAssetTests()
     {
         const auto disk = root / L"disk-budget";
         fs::create_directories(disk);
-        for (const auto* name : {L"steam-old-a.png", L"steam-old-b.png", L"steam-pinned.png", L"import-user.png", L"unrelated.txt"})
+        for (const auto* name : {L"steam-96001-landscape-english.png", L"steam-96002-landscape-english.png", L"steam-96003-landscape-english.png",
+            L"import-user.png", L"unrelated.txt", L"steam-personal.png", L"steam-个人.png"})
             atomic_file::WriteAll(disk / name, std::string(3000, 'x'));
         Queue budget(disk, {128ull * 1024 * 1024, 4096});
-        budget.assets.RetainReferences({"steam-pinned.png"});
+        budget.assets.RetainReferences({"steam-96003-landscape-english.png"});
         LargeIconAssetRequest image;
         image.itemKey = L"collect"; image.generation = 1; image.importPath = square; image.pixels = 64;
         budget.assets.Request(image);
@@ -353,8 +354,9 @@ int RunLargeIconAssetTests()
                 "the cache collection worker completes before filesystem assertions");
         }
         auto collected = budget.Wait(1);
-        Check(!fs::exists(disk / L"steam-old-a.png") && !fs::exists(disk / L"steam-old-b.png") &&
-            fs::exists(disk / L"steam-pinned.png") && fs::exists(disk / L"import-user.png") && fs::exists(disk / L"unrelated.txt") &&
+        Check(!fs::exists(disk / L"steam-96001-landscape-english.png") && !fs::exists(disk / L"steam-96002-landscape-english.png") &&
+            fs::exists(disk / L"steam-96003-landscape-english.png") && fs::exists(disk / L"import-user.png") && fs::exists(disk / L"unrelated.txt") &&
+            fs::exists(disk / L"steam-personal.png") && fs::exists(disk / L"steam-个人.png") &&
             !collected.empty() && collected[0].asset && fs::exists(disk / collected[0].asset->previewReference),
             "automatic disk eviction preserves retained sources, active previews, user imports and unrelated files");
     }

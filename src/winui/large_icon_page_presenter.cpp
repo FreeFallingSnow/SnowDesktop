@@ -6,6 +6,8 @@
 #include <winrt/Microsoft.UI.Composition.h>
 #include <winrt/Windows.System.h>
 #include "../large_icon_render_rules.h"
+#include "../large_icon_motion.h"
+#include <chrono>
 
 namespace snowdesktop::winui
 {
@@ -23,7 +25,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::StackPanel root, editors;
     c::ContentControl editorHost;
     c::TextBlock status;
-    c::Border preview;
+    c::Border preview, frameBackground, frameStroke, launchStroke;
+    std::array<c::Border, 5> shadows;
+    LargeIconMotion motion;
+    winrt::event_token rendering{};
+    bool renderingActive = false;
+    double lastFrame = 0;
     c::Canvas previewStage;
     c::Canvas previewCanvas;
     c::Image previewImage;
@@ -81,27 +88,73 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         return snapshot.succeeded;
     }
 
+    static double Now()
+    { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+    void StopRendering()
+    {
+        if (renderingActive) { m::CompositionTarget::Rendering(rendering); renderingActive = false; }
+    }
+    void ScheduleRendering(bool moving)
+    {
+        if (!moving || !active) { StopRendering(); return; }
+        if (renderingActive) return;
+        std::weak_ptr<Impl> weak = shared_from_this();
+        renderingActive = true;
+        rendering = m::CompositionTarget::Rendering([weak](auto const&, auto const&) {
+            if (auto self = weak.lock())
+            {
+                const double now = Now();
+                const double interval = 1000. / (self->snapshot.frameLimit > 0 ? self->snapshot.frameLimit : 120);
+                if (now - self->lastFrame >= interval) { self->lastFrame = now; self->UpdatePreview(); }
+            }
+        });
+    }
+    void CancelPreview()
+    {
+        if (!previewDirty) return;
+        Send("cancel"); ReloadDraft();
+        syncing = true; for (auto& sync : syncControls) sync(); syncing = false;
+        UpdatePreview();
+    }
     void UpdatePreview()
     {
-        const double width = std::max(30., std::min(300., 260. * draft.columns / std::max(1, draft.rows)));
-        const double height = std::max(30., std::min(260., 300. * draft.rows / std::max(1, draft.columns)));
+        const double now = Now();
+        const bool moving = motion.Advance(now, hovered, active && snapshot.available, snapshot.animations, snapshot.durationScale, draft);
+        ScheduleRendering(moving);
+        const double hover = motion.hover, wave = motion.LaunchWave(now, snapshot.durationScale);
+        const double fw = std::max(1, draft.columns <= static_cast<int>(snapshot.frameWidths.size()) ? snapshot.frameWidths[draft.columns - 1] : snapshot.frameWidth);
+        const double fh = std::max(1, draft.rows <= static_cast<int>(snapshot.frameHeights.size()) ? snapshot.frameHeights[draft.rows - 1] : snapshot.frameHeight);
+        const double fit = std::min({1., 300. / fw, 260. / fh});
+        const double width = fw * fit, height = fh * fit, scale = snapshot.unitScale * fit;
+        const double offset = (330 - width) / 2, top = 12;
         preview.Width(width); preview.Height(height);
-        previewStage.Width(330); previewStage.Height(height + std::max(60., draft.titleSize * 2.8 + 20));
-        c::Canvas::SetLeft(preview, (330 - width) / 2);
-        previewCanvas.Width(preview.Width()); previewCanvas.Height(preview.Height());
-        preview.CornerRadius(x::CornerRadius{draft.radius});
-        const unsigned neutral = root.ActualTheme() == x::ElementTheme::Light ? 0xc9ced6u : 0x414751u;
-        const auto mix = [&](int shift) { return static_cast<unsigned>(((neutral >> shift) & 255) * (1 - draft.colorMix) + ((snapshot.accent >> shift) & 255) * draft.colorMix); };
-        const auto background = draft.autoColor ? (mix(16) << 16) | (mix(8) << 8) | mix(0) : draft.manualColor;
-        preview.Background(m::SolidColorBrush(Color(background, hovered && draft.hoverFrame == 1 ? draft.hoverOpacity : draft.opacity)));
-        preview.BorderBrush(m::SolidColorBrush(Color(draft.borderColor, std::min(1., (draft.border ? draft.borderOpacity : 0) + (hovered && draft.hoverFrame == 2 ? .4 : 0)))));
-        preview.BorderThickness(x::Thickness{draft.border || (hovered && draft.hoverFrame == 2) ? draft.borderWidth : 0});
+        previewStage.Width(330);
+        c::Canvas::SetLeft(preview, offset); c::Canvas::SetTop(preview, top);
+        previewCanvas.Width(width); previewCanvas.Height(height);
+        preview.Background(m::SolidColorBrush(Color(0, 0))); preview.BorderThickness(x::Thickness{0});
+        const double radius = std::min({draft.radius * scale, width / 2, height / 2});
+        const auto background = large_icon_render_rules::Background(draft, snapshot.neutral, snapshot.accent);
+        frameBackground.Width(width); frameBackground.Height(height); frameBackground.CornerRadius(x::CornerRadius{radius});
+        frameBackground.Background(m::SolidColorBrush(Color(background, draft.opacity + (draft.hoverFrame == 1 ? (draft.hoverOpacity - draft.opacity) * hover : 0))));
+        frameStroke.Width(width); frameStroke.Height(height); frameStroke.CornerRadius(x::CornerRadius{radius});
+        frameStroke.BorderBrush(m::SolidColorBrush(Color(draft.borderColor, std::min(1., (draft.border ? draft.borderOpacity : 0) + (draft.hoverFrame == 2 ? hover * .4 * draft.amplitude : 0)))));
+        frameStroke.BorderThickness(x::Thickness{draft.border || (hover > 0 && draft.hoverFrame == 2) ? draft.borderWidth * scale : 0});
+        launchStroke.Width(width); launchStroke.Height(height); launchStroke.CornerRadius(x::CornerRadius{radius});
+        launchStroke.BorderBrush(m::SolidColorBrush(Color(0xffffff, draft.launch == 2 && snapshot.animations ? std::min(1., wave * .65 * draft.amplitude) : 0)));
+        launchStroke.BorderThickness(x::Thickness{2 * scale});
+        for (int i = 0; i < 5; ++i)
+        {
+            const double spread = (5 - i) * scale;
+            auto shadow = shadows[i]; shadow.Width(width + 2 * spread); shadow.Height(height + 2 * spread);
+            shadow.CornerRadius(x::CornerRadius{radius + spread});
+            shadow.Background(m::SolidColorBrush(Color(0, draft.shadowStrength * (draft.shadow ? .06 : 0) + (draft.hoverFrame == 3 ? hover * .035 * draft.amplitude : 0))));
+            c::Canvas::SetLeft(shadow, offset - spread); c::Canvas::SetTop(shadow, top - spread + 2 * scale);
+        }
         auto visual = x::Hosting::ElementCompositionPreview::GetElementVisual(previewCanvas);
-        auto geometry = visual.Compositor().CreateRoundedRectangleGeometry();
-        geometry.Size({static_cast<float>(preview.Width()), static_cast<float>(preview.Height())});
-        const float radius = static_cast<float>(std::min({draft.radius, preview.Width() / 2, preview.Height() / 2}));
-        geometry.CornerRadius({radius, radius});
-        visual.Clip(visual.Compositor().CreateGeometricClip(geometry));
+        auto clip = visual.Compositor().CreateRoundedRectangleGeometry();
+        clip.Size({static_cast<float>(width), static_cast<float>(height)});
+        clip.CornerRadius({static_cast<float>(radius), static_cast<float>(radius)});
+        visual.Clip(visual.Compositor().CreateGeometricClip(clip));
         if (previewPath != snapshot.imagePath)
         {
             previewPath = snapshot.imagePath;
@@ -113,38 +166,51 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 previewImage.Source(previewBitmap);
             }
         }
-        const double sw = previewBitmap ? std::max(1, previewBitmap.PixelWidth()) : 1;
-        const double sh = previewBitmap ? std::max(1, previewBitmap.PixelHeight()) : 1;
-        const double edge = std::min(width, height) * draft.contentScale;
-        const bool raw = draft.content == 0 || snapshot.source == "original";
-        const double factor = raw ? std::min({1., edge / sw, edge / sh}) :
-            draft.fit == 0 ? std::min(width / sw, height / sh) : std::max(width / sw, height / sh);
-        const bool left = raw && (draft.titleMode == 1 || draft.hoverContent == 1) &&
-            large_icon_render_rules::CanRevealTitle(static_cast<float>(width), static_cast<float>(height), static_cast<float>(edge), static_cast<float>(draft.titleSize), 1);
-        double zoom = hovered && ((raw && draft.hoverContent == 2) || (!raw && draft.coverHover == 1)) ? 1 + .06 * draft.amplitude : 1;
-        if (pressed && draft.press) zoom *= .96;
-        const double iw = sw * factor * zoom, ih = sh * factor * zoom;
-        previewImage.Width(iw); previewImage.Height(ih); previewImage.Stretch(m::Stretch::Fill);
-        c::Canvas::SetLeft(previewImage, hovered && left ? 12 : (width - iw) * (raw || draft.fit == 0 ? .5 : draft.focusX));
-        c::Canvas::SetTop(previewImage, (height - ih) * (raw || draft.fit == 0 ? .5 : draft.focusY) - (hovered && raw && draft.hoverContent == 3 ? 6 * draft.amplitude : 0));
-        previewTitle.Text(snapshot.name); previewTitle.FontSize(draft.titleSize);
+        const double sw = previewBitmap ? previewBitmap.PixelWidth() : 0;
+        const double sh = previewBitmap ? previewBitmap.PixelHeight() : 0;
+        const bool raw = draft.content == 0 || snapshot.source == "original" || snapshot.imagePath.empty();
+        const auto content = large_icon_render_rules::ResolveContent(draft, fw, fh, sw, sh, snapshot.unitScale,
+            raw, snapshot.animations, hover, pressed, wave);
+        previewImage.Width(content.width * fit); previewImage.Height(content.height * fit); previewImage.Stretch(m::Stretch::Fill);
+        c::Canvas::SetLeft(previewImage, content.x * fit); c::Canvas::SetTop(previewImage, content.y * fit);
+        const bool left = content.leftReveal;
+        const double lineHeight = draft.titleSize * scale * 1.3;
+        const double titleLeft = left ? content.titleLeft * fit : 6 * scale;
+        const double titleWidth = std::max(1., width - titleLeft - 12 * scale);
+        const double titlePadding = (6 + (1 - hover) * 6) * scale;
+        previewTitle.Text(snapshot.name); previewTitle.FontSize(draft.titleSize * scale);
         previewTitle.TextWrapping(x::TextWrapping::Wrap); previewTitle.MaxLines(2);
+        previewTitle.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight); previewTitle.LineHeight(lineHeight);
         previewTitle.TextTrimming(x::TextTrimming::CharacterEllipsis);
+        previewTitle.VerticalAlignment(x::VerticalAlignment::Center);
         const auto textColor = draft.autoTitleColor ? 0xffffffu : draft.titleColor;
         previewTitle.Foreground(m::SolidColorBrush(Color(textColor)));
-        innerTitleBackdrop.Visibility(hovered && (left || (!raw && draft.coverHover == 2)) ? x::Visibility::Visible : x::Visibility::Collapsed);
-        previewTitle.Width(std::max(1., width - (left ? edge + 36 : 12)));
+        innerTitleBackdrop.Visibility(left || (!raw && draft.coverHover == 2) ? x::Visibility::Visible : x::Visibility::Collapsed);
+        innerTitleBackdrop.Opacity(hover); innerTitleBackdrop.Width(titleWidth); innerTitleBackdrop.Height(lineHeight * 2);
+        innerTitleBackdrop.Padding(x::Thickness{titlePadding, 0, 6 * scale, 0}); innerTitleBackdrop.CornerRadius(x::CornerRadius{4 * scale});
         innerTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .88)));
-        c::Canvas::SetLeft(innerTitleBackdrop, left ? edge + 24 : 6);
-        c::Canvas::SetTop(innerTitleBackdrop, left ? std::max(0., (height - draft.titleSize * 2.7) / 2) : std::max(0., height - draft.titleSize * 2.7));
-        floatingTitle.Text(snapshot.name); floatingTitle.FontSize(draft.titleSize);
-        floatingTitle.TextWrapping(x::TextWrapping::Wrap); floatingTitle.MaxLines(2); floatingTitle.TextTrimming(x::TextTrimming::CharacterEllipsis);
+        c::Canvas::SetLeft(innerTitleBackdrop, titleLeft);
+        c::Canvas::SetTop(innerTitleBackdrop, left ? height / 2 - lineHeight : height - lineHeight * 2 - 6 * scale);
+        floatingTitle.Text(snapshot.name); floatingTitle.FontSize(draft.titleSize * scale);
+        floatingTitle.TextWrapping(x::TextWrapping::Wrap); floatingTitle.MaxLines(0); floatingTitle.TextTrimming(x::TextTrimming::None);
+        floatingTitle.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight); floatingTitle.LineHeight(lineHeight);
+        floatingTitle.TextAlignment(x::TextAlignment::Center);
         floatingTitle.Foreground(m::SolidColorBrush(Color(textColor)));
-        floatingTitleBackdrop.Visibility(hovered && !left ? x::Visibility::Visible : x::Visibility::Collapsed);
+        // Measure an untrimmed name to decide whether the two-line inner title
+        // needs the same full-name floating hint as the desktop renderer.
+        c::TextBlock measure; measure.Text(snapshot.name); measure.FontSize(draft.titleSize * scale);
+        measure.TextWrapping(x::TextWrapping::Wrap); measure.LineHeight(lineHeight); measure.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight);
+        measure.Measure({static_cast<float>(std::max(1., titleWidth - 12 * scale)), 100000.f});
+        const bool fullHint = !left || measure.DesiredSize().Height > lineHeight * 2 + .1;
+        floatingTitleBackdrop.Visibility(fullHint ? x::Visibility::Visible : x::Visibility::Collapsed);
+        floatingTitleBackdrop.Opacity(hover);
         floatingTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .96)));
-        floatingTitleBackdrop.Width(300); floatingTitleBackdrop.Padding(x::Thickness{6}); floatingTitleBackdrop.CornerRadius(x::CornerRadius{6});
-        floatingTitleBackdrop.IsHitTestVisible(false);
-        c::Canvas::SetLeft(floatingTitleBackdrop, 15); c::Canvas::SetTop(floatingTitleBackdrop, height + 6);
+        const double titleExtent = std::min(330., std::max(160., 260. * snapshot.unitScale) * fit);
+        floatingTitleBackdrop.Width(titleExtent); floatingTitleBackdrop.Padding(x::Thickness{6 * scale}); floatingTitleBackdrop.CornerRadius(x::CornerRadius{6 * scale});
+        floatingTitleBackdrop.Measure({static_cast<float>(titleExtent), 100000.f});
+        const double titleHeight = std::max(36., double(floatingTitleBackdrop.DesiredSize().Height));
+        previewStage.Height(top + height + 6 * scale + titleHeight + 12);
+        c::Canvas::SetLeft(floatingTitleBackdrop, (330 - titleExtent) / 2); c::Canvas::SetTop(floatingTitleBackdrop, top + height + 5 * scale);
         previewSource.Text(snapshot.source.empty() ? L("largeIcon.loading") : SourceLabel(snapshot.source));
         for (int i = 0; i < 2; ++i)
         {
@@ -255,7 +321,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         picker.KeyDown([weak, flyout](auto const&, auto const& args) {
             if (args.Key() == winrt::Windows::System::VirtualKey::Escape)
-                if (auto self = weak.lock()) { self->Send("cancel"); self->ReloadDraft(); self->UpdatePreview(); args.Handled(true); flyout.Hide(); }
+                if (auto self = weak.lock()) { self->CancelPreview(); args.Handled(true); flyout.Hide(); }
         });
         flyout.Closed([weak](auto const&, auto const&) {
             if (auto self = weak.lock(); self && self->active && !self->syncing && self->previewDirty) self->Send("commit");
@@ -277,9 +343,14 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         root.Spacing(16); editors.Spacing(16);
         previewStage.Children().Clear(); previewCanvas.Children().Clear();
         innerTitleBackdrop.Child(previewTitle); floatingTitleBackdrop.Child(floatingTitle);
-        previewCanvas.Children().Append(previewImage); previewCanvas.Children().Append(innerTitleBackdrop);
+        frameBackground.IsHitTestVisible(false); frameStroke.IsHitTestVisible(false); launchStroke.IsHitTestVisible(false);
+        innerTitleBackdrop.IsHitTestVisible(false); floatingTitleBackdrop.IsHitTestVisible(false);
+        previewImage.IsHitTestVisible(false);
+        previewCanvas.Children().Append(frameBackground); previewCanvas.Children().Append(previewImage);
+        previewCanvas.Children().Append(innerTitleBackdrop); previewCanvas.Children().Append(frameStroke); previewCanvas.Children().Append(launchStroke);
         preview.Child(previewCanvas); preview.HorizontalAlignment(x::HorizontalAlignment::Center);
         previewStage.HorizontalAlignment(x::HorizontalAlignment::Center);
+        for (auto shadow : shadows) { shadow.IsHitTestVisible(false); previewStage.Children().Append(shadow); }
         previewStage.Children().Append(preview); previewStage.Children().Append(floatingTitleBackdrop);
         root.Children().Append(previewStage);
         root.Children().Append(previewSource);
@@ -368,7 +439,11 @@ LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::s
     impl_->preview.PointerEntered([weak](auto const&, auto const&) { if (auto self = weak.lock()) { self->hovered = true; self->UpdatePreview(); } });
     impl_->preview.PointerExited([weak](auto const&, auto const&) { if (auto self = weak.lock()) { self->hovered = false; self->pressed = false; self->UpdatePreview(); } });
     impl_->preview.PointerPressed([weak](auto const&, auto const&) { if (auto self = weak.lock()) { self->pressed = true; self->UpdatePreview(); } });
-    impl_->preview.PointerReleased([weak](auto const&, auto const&) { if (auto self = weak.lock()) { self->pressed = false; self->UpdatePreview(); } });
+    impl_->preview.PointerReleased([weak](auto const&, auto const&) { if (auto self = weak.lock()) { if (self->pressed && self->hovered) self->motion.Launch(Impl::Now(), self->snapshot.animations, self->draft); self->pressed = false; self->UpdatePreview(); } });
+    impl_->root.PreviewKeyDown([weak](auto const&, auto const& args) {
+        if (args.Key() == winrt::Windows::System::VirtualKey::Escape)
+            if (auto self = weak.lock(); self && self->previewDirty) { self->CancelPreview(); args.Handled(true); }
+    });
     impl_->previewImage.ImageOpened([weak](auto const&, auto const&) { if (auto self = weak.lock()) self->UpdatePreview(); });
     impl_->timer.Interval(std::chrono::seconds(1));
     impl_->timer.Tick([weak](auto const&, auto const&) {
@@ -385,7 +460,7 @@ void LargeIconPagePresenter::Activate(std::wstring key)
 }
 void LargeIconPagePresenter::Deactivate()
 {
-    impl_->timer.Stop();
+    impl_->timer.Stop(); impl_->StopRendering(); impl_->hovered = impl_->pressed = false; impl_->motion = {};
     const bool wasActive = impl_->active;
     impl_->active = false;
     if (wasActive) impl_->Send("cancel");

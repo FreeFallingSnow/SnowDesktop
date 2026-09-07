@@ -31,6 +31,7 @@
 #include "settings_controller.h"
 #include "large_icon_settings.h"
 #include "large_icon_assets.h"
+#include "large_icon_motion.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "display_topology_refresh.h"
@@ -3250,8 +3251,7 @@ private:
         std::array<std::wstring, 2> previewSignatures;
         std::array<std::uint64_t, 2> previewGenerations{};
         double retryAt = 0;
-        float hover = 0, from = 0, target = 0;
-        double transitionStart = 0, launchStart = 0;
+        snowdesktop::LargeIconMotion motion;
         bool pending = false;
         std::string error;
     };

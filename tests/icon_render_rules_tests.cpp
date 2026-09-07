@@ -1,11 +1,13 @@
 #include "icon_render_rules.h"
 #include "large_icon_render_rules.h"
+#include "large_icon_motion.h"
 
 #include <iostream>
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
 int RunLargeIconShellAssetTests();
+int RunLargeIconRenderingTests(const char* outputDirectory);
 
 namespace
 {
@@ -23,12 +25,66 @@ void Check(bool condition, const char* message)
 int main(int argc, char** argv)
 {
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
+    if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
     failures += RunLargeIconAssetTests();
     using namespace snowdesktop::large_icon_render_rules;
     Check(CanRevealTitle(400, 180, 108, 12, 1), "wide large icons can reveal names without resizing content");
     Check(!CanRevealTitle(100, 400, 60, 12, 1), "portrait frames keep floating titles");
     Check(!CanRevealTitle(180, 100, 100, 18, 1), "insufficient text room keeps floating titles");
     Check(TitleBackdrop(0) != TitleBackdrop(0xffffff), "manual dark titles receive a readable light backdrop");
+    snowdesktop::LargeIconConfig config;
+    snowdesktop::LargeIconMotion motion;
+    Check(motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0, "hover starts with the configured delay");
+    motion.Advance(1119, true, true, true, 1, config);
+    Check(motion.hover == 0, "hover delay does not reveal the title early");
+    motion.Advance(1220, true, true, true, 1, config);
+    Check(std::abs(motion.hover - .5f) < .0001, "hover reaches the midpoint after half the entry duration");
+    motion.Advance(1220, false, true, true, 1, config);
+    Check(std::abs(motion.hover - .5f) < .0001, "rapid exit reverses from the current pose without jumping");
+    motion.Advance(1300, false, true, true, 1, config);
+    Check(std::abs(motion.hover - .25f) < .0001, "exit uses its independent duration");
+    motion.Advance(1300, true, true, true, 1, config);
+    Check(std::abs(motion.hover - .25f) < .0001, "reentry continues without repeating the initial delay");
+    Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled hover requests no animation frames");
+    Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately stop and clear effects");
+    Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced animation reveals the name without a transition");
+    config.enterMs = 0; motion = {};
+    motion.Advance(2000, true, true, true, 1, config);
+    Check(motion.hover == 0, "zero-duration transitions still honor the hover delay");
+    Check(!motion.Advance(2120, true, true, true, 1, config) && motion.hover == 1, "zero-duration transition completes once after the delay");
+    config.launch = 1; motion.Launch(3000, true, config);
+    Check(std::abs(motion.LaunchWave(3450, 2) - 1) < .0001, "launch feedback follows the global duration scale");
+    Check(!motion.Advance(3900, true, true, true, 2, config) && motion.launchStart == 0 && motion.LaunchWave(3901, 2) == 0,
+        "launch feedback finishes once and does not leave a recurring refresh");
+    motion.Launch(4000, true, config);
+    motion.Advance(4001, true, true, false, 1, config);
+    Check(motion.launchStart == 0, "disabling animations cancels in-flight launch feedback");
+
+    config = {};
+    auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 0, false, 0);
+    Check(geometry.width == 32 && geometry.x == 184 && geometry.y == 74, "small original pixels remain unscaled and exactly centered");
+    config.hoverContent = 2;
+    auto zoomed = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 1, false, 0);
+    Check(std::abs(zoomed.width - 32 * 1.06) < .0001 && !zoomed.leftReveal, "hover enlargement also affects small original icons");
+    config.titleMode = 1; config.hoverContent = 1;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 1, false, 0);
+    Check(geometry.leftReveal && geometry.x == 12 && geometry.width == 32 && geometry.titleLeft == 56,
+        "left reveal uses the actual original image size and keeps room for the title");
+    geometry = ResolveContent(config, 180, 400, 256, 256, 1, true, true, 1, false, 0);
+    Check(!geometry.leftReveal && geometry.x == 36 && geometry.width == 108, "portrait fallback does not shrink the icon to fit text");
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, false, 1, false, 0);
+    Check(!geometry.leftReveal && geometry.x == 184, "reduced motion keeps the original centered with a floating title");
+    config.content = 1; config.fit = 1;
+    geometry = ResolveContent(config, 200, 100, 400, 200, 1, false, true, 0, true, 0);
+    Check(!geometry.leftReveal && geometry.width == 192 && geometry.height == 96 && geometry.x == 4 && geometry.y == 2,
+        "pressing an exact-aspect cover visibly shrinks it inside the fixed frame");
+    config.focusX = 1;
+    geometry = ResolveContent(config, 100, 200, 400, 200, 1, false, true, 0, false, 0);
+    Check(geometry.x == -300 && geometry.width == 400 && geometry.height == 200, "fill focus crops without stretching the source");
+    config = {};
+    Check(Background(config, 0x414751, 0x414751) == 0x414751, "missing color data immediately uses the neutral background");
+    config.autoColor = false; config.manualColor = 0x123456;
+    Check(Background(config, 0, 0xffffff) == 0x123456, "manual colors remain independent from automatic extraction");
     Check(rules::SourcePixelsForTarget(32) == 64,
         "small icons use the baseline source bucket");
     Check(rules::SourcePixelsForTarget(65) == 96,
