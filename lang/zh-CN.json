@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "悬停形式",
     "settings.animation.hover.description": "可放大单个图标或联动放大邻近图标；标题与窗口预览始终可用。",
     "settings.animation.hoverScale": "最大放大比例（%）",
-    "settings.animation.hoverScale.description": "100% 为原始大小，200% 为两倍大小；默认为 128%。",
+    "settings.animation.hoverScale.description": "原始大小：100%；两倍大小：200%；默认：128%。",
     "settings.animation.launch": "应用启动反馈",
     "settings.animation.launch.description": "从 Dock 启动应用时播放图标动画。",
     "settings.animation.window": "窗口最小化与还原",

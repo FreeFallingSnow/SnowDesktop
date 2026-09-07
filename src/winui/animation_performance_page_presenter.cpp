@@ -6,6 +6,7 @@
 #include "../dock_launch_animation.h"
 #include "../dock_magnification.h"
 #include "../popup_animation_rules.h"
+#include "../l10n.h"
 
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <array>
@@ -105,11 +106,17 @@ struct AnimationPerformancePagePresenter::Impl
         dockCard.Initialize(style, root);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
-            {"followSystem", "alwaysOn", "off"});
+            {L10N_KEY("settings.animation.option.followSystem"),
+             L10N_KEY("settings.animation.option.alwaysOn"),
+             L10N_KEY("settings.animation.option.off")});
         AddChoice(popup, generalCard, "popup", "animation.popup", 2,
-            {"off", "fade", "scale"});
+            {L10N_KEY("settings.animation.option.off"),
+             L10N_KEY("settings.animation.option.fade"),
+             L10N_KEY("settings.animation.option.scale")});
         AddChoice(speed, generalCard, "speed", "animation.speed", 1,
-            {"fast", "standard", "slow"});
+            {L10N_KEY("settings.animation.option.fast"),
+             L10N_KEY("settings.animation.option.standard"),
+             L10N_KEY("settings.animation.option.slow")});
         HookGeneral(mode, &GeneralSettings::animationMode);
         HookGeneral(popup, &GeneralSettings::popupAnimationEffect);
         HookGeneral(speed, &GeneralSettings::animationSpeed);
@@ -126,7 +133,9 @@ struct AnimationPerformancePagePresenter::Impl
         });
         revoke.push_back([control = dockLink, linkToken]() { control.Click(linkToken); });
         AddChoice(hover, dockCard, "hover", "animation.hover", 2,
-            {"noMagnification", "singleIcon", "wave"});
+            {L10N_KEY("settings.animation.option.noMagnification"),
+             L10N_KEY("settings.animation.option.singleIcon"),
+             L10N_KEY("settings.animation.option.wave")});
         HookDock(hover, &DockSettings::hoverEffect);
 
         hoverScale = muxc::Slider{};
@@ -165,13 +174,21 @@ struct AnimationPerformancePagePresenter::Impl
         });
         revoke.push_back([control = scaleReset, token]() { control.Click(token); });
         AddChoice(launch, dockCard, "launch", "animation.launch", 1,
-            {"off", "bounce", "gentleScale"});
+            {L10N_KEY("settings.animation.option.off"),
+             L10N_KEY("settings.animation.option.bounce"),
+             L10N_KEY("settings.animation.option.gentleScale")});
         AddChoice(window, dockCard, "window", "animation.window", 1,
-            {"systemDefault", "scale", "fade", "genie"});
+            {L10N_KEY("settings.animation.option.systemDefault"),
+             L10N_KEY("settings.animation.option.scale"),
+             L10N_KEY("settings.animation.option.fade"),
+             L10N_KEY("settings.animation.option.genie")});
         HookDock(launch, &DockSettings::launchEffect);
         HookDock(window, &DockSettings::windowEffect);
         AddChoice(frameLimit, performanceCard, "frameLimit", "animation.frameLimit", 0,
-            {"automatic", "fps30", "fps60", "fps120"});
+            {L10N_KEY("settings.animation.option.automatic"),
+             L10N_KEY("settings.animation.option.fps30"),
+             L10N_KEY("settings.animation.option.fps60"),
+             L10N_KEY("settings.animation.option.fps120")});
         HookGeneral(frameLimit, &GeneralSettings::animationFrameLimit, true);
         AddSwitch(energySaver, "energySaver", &GeneralSettings::animationEnergySaver, true);
         AddSwitch(onBattery, "onBattery", &GeneralSettings::animationOnBattery, false);
@@ -553,7 +570,7 @@ struct AnimationPerformancePagePresenter::Impl
             const int selected = choice->combo.SelectedIndex();
             choice->combo.Items().Clear();
             for (const auto& key : choice->options)
-                choice->combo.Items().Append(winrt::box_value(L("settings.animation.option." + key)));
+                choice->combo.Items().Append(winrt::box_value(L(key)));
             choice->combo.SelectedIndex(selected >= 0 ? selected : choice->defaultIndex);
             muxa::AutomationProperties::SetName(choice->combo, L(choice->key));
             muxa::AutomationProperties::SetHelpText(choice->combo, L(choice->key + ".description"));

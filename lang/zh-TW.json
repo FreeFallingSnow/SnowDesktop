@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "游標暫留效果",
     "settings.animation.hover.description": "可放大單一圖示或連動放大鄰近圖示；標題與視窗預覽仍可使用。",
     "settings.animation.hoverScale": "最大放大比例（%）",
-    "settings.animation.hoverScale.description": "100% 為原始大小，200% 為兩倍大小；預設為 128%。",
+    "settings.animation.hoverScale.description": "原始大小：100%；兩倍大小：200%；預設：128%。",
     "settings.animation.launch": "應用程式啟動回饋",
     "settings.animation.launch.description": "從 Dock 啟動應用程式時播放圖示動畫。",
     "settings.animation.window": "視窗最小化與還原",

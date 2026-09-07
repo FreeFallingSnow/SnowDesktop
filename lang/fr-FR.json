@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "Effet au survol",
     "settings.animation.hover.description": "Agrandit une icône ou une vague d’icônes voisines. Les titres et aperçus des fenêtres restent disponibles.",
     "settings.animation.hoverScale": "Grossissement maximal (%)",
-    "settings.animation.hoverScale.description": "100 % conserve la taille d’origine ; 200 % la double. Valeur par défaut : 128 %.",
+    "settings.animation.hoverScale.description": "Taille d’origine : 100 % ; taille double : 200 % ; valeur par défaut : 128 %.",
     "settings.animation.launch": "Retour au lancement des applications",
     "settings.animation.launch.description": "Anime l’icône du Dock au lancement d’une application.",
     "settings.animation.window": "Réduction et restauration des fenêtres",

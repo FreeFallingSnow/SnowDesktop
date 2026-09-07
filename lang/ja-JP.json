@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "ホバー効果",
     "settings.animation.hover.description": "1 つのアイコン、または周囲のアイコンを波状に拡大します。タイトルとウィンドウプレビューは引き続き使用できます。",
     "settings.animation.hoverScale": "最大拡大率 (%)",
-    "settings.animation.hoverScale.description": "100% は元のサイズ、200% は 2 倍です。既定値は 128% です。",
+    "settings.animation.hoverScale.description": "元のサイズ：100%。2 倍のサイズ：200%。既定値：128%。",
     "settings.animation.launch": "アプリ起動時の効果",
     "settings.animation.launch.description": "Dock からアプリを起動するときにアイコンをアニメーション表示します。",
     "settings.animation.window": "ウィンドウの最小化と復元",

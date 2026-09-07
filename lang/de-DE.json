@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "Effekt beim Zeigen",
     "settings.animation.hover.description": "Vergrößert ein Symbol oder benachbarte Symbole als Welle. Titel und Fenstervorschauen bleiben verfügbar.",
     "settings.animation.hoverScale": "Maximale Vergrößerung (%)",
-    "settings.animation.hoverScale.description": "100 % entspricht der Originalgröße, 200 % der doppelten Größe. Standard: 128 %.",
+    "settings.animation.hoverScale.description": "Originalgröße: 100 %; doppelte Größe: 200 %; Standard: 128 %.",
     "settings.animation.launch": "Rückmeldung beim App-Start",
     "settings.animation.launch.description": "Animiert das Dock-Symbol beim Start einer App.",
     "settings.animation.window": "Fenster minimieren und wiederherstellen",

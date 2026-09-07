@@ -5670,9 +5670,12 @@ int main(int argc, char** argv)
         Check(compositionAnimationSource.find(
                   "ApplyCollectionPopupBackdropAnimationFrame();") !=
                     std::string::npos &&
-                compositionAnimationSource.find(
-                  "StartVisualScaleAnimation(") !=
-                    std::string::npos &&
+                ContainsIgnoringWhitespace(
+                  compositionAnimationSource,
+                  "collectionPopupBackdropCompositor_.StartVisualTransformAnimation(") &&
+                ContainsIgnoringWhitespace(
+                  animationSchedulerSource,
+                  "if (!popupAnimationFrameToken_ && popupAnimation_.IsAnimating() && !popupAnimationCompositorDriven_)") &&
                 compositionAnimationSource.find(
                   "if (collectionPopupGlassTheme_)\n        return false;") ==
                     std::string::npos &&
@@ -8563,7 +8566,7 @@ int main(int argc, char** argv)
                 closePopupClosingGuard);
         const std::size_t closePopupAnimation =
             popupLifecycleSource.find(
-                "SystemAnimationsEnabled()",
+                "RuntimePopupEffect()",
                 closePopupLoadCancel);
         Check(openDockPopupBegin != std::string::npos &&
                 openDockPopupClear != std::string::npos &&

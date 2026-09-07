@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "Efeito ao passar o mouse",
     "settings.animation.hover.description": "Amplia um ícone ou uma onda de ícones próximos. Títulos e prévias de janelas continuam disponíveis.",
     "settings.animation.hoverScale": "Ampliação máxima (%)",
-    "settings.animation.hoverScale.description": "100% mantém o tamanho original; 200% dobra o tamanho. Padrão: 128%.",
+    "settings.animation.hoverScale.description": "Tamanho original: 100%; tamanho dobrado: 200%; padrão: 128%.",
     "settings.animation.launch": "Efeito ao iniciar aplicativos",
     "settings.animation.launch.description": "Anima o ícone do Dock ao iniciar um aplicativo.",
     "settings.animation.window": "Minimizar e restaurar janelas",

@@ -1386,7 +1386,7 @@
     "settings.animation.hover": "Hover effect",
     "settings.animation.hover.description": "Magnify one icon or a wave of nearby icons. Titles and window previews remain available.",
     "settings.animation.hoverScale": "Maximum magnification (%)",
-    "settings.animation.hoverScale.description": "100% keeps the original size; 200% doubles it. Default: 128%.",
+    "settings.animation.hoverScale.description": "Original size: 100%; double size: 200%; default: 128%.",
     "settings.animation.launch": "App launch feedback",
     "settings.animation.launch.description": "Animate the Dock icon while launching an app.",
     "settings.animation.window": "Minimize and restore windows",
