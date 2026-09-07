@@ -312,6 +312,20 @@ local function render(_context, model)
 end
 
 local function event(_context, model, value)
+    -- Hidden widgets lose queued frames, but retain their Lua model. Resume
+    -- explicitly without resetting the progress saved before the page switch.
+    if value.kind == "visibility" then
+        if value.visible and model.feedbackActive and model.feedbackAnimated then
+            if not animation.requestFrame(FEEDBACK_FRAME) then
+                model.feedbackActive = false
+                model.feedbackAnimated = false
+                animation.cancelFrame(FEEDBACK_FRAME)
+            end
+            widget.invalidate()
+        end
+        return
+    end
+
     if value.kind == "action" and value.id == "wooden-fish.strike" then
         rollToday(model)
         if model.count < MAX_COUNT then
@@ -344,9 +358,8 @@ local function event(_context, model, value)
     if value.kind == "frame" and value.id == FEEDBACK_FRAME then
         model.feedbackElapsedMs = math.min(FEEDBACK_DURATION_MS,
             model.feedbackElapsedMs + math.max(0, value.deltaMs or 0))
-        if model.feedbackElapsedMs < FEEDBACK_DURATION_MS then
-            animation.requestFrame(FEEDBACK_FRAME)
-        else
+        if model.feedbackElapsedMs >= FEEDBACK_DURATION_MS or
+                not animation.requestFrame(FEEDBACK_FRAME) then
             model.feedbackActive = false
             model.feedbackAnimated = false
             -- Reset the host's per-ID frame clock so the next strike starts
