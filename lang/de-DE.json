@@ -1,4 +1,5 @@
 {
+    "app.launcher.failed": "SnowDesktop konnte nicht gestartet werden. Überprüfen Sie die App-Dateien in Steam und versuchen Sie es erneut. Wenn das Problem weiterhin besteht, senden Sie die folgenden Details an den Support. Löschen Sie den Ordner data nicht.",
   "app.settings.title": "SnowDesktop-Einstellungen",
   "app.settings.general": "Allgemein",
   "app.settings.appearance": "Aussehen",

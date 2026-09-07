@@ -1,5 +1,7 @@
 #include "steam_runtime_environment.h"
 #include "steam_runtime_manager.h"
+#include "language_fallback.h"
+#include "launcher_messages.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -8,6 +10,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <exception>
 
 namespace
 {
@@ -68,6 +71,37 @@ void AppendLauncherLog(const std::filesystem::path& installRoot,
     stream << prefix << message << '\n';
 }
 
+void ShowLaunchFailure(const std::filesystem::path& installRoot,
+    std::string_view detail)
+{
+    wchar_t localeName[LOCALE_NAME_MAX_LENGTH]{};
+    GetUserDefaultLocaleName(localeName, LOCALE_NAME_MAX_LENGTH);
+    const std::wstring wideLocale(localeName);
+    std::vector<std::string> languages;
+    for (const auto& entry : kLauncherMessages)
+        languages.emplace_back(entry.language);
+    std::string language = snowdesktop::localization::ResolveBestLanguage(
+        languages, std::string(wideLocale.begin(), wideLocale.end()));
+    if (language.empty())
+        language = "en-US";
+    std::wstring message;
+    for (const auto& entry : kLauncherMessages)
+        if (language == entry.language)
+            message = entry.message;
+    const int length = MultiByteToWideChar(CP_UTF8, 0, detail.data(),
+        static_cast<int>(detail.size()), nullptr, 0);
+    std::wstring wideDetail(static_cast<std::size_t>(length), L'\0');
+    if (length > 0)
+        MultiByteToWideChar(CP_UTF8, 0, detail.data(),
+            static_cast<int>(detail.size()), wideDetail.data(), length);
+    message += L"\n\n" + wideDetail;
+    if (!installRoot.empty())
+        message += L"\n\n" + (installRoot / L".snowdesktop" /
+            L"launcher.log").wstring();
+    MessageBoxW(nullptr, message.c_str(), L"SnowDesktop",
+        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+}
+
 bool LaunchRuntime(const std::filesystem::path& executable,
     const std::vector<std::wstring>& arguments, DWORD& error)
 {
@@ -122,17 +156,25 @@ bool LaunchRuntime(const std::filesystem::path& executable,
 }
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+int RunLauncher(bool& maintenance)
 {
     const std::filesystem::path installRoot = CurrentExecutableDirectory();
     if (installRoot.empty())
+    {
+        ShowLaunchFailure(installRoot, "cannot locate the launcher directory");
         return ERROR_PATH_NOT_FOUND;
+    }
 
     int argumentCount = 0;
     wchar_t** rawArguments = CommandLineToArgvW(
         GetCommandLineW(), &argumentCount);
     if (!rawArguments)
-        return static_cast<int>(GetLastError());
+    {
+        const DWORD error = GetLastError();
+        ShowLaunchFailure(installRoot, "cannot read launch arguments (Win32 error " +
+            std::to_string(error) + ")");
+        return static_cast<int>(error);
+    }
     bool applyOnly = false;
     bool pruneOnly = false;
     std::vector<std::wstring> forwarded;
@@ -154,13 +196,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         }
     }
     LocalFree(rawArguments);
+    maintenance = applyOnly || pruneOnly;
 
     const auto applied =
         snowdesktop::steam_runtime::ApplyDistribution(installRoot);
     if (!applied.error.empty())
         AppendLauncherLog(installRoot, applied.error);
     if (!applied.ok)
+    {
+        if (!maintenance)
+            ShowLaunchFailure(installRoot, applied.error);
         return ERROR_INSTALL_FAILURE;
+    }
     if (pruneOnly)
     {
         snowdesktop::steam_runtime::PruneResult pruned;
@@ -190,7 +237,28 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         AppendLauncherLog(installRoot,
             "cannot launch runtime (Win32 error " +
                 std::to_string(launchError) + ")");
+        ShowLaunchFailure(installRoot,
+            "cannot launch runtime (Win32 error " +
+                std::to_string(launchError) + "): " +
+                applied.executable.string());
         return static_cast<int>(launchError);
     }
     return 0;
+}
+
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+{
+    bool maintenance = false;
+    try
+    {
+        return RunLauncher(maintenance);
+    }
+    catch (const std::exception& error)
+    {
+        const auto root = CurrentExecutableDirectory();
+        AppendLauncherLog(root, error.what());
+        if (!maintenance)
+            ShowLaunchFailure(root, error.what());
+        return ERROR_INSTALL_FAILURE;
+    }
 }

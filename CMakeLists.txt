@@ -690,6 +690,21 @@ add_executable(SnowDesktop WIN32
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
 
+# Error messages must survive a missing or damaged distribution/lang tree.
+# Keep lang/*.json as the only translation source, embedded at configure time.
+file(GLOB SNOWDESKTOP_LAUNCHER_CATALOGS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/lang/*.json")
+set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
+foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${catalog}")
+    get_filename_component(language "${catalog}" NAME_WE)
+    file(READ "${catalog}" catalog_json)
+    string(JSON message GET "${catalog_json}" "app.launcher.failed")
+    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\"},\n")
+endforeach()
+string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "};\n")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_messages.h"
+    CONTENT "${SNOWDESKTOP_LAUNCHER_MESSAGES}" @ONLY)
+
 add_executable(SnowDesktopLauncher WIN32
     src/steam_launcher_main.cpp
     src/steam_runtime_context.cpp
@@ -699,8 +714,8 @@ add_executable(SnowDesktopLauncher WIN32
     src/app_icon.rc
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
 target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
-target_include_directories(SnowDesktopLauncher PRIVATE src)
-target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32)
+target_include_directories(SnowDesktopLauncher PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32)
 if (MSVC)
     set_property(TARGET SnowDesktopLauncher PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

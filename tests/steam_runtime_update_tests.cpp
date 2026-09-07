@@ -1169,12 +1169,12 @@ void TestReadOnlyPayloadAndStagingCleanup(
                 snowdesktop::steam_runtime::ApplyDistribution(caseRoot);
             const DWORD finalAttributes =
                 GetFileAttributesW(sentinel.c_str());
-            Check(relaunched.ok && relaunched.usedFallback &&
+            Check(relaunched.ok && !relaunched.usedFallback &&
                     relaunched.executable == initial.executable &&
                     relaunched.error.find(
                         "cannot clean abandoned Steam staging data") !=
                         std::string::npos,
-                "a read-only staged hardlink is rejected with the last valid runtime as fallback");
+                "a read-only staged hardlink is retained without blocking normal activation");
             Check(std::filesystem::exists(abandoned) &&
                     ReadText(sentinel) ==
                         "outside read-only sentinel unchanged" &&
@@ -1436,6 +1436,48 @@ void TestLegacyDistributionWrites(const std::filesystem::path& root)
         "unlisted distribution entries remain untouched while the runtime is repaired");
 }
 
+void TestCleanupFailureDoesNotBlockUpdate(const std::filesystem::path& root)
+{
+    const auto initial = PrepareRuntime(root, "cleanup-blocked-old");
+    if (!initial.ok)
+        return;
+    const auto runtimeRoot = initial.executable.parent_path().parent_path();
+    const auto abandoned = runtimeRoot / L".staging.123.456";
+    const auto outside = root / L"outside";
+    WriteText(outside / L"sentinel.txt", "preserve outside data");
+    WriteText(root / L"data" / L"layout.json", "preserve layout");
+    WriteText(initial.executable.parent_path() / L"log" / L"old.log", "old log");
+    const auto link = abandoned / L"linked-directory";
+    const bool linked = CreateDirectoryJunction(link, outside);
+    Check(linked, "blocked-cleanup junction fixture is available");
+    if (!linked)
+        return;
+
+    // Reproduce both errors in launcher.log at once: an unsafe abandoned
+    // directory and a previously published runtime polluted by log output.
+    WriteDistribution(root, "1.0.5.0", "cleanup-blocked-new",
+        "new host", "new library");
+    const auto updated = snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(updated.ok && !updated.usedFallback &&
+            updated.buildId == "cleanup-blocked-new" &&
+            ReadText(updated.executable) == "new host" &&
+            updated.error.find("cannot clean abandoned Steam staging data") !=
+                std::string::npos,
+        "blocked cleanup and polluted fallback do not prevent publishing the new version");
+    const auto relaunched = snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(relaunched.ok && relaunched.executable == updated.executable &&
+            !relaunched.error.empty() && IsReparsePoint(link) &&
+            ReadText(outside / L"sentinel.txt") == "preserve outside data" &&
+            ReadText(root / L"data" / L"layout.json") == "preserve layout",
+        "later launches retry cleanup without following the link or modifying user data");
+    Check(RemoveDirectoryW(link.c_str()) != FALSE,
+        "detach the test junction without touching its target");
+    const auto recovered = snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(recovered.ok && recovered.error.empty() &&
+            !std::filesystem::exists(abandoned),
+        "a later launch cleans the retained directory once its blocker is removed");
+}
+
 void TestSteamAutoStartRules()
 {
     using namespace snowdesktop;
@@ -1483,6 +1525,7 @@ int main()
         TestCompletionMarkerIsFinalFence();
         TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
         TestLegacyDistributionWrites(root / L"legacy-distribution-writes");
+        TestCleanupFailureDoesNotBlockUpdate(root / L"blocked-cleanup-update");
         TestSteamAutoStartRules();
     }
     catch (const std::exception& exception)

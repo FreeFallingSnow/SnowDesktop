@@ -1,4 +1,5 @@
 {
+    "app.launcher.failed": "SnowDesktop을 시작할 수 없습니다. Steam에서 앱 파일의 무결성을 확인한 후 다시 시도해 주세요. 문제가 계속되면 아래 세부 정보를 개발자에게 보내 주세요. data 폴더를 삭제하지 마세요.",
   "app.settings.title": "SnowDesktop 설정",
   "app.settings.general": "일반",
   "app.settings.appearance": "외관",

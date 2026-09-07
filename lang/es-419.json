@@ -1,4 +1,5 @@
 {
+    "app.launcher.failed": "No se pudo iniciar SnowDesktop. Verifica la integridad de los archivos de la aplicación en Steam y vuelve a intentarlo. Si el problema persiste, envía los detalles siguientes al soporte técnico. No elimines la carpeta data.",
   "app.settings.title": "Configuración de SnowDesktop",
   "app.settings.general": "General",
   "app.settings.appearance": "Apariencia",

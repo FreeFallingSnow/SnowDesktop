@@ -1357,12 +1357,13 @@ bool CleanupAbandonedStagingDirectories(
         if (!RemoveStagingDirectorySafely(
                 entry, runtimeRoot, cleanupError))
         {
-            error = "cannot clean abandoned Steam staging data: " +
-                cleanupError;
-            return false;
+            if (!error.empty())
+                error += "; ";
+            error += "cannot clean abandoned Steam staging data: " +
+                entry.filename().string() + ": " + cleanupError;
         }
     }
-    return true;
+    return error.empty();
 }
 
 ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
@@ -1504,8 +1505,11 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             "cannot acquire the Steam runtime update lock");
 
     std::string error;
-    if (!CleanupAbandonedStagingDirectories(runtimeRoot, error))
-        return FailureOrFallback(stateRoot, runtimeRoot, error);
+    // Retired/staging residue is maintenance work, never a prerequisite for
+    // validating or publishing an independent runtime. Keep unsafe entries
+    // untouched and report the warning even when activation succeeds.
+    std::string cleanupWarning;
+    CleanupAbandonedStagingDirectories(runtimeRoot, cleanupWarning);
 
     const std::filesystem::path manifestPath =
         installRoot / kDistributionManifestFilename;
@@ -1535,6 +1539,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
         result.ok = true;
         result.executable = selected.path / L"SnowDesktop.exe";
         result.buildId = manifest->buildId;
+        result.error = cleanupWarning;
         return result;
     };
 
@@ -1812,13 +1817,17 @@ PruneResult PruneInactiveRuntimes(
         }
         if (!RemoveStagingDirectorySafely(*staging, runtimeRoot, error))
         {
-            result.error =
-                "cannot remove a retired Steam runtime: " + error;
-            return result;
+            if (!result.error.empty())
+                result.error += "; ";
+            result.error += "cannot remove a retired Steam runtime: " +
+                staging->filename().string() + ": " + error;
+            error.clear();
+            ++result.retained;
+            continue;
         }
         ++result.removed;
     }
-    result.ok = true;
+    result.ok = result.error.empty();
     return result;
 }
 }

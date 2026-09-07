@@ -1,4 +1,5 @@
 {
+    "app.launcher.failed": "SnowDesktop を起動できませんでした。Steam でアプリのファイルの整合性を確認してから、もう一度お試しください。問題が解決しない場合は、以下の詳細を開発者にお送りください。data フォルダーは削除しないでください。",
   "app.settings.title": "SnowDesktop の設定",
   "app.settings.general": "一般",
   "app.settings.appearance": "外観",
