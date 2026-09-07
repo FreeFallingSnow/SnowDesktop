@@ -137,7 +137,7 @@ std::uint32_t Accent(const std::vector<std::uint32_t>& pixels, int width, int he
         weights[index] += a; sums[index][0] += r * a; sums[index][1] += g * a; sums[index][2] += b * a;
     }
     const size_t i = std::max_element(weights.begin(), weights.end()) - weights.begin();
-    if (weights[i] == 0) return 0x505866;
+    if (weights[i] == 0) return 0; // No visible samples; renderer uses its current theme neutral.
     // Mixing each channel toward neutral bounds saturation as well as luma.
     auto channel = [&](int n) { return std::clamp<int>(static_cast<int>(sums[i][n] / weights[i]) * 3 / 4 + 32, 40, 215); };
     return (channel(0) << 16) | (channel(1) << 8) | channel(2);

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../large_icon_backup.h"
 #include "../collection_titleless_rules.h"
 #include "../font_cu_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -795,16 +796,11 @@ bool DesktopApp::SaveLayoutSlots()
         const std::filesystem::path data = GetDataDirectoryPath();
         auto state = std::filesystem::path(snowdesktop::deployment::GetPackageLocalStatePath());
         if (state.empty()) state = data.parent_path();
-        snowdesktop::backup::FullDataBackupManager backup(
-            state / L"LargeIconUpgradeBackup", data, SNOWDESKTOP_VERSION, "large-icon-upgrade");
-        if (backup.List().empty())
+        const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION);
+        if (!result.ok)
         {
-            const auto result = backup.Create();
-            if (!result.ok)
-            {
-                WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);
-                return false;
-            }
+            WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);
+            return false;
         }
     }
     demoCollectionIdentityCache_.clear();

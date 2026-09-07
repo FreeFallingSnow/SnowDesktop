@@ -18,6 +18,9 @@ inline unsigned TitleBackdrop(unsigned textColor)
 inline unsigned Background(const LargeIconConfig& config, unsigned neutral, unsigned accent)
 {
     if (!config.autoColor) return config.manualColor;
+    // Extracted channels are bounded away from zero; zero denotes that there
+    // were no usable visible pixels, so the active theme supplies the fallback.
+    if (!accent) accent = neutral;
     const auto channel = [&](int shift) { return static_cast<unsigned>(
         ((neutral >> shift) & 255) * (1 - config.colorMix) + ((accent >> shift) & 255) * config.colorMix); };
     return (channel(16) << 16) | (channel(8) << 8) | channel(0);

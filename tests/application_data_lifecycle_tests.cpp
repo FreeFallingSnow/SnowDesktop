@@ -1,4 +1,5 @@
 #include "full_data_backup.h"
+#include "large_icon_backup.h"
 #include "layout_storage.h"
 #include "widget_package.h"
 #include "portable_data_migration.h"
@@ -1826,6 +1827,23 @@ int main()
 
     Write(fullBackupData / L"large-icons" / L"import-user.png", "retained original image bytes");
     Write(fullBackupData / L"large-icons" / L"steam-999-portrait-english.png", "retained offline cover bytes");
+    const auto upgradeState = root / L"large-icon-upgrade-state";
+    const auto upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
+    Expect(upgrade.ok && Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout &&
+        Read(upgrade.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
+        !std::filesystem::exists(upgrade.backup.data / L"SnowDesktop.entitlement.bin"),
+        "first large-icon write establishes an independent complete backup without entitlement data");
+    Write(fullBackupData / L"SnowDesktop.layout.json", modifiedLayout);
+    const auto keptUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
+    Expect(keptUpgrade.ok && keptUpgrade.backup.id == upgrade.backup.id &&
+        Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
+        "subsequent large-icon saves never replace the pre-upgrade snapshot with a newer layout");
+    Write(fullBackupData / L"SnowDesktop.layout.json", originalLayout);
+    const auto blockedUpgrade = root / L"large-icon-upgrade-blocked";
+    Write(blockedUpgrade, "a file prevents creation of the backup directory");
+    const auto failedUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(blockedUpgrade, fullBackupData, "1.0.5.0");
+    Expect(!failedUpgrade.ok && !failedUpgrade.error.empty() && Read(fullBackupData / L"SnowDesktop.layout.json") == originalLayout,
+        "upgrade-backup failure is reported without changing the active layout");
     snowdesktop::backup::FullDataBackupManager fullBackupManager(
         fullBackupState, fullBackupData, "1.0.1.0", "portable");
 

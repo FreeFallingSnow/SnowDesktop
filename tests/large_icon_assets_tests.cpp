@@ -4,6 +4,8 @@
 #include "preview_png_writer.h"
 #include "atomic_file.h"
 #include <objbase.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -25,6 +27,27 @@ void Check(bool condition, const char* message)
 {
     if (!condition) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
 }
+bool EncodeFixture(const std::filesystem::path& path, REFGUID container, int width, int height)
+{
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) return false;
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    if (FAILED(factory->CreateStream(&stream)) || FAILED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE)) ||
+        FAILED(factory->CreateEncoder(container, nullptr, &encoder)) || FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) ||
+        FAILED(encoder->CreateNewFrame(&frame, nullptr)) || FAILED(frame->Initialize(nullptr)) || FAILED(frame->SetSize(width, height))) return false;
+    auto format = GUID_WICPixelFormat24bppBGR;
+    if (FAILED(frame->SetPixelFormat(&format))) return false;
+    std::vector<std::uint32_t> pixels(static_cast<size_t>(width) * height, 0xff22aa77);
+    ComPtr<IWICBitmap> source;
+    return SUCCEEDED(factory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat32bppBGRA, width * 4,
+        static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data()), &source)) &&
+        SUCCEEDED(frame->WriteSource(source.Get(), nullptr)) && SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+}
+void AppendLe(std::string& bytes, std::uint32_t value, int length)
+{ for (int i = 0; i < length; ++i) bytes.push_back(static_cast<char>((value >> (i * 8)) & 255)); }
 struct Queue
 {
     std::mutex mutex;
@@ -165,6 +188,64 @@ int RunLargeIconAssetTests()
         queue.assets.Request(request);
         auto unsupported = queue.Wait(1);
         Check(!unsupported.empty() && !unsupported[0].asset, "GIF content is rejected even if WIC can decode it");
+        for (const auto container : {GUID_ContainerFormatBmp, GUID_ContainerFormatJpeg})
+        {
+            const auto path = root / (container == GUID_ContainerFormatBmp ? L"actual.bmp" : L"actual.jpg");
+            Check(EncodeFixture(path, container, 180, 90), "encode actual BMP/JPEG bytes through the installed WIC codec");
+            LargeIconAssetRequest format;
+            format.itemKey = path.wstring(); format.importPath = path; format.pixels = 64; format.generation = 1;
+            queue.assets.Request(format);
+            auto imported = queue.Wait(1);
+            Check(!imported.empty() && imported[0].asset && imported[0].asset->width == 64 && imported[0].asset->height == 32,
+                "BMP and JPEG imports decode with the same aspect-preserving rules");
+            if (!imported.empty() && imported[0].asset)
+            {
+                std::string originalBytes, copiedBytes;
+                atomic_file::ReadAll(path, originalBytes); atomic_file::ReadAll(directory / imported[0].asset->reference, copiedBytes);
+                Check(originalBytes == copiedBytes, "BMP/JPEG import retains original encoded bytes for resizing and backup");
+            }
+        }
+        const auto smallIcon = root / L"ico-small.png", largeIcon = root / L"ico-large.png";
+        Check(preview_png::Save(smallIcon, 16, 16, std::vector<std::uint32_t>(16 * 16, 0xffff0000), error) &&
+            preview_png::Save(largeIcon, 128, 128, std::vector<std::uint32_t>(128 * 128, 0xff00ff00), error), "encode two real ICO frames");
+        std::string smallPng, largePng, ico;
+        atomic_file::ReadAll(smallIcon, smallPng); atomic_file::ReadAll(largeIcon, largePng);
+        AppendLe(ico, 0, 2); AppendLe(ico, 1, 2); AppendLe(ico, 2, 2);
+        for (int i = 0; i < 2; ++i)
+        {
+            AppendLe(ico, i ? 128 : 16, 1); AppendLe(ico, i ? 128 : 16, 1); AppendLe(ico, 0, 2);
+            AppendLe(ico, 1, 2); AppendLe(ico, 32, 2);
+            AppendLe(ico, static_cast<std::uint32_t>(i ? largePng.size() : smallPng.size()), 4);
+            AppendLe(ico, 38 + static_cast<std::uint32_t>(i ? smallPng.size() : 0), 4);
+        }
+        ico += smallPng; ico += largePng;
+        const auto icoPath = root / L"multi-frame.ico"; atomic_file::WriteAll(icoPath, ico);
+        LargeIconAssetRequest iconRequest;
+        iconRequest.itemKey = L"ico-largest"; iconRequest.importPath = icoPath; iconRequest.pixels = 256; iconRequest.generation = 1;
+        queue.assets.Request(iconRequest);
+        auto multiFrame = queue.Wait(1);
+        Check(!multiFrame.empty() && multiFrame[0].asset && multiFrame[0].asset->width == 128 && multiFrame[0].asset->height == 128,
+            "multi-frame ICO import chooses the largest valid frame instead of enlarging its first tiny frame");
+        for (unsigned alpha : {0u, 16u})
+        {
+            const auto transparentPath = root / (L"transparent-" + std::to_wstring(alpha) + L".png");
+            const unsigned transparentPixel = (alpha << 24) | (alpha << 8);
+            Check(preview_png::Save(transparentPath, 64, 64, std::vector<std::uint32_t>(64 * 64, transparentPixel), error), "encode transparent color samples");
+            LargeIconAssetRequest noColor;
+            noColor.itemKey = transparentPath.wstring(); noColor.importPath = transparentPath; noColor.generation = 1;
+            queue.assets.Request(noColor);
+            auto transparent = queue.Wait(1);
+            Check(!transparent.empty() && transparent[0].asset && transparent[0].asset->accent == 0,
+                "fully transparent and negligible-alpha pixels leave color selection to the current host theme");
+        }
+        const auto tooManyPixels = root / L"over-pixel-limit.png";
+        Check(preview_png::Save(tooManyPixels, 4001, 4000, std::vector<std::uint32_t>(4001ull * 4000, 0xff55aa88), error), "encode a valid image just above sixteen million pixels");
+        Check(fs::file_size(tooManyPixels) < 16 * 1024 * 1024, "pixel-limit fixture remains below the encoded byte limit");
+        LargeIconAssetRequest pixelLimit;
+        pixelLimit.itemKey = L"pixel-limit"; pixelLimit.importPath = tooManyPixels; pixelLimit.generation = 1;
+        queue.assets.Request(pixelLimit);
+        const auto rejectedPixels = queue.Wait(1);
+        Check(!rejectedPixels.empty() && !rejectedPixels[0].asset, "source dimensions are rejected even when the PNG compresses below the file-size limit");
         const auto library = root / L"steam" / L"appcache" / L"librarycache";
         fs::create_directories(library / L"99992" / L"hash");
         fs::create_directories(library / L"99993" / L"current-hash");

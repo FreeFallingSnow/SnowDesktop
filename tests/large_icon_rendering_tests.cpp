@@ -73,11 +73,29 @@ size_t Visible(const std::vector<unsigned>& image, RECT area)
         count += (Pixel(image, x, y) >> 24) != 0;
     return count;
 }
+int TextBands(const std::vector<unsigned>& image, RECT area)
+{
+    int bands = 0, blank = 3;
+    for (LONG y = area.top; y < area.bottom; ++y)
+    {
+        bool ink = false;
+        for (LONG x = area.left; x < area.right; ++x)
+        {
+            const auto value = Pixel(image, x, y);
+            ink = ink || ((value >> 24) > 200 && ((value >> 16) & 255) > 180 &&
+                ((value >> 8) & 255) > 180 && (value & 255) > 180);
+        }
+        if (ink) { if (blank >= 2) ++bands; blank = 0; }
+        else ++blank;
+    }
+    return bands;
+}
 void Save(const char* directory, const char* name, const std::vector<unsigned>& pixels)
 {
     if (!directory) return;
     std::string error;
-    Check(snowdesktop::preview_png::Save(std::filesystem::path(directory) / name, Canvas::width, Canvas::height, pixels, error), error.c_str());
+    const bool saved = snowdesktop::preview_png::Save(std::filesystem::path(directory) / name, Canvas::width, Canvas::height, pixels, error);
+    Check(saved, error.c_str());
 }
 }
 
@@ -114,8 +132,9 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
             "left reveal preserves original pixel dimensions and moves to the frame inset");
         Check(Visible(pixels, {0, 270, Canvas::width, Canvas::height}) == 0, "a short inner title does not create a duplicate floating label");
         Save(outputDirectory, "04-left-title.png", pixels);
-        view.name = L"一个很长的游戏名称，用于检查两行省略后仍然能够查看完整名称以及保持原始图标尺寸和外框几何不变。";
+        view.name = L"一个很长的游戏名称，用于检查两行省略后仍然能够查看完整名称以及保持原始图标尺寸和外框几何不变。继续加入额外的标题内容，确保这段名称确实超过两行宽度，覆盖完整名称提示的回归场景。";
         pixels = canvas.Draw(config, view, true);
+        Check(TextBands(pixels, {134, 149, 422, 181}) == 2, "fractional line metrics still render two inner title lines before ellipsis");
         Check(Visible(pixels, {0, 270, Canvas::width, Canvas::height}) > 100, "truncated inner titles retain a full floating name");
         Save(outputDirectory, "05-long-title.png", pixels);
         view.animations = false; pixels = canvas.Draw(config, view, true); bounds = RedBounds(pixels);

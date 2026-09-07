@@ -76,9 +76,12 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     if ((geometry.leftReveal || (!view.original && config.coverHover == 2)) && hover > 0)
     {
         const float lineHeight = static_cast<float>(config.titleSize) * scale * 1.3f;
-        const float top = geometry.leftReveal ? (frame.top + frame.bottom) / 2 - lineHeight : frame.bottom - lineHeight * 2 - 6 * scale;
+        // A fractional rectangle can lose a few ulps after adding its origin;
+        // DirectWrite then fits only one line into an apparent two-line box.
+        const float titleHeight = std::ceil(lineHeight * 2);
+        const float top = geometry.leftReveal ? (frame.top + frame.bottom) / 2 - titleHeight / 2 : frame.bottom - titleHeight - 6 * scale;
         const auto title = D2D1::RectF(frame.left + static_cast<float>(geometry.leftReveal ? geometry.titleLeft : 6 * scale),
-            top, frame.right - 12 * scale, top + lineHeight * 2);
+            top, frame.right - 12 * scale, top + titleHeight);
         const unsigned textColor = config.autoTitleColor ? 0xffffff : config.titleColor;
         Rounded(target, title, 4 * scale, Color(large_icon_render_rules::TitleBackdrop(textColor), .88 * hover), Color(0, 0));
         auto format = Format(fonts, config, scale);

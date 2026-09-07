@@ -1,5 +1,6 @@
 #include "settings_ipc_channel.h"
 #include "settings_ipc_values.h"
+#include "large_icon_edit_rules.h"
 #include "settings_process.h"
 
 #include <atomic>
@@ -278,9 +279,63 @@ int RunSettingsIpcChildIfRequested()
     catch (...) { return 1; }
 }
 
+void TestLargeIconEditing()
+{
+    using namespace snowdesktop;
+    using namespace snowdesktop::large_icon_edit_rules;
+    struct Item { std::optional<LargeIconConfig> largeIcon; std::pair<int, int> gridSpan{1, 1}; } item;
+    LargeIconConfig config; config.columns = 3; config.rows = 2; config.opacity = .2;
+    int writes = 0;
+    auto persist = [&] { ++writes; return true; };
+    Check(!Store(item, config, std::pair{3, 2}, false, true, persist) && !item.largeIcon && writes == 0,
+        "host rejects creation without effective unlock before touching state or persistence");
+    Check(!Store(item, config, std::pair{3, 2}, true, false, persist) && writes == 0,
+        "host rejects large-icon creation inside a storage container");
+    Check(Store(item, config, std::pair{3, 2}, true, true, persist) && item.largeIcon == config && writes == 1,
+        "effective unlock permits a new large icon, including an offline-valid entitlement result");
+    auto changed = config; changed.opacity = .8;
+    Check(!Store(item, changed, std::pair{2, 2}, false, true, persist) && item.largeIcon == config && item.gridSpan == std::pair{3, 2} && writes == 1,
+        "unlock loss preserves committed appearance and size while preventing edits");
+    Check(!Store(item, changed, std::pair{2, 2}, true, true, [] { return false; }) && item.largeIcon == config && item.gridSpan == std::pair{3, 2},
+        "failed persistence rolls back both appearance and span");
+    Check(!Store(item, changed, std::pair{2, 2}, true, true, []() -> bool { throw std::runtime_error("write failed"); }) && item.largeIcon == config,
+        "exceptional persistence failure also preserves the committed configuration");
+    Check(Store(item, changed, std::pair{2, 2}, true, true, persist) && item.largeIcon == changed,
+        "editing can retry successfully after re-unlock or a persistence failure");
+    Check(Store(item, std::nullopt, std::pair{1, 1}, false, true, persist) && !item.largeIcon && item.gridSpan == std::pair{1, 1},
+        "returning to an ordinary icon remains available after unlock loss");
+    config.radius = -1;
+    Check(!Store(item, config, std::pair{2, 2}, true, true, persist) && !item.largeIcon,
+        "host transaction rejects invalid configuration even with an effective unlock");
+
+    LargeIconEditSession edit{L"game", 11, 7, LargeIconConfig{}};
+    LargeIconSettingsRequest request{L"game", 11, 7, "preview", EncodeLargeIconConfig({}), {}};
+    Check(CheckRequest(edit, request, true).empty(), "current item session may preview");
+    for (const auto action : {"preview", "commit", "cancel", "import", "refresh"})
+    {
+        request.action = action; request.revision = 6;
+        Check(CheckRequest(edit, request, true) == "largeIcon.stale", "all edit operations reject an obsolete revision");
+        request.revision = 7; request.session = 10;
+        Check(CheckRequest(edit, request, true) == "largeIcon.stale", "all edit operations reject an obsolete editor session");
+        request.session = 11; request.key = L"other";
+        Check(CheckRequest(edit, request, true) == "largeIcon.stale", "all edit operations validate the original project identity");
+        request.key = L"game"; edit.preview = LargeIconConfig{};
+        Check(CheckRequest(edit, request, false) == "largeIcon.locked" && !edit.preview,
+            "unlock loss rejects every editing operation and cancels its uncommitted preview");
+    }
+    request.action = "status"; request.revision = 1;
+    Check(CheckRequest(edit, request, true).empty(), "status can observe a newer revision in the same editor session");
+    request.action = "commit"; request.revision = 7;
+    edit = {};
+    Check(CheckRequest(edit, request, true) == "largeIcon.stale", "deletion, conversion or editor teardown invalidates old requests");
+    request.action = "read";
+    Check(CheckRequest(edit, request, true).empty(), "reopening may establish a fresh session after re-unlock");
+}
+
 int RunSettingsIpcTests()
 {
     TestCodec();
+    TestLargeIconEditing();
     TestChannel();
     TestStalledPeer();
     TestProcessLifecycle();

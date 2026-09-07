@@ -122,8 +122,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const bool moving = motion.Advance(now, hovered, active && snapshot.available, snapshot.animations, snapshot.durationScale, draft);
         ScheduleRendering(moving);
         const double hover = motion.hover, wave = motion.LaunchWave(now, snapshot.durationScale);
-        const double fw = std::max(1, draft.columns <= static_cast<int>(snapshot.frameWidths.size()) ? snapshot.frameWidths[draft.columns - 1] : snapshot.frameWidth);
-        const double fh = std::max(1, draft.rows <= static_cast<int>(snapshot.frameHeights.size()) ? snapshot.frameHeights[draft.rows - 1] : snapshot.frameHeight);
+        const double fw = std::max(1, draft.columns >= 1 && draft.columns <= static_cast<int>(snapshot.frameWidths.size()) ? snapshot.frameWidths[draft.columns - 1] : snapshot.frameWidth);
+        const double fh = std::max(1, draft.rows >= 1 && draft.rows <= static_cast<int>(snapshot.frameHeights.size()) ? snapshot.frameHeights[draft.rows - 1] : snapshot.frameHeight);
         const double fit = std::min({1., 300. / fw, 260. / fh});
         const double width = fw * fit, height = fh * fit, scale = snapshot.unitScale * fit;
         const double offset = (330 - width) / 2, top = 12;
@@ -175,6 +175,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::Canvas::SetLeft(previewImage, content.x * fit); c::Canvas::SetTop(previewImage, content.y * fit);
         const bool left = content.leftReveal;
         const double lineHeight = draft.titleSize * scale * 1.3;
+        const double innerHeight = std::ceil(draft.titleSize * snapshot.unitScale * 1.3 * 2) * fit;
         const double titleLeft = left ? content.titleLeft * fit : 6 * scale;
         const double titleWidth = std::max(1., width - titleLeft - 12 * scale);
         const double titlePadding = (6 + (1 - hover) * 6) * scale;
@@ -186,11 +187,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto textColor = draft.autoTitleColor ? 0xffffffu : draft.titleColor;
         previewTitle.Foreground(m::SolidColorBrush(Color(textColor)));
         innerTitleBackdrop.Visibility(left || (!raw && draft.coverHover == 2) ? x::Visibility::Visible : x::Visibility::Collapsed);
-        innerTitleBackdrop.Opacity(hover); innerTitleBackdrop.Width(titleWidth); innerTitleBackdrop.Height(lineHeight * 2);
+        innerTitleBackdrop.Opacity(hover); innerTitleBackdrop.Width(titleWidth); innerTitleBackdrop.Height(innerHeight);
         innerTitleBackdrop.Padding(x::Thickness{titlePadding, 0, 6 * scale, 0}); innerTitleBackdrop.CornerRadius(x::CornerRadius{4 * scale});
         innerTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .88)));
         c::Canvas::SetLeft(innerTitleBackdrop, titleLeft);
-        c::Canvas::SetTop(innerTitleBackdrop, left ? height / 2 - lineHeight : height - lineHeight * 2 - 6 * scale);
+        c::Canvas::SetTop(innerTitleBackdrop, left ? height / 2 - innerHeight / 2 : height - innerHeight - 6 * scale);
         floatingTitle.Text(snapshot.name); floatingTitle.FontSize(draft.titleSize * scale);
         floatingTitle.TextWrapping(x::TextWrapping::Wrap); floatingTitle.MaxLines(0); floatingTitle.TextTrimming(x::TextTrimming::None);
         floatingTitle.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight); floatingTitle.LineHeight(lineHeight);
@@ -389,7 +390,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             Button(content, "largeIcon.refresh", [](Impl& self) { self.Send("refresh"); });
         }
         auto frame = Group("largeIcon.frame");
-        Slider(frame, "largeIcon.radius", &LargeIconConfig::radius, 0, 100, 1);
+        Slider(frame, "largeIcon.radius", &LargeIconConfig::radius, 0, 512, 1);
         Toggle(frame, "largeIcon.autoColor", &LargeIconConfig::autoColor);
         ColorPicker(frame, "largeIcon.manualColor", &LargeIconConfig::manualColor);
         Slider(frame, "largeIcon.colorMix", &LargeIconConfig::colorMix, 0, 1);

@@ -83,6 +83,8 @@ int main(int argc, char** argv)
     Check(geometry.x == -300 && geometry.width == 400 && geometry.height == 200, "fill focus crops without stretching the source");
     config = {};
     Check(Background(config, 0x414751, 0x414751) == 0x414751, "missing color data immediately uses the neutral background");
+    Check(Background(config, 0xc9ced6, 0) == 0xc9ced6 && Background(config, 0x414751, 0) == 0x414751,
+        "fully transparent sources follow both light and dark theme neutral colors");
     config.autoColor = false; config.manualColor = 0x123456;
     Check(Background(config, 0, 0xffffff) == 0x123456, "manual colors remain independent from automatic extraction");
     Check(rules::SourcePixelsForTarget(32) == 64,

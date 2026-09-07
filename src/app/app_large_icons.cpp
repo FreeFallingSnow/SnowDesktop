@@ -3,6 +3,7 @@
 #include "../large_icon_steam.h"
 #include "../large_icon_render_rules.h"
 #include "../large_icon_renderer.h"
+#include "../large_icon_edit_rules.h"
 
 void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant)
 {
@@ -109,8 +110,8 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
 {
     if (index >= items_.size()) return false;
     auto& item = items_[index];
-    if (config && (!CanEditLargeIcons() || !snowdesktop::ValidateLargeIconConfig(*config) ||
-        IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId)) return false;
+    const bool desktop = !IsItemInAnyWidget(item) && item.gridCell.pageId != kDockPageId;
+    if (!snowdesktop::large_icon_edit_rules::CanStore(config, CanEditLargeIcons(), desktop)) return false;
     if (config && config->content == 2)
     {
         wchar_t url[2048]{};
@@ -132,15 +133,10 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
             if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
         if (AreGridSlotsMarked(occupied, item.gridCell, span)) return false;
     }
-    const auto previous = item.largeIcon;
-    const auto previousSpan = item.gridSpan;
     const auto previousRecords = layoutRecords_;
-    item.largeIcon = std::move(config);
-    item.gridSpan = span;
-    if (!SaveLayoutSlots())
+    if (!snowdesktop::large_icon_edit_rules::Store(item, std::move(config), span, CanEditLargeIcons(), desktop,
+        [this] { return SaveLayoutSlots(); }))
     {
-        item.largeIcon = previous;
-        item.gridSpan = previousSpan;
         layoutRecords_ = previousRecords;
         return false;
     }
@@ -229,10 +225,9 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
             result.frameHeights.push_back(rect.bottom - rect.top);
         }
     }
-    if (!result.editable)
+    if (const auto error = snowdesktop::large_icon_edit_rules::CheckRequest(largeIconEdit_, request, result.editable); !error.empty())
     {
-        largeIconEdit_.preview.reset();
-        result.error = "largeIcon.locked";
+        result.error = error;
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
     else if (request.action == "read")
@@ -240,11 +235,8 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         largeIconEdit_ = { request.key, ++largeIconSessionSerial_, 1, {} };
         result.succeeded = true;
     }
-    else if (request.action == "status" && request.key == largeIconEdit_.key && request.session == largeIconEdit_.token)
+    else if (request.action == "status")
         result.succeeded = true;
-    else if (request.session != largeIconEdit_.token || request.key != largeIconEdit_.key ||
-        request.revision != largeIconEdit_.revision)
-        result.error = "largeIcon.stale";
     else if (request.action == "cancel")
     {
         largeIconEdit_.preview.reset();

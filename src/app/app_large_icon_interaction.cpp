@@ -159,7 +159,8 @@ void DesktopApp::UpdateLargeIconHover()
         const auto& config = EffectiveLargeIconConfig(item);
         auto& state = it->second;
         const auto frame = GetLargeIconFrameRect(item);
-        const bool visible = !desktopIconsHidden_ && !IsRectEmptyRect(frame) && FindGridPage(gridPages_, item.gridCell.pageId);
+        const bool visible = !desktopIconsHidden_ && !IsRectEmptyRect(item.bounds) &&
+            !IsRectEmptyRect(frame) && FindGridPage(gridPages_, item.gridCell.pageId);
         const bool interactive = !dragSession_.IsActive() && !marqueeActive_ && !largeIconGesture_ &&
             widgetAction_ == WidgetAction::None && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(lastMousePoint_);
         const bool hover = PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected);
