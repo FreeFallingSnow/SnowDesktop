@@ -872,9 +872,14 @@ bool DesktopApp::ActivateOrToggleDockItem(
         {
             CancelDockWindowActivationObservation(target);
             snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
-            const bool minimizeAccepted = RequestDockWindowMinimize(target);
+            snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
+            const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
+            wchar_t minimizeDiagnostic[128]{};
+            swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
+                minimizeAccepted ? 1 : 0,
+                snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
             snowdesktop::dock_taskbar_diagnostics::Record(
-                minimizeAccepted ? L"native-minimize-accepted" : L"native-minimize-rejected", target);
+                minimizeDiagnostic, target);
         }
         found->second.minimized = true;
         found->second.foreground = false;
@@ -1011,9 +1016,14 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         {
             CancelDockWindowActivationObservation(target);
             snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
-            const bool minimizeAccepted = RequestDockWindowMinimize(target);
+            snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
+            const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
+            wchar_t minimizeDiagnostic[128]{};
+            swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
+                minimizeAccepted ? 1 : 0,
+                snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
             snowdesktop::dock_taskbar_diagnostics::Record(
-                minimizeAccepted ? L"native-minimize-accepted" : L"native-minimize-rejected", target);
+                minimizeDiagnostic, target);
         }
         nowMinimized = true;
     }

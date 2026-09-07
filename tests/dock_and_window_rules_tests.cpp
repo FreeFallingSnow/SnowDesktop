@@ -3566,9 +3566,40 @@ int main(int argc, char** argv)
             [&]() { ++unsafeForegroundRetries; }) &&
             unsafeForegroundRetries == 0,
         "a hung activation target must not enter the attached-input retry");
-    Check(rules::NeedsDockMinimizeSystemCommandFallback(false) &&
-            !rules::NeedsDockMinimizeSystemCommandFallback(true),
-        "a rejected asynchronous minimize must use the system-command fallback");
+    using MinimizeRoute = rules::DockWindowMinimizeRequestRoute;
+    const auto checkMinimizeRequestRoute = [](
+        bool postAccepted, bool showAccepted, MinimizeRoute expectedRoute,
+        const char* expectedCalls, const char* message) {
+        std::string calls;
+        const auto route = rules::ApplyDockMinimizeRequest(
+            [&](WPARAM command) {
+                Check(command == SC_MINIMIZE,
+                    "the posted minimize request must use SC_MINIMIZE");
+                calls += 'P';
+                return postAccepted;
+            },
+            [&](int showCommand) {
+                Check(showCommand == SW_MINIMIZE,
+                    "the asynchronous minimize fallback must use SW_MINIMIZE");
+                calls += 'S';
+                return showAccepted;
+            },
+            [&](WPARAM command) {
+                Check(command == SC_MINIMIZE,
+                    "the default-procedure minimize fallback must use SC_MINIMIZE");
+                calls += 'D';
+            });
+        Check(route == expectedRoute && calls == expectedCalls, message);
+    };
+    checkMinimizeRequestRoute(
+        true, false, MinimizeRoute::PostedSystemCommand, "P",
+        "a posted minimize must return immediately without duplicate requests while native completion is pending");
+    checkMinimizeRequestRoute(
+        false, true, MinimizeRoute::AsyncShowFallback, "PS",
+        "a rejected system-command post must try one asynchronous minimize and stop when accepted");
+    checkMinimizeRequestRoute(
+        false, false, MinimizeRoute::DefaultSystemCommandFallback, "PSD",
+        "when both asynchronous routes are rejected, including by UIPI, one default system command must remain available");
     Check(rules::NeedsDockCloseSystemCommandFallback(false) &&
             !rules::NeedsDockCloseSystemCommandFallback(true),
         "a rejected graceful close must use the system-command fallback");

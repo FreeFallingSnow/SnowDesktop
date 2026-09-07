@@ -591,23 +591,31 @@ inline int DockRestoreShowCommand(HWND window)
 }
 
 /**
- * @brief 请求最小化窗口，并为高完整性窗口提供默认系统命令回退。
+ * @brief 异步请求应用处理最小化，并保留高完整性窗口的失败回退。
  */
-inline bool RequestDockWindowMinimize(HWND window)
+inline bool RequestDockWindowMinimize(HWND window,
+    snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute* route = nullptr)
 {
+    using Route = snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute;
+    if (route)
+        *route = Route::None;
     if (!window || !IsWindow(window))
         return false;
-    const BOOL accepted =
-        ShowWindowAsync(window, SW_MINIMIZE);
-    if (snowdesktop::dock_window_rules::
-            NeedsDockMinimizeSystemCommandFallback(
-                accepted != FALSE))
-    {
-        DefWindowProcW(
-            window, WM_SYSCOMMAND,
-            SC_MINIMIZE, 0);
-    }
-    return accepted != FALSE ||
+    const Route dispatched = snowdesktop::dock_window_rules::ApplyDockMinimizeRequest(
+        [window](WPARAM command) {
+            // Match the system minimize command path so the application can
+            // handle foreground succession. A successful post is not completion.
+            return PostMessageW(window, WM_SYSCOMMAND, command, 0) != FALSE;
+        },
+        [window](int showCommand) {
+            return ShowWindowAsync(window, showCommand) != FALSE;
+        },
+        [window](WPARAM command) {
+            DefWindowProcW(window, WM_SYSCOMMAND, command, 0);
+        });
+    if (route)
+        *route = dispatched;
+    return dispatched != Route::DefaultSystemCommandFallback ||
         IsIconic(window) != FALSE;
 }
 

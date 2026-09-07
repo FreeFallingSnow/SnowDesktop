@@ -199,17 +199,50 @@ constexpr bool ShouldDispatchDockDoubleClickPress(
     return !specialDoubleClickHandled;
 }
 
-/**
- * @brief 普通异步最小化被系统拒绝时，改由默认窗口过程执行系统命令。
- *
- * 管理员权限窗口会通过 UIPI 拒绝来自普通完整性进程的
- * ShowWindowAsync，但 DefWindowProc(SC_MINIMIZE) 仍可执行与系统
- * 任务栏一致的默认最小化行为。
- */
-constexpr bool NeedsDockMinimizeSystemCommandFallback(
-    bool showWindowAccepted) noexcept
+enum class DockWindowMinimizeRequestRoute
 {
-    return !showWindowAccepted;
+    None,
+    PostedSystemCommand,
+    AsyncShowFallback,
+    DefaultSystemCommandFallback,
+};
+
+constexpr const wchar_t* DockWindowMinimizeRequestRouteName(
+    DockWindowMinimizeRequestRoute route) noexcept
+{
+    switch (route)
+    {
+    case DockWindowMinimizeRequestRoute::PostedSystemCommand:
+        return L"system-command-posted";
+    case DockWindowMinimizeRequestRoute::AsyncShowFallback:
+        return L"show-async-fallback";
+    case DockWindowMinimizeRequestRoute::DefaultSystemCommandFallback:
+        return L"default-proc-fallback";
+    default:
+        return L"none";
+    }
+}
+
+/**
+ * @brief 优先让应用处理系统最小化命令，仅在投递失败时使用原有回退。
+ *
+ * PostMessage 成功只代表入队，不应因 IsIconic 尚未变化就重复请求。
+ * 保留 ShowWindowAsync 和默认系统命令回退，以处理 UIPI 等投递拒绝。
+ */
+template <typename PostSystemCommand,
+    typename ShowWindowAsyncRequest,
+    typename ExecuteDefaultSystemCommand>
+DockWindowMinimizeRequestRoute ApplyDockMinimizeRequest(
+    PostSystemCommand&& postSystemCommand,
+    ShowWindowAsyncRequest&& showWindowAsyncRequest,
+    ExecuteDefaultSystemCommand&& executeDefaultSystemCommand)
+{
+    if (postSystemCommand(static_cast<WPARAM>(SC_MINIMIZE)))
+        return DockWindowMinimizeRequestRoute::PostedSystemCommand;
+    if (showWindowAsyncRequest(SW_MINIMIZE))
+        return DockWindowMinimizeRequestRoute::AsyncShowFallback;
+    executeDefaultSystemCommand(static_cast<WPARAM>(SC_MINIMIZE));
+    return DockWindowMinimizeRequestRoute::DefaultSystemCommandFallback;
 }
 
 /**
