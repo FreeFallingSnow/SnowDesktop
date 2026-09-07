@@ -1,5 +1,6 @@
 #include "dock_window_transition.h"
 #include "dock_window_rules.h"
+#include "animation_settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,20 +24,14 @@ bool SystemWindowAnimationsEnabled()
         !compositionEnabled)
         return false;
 
-    ANIMATIONINFO animationInfo{ sizeof(animationInfo) };
-    if (SystemParametersInfoW(
-            SPI_GETANIMATION, sizeof(animationInfo),
-            &animationInfo, 0) &&
-        animationInfo.iMinAnimate == 0)
-        return false;
+    return snowdesktop::animation::RuntimeAnimationsEnabled() &&
+        snowdesktop::animation::RuntimeWindowEffect() != 0;
+}
 
-    BOOL clientAreaAnimation = TRUE;
-    if (SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION, 0,
-            &clientAreaAnimation, 0) &&
-        !clientAreaAnimation)
-        return false;
-    return true;
+double TransitionDuration(int effect) noexcept
+{
+    return (effect == 3 ? 360.0 : effect == 2 ? 180.0 : 240.0) *
+        snowdesktop::animation::RuntimeDurationScale();
 }
 
 double MonotonicTimeMilliseconds() noexcept
@@ -372,6 +367,9 @@ bool DockWindowTransition::Start(
     sourceWindow_ = sourceWindow;
     direction_ = direction;
     restoreCallback_ = std::move(restoreCallback);
+    effect_ = snowdesktop::animation::RuntimeWindowEffect();
+    genieEdge_ = static_cast<snowdesktop::dock_genie::Edge>(
+        std::clamp(snowdesktop::animation::RuntimeDockPosition(), 0, 3));
 
     RECT windowRect{};
     if (direction_ == DockWindowTransitionDirection::Minimize)
@@ -403,15 +401,18 @@ bool DockWindowTransition::Start(
     toRect_ = direction_ ==
             DockWindowTransitionDirection::Minimize
         ? dockRect_ : windowRect_;
+    if (effect_ == 2)
+        fromRect_ = toRect_ = windowRect_;
+    collapseFrom_ = direction_ == DockWindowTransitionDirection::Minimize ? 0.0 : 1.0;
+    collapseTo_ = 1.0 - collapseFrom_;
+    lastCollapse_ = collapseFrom_;
     animationFromOpacity_ =
         ResolveDockWindowTransitionOpacity(
             direction_, 0.0);
     animationToOpacity_ =
         ResolveDockWindowTransitionOpacity(
             direction_, 1.0);
-    animationDurationMs_ =
-        static_cast<double>(
-            kAnimationDurationMs);
+    animationDurationMs_ = TransitionDuration(effect_);
 
     const CachedSnapshot* snapshot = nullptr;
     if (capturePolicy !=
@@ -451,6 +452,15 @@ bool DockWindowTransition::Start(
         Cancel();
         return false;
     }
+
+    effect_ = snowdesktop::dock_genie::EffectiveEffect(effect_, snapshotAvailable);
+    if (effect_ == 3 && !CreateGenieStrips())
+    {
+        // Keep the selected preference. Only this presentation falls back.
+        ClearGenieStrips();
+        effect_ = 1;
+    }
+    animationDurationMs_ = TransitionDuration(effect_);
 
     snapshotHostRect_ =
         surface_ ==
@@ -564,8 +574,7 @@ bool DockWindowTransition::Reverse(
         awaitingRestoreVisibility_)
         return false;
 
-    if (surface_ == DockWindowTransitionSurface::Snapshot &&
-        compositionTimelineActive_)
+    if (!awaitingRestoreVisibility_)
     {
         const double progress = std::clamp(
             (MonotonicTimeMilliseconds() - animationStartTimeMs_) /
@@ -611,28 +620,37 @@ bool DockWindowTransition::Reverse(
         1.0,
         maximumEdgeDistance(
             windowRect_, dockRect_));
-    const double remainingRatio = std::clamp(
+    double remainingRatio = std::clamp(
         maximumEdgeDistance(
             currentFrame, targetFrame) /
             fullDistance,
         0.0, 1.0);
 
+    const double targetCollapse =
+        direction == DockWindowTransitionDirection::Minimize ? 1.0 : 0.0;
+    if (effect_ == 3)
+        remainingRatio = std::abs(targetCollapse - lastCollapse_);
+    else if (effect_ == 2)
+        remainingRatio = std::abs(static_cast<double>(lastFrameOpacity_) -
+            (direction == DockWindowTransitionDirection::Minimize ? 0.0 : 255.0)) / 255.0;
+
     direction_ = direction;
     fromRect_ = currentFrame;
     toRect_ = targetFrame;
+    if (effect_ == 2)
+        fromRect_ = toRect_ = windowRect_;
+    collapseFrom_ = lastCollapse_;
+    collapseTo_ = targetCollapse;
     animationFromOpacity_ =
         lastFrameOpacity_;
     animationToOpacity_ =
         ResolveDockWindowTransitionOpacity(
             direction_, 1.0);
     animationDurationMs_ = std::clamp(
+        TransitionDuration(effect_) * remainingRatio,
         static_cast<double>(
-            kAnimationDurationMs) *
-            remainingRatio,
-        static_cast<double>(
-            kMinimumReverseDurationMs),
-        static_cast<double>(
-            kAnimationDurationMs));
+            kMinimumReverseDurationMs) * snowdesktop::animation::RuntimeDurationScale(),
+        TransitionDuration(effect_));
     restoreCallback_ =
         std::move(restoreCallback);
     animationStartTimeMs_ =
@@ -1044,6 +1062,96 @@ bool DockWindowTransition::CreateCompositionSnapshot(
     return true;
 }
 
+void DockWindowTransition::ClearGenieStrips()
+{
+    if (genieStrips_.empty())
+        return;
+    if (compositionVisual_)
+        compositionVisual_->RemoveAllVisuals();
+    for (auto& strip : genieStrips_)
+        strip->SetContent(nullptr);
+    genieStrips_.clear();
+    if (compositionVisual_)
+    {
+        compositionVisual_->SetContent(compositionSurface_.Get());
+        compositionVisual_->SetTransform(compositionScaleTransform_.Get());
+        compositionVisual_->SetClip(compositionClip_.Get());
+    }
+    hasLastFrame_ = false;
+}
+
+bool DockWindowTransition::CreateGenieStrips()
+{
+    if (!compositionVisual_ || !compositionSurface_ || !compositionDevice_)
+        return false;
+    const float width = static_cast<float>(compositionSnapshotSize_.cx);
+    const float height = static_cast<float>(compositionSnapshotSize_.cy);
+    const bool vertical = snowdesktop::dock_genie::Vertical(genieEdge_);
+    genieStrips_.reserve(snowdesktop::dock_genie::StripCount);
+    for (std::size_t i = 0; i < snowdesktop::dock_genie::StripCount; ++i)
+    {
+        Microsoft::WRL::ComPtr<IDCompositionVisual2> strip;
+        HRESULT hr = compositionDevice_->CreateVisual(&strip);
+        if (FAILED(hr) || !strip)
+            return false;
+        genieStrips_.push_back(strip);
+        hr = strip->SetContent(compositionSurface_.Get());
+        const float begin = static_cast<float>(i) /
+            static_cast<float>(snowdesktop::dock_genie::StripCount);
+        const float end = static_cast<float>(i + 1) /
+            static_cast<float>(snowdesktop::dock_genie::StripCount);
+        // Slight overlap avoids transparent seams under fractional GPU sampling.
+        // Opacity belongs to the parent so overlapping strips do not darken.
+        const D2D1_RECT_F clip = vertical
+            ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.35f),
+                width, std::min(height, end * height + 0.35f))
+            : D2D1::RectF(std::max(0.0f, begin * width - 0.35f), 0,
+                std::min(width, end * width + 0.35f), height);
+        if (SUCCEEDED(hr)) hr = strip->SetClip(clip);
+        if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+        if (SUCCEEDED(hr)) hr = strip->SetBitmapInterpolationMode(
+            DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+        if (SUCCEEDED(hr)) hr = compositionVisual_->AddVisual(strip.Get(), TRUE, nullptr);
+        if (FAILED(hr))
+            return false;
+    }
+    HRESULT hr = compositionVisual_->SetContent(nullptr);
+    if (SUCCEEDED(hr)) hr = compositionVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (SUCCEEDED(hr)) hr = compositionVisual_->SetClip(static_cast<IDCompositionClip*>(nullptr));
+    if (SUCCEEDED(hr)) hr = compositionVisual_->SetOffsetX(0.0f);
+    if (SUCCEEDED(hr)) hr = compositionVisual_->SetOffsetY(0.0f);
+    return SUCCEEDED(hr);
+}
+
+bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
+{
+    if (genieStrips_.size() != snowdesktop::dock_genie::StripCount ||
+        !compositionDevice_ || !compositionEffect_)
+        return false;
+    const auto rect = [](const RECT& value) {
+        return snowdesktop::dock_genie::Rect{
+            static_cast<double>(value.left), static_cast<double>(value.top),
+            static_cast<double>(value.right), static_cast<double>(value.bottom)};
+    };
+    HRESULT hr = S_OK;
+    for (std::size_t i = 0; i < genieStrips_.size() && SUCCEEDED(hr); ++i)
+    {
+        const auto transform = snowdesktop::dock_genie::StripMatrix(
+            rect(windowRect_), rect(dockRect_), genieEdge_, collapsed,
+            compositionSnapshotSize_.cx, compositionSnapshotSize_.cy,
+            static_cast<double>(i) / static_cast<double>(genieStrips_.size()),
+            static_cast<double>(i + 1) / static_cast<double>(genieStrips_.size()),
+            snapshotHostRect_.left, snapshotHostRect_.top);
+        const D2D1_MATRIX_3X2_F matrix{
+            transform.m11, transform.m12, transform.m21,
+            transform.m22, transform.dx, transform.dy};
+        hr = genieStrips_[i]->SetTransform(matrix);
+    }
+    if (SUCCEEDED(hr)) hr = compositionEffect_->SetOpacity(static_cast<float>(opacity) / 255.0f);
+    if (SUCCEEDED(hr)) hr = compositionDevice_->Commit();
+    return SUCCEEDED(hr);
+}
+
 bool DockWindowTransition::StartCompositionTimeline()
 {
     if (!compositionSnapshotActive_ || !compositionDevice_ ||
@@ -1156,7 +1264,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
 
-    if (surface_ == DockWindowTransitionSurface::Snapshot)
+    if (surface_ == DockWindowTransitionSurface::Snapshot && effect_ != 3)
     {
         if (!StartCompositionTimeline())
             return false;
@@ -1208,7 +1316,7 @@ bool DockWindowTransition::ApplyFrame(double progress)
         std::max(1L, frame.bottom - frame.top);
     const double eased =
         EaseDockWindowTransition(progress);
-    const BYTE frameOpacity =
+    BYTE frameOpacity =
         static_cast<BYTE>(std::clamp(
             static_cast<int>(std::lround(
                 static_cast<double>(
@@ -1219,6 +1327,21 @@ bool DockWindowTransition::ApplyFrame(double progress)
                         animationFromOpacity_)) *
                     eased)),
             0, 255));
+    if (!awaitingRestoreVisibility_)
+        lastCollapse_ = snowdesktop::dock_genie::Mix(collapseFrom_, collapseTo_, eased);
+    if (effect_ == 3)
+    {
+        if (!awaitingRestoreVisibility_)
+            frameOpacity = static_cast<BYTE>(std::clamp(
+                static_cast<int>(std::lround(
+                    snowdesktop::dock_genie::Opacity(lastCollapse_) * 255.0)), 0, 255));
+        if (!ApplyGenieFrame(lastCollapse_, frameOpacity))
+            return false;
+        lastFrameRect_ = frame;
+        lastFrameOpacity_ = frameOpacity;
+        hasLastFrame_ = true;
+        return true;
+    }
     const int cornerRadius =
         ResolveDockWindowTransitionCornerRadius(
             frame, dockRect_);
@@ -1353,6 +1476,11 @@ bool DockWindowTransition::OnAnimationFrame(
     if (!sourceWindow_ || !IsWindow(sourceWindow_))
     {
         Finish();
+        return false;
+    }
+    if (!snowdesktop::animation::RuntimeAnimationsEnabled())
+    {
+        CompleteImmediately();
         return false;
     }
 
@@ -1534,6 +1662,7 @@ void DockWindowTransition::Finish()
         compositionSnapshotActive_;
     if (compositionEffect_)
         compositionEffect_->SetOpacity(0.0f);
+    ClearGenieStrips();
     if (compositionScaleTransform_)
     {
         compositionScaleTransform_->SetScaleX(1.0f);
@@ -1581,11 +1710,31 @@ void DockWindowTransition::Finish()
     animationFromOpacity_ = 255;
     animationToOpacity_ = 0;
     awaitingRestoreVisibility_ = false;
+    effect_ = 1;
+    collapseFrom_ = 0.0;
+    collapseTo_ = 1.0;
+    lastCollapse_ = 0.0;
     restoreCallback_ = {};
 }
 
 void DockWindowTransition::Cancel()
 {
+    Finish();
+}
+
+void DockWindowTransition::CompleteImmediately()
+{
+    // The source has already received the native minimize command. A restore
+    // is deferred until the overlay reaches its destination, so complete that
+    // request explicitly before removing the presentation window.
+    if (direction_ == DockWindowTransitionDirection::Restore &&
+        restoreCallback_ && sourceWindow_ && IsWindow(sourceWindow_))
+    {
+        if (IsIconic(sourceWindow_))
+            CompleteRestoreAfterRenderFailure();
+        else
+            ActivateRestoredWindowForHandoff();
+    }
     Finish();
 }
 

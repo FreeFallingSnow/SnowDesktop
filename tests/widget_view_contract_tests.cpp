@@ -758,7 +758,12 @@ void TestMachineReadableContract()
             runtime && runtime->IsObject() &&
             runtime->Find("runsLuaPerFrame") &&
             runtime->Find("runsLuaPerFrame")->IsBoolean() &&
-            !runtime->Find("runsLuaPerFrame")->boolean,
+            !runtime->Find("runsLuaPerFrame")->boolean &&
+            runtime->Find("reducedMotionSource") &&
+            runtime->Find("reducedMotionSource")->string ==
+                "host-effective-animation-preference" &&
+            runtime->Find("durationScaleSource") &&
+            runtime->Find("durationScaleSource")->string == "host-animation-speed",
         "view JSON must export the bounded host transition contract");
     Check(preview && preview->IsObject() &&
             preview->Find("renderer") &&

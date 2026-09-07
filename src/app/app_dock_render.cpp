@@ -181,6 +181,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         if (index >= items_.size()) return;
         const float launchOffset =
             GetDockLaunchBounceOffset(index, iconSize);
+        const float launchScale = GetDockLaunchPulseScale(index);
         float launchOffsetX = 0.0f;
         float launchOffsetY = 0.0f;
         switch (dockSettings_.position)
@@ -203,10 +204,16 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         ctx->GetTransform(&previousTransform);
         const bool launchTransformApplied =
             std::abs(launchOffsetX) > 0.001f ||
-            std::abs(launchOffsetY) > 0.001f;
+            std::abs(launchOffsetY) > 0.001f ||
+            std::abs(launchScale - 1.0f) > 0.001f;
         if (launchTransformApplied)
         {
             ctx->SetTransform(
+                D2D1::Matrix3x2F::Scale(
+                    launchScale, launchScale,
+                    D2D1::Point2F(
+                        (iconRect.left + iconRect.right) * 0.5f,
+                        (iconRect.top + iconRect.bottom) * 0.5f)) *
                 D2D1::Matrix3x2F::Translation(
                     launchOffsetX,
                     launchOffsetY) *

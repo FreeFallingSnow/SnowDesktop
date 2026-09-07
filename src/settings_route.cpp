@@ -205,6 +205,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::AppearanceDesktopIcons:
     case SettingsPage::AppearanceIconBeautification:
     case SettingsPage::DesktopPages:
+    case SettingsPage::AnimationPerformance:
         break;
     default:
         return false;
@@ -240,6 +241,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::AppearanceIconBeautification:
         return "appearance-icon-beautification";
     case SettingsPage::DesktopPages: return "desktop-pages";
+    case SettingsPage::AnimationPerformance: return "animation-performance";
     }
     return "home";
 }

@@ -4255,6 +4255,30 @@ void TestVisualTransitionRuntime()
     Check(runtime.Size() == 0,
         "transition runtime must release nodes not observed in the next frame");
 
+    ViewTransitionRuntime speedRuntime;
+    speedRuntime.SetDurationScale(1.4);
+    speedRuntime.BeginFrame();
+    (void)speedRuntime.Resolve("speed", start, transition, origin, false);
+    speedRuntime.EndFrame();
+    speedRuntime.BeginFrame();
+    (void)speedRuntime.Resolve("speed", target, transition, origin, false);
+    speedRuntime.EndFrame();
+    speedRuntime.SetDurationScale(1.4);
+    speedRuntime.BeginFrame();
+    const auto slowerMiddle = speedRuntime.Resolve("speed", target, transition,
+        origin + std::chrono::milliseconds(70), false);
+    speedRuntime.EndFrame();
+    Check(slowerMiddle.opacity && Near(*slowerMiddle.opacity, 0.5f) &&
+            speedRuntime.HasActive() && transition.durationMilliseconds == 100,
+        "host speed must scale presentation time without mutating the Lua descriptor or settling unchanged preferences");
+    speedRuntime.Settle();
+    speedRuntime.BeginFrame();
+    Check(speedRuntime.Resolve("speed", target, transition,
+            origin + std::chrono::milliseconds(70), false) == target &&
+            !speedRuntime.HasActive(),
+        "disabling host motion must settle at the existing target without replaying it");
+    speedRuntime.EndFrame();
+
     ViewTransition transformTransition;
     transformTransition.durationMilliseconds = 100;
     transformTransition.easing = ViewTransitionEasing::Linear;
@@ -4386,6 +4410,23 @@ void TestVisualTransitionRuntime()
     Check(reducedEnter.style == enteredStyle && !reducedEnter.transform,
         "reducedMotion must suppress enterTransition for newly inserted nodes");
 
+    ViewTransitionRuntime fastEnterRuntime;
+    fastEnterRuntime.SetDurationScale(0.7);
+    fastEnterRuntime.BeginFrame();
+    fastEnterRuntime.EndFrame();
+    fastEnterRuntime.BeginFrame();
+    (void)fastEnterRuntime.ResolvePresentation("fast-enter", enteredStyle,
+        std::nullopt, std::nullopt, std::nullopt, enterTransition, origin, false);
+    fastEnterRuntime.EndFrame();
+    fastEnterRuntime.BeginFrame();
+    const auto fastMiddle = fastEnterRuntime.ResolvePresentation("fast-enter", enteredStyle,
+        std::nullopt, std::nullopt, std::nullopt, enterTransition,
+        origin + std::chrono::milliseconds(35), false);
+    fastEnterRuntime.EndFrame();
+    Check(fastMiddle.style.opacity && Near(*fastMiddle.style.opacity, 0.5f) &&
+            enterTransition.durationMilliseconds == 100,
+        "host speed must also scale presence entry while retaining the authored duration");
+
     ViewNode previousRoot;
     previousRoot.type = ViewNodeType::Box;
     previousRoot.key = "exit-root";
@@ -4449,6 +4490,19 @@ void TestVisualTransitionRuntime()
     Check(reducedExitRuntime.ExitFrames(origin, true).empty() &&
             !reducedExitRuntime.HasActive(),
         "reducedMotion must suppress and release queued exit snapshots");
+
+    ViewTransitionRuntime slowExitRuntime;
+    slowExitRuntime.SetDurationScale(1.4);
+    slowExitRuntime.QueueExitTransitions(previousRoot, currentRoot, origin, false);
+    const auto slowExitMiddle = slowExitRuntime.ExitFrames(
+        origin + std::chrono::milliseconds(70), false);
+    Check(slowExitMiddle.size() == 1 && slowExitMiddle[0].presentation.style.opacity &&
+            Near(*slowExitMiddle[0].presentation.style.opacity, 0.5f) &&
+            previousRoot.children[0].exitTransition->durationMilliseconds == 100,
+        "host speed must scale exit snapshots without changing the component view tree");
+    slowExitRuntime.Settle();
+    Check(!slowExitRuntime.HasActive() && slowExitRuntime.ExitFrames(origin, false).empty(),
+        "disabling host motion must discard retained exit pictures immediately");
 }
 
 void TestThemeColorTokens()

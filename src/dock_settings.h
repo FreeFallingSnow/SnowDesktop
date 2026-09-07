@@ -2,6 +2,7 @@
 
 #include "dock_settings_rules.h"
 #include "personalization.h"
+#include "animation_settings.h"
 
 #include <windows.h>
 
@@ -98,6 +99,10 @@ struct DockSettings
     bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
+    int hoverEffect = 2;
+    float hoverScale = 1.28f;
+    int launchEffect = 1;
+    int windowEffect = 1;
     bool systemTaskbarAutoHide = false;
     int systemTaskbarAlignment = 1; // 0=靠左, 1=居中
     bool systemTaskbarBackdropEnabled = false;
@@ -112,6 +117,10 @@ struct DockSettings
 
 inline void NormalizeDockSettings(DockSettings& settings) noexcept
 {
+    settings.hoverEffect = snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect);
+    settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(settings.hoverScale);
+    settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
+    settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);

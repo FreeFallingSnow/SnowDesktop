@@ -52,6 +52,16 @@ struct Visual
 class State
 {
 public:
+    void Configure(bool fade, double durationScale)
+    {
+        fade_ = fade;
+        durationScale_ = std::clamp(durationScale, 0.1, 10.0);
+    }
+    [[nodiscard]] double DurationMilliseconds(bool opening) const
+    {
+        return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_;
+    }
+    [[nodiscard]] float HiddenScale() const { return fade_ ? 1.0f : kMinimumScale; }
     void Open(std::uint64_t now)
     {
         Advance(now);
@@ -83,7 +93,7 @@ public:
             return false;
 
         const float duration = static_cast<float>(
-            targetVisible_ ? kOpenDurationMs : kCloseDurationMs);
+            DurationMilliseconds(targetVisible_));
         const float delta = static_cast<float>(elapsed) / duration;
         const float previous = progress_;
         progress_ = ClampUnit(
@@ -118,7 +128,7 @@ public:
         return {
             progress_,
             eased,
-            kMinimumScale + (1.0f - kMinimumScale) * eased,
+            fade_ ? 1.0f : kMinimumScale + (1.0f - kMinimumScale) * eased,
             targetVisible_ || progress_ > 0.0f
         };
     }
@@ -149,6 +159,8 @@ public:
     }
 
 private:
+    bool fade_ = false;
+    double durationScale_ = 1.0;
     float progress_ = 0.0f;
     bool targetVisible_ = false;
     bool animating_ = false;

@@ -11,6 +11,7 @@
  */
 
 #include "widget_engine.h"
+#include "animation_settings.h"
 #include "performance_trace.h"
 #include "widget_logical_slot_manifest.h"
 #include "logical_slot_keyboard_rules.h"
@@ -16185,12 +16186,20 @@ static snowdesktop::widget_runtime::ViewStyle ResolveViewStyle(
     return result;
 }
 
+// Host-controlled visuals have their own effective preference. The public Lua
+// system accessibility snapshot and animation.request semantics stay intact.
+static bool HostManagedAnimationsSuppressed() noexcept
+{
+    return !snowdesktop::animation::RuntimeAnimationsEnabled();
+}
+
 static float WidgetIndeterminateProgressPhase(
     snowdesktop::widget_runtime::ViewTransitionRuntime::TimePoint now,
     bool reducedMotion) noexcept
 {
     if (reducedMotion) return 0.25f;
-    constexpr std::int64_t PeriodMilliseconds = 1400;
+    const auto PeriodMilliseconds = static_cast<std::int64_t>(std::lround(
+        1400.0 * snowdesktop::animation::RuntimeDurationScale()));
     const auto elapsed = std::chrono::duration_cast<
         std::chrono::milliseconds>(now.time_since_epoch()).count();
     const auto wrapped = ((elapsed % PeriodMilliseconds) +
@@ -18542,6 +18551,7 @@ static bool DrawWidgetViewTree(D2DState* state,
         ViewTransitionRuntime::Clock::now();
     const auto palette = BuildWidgetViewThemePalette(state);
     const auto textCountsBefore = state->textLayoutCache.Statistics();
+    transitions.SetDurationScale(snowdesktop::animation::RuntimeDurationScale());
     transitions.BeginFrame();
     DrawWidgetViewNode(state, tree, regions, focusedKey,
         &transitions, now, reducedMotion, palette);
@@ -19111,7 +19121,8 @@ static bool AdvanceNativeMarqueeSurface(
         if (!marquee.scrolling) continue;
         marquee.offset = snowdesktop::widget_runtime::
             AdvanceDrawMarqueeOffset(marquee.offset, deltaMilliseconds,
-                marquee.speed, marquee.textWidth + marquee.gap);
+                marquee.speed / static_cast<float>(snowdesktop::animation::RuntimeDurationScale()),
+                marquee.textWidth + marquee.gap);
     }
     surface.framePending = true;
     return true;
@@ -19461,7 +19472,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             VisualViewFocusForSurface(*found, "desktop"),
             found->viewTransitions,
             found->preview || !widgetTimerRequestCallback_ ||
-                QueryWidgetSystemEnvironment().reducedMotion);
+                HostManagedAnimationsSuppressed());
         DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
             found->interactionRegions, found->viewTree->frame.height);
         DrawHostViewInteractionOverlays(*found,
@@ -19489,7 +19500,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         {
             DrawNativeMarqueeSurface(d2dState_, found->desktopMarquee,
                 found->preview || !widgetTimerRequestCallback_ ||
-                    QueryWidgetSystemEnvironment().reducedMotion);
+                    HostManagedAnimationsSuppressed());
             DrawHostViewInteractionOverlays(*found,
                 found->interactionRegions,
                 found->viewKeyboardFocusKey, true);
@@ -19828,14 +19839,15 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                             candidate, *found, "desktop");
                     if (found->viewTree)
                     {
+                        found->viewTransitions.SetDurationScale(
+                            snowdesktop::animation::RuntimeDurationScale());
                         found->viewTransitions.QueueExitTransitions(
                             *found->viewTree, candidate,
                             snowdesktop::widget_runtime::
                                 ViewTransitionRuntime::Clock::now(),
                             found->preview ||
                                 !widgetTimerRequestCallback_ ||
-                                QueryWidgetSystemEnvironment().
-                                    reducedMotion);
+                                HostManagedAnimationsSuppressed());
                     }
                     found->viewTree = std::move(candidate);
                     found->viewIndeterminateProgressActive =
@@ -19889,7 +19901,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 VisualViewFocusForSurface(*found, "desktop"),
                 found->viewTransitions,
                 found->preview || !widgetTimerRequestCallback_ ||
-                    QueryWidgetSystemEnvironment().reducedMotion);
+                    HostManagedAnimationsSuppressed());
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions,
                 found->viewTree->frame.height);
@@ -20027,7 +20039,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 std::move(nativeMarqueeCommands));
             const bool reducedMotion = found->preview ||
                 !widgetTimerRequestCallback_ ||
-                QueryWidgetSystemEnvironment().reducedMotion;
+                HostManagedAnimationsSuppressed();
             const bool compositionManaged =
                 SyncNativeMarqueeComposition(*found, reducedMotion);
             DrawNativeMarqueeSurface(d2dState_,
@@ -20144,7 +20156,7 @@ bool WidgetEngine::RenderWidgetPanel(
             VisualViewFocusForSurface(widget, normalizedSurface),
             widget.panelViewTransitions,
             widget.preview || !widgetTimerRequestCallback_ ||
-                QueryWidgetSystemEnvironment().reducedMotion);
+                HostManagedAnimationsSuppressed());
         DrawWidgetSelectOverlays(d2dState_, *widget.panelViewTree,
             widget.panelInteractionRegions,
             widget.panelViewTree->frame.height);
@@ -20412,14 +20424,15 @@ bool WidgetEngine::RenderWidgetPanel(
                             current, normalizedSurface);
                     if (current.panelViewTree)
                     {
+                        current.panelViewTransitions.SetDurationScale(
+                            snowdesktop::animation::RuntimeDurationScale());
                         current.panelViewTransitions.QueueExitTransitions(
                             *current.panelViewTree, candidate,
                             snowdesktop::widget_runtime::
                                 ViewTransitionRuntime::Clock::now(),
                             current.preview ||
                                 !widgetTimerRequestCallback_ ||
-                                QueryWidgetSystemEnvironment().
-                                    reducedMotion);
+                                HostManagedAnimationsSuppressed());
                     }
                     current.panelViewTree = std::move(candidate);
                     current.panelIndeterminateProgressActive =
@@ -20481,7 +20494,7 @@ bool WidgetEngine::RenderWidgetPanel(
                             current, normalizedSurface),
                         current.panelViewTransitions,
                         current.preview || !widgetTimerRequestCallback_ ||
-                            QueryWidgetSystemEnvironment().reducedMotion);
+                            HostManagedAnimationsSuppressed());
                     DrawWidgetSelectOverlays(d2dState_,
                         *current.panelViewTree,
                         current.panelInteractionRegions,
@@ -20525,7 +20538,7 @@ bool WidgetEngine::RenderWidgetPanel(
                         current, normalizedSurface),
                     current.panelViewTransitions,
                     current.preview || !widgetTimerRequestCallback_ ||
-                        QueryWidgetSystemEnvironment().reducedMotion);
+                        HostManagedAnimationsSuppressed());
                 DrawWidgetSelectOverlays(d2dState_,
                     *current.panelViewTree,
                     current.panelInteractionRegions,
@@ -20933,7 +20946,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         const bool panelTransitionFrame =
             widget.panelViewTransitions.Tick(now);
         const bool reducedMotion =
-            QueryWidgetSystemEnvironment().reducedMotion;
+            HostManagedAnimationsSuppressed();
         const bool animateIndeterminateProgress = !reducedMotion;
         const bool desktopProgressFrame = animateIndeterminateProgress &&
             widget.hostVisible &&
@@ -25609,12 +25622,12 @@ bool WidgetEngine::RuntimeCancelAnimationFrame(
     LuaWidget& widget = widgets_[index];
     const bool removed = widget.animationFrames.Cancel(name);
     const bool indeterminateProgressActive =
-        !QueryWidgetSystemEnvironment().reducedMotion &&
+        !HostManagedAnimationsSuppressed() &&
         ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
             (widget.panelActive &&
                 widget.panelIndeterminateProgressActive));
     const bool nativeMarqueeActive =
-        !QueryWidgetSystemEnvironment().reducedMotion &&
+        !HostManagedAnimationsSuppressed() &&
         widget.desktopVisible &&
         !widget.desktopMarquee.compositionManaged &&
         HasActiveNativeMarquee(widget.desktopMarquee);
@@ -25683,12 +25696,12 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
     if (widget.animationTimerId)
         return true;
     const bool indeterminateProgressActive =
-        !QueryWidgetSystemEnvironment().reducedMotion &&
+        !HostManagedAnimationsSuppressed() &&
         ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
             (widget.panelActive &&
                 widget.panelIndeterminateProgressActive));
     const bool nativeMarqueeActive =
-        !QueryWidgetSystemEnvironment().reducedMotion &&
+        !HostManagedAnimationsSuppressed() &&
         widget.desktopVisible &&
         !widget.desktopMarquee.compositionManaged &&
         HasActiveNativeMarquee(widget.desktopMarquee);
@@ -25702,8 +25715,12 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
         !pending ||
         !widgetTimerRequestCallback_)
         return false;
-    widget.animationTimerId = widgetTimerRequestCallback_(
-        widget.widgetId, highRateAnimationPending ? 16 : 33);
+    const int frameLimit = snowdesktop::animation::RuntimeFrameLimit();
+    const UINT baseInterval = highRateAnimationPending ? 16 : 33;
+    const UINT interval = frameLimit > 0
+        ? std::max(baseInterval, static_cast<UINT>((1000 + frameLimit - 1) / frameLimit))
+        : baseInterval;
+    widget.animationTimerId = widgetTimerRequestCallback_(widget.widgetId, interval);
     return widget.animationTimerId != 0;
 }
 
@@ -25730,9 +25747,71 @@ bool WidgetEngine::SyncNativeMarqueeComposition(
     if (widget.preview || !widget.desktopVisible ||
         !nativeMarqueeSyncCallback_)
         return false;
-    surface.compositionManaged = nativeMarqueeSyncCallback_(
-        widget.widgetId, surface.marquees, reducedMotion);
+    const float durationScale = static_cast<float>(
+        snowdesktop::animation::RuntimeDurationScale());
+    if (durationScale == 1.0f || reducedMotion)
+        surface.compositionManaged = nativeMarqueeSyncCallback_(
+            widget.widgetId, surface.marquees, reducedMotion);
+    else
+    {
+        auto presentation = surface.marquees;
+        for (auto& marquee : presentation)
+            marquee.speed /= durationScale;
+        surface.compositionManaged = nativeMarqueeSyncCallback_(
+            widget.widgetId, presentation, reducedMotion);
+    }
     return surface.compositionManaged;
+}
+
+void WidgetEngine::ApplyHostAnimationPreferences()
+{
+    const bool enabled = !HostManagedAnimationsSuppressed();
+    const double durationScale = snowdesktop::animation::RuntimeDurationScale();
+    const int frameLimit = snowdesktop::animation::RuntimeFrameLimit();
+    const bool motionChanged = !hostAnimationPreferencesKnown_ ||
+        enabled != hostAnimationsEnabled_ || durationScale != hostAnimationDurationScale_;
+    if (!motionChanged && frameLimit == hostAnimationFrameLimit_)
+        return;
+    hostAnimationPreferencesKnown_ = true;
+    hostAnimationsEnabled_ = enabled;
+    hostAnimationDurationScale_ = durationScale;
+    hostAnimationFrameLimit_ = frameLimit;
+    std::vector<std::wstring> ids;
+    for (const auto& widget : widgets_)
+        if (widget.valid && !widget.preview) ids.push_back(widget.widgetId);
+    for (const auto& id : ids)
+    {
+        const int index = FindWidget(id);
+        if (index < 0) continue;
+        auto& widget = widgets_[index];
+        if (motionChanged)
+        {
+            widget.viewTransitions.SetDurationScale(durationScale);
+            widget.panelViewTransitions.SetDurationScale(durationScale);
+            widget.viewTransitions.Settle();
+            widget.panelViewTransitions.Settle();
+            widget.viewTransitionFramePending = static_cast<bool>(widget.viewTree);
+            widget.panelViewTransitionFramePending = static_cast<bool>(widget.panelViewTree);
+            widget.desktopMarquee.lastAdvance = std::chrono::steady_clock::now();
+            widget.desktopMarquee.framePending = true;
+            if (!enabled)
+                for (auto& marquee : widget.desktopMarquee.marquees) marquee.offset = 0.0f;
+            (void)SyncNativeMarqueeComposition(widget, !enabled);
+        }
+        // Re-arm only the shared presentation wake. Named/refresh timers,
+        // queued script frames and data-refresh requests are left untouched.
+        if (widget.animationTimerId && widgetTimerKillCallback_)
+            widgetTimerKillCallback_(widget.animationTimerId);
+        widget.animationTimerId = 0;
+        (void)ScheduleAnimationFrame(widget);
+        const bool desktopVisible = widget.desktopVisible;
+        const bool panelActive = widget.panelActive;
+        const auto panelSurface = widget.panelSurface;
+        if (motionChanged && desktopVisible)
+            invalidationBatch_.Invalidate(invalidateCallback_, id, std::nullopt, "desktop");
+        if (motionChanged && panelActive)
+            invalidationBatch_.Invalidate(invalidateCallback_, id, std::nullopt, panelSurface);
+    }
 }
 
 void WidgetEngine::ClearNativeMarqueeComposition(LuaWidget& widget)

@@ -3,6 +3,7 @@
 #include "app.h"
 #include "constants.h"
 #include "../dock_magnification.h"
+#include "../animation_settings.h"
 #include "slot.h"
 #include "../l10n.h"
 #include "../item_location.h"
@@ -687,6 +688,28 @@ bool DockContainer::IsMagnificationSuppressed() const
                 DesktopApp::WidgetAction::Resize);
 }
 
+float DockContainer::GetMaximumMagnificationScale() const
+{
+    if (!app_ || IsMagnificationSuppressed())
+        return 1.0f;
+    return snowdesktop::dock_magnification::ResolveFocusScale(
+        app_->dockSettings_.hoverEffect,
+        app_->dockSettings_.hoverScale,
+        snowdesktop::animation::RuntimeAnimationsEnabled());
+}
+
+int DockContainer::GetLaunchAnimationPadding() const
+{
+    if (!app_ || app_->dockSettings_.launchEffect != 1 ||
+        app_->dockLaunchBounces_.empty() ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+        return 0;
+    const int iconSize = static_cast<int>(std::ceil(
+        ItemIconSize() * GetMaximumMagnificationScale()));
+    return static_cast<int>(std::ceil(
+        snowdesktop::dock_launch_animation::MaximumOffsetPixels(iconSize))) + 1;
+}
+
 RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
 {
     if (IsMagnificationSuppressed())
@@ -738,7 +761,8 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
                     GetBounds(),
                     app_->dockSettings_.position,
                     ItemIconSize(),
-                    magnificationActive);
+                    magnificationActive,
+                    GetMaximumMagnificationScale());
         if (PtInRect(&separatorHoverBounds, pointer))
         {
             RECT nearest{};
@@ -791,7 +815,8 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
                 ExpandInteractionBounds(
                     GetBounds(),
                     app_->dockSettings_.position,
-                    ItemIconSize());
+                    ItemIconSize(),
+                    GetMaximumMagnificationScale());
         if (!PtInRect(&interactive, pointer))
             return RECT{};
 
@@ -891,19 +916,22 @@ float DockContainer::GetMagnificationScale(
     const int baseCenter = IsVertical()
         ? (baseRect.top + baseRect.bottom) / 2
         : (baseRect.left + baseRect.right) / 2;
-    return snowdesktop::dock_magnification::ScaleForAxisDistance(
+    return snowdesktop::dock_magnification::ScaleForEffect(
+        app_->dockSettings_.hoverEffect,
+        EqualRect(&baseRect, &focusRect) != FALSE,
         static_cast<float>(
             baseCenter -
             (IsVertical()
                 ? pointer.y : pointer.x)),
-        ItemPitch());
+        ItemPitch(), GetMaximumMagnificationScale());
 }
 
 int DockContainer::GetMagnificationAxisShift(
     const RECT& baseRect, const RECT& focusRect,
     POINT pointer) const
 {
-    if (!app_ || IsRectEmpty(&focusRect))
+    if (!app_ || IsRectEmpty(&focusRect) ||
+        GetMaximumMagnificationScale() <= 1.0f)
         return 0;
     if (IsEdgeAttached())
     {
@@ -938,11 +966,13 @@ int DockContainer::GetMagnificationAxisShift(
                 : (candidate.left + candidate.right) / 2;
             scales.push_back(
                 snowdesktop::dock_magnification::
-                    ScaleForAxisDistance(
+                    ScaleForEffect(
+                        app_->dockSettings_.hoverEffect,
+                        EqualRect(&candidate, &focusRect) != FALSE,
                         static_cast<float>(
                             candidateCenter -
                             pointerAxis),
-                        ItemPitch()));
+                        ItemPitch(), GetMaximumMagnificationScale()));
         }
         return snowdesktop::dock_magnification::PackedAxisShift(
             scales,
@@ -954,11 +984,20 @@ int DockContainer::GetMagnificationAxisShift(
     const int baseCenter = IsVertical()
         ? (baseRect.top + baseRect.bottom) / 2
         : (baseRect.left + baseRect.right) / 2;
+    if (app_->dockSettings_.hoverEffect == 1)
+    {
+        const int focusCenter = IsVertical()
+            ? (focusRect.top + focusRect.bottom) / 2
+            : (focusRect.left + focusRect.right) / 2;
+        return snowdesktop::dock_magnification::SingleFocusAxisShift(
+            baseCenter - focusCenter, ItemIconSize(),
+            GetMaximumMagnificationScale());
+    }
     return snowdesktop::dock_magnification::AxisShiftForDistance(
         baseCenter -
             (IsVertical()
                 ? pointer.y : pointer.x),
-        ItemPitch(), ItemIconSize());
+        ItemPitch(), ItemIconSize(), GetMaximumMagnificationScale());
 }
 
 RECT DockContainer::GetElementVisualRect(
@@ -1223,7 +1262,18 @@ RECT DockContainer::GetInteractiveBounds() const
     if (IsMagnificationSuppressed())
         return bounds;
     return snowdesktop::dock_magnification::ExpandInteractionBounds(
-        bounds, app_->dockSettings_.position, ItemIconSize());
+        bounds, app_->dockSettings_.position, ItemIconSize(),
+        GetMaximumMagnificationScale());
+}
+
+RECT DockContainer::GetAnimationVisualBounds() const
+{
+    const RECT bounds = GetInteractiveBounds();
+    const int padding = GetLaunchAnimationPadding();
+    if (padding <= 0)
+        return bounds;
+    return snowdesktop::dock_magnification::ExpandPerpendicularBounds(
+        bounds, app_->dockSettings_.position, padding, 2.0f);
 }
 
 RECT DockContainer::GetScrollViewport(const RECT& bounds) const
@@ -1298,7 +1348,8 @@ bool DockContainer::IsPointInScrollViewport(POINT point) const
     {
         viewport = snowdesktop::dock_magnification::
             ExpandPerpendicularBounds(viewport,
-                app_->dockSettings_.position, ItemIconSize());
+                app_->dockSettings_.position, ItemIconSize(),
+                GetMaximumMagnificationScale());
     }
     return PtInRect(&viewport, point) != FALSE;
 }
@@ -1896,9 +1947,12 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                     ScaledSeparatorGap());
         }
     }
+    const float renderScale = GetMaximumMagnificationScale() +
+        static_cast<float>(GetLaunchAnimationPadding()) /
+            static_cast<float>(std::max(1, ItemIconSize()));
     const RECT scrollVisualViewport = snowdesktop::dock_magnification::
         ExpandPerpendicularBounds(scrollViewport, app_->dockSettings_.position,
-            ItemIconSize());
+            ItemIconSize(), renderScale);
     const D2D1_RECT_F scrollVisualViewportF = D2D1::RectF(
         static_cast<float>(scrollVisualViewport.left),
         static_cast<float>(scrollVisualViewport.top),

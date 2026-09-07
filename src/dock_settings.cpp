@@ -1012,6 +1012,14 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
         settings.thicknessScale = ClampDockScale(static_cast<float>(value));
+    if (ReadDoubleField(text, "hoverEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
+        settings.hoverEffect = static_cast<int>(value);
+    if (ReadDoubleField(text, "hoverScale", value))
+        settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(static_cast<float>(value));
+    if (ReadDoubleField(text, "launchEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
+        settings.launchEffect = static_cast<int>(value);
+    if (ReadDoubleField(text, "windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 3 && std::floor(value) == value)
+        settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     if (ReadDoubleField(text, "systemTaskbarAlignment", value))
         settings.systemTaskbarAlignment = std::clamp(static_cast<int>(value), 0, 1);
@@ -1093,6 +1101,10 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
+    file << "  \"hoverEffect\": " << snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect) << ",\n";
+    file << "  \"hoverScale\": " << snowdesktop::animation::NormalizeHoverScale(settings.hoverScale) << ",\n";
+    file << "  \"launchEffect\": " << snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect) << ",\n";
+    file << "  \"windowEffect\": " << snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect) << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAlignment\": " << settings.systemTaskbarAlignment << ",\n";

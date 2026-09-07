@@ -931,8 +931,7 @@ void DesktopApp::OpenQuickNavigation(
                 quickNavigationSearchEdit_,
                 SW_SHOWNOACTIVATE);
         }
-        if (snowdesktop::dock_launch_animation::
-                SystemAnimationsEnabled())
+        if ((snowdesktop::animation::RuntimePopupEffect() != 0))
         {
             quickNavigationAnimation_.Open(
                 static_cast<std::uint64_t>(
@@ -1019,8 +1018,7 @@ void DesktopApp::OpenQuickNavigation(
             quickNavigationSearchEdit_,
             SW_SHOWNOACTIVATE);
     }
-    if (snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if ((snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         quickNavigationAnimation_.Open(
             static_cast<std::uint64_t>(
@@ -1112,8 +1110,7 @@ void DesktopApp::CloseQuickNavigation()
         return;
     }
 
-    if (snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if ((snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         quickNavigationAnimation_.Close(
             static_cast<std::uint64_t>(

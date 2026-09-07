@@ -789,7 +789,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
             popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
     }
     collectionPopupBackdropCompositor_.SetVisualTransform(
-        visual.scale, visual.visible ? 1.0f : 0.0f,
+        visual.scale, visual.visible ? visual.opacity : 0.0f,
         static_cast<float>(
             anchor.x - floatingPopupWindowBounds_.left),
         static_cast<float>(

@@ -306,6 +306,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
+    src/winui/animation_performance_page_presenter.cpp
+    src/winui/animation_performance_page_presenter.h
     src/winui/dock_page_presenter.h
     src/winui/SettingsShell.xaml
     src/winui/SettingsShell.xaml.cpp

@@ -31,7 +31,7 @@ SD_IPC_FIELDS(DockSettings,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.frequentItemCount, v.thicknessScale,
     v.systemTaskbarAutoHide, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
-    v.systemTaskbarShellUi);
+    v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode);
 SD_IPC_FIELDS(GeneralSettings,
@@ -39,7 +39,8 @@ SD_IPC_FIELDS(GeneralSettings,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
     v.pageNavigationPreviousModifiers, v.pageNavigationPreviousVirtualKey, v.pageNavigationNextModifiers, v.pageNavigationNextVirtualKey,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
-    v.language);
+    v.language, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
+    v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions);
 SD_IPC_FIELDS(CategorySettings,

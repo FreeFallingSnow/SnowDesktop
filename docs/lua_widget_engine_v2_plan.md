@@ -1241,7 +1241,7 @@ feature probe、LuaLS 和契约测试；日期单元已经进入通用键盘导�
 | 宿主槽位 | `binding` 或 `collection`、`reference`、`emptyContent`、`dropStyle`；slot ID/kind 来自 manifest，reference 只能来自对应宿主模型，不能用字符串伪造 |
 | 事件 | `events` 中的 pointer/focus/key/click/doubleClick/contextMenu/change/submit/scrollEnd；值只能是序列化 action ID 和有界参数 |
 | 提示/菜单 | `tooltip`、`contextMenu`、`accessKey`、`acceleratorText`；简单 tooltip 可为字符串，富 tooltip 和菜单使用有界描述结构，实际命令仍经过 action 与权限代理 |
-| 动画 | `transition`、`enterTransition`、`exitTransition`；只允许白名单属性、时长和 easing，并自动遵守 `reducedMotion` |
+| 动画 | `transition`、`enterTransition`、`exitTransition`；只允许白名单属性、基础时长和 easing，并遵守宿主有效动画偏好 |
 | 无障碍 | `role`、`accessibilityLabel`、`accessibilityValue`、`accessibilityHint`、`labelledBy`、`describedBy`、`headingLevel`、`live`、`positionInSet`、`setSize`、`rowIndex`、`columnIndex`、`accessibilityHidden` |
 
 属性规则：
@@ -1328,7 +1328,7 @@ RTL、逐属性动画映射和稳定的视图管线阶段码已经迁入机器�
 划分完整公共目录；还直接读取 `ViewTreeLimits` 导出全树、文本、资源、图表、集合和
 虚拟化额度；动画部分公开更新 transition 的六种允许属性、入退场的 opacity/transform 字段、
 1–2000 ms、四种 easing 和 1–4 项唯一属性约束，并明确宿主驱动、不逐帧执行 Lua、预览与
-`reducedMotion` 落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。schema 2
+宿主有效动画偏好关闭时落到最终状态。预览部分同时登记宿主渲染/校验和隔离存储覆盖层。schema 2
 又为每个属性登记 visual/transform/layout 过渡影响，并导出 auto/ltr/rtl 解析、方向感知对齐、
 声明顺序规则以及候选树原子拒绝/保留上一成功树的行为。schema 3 进一步导出十个稳定的
 视图管线阶段码，并让 desktop 与辅助 surface 的运行时诊断统一使用 `[code] message`；工具可按
@@ -1370,7 +1370,7 @@ view.row({
 - `view.layout.overflow` 现以 `overflow=visible|clip` 正式承接容器后代溢出策略，旧 `clip` 仅作一致性兼容入口；`view.shadow` 使用与即时绘制相同的最多 16 层有界衰减模型，`view.image.tint` 通过宿主 ColorMatrix 保留源 alpha 并替换 RGB。阴影不改变布局/命中。
 - `view.theme.tokens` 已公开 `widgetBackground/surface/surfaceVariant`、三档文本、两档边框、系统强调色及其前景色和四种状态色。style/全部状态 style、styledText span、shadow color 与 image tint 共用同一解析器；宿主在状态叠加后、transition 前按组件主题解析，高对比度改用 Windows 系统色，未知 token 原子拒绝。即时绘制仍只接受显式 RGB；实际深浅主题切换、高对比度和辅助 surface 场景待验证。
 - `view.transform.basic` 已加入布局后的 `translateX/translateY`、正数统一 `scale` 和归一化 `originX/originY`；`view.transform.affine` 又加入正数 `scaleX/scaleY` 乘数、-360–360 度 `rotate` 与各 -80–80 度 `skewX/skewY`，固定顺序为 scale→skew→rotate→translate。单节点最终轴限制为 0.05–8，嵌套仿射矩阵以奇异值限制累计伸缩为 1/64–64；Direct2D 直接消费 scene 的同一局部矩阵，元素命中通过逆矩阵保持 roundedRect/circle/文本片段精度，slider 通过变换后的轴向量解析值，UIA 使用四角包围框。宿主管理输入、scroll 和逻辑槽位以及执行裁剪的节点仍要求正向轴对齐矩阵，透视不开放；当前真实桌面绘制、命中和辅助技术场景待验证。
-- `view.transition.visual` 已公开节点级 `background/foreground/borderColor/opacity` 过渡，`view.transition.transform` 又加入平移、缩放、原点、最短路径旋转和斜切插值，`view.transition.layout` 再为稳定 key 节点加入父布局内相对位置与尺寸的呈现过渡；每个更新描述符仍限制为 1–4 个唯一属性、1–2000 ms 与 linear/easeIn/easeOut/easeInOut。`view.transition.enter` 另以 `enterTransition` 公开有界起始 opacity/完整 transform，只对 surface 已有成功 scene 后首次出现的新 key 生效，初始整树不会集体入场；`view.transition.exit` 以同型 `exitTransition` 端点保留被移除节点的不可交互旧子树快照，继承旧父变换/裁剪并在每 surface 最多保留 512 个节点，重新出现的 key 会取消旧快照。宿主在桌面及辅助 surface 上复用统一 16 ms 计时器，并直接重绘上一棵成功树，不在每个插值帧重复执行 Lua `view()`；预览、无计时器和 `reducedMotion` 直接落到最终样式。颜色端点任一未显式声明时切换而不插值，缺失 transform 按单位变换处理；布局坐标在施加滚动偏移前以父相对形式捕获，因此滚动和虚拟窗口平移不触发布局动画。命中、裁剪、宿主控件和 UIA 几何在新 scene 提交时使用目标矩阵，不暴露插值中间几何，退场快照也不保留动作或语义。实际 hover、面板、重排、入退场与减少动态效果场景待验证。
+- `view.transition.visual` 已公开节点级 `background/foreground/borderColor/opacity` 过渡，`view.transition.transform` 又加入平移、缩放、原点、最短路径旋转和斜切插值，`view.transition.layout` 再为稳定 key 节点加入父布局内相对位置与尺寸的呈现过渡；每个更新描述符仍限制为 1–4 个唯一属性、1–2000 ms 与 linear/easeIn/easeOut/easeInOut。`view.transition.enter` 另以 `enterTransition` 公开有界起始 opacity/完整 transform，只对 surface 已有成功 scene 后首次出现的新 key 生效，初始整树不会集体入场；`view.transition.exit` 以同型 `exitTransition` 端点保留被移除节点的不可交互旧子树快照，继承旧父变换/裁剪并在每 surface 最多保留 512 个节点，重新出现的 key 会取消旧快照。宿主在桌面及辅助 surface 上复用默认约 16 ms 的动画计时器，更新上限和节能策略可延后投递，并直接重绘上一棵成功树，不在每个插值帧重复执行 Lua `view()`；预览、无计时器或宿主有效动画偏好关闭时直接落到最终样式。颜色端点任一未显式声明时切换而不插值，缺失 transform 按单位变换处理；布局坐标在施加滚动偏移前以父相对形式捕获，因此滚动和虚拟窗口平移不触发布局动画。命中、裁剪、宿主控件和 UIA 几何在新 scene 提交时使用目标矩阵，不暴露插值中间几何，退场快照也不保留动作或语义。实际 hover、面板、重排、入退场与减少动态效果场景待验证。
 - `view.flex.sizing` 现已为 row/column/list 子项补齐 `flexBasis/flexGrow/flexShrink`：basis 先参与外尺寸求解，正空间按 grow 分配，溢出按 shrink×basis 迭代收缩并在命中 min 约束后重新分配；`fill` 保留隐式 grow=1。`view.flex.layout` 已为 row/column 补齐 row/rowReverse/column/columnReverse 主轴、noWrap/wrap/wrapReverse，以及 start/center/end/stretch/spaceBetween/spaceAround/spaceEvenly 多行对齐；每行独立执行 sizing/justify，逻辑绘制、命中、键盘和 UIA 顺序不随视觉反转。
 - `view.text.flow` 现已让普通 text、label 节点与 styledText 共用 `textWrap/maxLines/overflowText/verticalAlign` 的 DirectWrite layout 规则；普通文本默认 noWrap+ellipsis，styledText 默认 wrap+clip，行数限制为 0（无限）到 64。
 - `view.text.typography` 现已补入 100–900 的 `fontWeight`、normal/italic `fontStyle`、1–1024 `lineHeight` 与 -64–256 `letterSpacing`；行高参与固有高度和 DirectWrite 行距，字距参与近似固有宽度和 TextLayout1 字符间距；宿主编辑器排版不由本 feature 暗示。
@@ -1395,7 +1395,10 @@ view.row({
 - 声明式 transition 由宿主运行；`view.transition.visual` 只允许显式列出的颜色和透明度，`view.transition.transform` 允许显式 transform 呈现过渡，`view.transition.layout` 允许稳定 key 节点的父相对位置与尺寸过渡，`view.transition.enter/exit` 允许新增/移除 key 使用有界 opacity/完整 transform 端点。组件不能靠无条件 Lua 逐帧循环模拟动画。
 - 即时绘制组件已可通过 `animation.requestFrame(id)` 请求下一帧，收到包含单调时钟 `now` 和 `deltaMs` 的 frame 事件；同帧同 ID 合并，每实例最多 16 个待处理 ID，不再次请求就自动停止，禁止永久隐式 60 FPS 循环。`animation.cancelFrame(id)` 可显式取消待处理请求。
 - 当前实现会在组件隐藏、卸载、热重载和宿主关闭时停止并清空 frame 请求；恢复后首帧 delta 归零，不补绘所有错过帧。系统休眠/恢复的真实桌面场景仍列入第 18.5 节验证门禁。
-- `reducedMotion` 下宿主关闭非必要 transition，组件不得自行用逐帧回调绕过用户设置。
+- 宿主有效动画偏好分为“跟随系统 / 始终开启 / 关闭动画”。跟随系统读取 Windows 动画偏好；始终开启允许宿主管理的声明式过渡、不确定进度和原生 marquee 忽略 Windows 动画开关；关闭动画直接显示目标样式、释放退场快照并把 marquee 停在起点。`widget.context().accessibility.reducedMotion` 继续返回系统状态，`animation.requestFrame` 的系统 `reducedMotion` 拒绝规则、失败码和已接受请求均不受这个宿主开关改写；不能据此保证所有 Lua 自制动画同时启停。
+- `durationMs` 继续是作者基础时长，解析范围不变；快/标准/慢的实际时长分别乘 0.7/1/1.4，按毫秒取整。不确定进度周期采用同一倍率，`draw.marqueeText` 的实际速度为基础 `speed` 除以该倍率，原树和命令参数不变。更改宿主启停或速度会结算当前声明式过渡，后续目标变化使用新值；相同偏好不重新结算。预览始终静态。
+- 动画更新上限与节能策略限制宿主逐帧呈现和 `animation.frame` 的投递频率，默认 Lua 更新间隔仍约 16 ms，不保证固定帧率。`frame.now/deltaMs` 保留真实经过时间、首帧归零和 1000 ms 封顶规则，不乘速度倍率；组件应按时间推进。命名/业务定时器、`whenHidden` 与数据源采样规则不变，共享刷新仍可能等待下一宿主帧。Windows 合成器原生动画不承诺采用相同更新上限。
+- `view-contract` 在 `transitions.runtime` 增加可选说明字段 `reducedMotionSource="host-effective-animation-preference"` 和 `durationScaleSource="host-animation-speed"`，保留 `reducedMotion="final-state"`。终点声明指宿主有效策略，不是保证 Lua 系统 `reducedMotion` 与宿主视觉策略始终相同。旧宿主可能不返回说明字段，仍按原有系统动画策略和基础时长呈现；本次用户偏好覆盖不提高组件 `apiVersion` 或 `minHostVersion`，也不新增组件 feature。
 - “实时”表示输入或状态变化驱动的下一帧更新，不承诺硬实时或始终满刷新率；繁忙系统下允许合帧，但不能阻塞桌面 UI 线程等待 Lua、文件或网络。
 
 ### 13.9 环境上下文
@@ -1404,7 +1407,7 @@ view.row({
 local ctx = widget.context()
 -- size.width, size.height, columns, rows, sizeClass
 -- dpi, scale, cellWidth, cellHeight, cellGap
--- colorScheme, contrast, reducedMotion
+-- colorScheme, contrast; accessibility.reducedMotion (system state)
 -- locale, timeZone
 -- visible, preview, surface
 -- selected, focused
@@ -1921,7 +1924,7 @@ doubleClick/pointer/contextMenu action，以及“先完整校验布局、后原
 `selected/selectedStyle` 与 SelectionItem 语义，`view.checkbox.indeterminate` 已贯通
 混合态绘制、交互建议和 UIA Toggle Indeterminate；`view.progress.indeterminate` 已为
 progressBar/progressRing 加入仅在可见 surface 运行的宿主动画，隐藏或面板关闭时不再请求帧，
-预览与 reducedMotion 使用静态片段且不会向 Lua 投递逐帧事件；`view.input.required` 已贯通
+宿主管理的不确定进度在预览或有效动画偏好关闭时使用静态片段，其视觉更新不向 Lua 投递逐帧事件；`view.input.required` 已贯通
 input/select 的 UIA IsRequiredForForm 语义，`view.input.selection` 已贯通文本输入受控选区、
 UTF-8/UTF-16 边界换算和 selectionChange 建议，`view.keyboard.events` 已贯通桌面与输入代理的
 聚焦按键观察、按下/释放配对和失焦清理，`view.focus.request` 已把可信动作焦点请求扩展到

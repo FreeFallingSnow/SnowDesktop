@@ -127,6 +127,7 @@ public:
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     RECT GetInteractiveBounds() const;
+    RECT GetAnimationVisualBounds() const;
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
@@ -148,6 +149,8 @@ private:
     };
 
     bool IsMagnificationSuppressed() const;
+    float GetMaximumMagnificationScale() const;
+    int GetLaunchAnimationPadding() const;
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;

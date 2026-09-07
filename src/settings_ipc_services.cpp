@@ -10,7 +10,20 @@ using namespace widget_runtime;
 template<class T> bool ValidValue(const T&) { return true; }
 bool ValidValue(const GeneralSettings& value)
 {
-    return std::find(std::begin(value.language), std::end(value.language), '\0') != std::end(value.language);
+    using namespace snowdesktop::animation;
+    return std::find(std::begin(value.language), std::end(value.language), '\0') != std::end(value.language) &&
+        value.animationMode == NormalizeMode(value.animationMode) &&
+        value.popupAnimationEffect == NormalizePopupEffect(value.popupAnimationEffect) &&
+        value.animationSpeed == NormalizeSpeed(value.animationSpeed) &&
+        value.animationFrameLimit == NormalizeFrameLimit(value.animationFrameLimit);
+}
+bool ValidValue(const DockSettings& value)
+{
+    using namespace snowdesktop::animation;
+    return value.hoverEffect == NormalizeHoverEffect(value.hoverEffect) &&
+        value.hoverScale == NormalizeHoverScale(value.hoverScale) &&
+        value.launchEffect == NormalizeLaunchEffect(value.launchEffect) &&
+        value.windowEffect == NormalizeWindowEffect(value.windowEffect);
 }
 
 class ControllerProxy final : public ISettingsController

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "popup_opacity_scope.h"
 
 // Lua-widget panel layout and rendering.
 
@@ -279,6 +280,7 @@ void DesktopApp::DrawLuaWidgetPanel(
         luaWidgetPanelAnimationOverlay_.active)
         return;
     D2D1_MATRIX_3X2_F previousTransform{};
+    PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
     const bool animationApplied =
         applyAnimation && animation.progress < 1.0f;
     if (animationApplied)

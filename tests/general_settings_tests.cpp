@@ -36,6 +36,12 @@ int main()
     std::filesystem::remove(path, error);
 
     GeneralSettings saved;
+    saved.animationMode = 1;
+    saved.popupAnimationEffect = 1;
+    saved.animationSpeed = 2;
+    saved.animationFrameLimit = 30;
+    saved.animationEnergySaver = false;
+    saved.animationOnBattery = true;
     saved.demoModeEnabled = true;
     saved.widgetDeveloperToolsEnabled = true;
     saved.quickNavTheme = kFourThemeAcrylicDark;
@@ -52,6 +58,10 @@ int main()
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
+    Check(loaded.animationMode == 1 && loaded.popupAnimationEffect == 1 &&
+        loaded.animationSpeed == 2 && loaded.animationFrameLimit == 30 &&
+        !loaded.animationEnergySaver && loaded.animationOnBattery,
+        "animation preferences survive a settings save and reload");
     Check(loaded.demoModeEnabled &&
         loaded.widgetDeveloperToolsEnabled &&
         loaded.quickNavTheme == kFourThemeAcrylicDark &&
@@ -75,6 +85,10 @@ int main()
     {
         std::ofstream invalid(path, std::ios::binary | std::ios::trunc);
         invalid << "{\n"
+                   "  \"animationMode\": 99,\n"
+                   "  \"popupAnimationEffect\": -1,\n"
+                   "  \"animationSpeed\": 99,\n"
+                   "  \"animationFrameLimit\": 999,\n"
                    "  \"collectionPopupTheme\": 99,\n"
                    "  \"pageNavigationPreviousVirtualKey\": 999,\n"
                    "  \"pageNavigationNextVirtualKey\": -1,\n"
@@ -87,6 +101,9 @@ int main()
             clamped.pageNavigationPreviousVirtualKey == VK_PRIOR &&
             clamped.pageNavigationNextVirtualKey == VK_NEXT,
         "general settings reject invalid persisted themes and page keys");
+    Check(clamped.animationMode == 0 && clamped.popupAnimationEffect == 2 &&
+        clamped.animationSpeed == 1 && clamped.animationFrameLimit == 0,
+        "invalid animation choices fall back without disabling the interface");
 
     {
         std::ofstream legacy(path, std::ios::binary | std::ios::trunc);
@@ -98,6 +115,10 @@ int main()
     GeneralSettings migrated;
     Check(LoadGeneralSettings(path.c_str(), migrated),
         "legacy general settings still load");
+    Check(migrated.animationMode == 0 && migrated.popupAnimationEffect == 2 &&
+        migrated.animationSpeed == 1 && migrated.animationFrameLimit == 0 &&
+        migrated.animationEnergySaver && !migrated.animationOnBattery,
+        "legacy animation defaults preserve current effects and automatic cadence");
     Check(!migrated.demoModeEnabled &&
         !migrated.widgetDeveloperToolsEnabled &&
         migrated.collectionPopupTheme == kFourThemeDark &&

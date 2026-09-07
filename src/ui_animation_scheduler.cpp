@@ -1,4 +1,5 @@
 #include "ui_animation_scheduler.h"
+#include "animation_settings.h"
 #include "ui_animation_scheduler_rules.h"
 
 #include <algorithm>
@@ -450,7 +451,9 @@ double UiAnimationScheduler::EffectiveFrameIntervalMs() const noexcept
         kMinimumRefreshHz,
         targetRefreshHz_ /
             static_cast<double>(std::max(1U, adaptiveDivisor_)));
-    return 1000.0 / effectiveRefresh;
+    const int limit = animation::RuntimeFrameLimit();
+    return 1000.0 / (limit > 0 ? std::min(effectiveRefresh,
+        static_cast<double>(limit)) : effectiveRefresh);
 }
 
 void UiAnimationScheduler::PushSample(

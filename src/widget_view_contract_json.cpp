@@ -354,7 +354,9 @@ void WriteTransitions(std::ostream& output)
               "\"runtime\":{\"driver\":\"host\","
               "\"runsLuaPerFrame\":false,"
               "\"preview\":\"final-state\","
-              "\"reducedMotion\":\"final-state\"}}";
+              "\"reducedMotion\":\"final-state\","
+              "\"reducedMotionSource\":\"host-effective-animation-preference\","
+              "\"durationScaleSource\":\"host-animation-speed\"}}";
 }
 
 void WritePreview(std::ostream& output)

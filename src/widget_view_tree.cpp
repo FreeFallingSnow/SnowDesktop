@@ -4954,6 +4954,34 @@ ViewStyle ResolveViewThemeStyle(const ViewStyle& style,
     return result;
 }
 
+void ViewTransitionRuntime::SetDurationScale(double scale) noexcept
+{
+    const double normalized = std::isfinite(scale) ? std::clamp(scale, 0.1, 10.0) : 1.0;
+    if (durationScale_ == normalized) return;
+    Settle();
+    durationScale_ = normalized;
+}
+
+std::uint32_t ViewTransitionRuntime::ScaledDuration(std::uint32_t duration) const noexcept
+{
+    if (duration == 0) return 0;
+    return static_cast<std::uint32_t>(std::clamp(
+        std::round(static_cast<double>(duration) * durationScale_), 1.0,
+        static_cast<double>(std::numeric_limits<std::uint32_t>::max())));
+}
+
+void ViewTransitionRuntime::Settle() noexcept
+{
+    exits_.clear();
+    for (auto& [key, entry] : entries_)
+    {
+        (void)key;
+        entry.active = false;
+        entry.entering = false;
+        entry.start = entry.target;
+    }
+}
+
 void ViewTransitionRuntime::BeginFrame() noexcept
 {
     if (++generation_ == 0)
@@ -4994,7 +5022,8 @@ ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
     const ViewTransitionPresentation target{
         targetStyle, targetTransform, targetLayoutFrame };
     if (key.empty()) return target;
-    const ViewTransition configured = transition.value_or(ViewTransition{});
+    ViewTransition configured = transition.value_or(ViewTransition{});
+    configured.durationMilliseconds = ScaledDuration(configured.durationMilliseconds);
     auto [position, inserted] = entries_.try_emplace(std::string(key));
     Entry& entry = position->second;
     entry.generation = generation_;
@@ -5008,7 +5037,7 @@ ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
         {
             ViewTransition entering;
             entering.durationMilliseconds =
-                enterTransition->durationMilliseconds;
+                ScaledDuration(enterTransition->durationMilliseconds);
             entering.easing = enterTransition->easing;
             if (enterTransition->opacity)
             {
@@ -5153,7 +5182,7 @@ void ViewTransitionRuntime::QueueExitTransitions(
         {
             ViewTransition descriptor;
             descriptor.durationMilliseconds =
-                node.exitTransition->durationMilliseconds;
+                ScaledDuration(node.exitTransition->durationMilliseconds);
             descriptor.easing = node.exitTransition->easing;
             ViewTransitionPresentation start{
                 node.style, node.transform, node.layoutTransitionFrame };

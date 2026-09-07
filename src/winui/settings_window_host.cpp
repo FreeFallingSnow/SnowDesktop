@@ -214,6 +214,27 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
+    {SettingsPage::AnimationPerformance, "animation.mode",
+        "settings.animation.mode", "settings.animation.mode.description"},
+    {SettingsPage::AnimationPerformance, "animation.popup",
+        "settings.animation.popup", "settings.animation.popup.description"},
+    {SettingsPage::AnimationPerformance, "animation.speed",
+        "settings.animation.speed", "settings.animation.speed.description"},
+    {SettingsPage::AnimationPerformance, "animation.hover",
+        "settings.animation.hover", "settings.animation.hover.description"},
+    {SettingsPage::AnimationPerformance, "animation.hoverScale",
+        "settings.animation.hoverScale", "settings.animation.hoverScale.description"},
+    {SettingsPage::AnimationPerformance, "animation.launch",
+        "settings.animation.launch", "settings.animation.launch.description"},
+    {SettingsPage::AnimationPerformance, "animation.window",
+        "settings.animation.window", "settings.animation.window.description"},
+    {SettingsPage::AnimationPerformance, "animation.frameLimit",
+        "settings.animation.frameLimit", "settings.animation.frameLimit.description"},
+    {SettingsPage::AnimationPerformance, "animation.energySaver",
+        "settings.animation.energySaver", "settings.animation.energySaver.description"},
+    {SettingsPage::AnimationPerformance, "animation.onBattery",
+        "settings.animation.onBattery", "settings.animation.onBattery.description"},
+
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
@@ -1165,6 +1186,8 @@ struct SettingsWindowHost::Impl
                 {
                 case SettingsPage::General:
                     return L("app.settings.general");
+                case SettingsPage::AnimationPerformance:
+                    return L("settings.nav.animation");
                 case SettingsPage::Personalization:
                     return L("app.settings.appearance");
                 case SettingsPage::AppearanceTheme:

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "ui_animation_scheduler.h"
+#include "dock_genie_rules.h"
 
 enum class DockWindowTransitionDirection
 {
@@ -163,6 +164,8 @@ public:
         RestoreCallback restoreCallback,
         HWND keepBelowWindow = nullptr);
     void Cancel();
+    // Settings changes must not abandon an in-flight restore request.
+    void CompleteImmediately();
     bool IsActive() const;
     bool IsActiveFor(HWND window) const;
     bool IsPresentationWindow(HWND window) const noexcept
@@ -222,6 +225,9 @@ private:
     void PurgeSnapshotCache();
     bool CreateCompositionSnapshot(
         const CachedSnapshot& snapshot);
+    bool CreateGenieStrips();
+    bool ApplyGenieFrame(double progress, BYTE opacity);
+    void ClearGenieStrips();
     bool StartCompositionTimeline();
     bool ScheduleAnimationWake();
     bool ApplyFrame(double progress);
@@ -258,6 +264,13 @@ private:
     SIZE compositionSnapshotSize_{};
     bool compositionSnapshotActive_ = false;
     bool compositionTimelineActive_ = false;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> genieStrips_;
+    snowdesktop::dock_genie::Edge genieEdge_ =
+        snowdesktop::dock_genie::Edge::Bottom;
+    int effect_ = 1;
+    double collapseFrom_ = 0.0;
+    double collapseTo_ = 1.0;
+    double lastCollapse_ = 0.0;
     DockWindowTransitionDirection direction_ =
         DockWindowTransitionDirection::Minimize;
     RECT fromRect_{};

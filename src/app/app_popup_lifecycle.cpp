@@ -378,8 +378,7 @@ void DesktopApp::StartCollectionPopupAnimation(
 {
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
-    if (!snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         popupAnimation_.ShowImmediately();
         ResetCollectionPopupAnimationCache();
@@ -544,8 +543,7 @@ void DesktopApp::CloseCollectionPopup(
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    if (!snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         FinalizeCloseCollectionPopup();
         return;

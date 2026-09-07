@@ -43,6 +43,12 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.dockEnabled == after.dockEnabled &&
+        before.animationMode == after.animationMode &&
+        before.popupAnimationEffect == after.popupAnimationEffect &&
+        before.animationSpeed == after.animationSpeed &&
+        before.animationFrameLimit == after.animationFrameLimit &&
+        before.animationEnergySaver == after.animationEnergySaver &&
+        before.animationOnBattery == after.animationOnBattery &&
         before.widgetDeveloperToolsEnabled ==
             after.widgetDeveloperToolsEnabled &&
         std::strcmp(before.language, after.language) == 0;

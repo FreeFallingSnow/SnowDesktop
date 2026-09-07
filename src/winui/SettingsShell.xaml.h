@@ -5,6 +5,7 @@
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_presenter.h"
+#include "animation_performance_page_presenter.h"
 #include "desktop_page_presenter.h"
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
@@ -286,6 +287,7 @@ private:
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
+    std::unique_ptr<snowdesktop::winui::AnimationPerformancePagePresenter> animationPage_;
     std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
         homeAboutPage_;
     std::unique_ptr<snowdesktop::winui::PageLayoutPagePresenter>

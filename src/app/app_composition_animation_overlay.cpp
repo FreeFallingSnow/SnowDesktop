@@ -421,8 +421,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     const bool opening = quickNavigationAnimation_.IsOpening();
     const float targetScale = opening
         ? 1.0f
-        : snowdesktop::quick_navigation_animation_rules::
-            kMinimumScale;
+        : quickNavigationAnimation_.HiddenScale();
     const float targetOpacity = opening ? 1.0f : 0.0f;
     const float normalizedStartSlope =
         snowdesktop::quick_navigation_animation_rules::
@@ -432,11 +431,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(opening
-                ? snowdesktop::quick_navigation_animation_rules::
-                    kOpenDurationMs
-                : snowdesktop::quick_navigation_animation_rules::
-                    kCloseDurationMs))));
+            remaining * static_cast<float>(quickNavigationAnimation_.DurationMilliseconds(opening)))));
 
     bool backdropAnimationStarted = false;
     if (quickNavGlassTheme_ &&
@@ -628,7 +623,7 @@ bool DesktopApp::UpdateCollectionPopupCompositionAnimation(
     }
     return UpdateCompositionAnimationOverlay(
         popupAnimationOverlay_, visual.scale,
-        anchor, visual.visible ? 1.0f : 0.0f,
+        anchor, visual.visible ? visual.opacity : 0.0f,
         commit);
 }
 
@@ -650,7 +645,7 @@ bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
         };
     return UpdateCompositionAnimationOverlay(
         luaWidgetPanelAnimationOverlay_, visual.scale,
-        anchor, visual.visible ? 1.0f : 0.0f,
+        anchor, visual.visible ? visual.opacity : 0.0f,
         commit);
 }
 
@@ -678,9 +673,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(opening
-                ? snowdesktop::popup_animation_rules::kOpenDurationMs
-                : snowdesktop::popup_animation_rules::kCloseDurationMs))));
+            remaining * static_cast<float>(popupAnimation_.DurationMilliseconds(opening)))));
     POINT anchor{
         (popupRect_.left + popupRect_.right) / 2,
         (popupRect_.top + popupRect_.bottom) / 2,
@@ -698,12 +691,10 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     {
         backdropAnimationStarted =
             collectionPopupBackdropCompositor_.
-                StartVisualScaleAnimation(
+                StartVisualTransformAnimation(
                     visual.scale,
-                    opening ? 1.0f :
-                        snowdesktop::popup_animation_rules::
-                            kMinimumScale,
-                    1.0f,
+                    opening ? 1.0f : popupAnimation_.HiddenScale(),
+                    visual.opacity, popupAnimation_.EndpointOpacity(opening),
                     static_cast<float>(
                         anchor.x - floatingPopupWindowBounds_.left),
                     static_cast<float>(
@@ -716,9 +707,8 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     if (!AnimateCompositionAnimationOverlay(
             popupAnimationOverlay_,
             visual.scale,
-            opening ? 1.0f :
-                snowdesktop::popup_animation_rules::kMinimumScale,
-            anchor, 1.0f, 1.0f, duration,
+            opening ? 1.0f : popupAnimation_.HiddenScale(),
+            anchor, visual.opacity, popupAnimation_.EndpointOpacity(opening), duration,
             normalizedScaleStartSlope))
     {
         if (backdropAnimationStarted)
@@ -799,9 +789,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(opening
-                ? snowdesktop::popup_animation_rules::kOpenDurationMs
-                : snowdesktop::popup_animation_rules::kCloseDurationMs))));
+            remaining * static_cast<float>(luaWidgetPanelAnimation_.DurationMilliseconds(opening)))));
     const RECT panel = GetLuaWidgetPanelRect();
     const POINT anchor = luaWidgetPanelRequest_.surface == "dialog"
         ? POINT{ (panel.left + panel.right) / 2,
@@ -815,9 +803,8 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
     if (!AnimateCompositionAnimationOverlay(
             luaWidgetPanelAnimationOverlay_,
             visual.scale,
-            opening ? 1.0f :
-                snowdesktop::popup_animation_rules::kMinimumScale,
-            anchor, 1.0f, 1.0f, duration,
+            opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
+            anchor, visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening), duration,
             normalizedScaleStartSlope))
         return false;
 

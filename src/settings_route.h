@@ -34,6 +34,7 @@ enum class SettingsPage : std::uint8_t
     AppearanceIconBeautification,
     // Desktop page ordering and per-page grid settings.
     DesktopPages,
+    AnimationPerformance,
 };
 
 /**

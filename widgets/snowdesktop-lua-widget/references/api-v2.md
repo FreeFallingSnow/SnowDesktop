@@ -67,7 +67,13 @@ topic/task 目录生成机器可读报告。每个必选/可选声明包含风�
 类别。属性策略为 `closed-world`，每个节点的 `properties` 与 `prohibitedProperties` 明确划分
 全部公共属性；未知字段和节点禁止字段都不会被静默忽略。`limits` 直接导出宿主当前使用的
 全树、文本、资源、集合与虚拟化额度；`transitions`
-登记更新/入退场动画允许字段、时长、easing 及 preview/reducedMotion 的静态终点策略；
+登记更新/入退场动画允许字段、基础时长、easing 及预览/宿主有效动画偏好关闭时的静态终点行为；
+其中宿主的有效动画偏好与 Lua 返回的系统 `reducedMotion` 不同，见下文“宿主动画偏好”。
+`transitions.runtime.reducedMotionSource="host-effective-animation-preference"` 与
+`durationScaleSource="host-animation-speed"` 说明这两项宿主呈现策略的来源；既有
+`reducedMotion="final-state"` 表示宿主有效策略关闭动画时直接采用终点。这两个字段只作
+补充说明，旧宿主可能不返回；它们不改变 Lua 系统状态，也不新增组件 feature、`apiVersion`
+或 `minHostVersion` 要求。
 每个属性的 `transitionEffects` 进一步标出该字段变化可驱动 visual、transform 或 layout
 过渡。`directionality` 固定 auto/ltr/rtl 的解析、start/end 对齐以及声明顺序不随视觉方向反转；
 `validation` 则说明未知/禁止/错误值会原子拒绝整棵候选树并保留上一棵成功树。
@@ -389,6 +395,9 @@ transition = {
 }
 ```
 
+`durationMs` 是作者声明的基础时长；用户选择的宿主动画速度会调整实际呈现时长，
+不改写组件提交的树或描述符。更新、入场和退场采用同一倍率，见下文“宿主动画偏好”。
+
 `properties` 必须包含 1–4 个不重复的白名单名称；`durationMs` 默认为 120、范围为
 1–2000，`easing` 默认为 `easeOut`，也可使用 `linear/easeIn/easeInOut`。稳定 key 节点的
 解析后样式目标变化时，宿主插值 background/foreground/borderColor/opacity；颜色只有旧值和
@@ -417,7 +426,7 @@ enterTransition = {
 `opacity` 与 `transform` 至少提供一个；它们表示入场起点，终点仍是节点正常解析出的目标样式和
 transform。transform 是完整起始变换，省略字段使用单位变换默认值，不从目标 transform 逐字段
 继承。首次整棵 scene 提交不会让全部节点集体入场；只有宿主已经成功提交过该 surface 后首次
-出现的新稳定 key 才执行。预览、计时器不可用或 `reducedMotion` 开启时直接显示终点。入场只影响
+出现的新稳定 key 才执行。预览、计时器不可用或宿主有效动画偏好关闭时直接显示终点。入场只影响
 呈现，节点的命中、宿主控件和 UIA 从 scene 提交起即使用目标几何。
 
 探测 `view.transition.exit` 后，同一描述结构也可用于 `exitTransition`，其中 opacity/transform
@@ -426,7 +435,7 @@ transform。transform 是完整起始变换，省略字段使用单位变换默�
 继续接收动作、右键菜单或可信手势。移除的父节点声明退场时由它承载仍被移除的后代，已经在新
 scene 中复用的后代 key 会从快照剔除；没有退场的祖先不会阻止更深层节点使用自己的声明。
 同一 surface 最多保留 512 个快照节点，快速连续更新超过额度时最早的退场直接结束；key 在后续
-scene 重新出现会取消同 key 的旧快照。预览、无计时器或 `reducedMotion` 下不保留快照。
+scene 重新出现会取消同 key 的旧快照。预览、无计时器或宿主有效动画偏好关闭时不保留快照。
 
 阴影参数、圆角和边框宽度仍不能作为 transition 插值属性；出现/移除期间只开放 opacity 与
 完整 transform 端点。
@@ -435,8 +444,26 @@ scene 重新出现会取消同 key 的旧快照。预览、无计时器或 `redu
 不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走
 同一条已提交 scene 快速重绘路径；绑定动作时先向 `event.kind="action"` 投递精确节点事件，
 再由组件提交下一棵树。目标样式来自新 scene 或宿主 hover/pressed/focus 等状态；
-预览、宿主计时器不可用或系统开启“减少动态效果”时直接显示最终样式。隐藏、关闭 surface、
-热重载和卸载会清理待执行过渡。该能力不要求权限，也不能用于绕过 reducedMotion。
+预览、宿主计时器不可用或宿主有效动画偏好关闭时直接显示最终样式。隐藏、关闭 surface、
+热重载和卸载会清理待执行过渡。该能力不要求权限，组件不能覆盖宿主用户选择的动画偏好。
+
+**宿主动画偏好。** 动画与性能设置对宿主管理的声明式过渡、不确定进度动画和原生 marquee
+提供“跟随系统 / 始终开启 / 关闭动画”。跟随系统读取 Windows 动画偏好；始终开启允许这些
+宿主视觉效果忽略 Windows 动画开关；关闭动画直接显示目标样式，释放退场快照，并将 marquee
+停在起点。此偏好不改写 `widget.context().accessibility.reducedMotion`：该字段继续表示系统
+减少动态效果状态，也不修改 `animation.requestFrame` 的既有系统状态拒绝规则。因此始终开启
+不保证所有 Lua 自制动画运行，关闭宿主动画也不会强行取消第三方已接受的逐帧请求。
+
+“快 / 标准 / 慢”的实际过渡时长分别为基础 `durationMs` 的 0.7 / 1 / 1.4 倍，按毫秒取整。
+不确定进度动画采用相同周期倍率，marquee 的实际滚动速度为基础 `speed` 除以该倍率。
+更改宿主启停或速度会结算当前声明式过渡，后续目标变化使用新偏好；重复应用相同偏好不会
+重新启动过渡。预览始终静态，不依赖用户当前动画偏好。
+
+动画更新上限与节能策略可延后逐帧更新，但不缩放业务时钟、`frame.now/deltaMs` 或命名定时器
+的截止时间，也不改写 `whenHidden`、数据源采样间隔和权限。刷新合并仍可能等待下一次宿主帧；
+直接交给 Windows 合成器运行的动画不承诺服从同一逐帧更新上限。旧宿主没有这些偏好，仍按其
+原有系统动画策略和基础时长运行；组件不能把偏好是否存在作为新 feature 可用的证据。
+
 探测 `view.state.visibility` 后，节点可声明 `visibility="visible"|"hidden"|"collapsed"`。
 `hidden` 仍参与父布局，但整棵子树不绘制、不可命中、不创建宿主输入，也不进入 UI Automation；
 `collapsed` 则不占用布局空间。旧 `visible=false` 固定等价于 collapsed，`visible=true` 等价于 visible。
@@ -1060,7 +1087,7 @@ view.referenceIcon({
 进度色。探测 `view.progress.indeterminate` 后，两者还可声明 `indeterminate=true`；此时
 `value` 仍须处于 0–1 但不参与绘制，`meter` 不接受该状态。宿主只在对应 desktop/panel
 surface 可见时推进动画，不向 Lua 投递逐帧回调；组件隐藏、面板关闭后停止请求帧，预览和
-系统“减少动态效果”状态使用静态片段。这些节点均由宿主直接绘制，不开放路径、字体文件或
+宿主有效动画偏好关闭时使用静态片段。这些节点均由宿主直接绘制，不开放路径、字体文件或
 原生绘图对象。
 
 `styledText` 要求 1–64 个非空 `spans`，每个 span 可独立指定
@@ -1622,16 +1649,23 @@ timeline 跨过多个条目时也只分发最新到期值，并额外返回 `val
 - `animation.cancelFrame(id)` 取消尚未分发的同名请求；确有请求被取消时返回 `true`。
 
 ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，每实例最多同时保留 16 个
-不同 ID。宿主约 16 ms 后分发 `event.kind == "frame"`，并提供 `id`、单调时钟
+不同 ID。宿主默认按约 16 ms 的更新间隔分发 `event.kind == "frame"`；动画更新上限、
+节能策略和调度延迟可能延后投递，不保证固定帧率。事件提供 `id`、单调时钟
 `now` 和相对同一 ID 上一帧的 `deltaMs`；首帧和隐藏后恢复的首帧为 0，过长间隔
 封顶为 1000 ms。一次请求只产生一次事件，组件必须在 frame 事件中再次调用
 `requestFrame` 才会继续，因而不会创建永久隐式 60 FPS 循环。
+
+`now/deltaMs` 保持真实经过时间及上述 1000 ms 封顶规则，不乘宿主动画速度倍率；组件应按
+时间推进自制动画，不能依赖每次回调固定移动一段距离来维持速度。
 
 隐藏、卸载、热重载和宿主关闭会立即取消请求且不补帧；预览不启动真实计时器，系统启用
 “减少动态效果”时也拒绝逐帧回调。稳定失败码为 `hidden`、`reducedMotion`、
 `previewUnavailable`、`quotaExceeded`、`hostUnavailable` 或 `apiVersion`。此 API 不要求
 权限，对应 feature `animation.frame`；它只适合短时即时视觉更新，低频刷新仍应使用
 `schedule`，系统状态、媒体和音频数据仍应使用按需 `data.subscribe`。
+
+宿主“始终开启”不取消这里的系统 `reducedMotion` 拒绝；“关闭动画”也不新增拒绝码或取消
+已接受的第三方请求。它们控制的宿主视觉效果范围见“宿主动画偏好”。
 
 ### `data`
 
@@ -2323,7 +2357,8 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 feature，并且只能在桌面 surface 的 `render()` 中调用。`key` 必须在一次 render 中
 唯一且稳定；同一 key 在数据刷新或重新布局后会尽量保留滚动相位。`width/height` 定义
 裁剪视口，文字在视口内纵向居中；文字宽度不超过视口时返回 `false` 并静态绘制，否则
-返回 `true`。`speed` 默认每秒 24 个逻辑像素，`gap` 默认 24；一次 render 最多提交
+返回 `true`。`speed` 的基础值默认每秒 24 个逻辑像素，宿主动画速度倍率按前述规则调整实际
+呈现速度，不改写组件命令；`gap` 默认 24。一次 render 最多提交
 32 项，文字最多 4096 个 UTF-8 字节。
 
 宿主会把同一次即时 render 中的其他绘制录制为静态命令，后续滚动帧只重放这份缓存、
@@ -2332,7 +2367,7 @@ feature，并且只能在桌面 surface 的 `render()` 中调用。`key` 必须�
 `animation.requestFrame`/`schedule.every` 修改偏移。marquee 作为宿主原生覆盖层绘制在
 该次即时绘制缓存之上；不要依赖在它之后用其他即时绘制内容遮盖文字。数据、交互、主题
 或组件主动失效仍会正常重新执行 render 并更新缓存。组件隐藏时动画暂停；预览、
-reduced-motion 或宿主没有动画调度器时从起点静态显示，但返回值仍只表示是否发生溢出。
+宿主有效动画偏好关闭或宿主没有动画调度器时从起点静态显示，但返回值仍只表示是否发生溢出。
 
 上述 `arc/path/gradientRect/shadow/sparkline/imageFit` 属于可探测 feature
 `draw.advanced`，仅注册到 API v2。它们遵守以下确定性边界：

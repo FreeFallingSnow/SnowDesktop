@@ -1225,6 +1225,8 @@ private:
     bool StartDockLaunchBounce(size_t itemIndex);
     float GetDockLaunchBounceOffset(
         size_t itemIndex, int iconSize) const;
+    float GetDockLaunchPulseScale(size_t itemIndex) const;
+    void ApplyAnimationPreferences(bool systemChanged = false);
     void OnDockLaunchBounceTimer();
     void InvalidateDockLaunchBounceRects();
     bool ActivateOrToggleDockItem(size_t itemIndex,
@@ -3321,6 +3323,7 @@ private:
         double startTimeMs = 0.0;
         bool stopRequested = false;
         HWND observedForeground = nullptr;
+        double elapsedMs = 0.0;
     };
     std::unordered_map<std::wstring, DockLaunchBounceState>
         dockLaunchBounces_;
@@ -3431,6 +3434,7 @@ private:
     // ── 换页通知覆盖层（电视台换台式角标） ──
     std::wstring pageNotifyText_;
     DWORD pageNotifyStartTick_ = 0;
+    DWORD pageNotifyFadeMs_ = kPageNotifyFadeMs;
     snowdesktop::UiScheduleToken pageNotifyFadeOutToken_ = 0;
     bool pageNotifyActive_ = false;
     bool pageNotifyUseAnimation_ = true;

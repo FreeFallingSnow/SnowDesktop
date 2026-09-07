@@ -10,6 +10,7 @@
 #include <windows.h>
 
 #include <string>
+#include "animation_settings.h"
 
 struct GeneralSettings
 {
@@ -34,8 +35,23 @@ struct GeneralSettings
     int collectionPopupTheme = 0;
     bool dockEnabled = false;
     bool widgetDeveloperToolsEnabled = false;
+    int animationMode = 0;
+    int popupAnimationEffect = 2;
+    int animationSpeed = 1;
+    int animationFrameLimit = 0;
+    bool animationEnergySaver = true;
+    bool animationOnBattery = false;
     char language[85] = "system";
 };
+
+inline void NormalizeGeneralAnimationSettings(GeneralSettings& settings) noexcept
+{
+    using namespace snowdesktop::animation;
+    settings.animationMode = NormalizeMode(settings.animationMode);
+    settings.popupAnimationEffect = NormalizePopupEffect(settings.popupAnimationEffect);
+    settings.animationSpeed = NormalizeSpeed(settings.animationSpeed);
+    settings.animationFrameLimit = NormalizeFrameLimit(settings.animationFrameLimit);
+}
 
 std::wstring GetGeneralSettingsPath();
 bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings);

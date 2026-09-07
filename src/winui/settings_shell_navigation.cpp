@@ -34,6 +34,7 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::AppearanceDesktopIcons:
     case SettingsPage::AppearanceIconBeautification:
     case SettingsPage::DesktopPages:
+    case SettingsPage::AnimationPerformance:
         return true;
     default:
         return false;

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "popup_opacity_scope.h"
 #include "quick_navigation_theme.h"
 #include "../item_render_layer_rules.h"
 
@@ -31,6 +32,7 @@ void DesktopApp::DrawCollectionPopup(
         return;
     if (applyAnimation && popupAnimationOverlay_.active)
         return;
+    PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
 
     D2D1_MATRIX_3X2_F previousTransform{};
     const bool animationApplied =

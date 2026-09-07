@@ -1008,6 +1008,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_SETTINGCHANGE:
     {
+        ApplyAnimationPreferences(true);
         InvalidateDragHintRaster();
         const wchar_t* settingArea =
             reinterpret_cast<const wchar_t*>(lp);

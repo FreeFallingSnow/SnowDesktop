@@ -964,6 +964,9 @@ public:
         bool keepRuntimeActive = false);
     /** Hide or show the desktop surface of every loaded non-preview widget. */
     void SetAllWidgetDesktopVisible(bool visible);
+    // Applies host-owned presentation settings without changing Lua callbacks,
+    // accessibility context, named timers, or pending data refresh requests.
+    void ApplyHostAnimationPreferences();
     bool RenderWidgetPanel(const std::wstring& widgetId,
         ID2D1DeviceContext* context, RECT bounds,
         std::string_view surface = "panel");
@@ -1769,6 +1772,10 @@ private:
     bool SyncNativeMarqueeComposition(
         LuaWidget& widget, bool reducedMotion);
     void ClearNativeMarqueeComposition(LuaWidget& widget);
+    bool hostAnimationPreferencesKnown_ = false;
+    bool hostAnimationsEnabled_ = true;
+    double hostAnimationDurationScale_ = 1.0;
+    int hostAnimationFrameLimit_ = 0;
 
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文

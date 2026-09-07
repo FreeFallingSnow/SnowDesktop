@@ -62,6 +62,16 @@ void TestCodec()
     settings.generation = 17;
     settings.revision = UINT64_MAX;
     settings.externalReplacementPending = true;
+    settings.values.general.animationMode = 1;
+    settings.values.general.popupAnimationEffect = 1;
+    settings.values.general.animationSpeed = 2;
+    settings.values.general.animationFrameLimit = 120;
+    settings.values.general.animationEnergySaver = false;
+    settings.values.general.animationOnBattery = true;
+    settings.values.dock.hoverEffect = 1;
+    settings.values.dock.hoverScale = 1.75f;
+    settings.values.dock.launchEffect = 2;
+    settings.values.dock.windowEffect = 3;
     settings.values.general.language[0] = 'z';
     settings.values.general.language[1] = 'h';
     settings.values.general.language[2] = '\0';
@@ -70,6 +80,13 @@ void TestCodec()
     settings.values.desktop.iconBeautify.filterTintR = 0.123f;
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.general.animationMode == 1 &&
+        restored.values.general.popupAnimationEffect == 1 &&
+        restored.values.general.animationSpeed == 2 &&
+        restored.values.general.animationFrameLimit == 120 &&
+        !restored.values.general.animationEnergySaver &&
+        restored.values.general.animationOnBattery,
+        "animation preferences reach the independent settings process intact");
     Check(restored.externalReplacementPending && restored.revision == UINT64_MAX &&
         restored.values.dock == settings.values.dock &&
         restored.values.desktop.iconBeautify.filterTintR == 0.123f &&

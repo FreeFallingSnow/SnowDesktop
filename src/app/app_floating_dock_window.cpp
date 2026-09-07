@@ -579,7 +579,7 @@ CalculateFloatingDockStableSourceRect(
 
     const RECT dockRect =
         host.container->
-            GetInteractiveBounds();
+            GetAnimationVisualBounds();
     const PersonalizationSettings& appearance =
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_

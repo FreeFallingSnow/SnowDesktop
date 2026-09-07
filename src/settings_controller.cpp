@@ -303,6 +303,7 @@ void SettingsController::UpdateGeneral(
     SettingsUpdateMode mode)
 {
     if (externalReplacementPending_) return;
+    NormalizeGeneralAnimationSettings(settings);
     values_.general = std::move(settings);
     MarkChanged(SettingsDomain::General, mode);
 }

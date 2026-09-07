@@ -141,6 +141,13 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (ReadIntField(text, "collectionPopupTheme", theme))
         settings.collectionPopupTheme = std::clamp(theme, 0, 3);
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
+    ReadIntField(text, "animationMode", settings.animationMode);
+    ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
+    ReadIntField(text, "animationSpeed", settings.animationSpeed);
+    ReadIntField(text, "animationFrameLimit", settings.animationFrameLimit);
+    ReadBoolField(text, "animationEnergySaver", settings.animationEnergySaver);
+    ReadBoolField(text, "animationOnBattery", settings.animationOnBattery);
+    NormalizeGeneralAnimationSettings(settings);
     return true;
 }
 
@@ -149,6 +156,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
+    file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
+    file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
+    file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";
+    file << "  \"animationFrameLimit\": " << snowdesktop::animation::NormalizeFrameLimit(settings.animationFrameLimit) << ",\n";
+    file << "  \"animationEnergySaver\": " << (settings.animationEnergySaver ? "true" : "false") << ",\n";
+    file << "  \"animationOnBattery\": " << (settings.animationOnBattery ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
     file << "  \"demoModeEnabled\": "

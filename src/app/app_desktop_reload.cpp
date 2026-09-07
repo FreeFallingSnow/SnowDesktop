@@ -554,6 +554,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_SETTINGCHANGE:
     {
+        ApplyAnimationPreferences(true);
         const wchar_t* settingArea =
             reinterpret_cast<const wchar_t*>(lp);
         const bool traySettings = settingArea &&

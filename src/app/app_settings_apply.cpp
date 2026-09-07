@@ -855,6 +855,19 @@ public:
         using snowdesktop::HasSettingsDomain;
         using snowdesktop::SettingsDomain;
 
+        if (HasSettingsDomain(domains, SettingsDomain::General))
+        {
+            // Preview only animation preferences; other General fields still
+            // need their normal commit side effects and old-value comparisons.
+            const auto& general = snapshot.values.general;
+            app_.generalSettings_.animationMode = general.animationMode;
+            app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
+            app_.generalSettings_.animationSpeed = general.animationSpeed;
+            app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;
+            app_.generalSettings_.animationEnergySaver = general.animationEnergySaver;
+            app_.generalSettings_.animationOnBattery = general.animationOnBattery;
+            app_.ApplyAnimationPreferences();
+        }
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
@@ -879,6 +892,7 @@ public:
                 app_.dockSettings_.systemTaskbarAlignment;
             app_.dockSettings_ = snapshot.values.dock;
             NormalizeDockSettings(app_.dockSettings_);
+            app_.ApplyAnimationPreferences();
             app_.dockSettings_.systemTaskbarAutoHide =
                 committedTaskbarAutoHide;
             app_.dockSettings_.systemTaskbarAlignment =
@@ -998,6 +1012,7 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
             app_.dockSettings_ = requestedDockSettings;
+            app_.ApplyAnimationPreferences();
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1020,6 +1035,7 @@ public:
                 snapshot.values.general.language) != 0;
             app_.generalSettings_ = snapshot.values.general;
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
+            app_.ApplyAnimationPreferences();
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
             app_.ApplyDesktopPassthroughHotkey();
@@ -1463,6 +1479,7 @@ void DesktopApp::InitializeSettingsController()
         dockSettings_ = snapshot->values.dock;
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
+        ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
         generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
@@ -1772,6 +1789,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    ApplyAnimationPreferences();
     generalSettings_.autoStartEnabled = autoStartEnabled;
     if (std::strcmp(generalSettings_.language, "system") != 0 &&
         !Locale::Instance().HasLanguage(generalSettings_.language))
@@ -1856,6 +1874,7 @@ void DesktopApp::LoadDockSettingsAndApply()
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
     NormalizeDockSettings(settings);
     dockSettings_ = settings;
+    ApplyAnimationPreferences();
     SyncSystemTaskbarSettingsFromWindows();
     ApplyFloatingDockHotkey();
     systemTaskbarWindowStateChangedTick_.fetch_add(1,

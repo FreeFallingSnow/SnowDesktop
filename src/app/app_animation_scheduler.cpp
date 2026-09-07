@@ -9,6 +9,106 @@ std::uint64_t AnimationTick(double nowMilliseconds)
 }
 }
 
+void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
+{
+    namespace motion = snowdesktop::animation;
+    NormalizeGeneralAnimationSettings(generalSettings_);
+    NormalizeDockSettings(dockSettings_);
+    if (systemChanged) (void)motion::SystemAnimationsEnabled(true);
+    const bool transitionChanged = systemChanged ||
+        motion::detail::mode.load() != generalSettings_.animationMode ||
+        motion::detail::popupEffect.load() != generalSettings_.popupAnimationEffect ||
+        motion::detail::speed.load() != generalSettings_.animationSpeed;
+    const bool windowChanged = transitionChanged ||
+        motion::RuntimeWindowEffect() != dockSettings_.windowEffect;
+    const bool pageNotifyPolicyChanged =
+        motion::detail::mode.load() != generalSettings_.animationMode ||
+        motion::detail::popupEffect.load() != generalSettings_.popupAnimationEffect ||
+        motion::detail::speed.load() != generalSettings_.animationSpeed;
+    motion::SetRuntimePreferences(generalSettings_.animationMode,
+        generalSettings_.popupAnimationEffect, generalSettings_.animationSpeed,
+        generalSettings_.animationFrameLimit, generalSettings_.animationEnergySaver,
+        generalSettings_.animationOnBattery, dockSettings_.windowEffect,
+        static_cast<int>(dockSettings_.position));
+
+    const bool fade = generalSettings_.popupAnimationEffect == motion::Fade;
+    const double durationScale = motion::RuntimeDurationScale();
+    popupAnimation_.Configure(fade, durationScale);
+    luaWidgetPanelAnimation_.Configure(fade, durationScale);
+    quickNavigationAnimation_.Configure(fade, durationScale);
+
+    // Finish the old timeline when its duration/effect changes.
+    // Closing finalizers also preserve queued actions and pending popup opens.
+    if (transitionChanged)
+    {
+        if (popupAnimation_.IsAnimating())
+        {
+            if (popupAnimation_.IsClosing()) FinalizeCloseCollectionPopup();
+            else
+            {
+                popupAnimation_.ShowImmediately();
+                ResetCollectionPopupAnimationCache();
+                ApplyCollectionPopupBackdropAnimationFrame();
+            }
+        }
+        if (luaWidgetPanelAnimation_.IsAnimating())
+        {
+            if (luaWidgetPanelAnimation_.IsClosing()) FinalizeCloseLuaWidgetPanel();
+            else
+            {
+                luaWidgetPanelAnimation_.ShowImmediately();
+                ResetLuaWidgetPanelAnimationCache();
+            }
+        }
+        if (quickNavigationAnimation_.IsAnimating())
+        {
+            if (quickNavigationAnimationCompletionToken_)
+                uiAnimationScheduler_.Cancel(quickNavigationAnimationCompletionToken_);
+            quickNavigationAnimationCompletionToken_ = 0;
+            quickNavigationAnimationCompositorDriven_ = false;
+            if (quickNavigationAnimation_.IsClosing()) FinalizeCloseQuickNavigation();
+            else
+            {
+                quickNavigationAnimation_.ShowImmediately();
+                ApplyQuickNavigationAnimationFrame();
+            }
+        }
+    }
+    if (widgetEngine_)
+        widgetEngine_->ApplyHostAnimationPreferences();
+    if (windowChanged && dockWindowTransition_)
+        dockWindowTransition_->CompleteImmediately();
+    if (!motion::RuntimeAnimationsEnabled() || dockSettings_.launchEffect == 0)
+    {
+        dockLaunchBounces_.clear();
+        if (dockBounceAnimationFrameToken_)
+            uiAnimationScheduler_.Cancel(dockBounceAnimationFrameToken_);
+        dockBounceAnimationFrameToken_ = 0;
+    }
+    if (pageNotifyActive_ &&
+        (pageNotifyPolicyChanged || !motion::RuntimeAnimationsEnabled()))
+    {
+        if (pageNotifyFadeOutToken_)
+            uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
+        pageNotifyFadeOutToken_ = 0;
+        if (pageNotifyAnimationFrameToken_)
+            uiAnimationScheduler_.Cancel(pageNotifyAnimationFrameToken_);
+        pageNotifyAnimationFrameToken_ = 0;
+        pageNotifyActive_ = false;
+        pageNotifyUseAnimation_ = false;
+        pageNotifyText_.clear();
+        ResetPageNotifyTextCache();
+    }
+    InvalidateDockContainers();
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        InvalidateDragStaticScene();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        UpdateFloatingPopupWindowBounds(true);
+        InvalidateFloatingDockWindow(false);
+    }
+}
+
 // Every independently visible object owns its scheduler token. A terminal
 // callback can therefore retire only its own track; it cannot accidentally
 // stop hover, another popup, or a transition that started in the same frame.
@@ -147,10 +247,14 @@ void DesktopApp::EnsureUiAnimationFrame()
     const DWORD pageElapsed = pageNotifyActive_
         ? GetTickCount() - pageNotifyStartTick_
         : 0;
+    const DWORD pageVisibleMs = kPageNotifyVisibleMs -
+        2 * kPageNotifyFadeMs + 2 * pageNotifyFadeMs_;
     const bool pageFadeActive = pageNotifyActive_ &&
+        pageNotifyUseAnimation_ &&
+        snowdesktop::animation::RuntimeAnimationsEnabled() &&
         !pageNotifyCompositorDriven_ &&
-        (pageElapsed < kPageNotifyFadeMs ||
-         pageElapsed >= kPageNotifyVisibleMs - kPageNotifyFadeMs);
+        (pageElapsed < pageNotifyFadeMs_ ||
+         pageElapsed >= pageVisibleMs - pageNotifyFadeMs_);
     if (!pageNotifyAnimationFrameToken_ && pageFadeActive)
     {
         pageNotifyAnimationFrameToken_ =
@@ -158,6 +262,8 @@ void DesktopApp::EnsureUiAnimationFrame()
                 snowdesktop::UiAnimationSurface::Desktop,
                 [this](double) {
                     if (!pageNotifyActive_ ||
+                        !pageNotifyUseAnimation_ ||
+                        !snowdesktop::animation::RuntimeAnimationsEnabled() ||
                         pageNotifyCompositorDriven_)
                     {
                         pageNotifyAnimationFrameToken_ = 0;
@@ -166,8 +272,10 @@ void DesktopApp::EnsureUiAnimationFrame()
 
                     const DWORD elapsed =
                         GetTickCount() - pageNotifyStartTick_;
+                    const DWORD visibleMs = kPageNotifyVisibleMs -
+                        2 * kPageNotifyFadeMs + 2 * pageNotifyFadeMs_;
                     const RECT dirty = GetPageNotifyBounds();
-                    if (elapsed >= kPageNotifyVisibleMs)
+                    if (elapsed >= visibleMs)
                     {
                         pageNotifyActive_ = false;
                         pageNotifyText_.clear();
@@ -183,17 +291,17 @@ void DesktopApp::EnsureUiAnimationFrame()
                     else if (hwnd_ && IsWindow(hwnd_))
                     {
                         float opacity = 1.0f;
-                        if (elapsed < kPageNotifyFadeMs)
+                        if (elapsed < pageNotifyFadeMs_)
                         {
                             opacity = static_cast<float>(elapsed) /
-                                static_cast<float>(kPageNotifyFadeMs);
+                                static_cast<float>(pageNotifyFadeMs_);
                         }
                         else if (elapsed >=
-                            kPageNotifyVisibleMs - kPageNotifyFadeMs)
+                            visibleMs - pageNotifyFadeMs_)
                         {
                             opacity = static_cast<float>(
-                                kPageNotifyVisibleMs - elapsed) /
-                                static_cast<float>(kPageNotifyFadeMs);
+                                visibleMs - elapsed) /
+                                static_cast<float>(pageNotifyFadeMs_);
                         }
                         if (UpdatePageNotifyCompositionAnimation(
                                 opacity, false))
@@ -213,10 +321,11 @@ void DesktopApp::EnsureUiAnimationFrame()
                         ? GetTickCount() - pageNotifyStartTick_
                         : 0;
                     const bool keep = pageNotifyActive_ &&
+                        pageNotifyUseAnimation_ &&
+                        snowdesktop::animation::RuntimeAnimationsEnabled() &&
                         !pageNotifyCompositorDriven_ &&
-                        (currentElapsed < kPageNotifyFadeMs ||
-                         currentElapsed >= kPageNotifyVisibleMs -
-                            kPageNotifyFadeMs);
+                        (currentElapsed < pageNotifyFadeMs_ ||
+                         currentElapsed >= visibleMs - pageNotifyFadeMs_);
                     if (!keep)
                         pageNotifyAnimationFrameToken_ = 0;
                     return keep;

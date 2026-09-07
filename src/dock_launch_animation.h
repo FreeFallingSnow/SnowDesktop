@@ -15,6 +15,14 @@ constexpr ULONGLONG kMinimumDurationMs = kBouncePeriodMs * 2;
 constexpr ULONGLONG kMaximumDurationMs = kBouncePeriodMs * 5;
 constexpr double kCycleDamping = 0.68;
 
+inline double AdvanceElapsed(
+    double elapsedMs, double deltaMs, double durationScale) noexcept
+{
+    const double safeScale = std::isfinite(durationScale)
+        ? std::clamp(durationScale, 0.1, 10.0) : 1.0;
+    return std::max(0.0, elapsedMs) + std::max(0.0, deltaMs) / safeScale;
+}
+
 inline bool SystemAnimationsEnabled() noexcept
 {
     ANIMATIONINFO animationInfo{ sizeof(animationInfo) };
@@ -73,13 +81,24 @@ inline double NormalizedOffset(double elapsedMs) noexcept
         std::pow(kCycleDamping, cycle);
 }
 
+inline float MaximumOffsetPixels(int iconSize) noexcept
+{
+    return static_cast<float>(
+        std::max(6.0, static_cast<double>(iconSize) * 0.38));
+}
+
 inline float OffsetPixels(
     double elapsedMs, int iconSize) noexcept
 {
-    const double amplitude =
-        std::max(6.0, static_cast<double>(iconSize) * 0.38);
     return static_cast<float>(std::max(
-        0.0, amplitude * NormalizedOffset(elapsedMs)));
+        0.0, MaximumOffsetPixels(iconSize) * NormalizedOffset(elapsedMs)));
+}
+
+inline float PulseScale(double elapsedMs) noexcept
+{
+    // Contract toward the center so the feedback stays inside the hovered
+    // icon's existing visual and hit-test bounds, including at 2x hover.
+    return 1.0f - 0.14f * static_cast<float>(NormalizedOffset(elapsedMs));
 }
 
 inline bool IsRestingPoint(double elapsedMs) noexcept

@@ -1,5 +1,6 @@
 #include "ui_animation_scheduler.h"
 #include "ui_animation_scheduler_rules.h"
+#include "animation_settings.h"
 
 #include <windows.h>
 
@@ -32,6 +33,26 @@ void WaitAndDispatch(
 
 int main()
 {
+    namespace motion = snowdesktop::animation;
+    Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
+        motion::ResolveEnabled(motion::FollowSystem, true) &&
+        motion::ResolveEnabled(motion::AlwaysOn, false) &&
+        !motion::ResolveEnabled(motion::Disabled, true),
+        "global preferences respect system choice, explicit enable and disable");
+    Check(motion::ResolveFrameLimit(0, true, false, true, false) == 30 &&
+        motion::ResolveFrameLimit(120, false, true, false, true) == 30 &&
+        motion::ResolveFrameLimit(120, true, false, false, true) == 120 &&
+        motion::ResolveFrameLimit(0, true, false, false, false) == 0,
+        "battery preference is independent of system saver and never raises a cap");
+    motion::SetRuntimePreferences(1, 2, 1, 30, false, false, 1);
+    {
+        snowdesktop::UiAnimationScheduler limited;
+        limited.SetSoftwareRendering(true);
+        Check(limited.Metrics().effectiveRefreshHz <= 30.001,
+            "explicit limit applies to actual UI scheduler cadence");
+    }
+    // Isolate remaining scheduler tests from the machine's power policy.
+    motion::SetRuntimePreferences(0, 2, 1, 0, false, false, 1);
     using snowdesktop::UiAnimationScheduler;
     using snowdesktop::UiAnimationSurface;
     namespace rules =

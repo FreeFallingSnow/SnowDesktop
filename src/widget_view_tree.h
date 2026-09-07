@@ -746,6 +746,9 @@ public:
     using TimePoint = Clock::time_point;
 
     void BeginFrame() noexcept;
+    // Host presentation preferences; parsed Lua descriptors remain unchanged.
+    void SetDurationScale(double scale) noexcept;
+    void Settle() noexcept;
     ViewTransitionPresentation ResolvePresentation(std::string_view key,
         const ViewStyle& targetStyle,
         const std::optional<ViewTransform>& targetTransform,
@@ -793,10 +796,12 @@ private:
 
     static ViewTransitionPresentation CurrentPresentation(
         const Entry& entry, TimePoint now) noexcept;
+    std::uint32_t ScaledDuration(std::uint32_t duration) const noexcept;
 
     std::unordered_map<std::string, Entry> entries_;
     std::vector<ExitEntry> exits_;
     std::uint64_t generation_ = 0;
+    double durationScale_ = 1.0;
 };
 
 std::uint32_t ResolveViewThemeColor(ViewThemeColorToken token,

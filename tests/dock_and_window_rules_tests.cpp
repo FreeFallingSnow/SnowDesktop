@@ -14,6 +14,7 @@
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
+#include "dock_genie_rules.h"
 #include "dock_app_identity_rules.h"
 #include "page_navigation_rules.h"
 #include "page_layout_settings.h"
@@ -3899,6 +3900,54 @@ int main(int argc, char** argv)
             DockWindowTransitionStartAction::ContinueActive,
         "a repeated restore request must keep waiting for its real window");
 
+    namespace genie = snowdesktop::dock_genie;
+    const genie::Rect genieSource{ 1000.0, 1000.0, 1800.0, 1800.0 };
+    const std::array<std::pair<genie::Edge, genie::Rect>, 4> reversedGenieTargets{{
+        { genie::Edge::Bottom, { 1350.0, 100.0, 1450.0, 150.0 } },
+        { genie::Edge::Top, { 1350.0, 2600.0, 1450.0, 2650.0 } },
+        { genie::Edge::Left, { 2600.0, 1350.0, 2650.0, 1450.0 } },
+        { genie::Edge::Right, { 100.0, 1350.0, 150.0, 1450.0 } },
+    }};
+    bool reversedGenieKeepsAxisExtent = true;
+    bool reversedGenieReachesEndpoints = true;
+    for (const auto& [edge, target] : reversedGenieTargets)
+    {
+        for (int step = 0; step <= 20; ++step)
+        {
+            const double collapsed = static_cast<double>(step) / 20.0;
+            for (std::size_t strip = 0; strip < genie::StripCount; ++strip)
+            {
+                const double begin = static_cast<double>(strip) / genie::StripCount;
+                const double end = static_cast<double>(strip + 1) / genie::StripCount;
+                const auto matrix = genie::StripMatrix(genieSource, target,
+                    edge, collapsed, 800.0, 800.0, begin, end, 0.0, 0.0);
+                const bool vertical = genie::Vertical(edge);
+                const double axisExtent = (vertical ? matrix.m22 : matrix.m11) * 800.0;
+                const double targetExtent = vertical
+                    ? target.bottom - target.top : target.right - target.left;
+                reversedGenieKeepsAxisExtent = reversedGenieKeepsAxisExtent &&
+                    std::isfinite(matrix.m11) && std::isfinite(matrix.m12) &&
+                    std::isfinite(matrix.m21) && std::isfinite(matrix.m22) &&
+                    std::isfinite(matrix.dx) && std::isfinite(matrix.dy) &&
+                    axisExtent >= targetExtent - 0.001;
+                if (step == 0 || step == 20)
+                {
+                    const auto& expected = step == 0 ? genieSource : target;
+                    reversedGenieReachesEndpoints = reversedGenieReachesEndpoints &&
+                        std::abs(matrix.dx - expected.left) < 0.001 &&
+                        std::abs(matrix.dy - expected.top) < 0.001 &&
+                        std::abs(matrix.m11 * 800.0 - (expected.right - expected.left)) < 0.001 &&
+                        std::abs(matrix.m22 * 800.0 - (expected.bottom - expected.top)) < 0.001 &&
+                        std::abs(matrix.m12) < 0.001 && std::abs(matrix.m21) < 0.001;
+                }
+            }
+        }
+    }
+    Check(reversedGenieKeepsAxisExtent,
+        "Genie must not collapse to a thin line when the target is across the opposite monitor edge");
+    Check(reversedGenieReachesEndpoints,
+        "Genie strips must still match the window and Dock target at both endpoints on all four edges");
+
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;
     Check(launchAnimation::NormalizedOffset(0) == 0.0 &&
@@ -3933,8 +3982,54 @@ int main(int argc, char** argv)
             launchAnimation::IsRestingPoint(
                 launchAnimation::kMinimumDurationMs),
         "Dock launch bounce must complete at least two cycles");
+    const double normalLaunchElapsed =
+        launchAnimation::AdvanceElapsed(0.0, 100.0, 1.0);
+    const double fastLaunchElapsed =
+        launchAnimation::AdvanceElapsed(normalLaunchElapsed, 70.0, 0.7);
+    const double slowLaunchElapsed =
+        launchAnimation::AdvanceElapsed(fastLaunchElapsed, 140.0, 1.4);
+    Check(std::abs(slowLaunchElapsed - 300.0) < 0.001 &&
+            launchAnimation::AdvanceElapsed(fastLaunchElapsed, 0.0, 1.4) ==
+                fastLaunchElapsed &&
+            launchAnimation::AdvanceElapsed(fastLaunchElapsed, -10.0, 0.7) ==
+                fastLaunchElapsed,
+        "changing Dock launch speed must preserve accumulated progress and never rewind");
+    Check(launchAnimation::PulseScale(0.0) == 1.0f &&
+            launchAnimation::PulseScale(launchAnimation::kMaximumDurationMs) == 1.0f &&
+            launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs / 2) < 1.0f &&
+            launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs / 2) >= 0.85f &&
+            launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs * 1.5) >
+                launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs / 2),
+        "Dock launch pulse must return to rest and remain inside the icon bounds");
 
     namespace magnification = snowdesktop::dock_magnification;
+    Check(magnification::ResolveFocusScale(0, 2.0f, true) == 1.0f &&
+            magnification::ResolveFocusScale(2, 2.0f, false) == 1.0f &&
+            magnification::ResolveFocusScale(2, 0.5f, true) == 1.0f &&
+            magnification::ResolveFocusScale(2, 3.0f, true) == 2.0f &&
+            magnification::ResolveFocusScale(2,
+                std::numeric_limits<float>::quiet_NaN(), true) ==
+                magnification::kFocusScale,
+        "Dock hover settings must honor global off and keep magnification within safe limits");
+    Check(magnification::ScaleForEffect(0, true, 0.0f, 76, 2.0f) == 1.0f &&
+            magnification::ScaleForEffect(1, true, 0.0f, 76, 2.0f) == 2.0f &&
+            magnification::ScaleForEffect(1, false, 76.0f, 76, 2.0f) == 1.0f &&
+            std::abs(magnification::ScaleForEffect(2, false, 76.0f, 76, 2.0f) -
+                1.5f) < 0.001f,
+        "single hover must leave neighbors unscaled while wave hover grows them proportionally");
+    Check(magnification::ScaleForEffect(2, true, 0.0f, 76, 1.0f) == 1.0f &&
+            magnification::AxisShiftForDistance(76, 76, 64, 1.0f) == 0 &&
+            magnification::SingleFocusAxisShift(76, 64, 1.0f) == 0,
+        "disabled hover must remove both icon growth and neighboring layout displacement");
+    const RECT singleFocusBase{ 0, 100, 76, 176 };
+    const RECT singleNeighborBase{ 76, 100, 152, 176 };
+    const RECT singleFocusVisual = magnification::MagnifyRect(
+        singleFocusBase, DockPosition::Bottom, 2.0f, 64);
+    const RECT singleNeighborVisual = magnification::MagnifyRect(
+        singleNeighborBase, DockPosition::Bottom, 1.0f, 64,
+        magnification::SingleFocusAxisShift(76, 64, 2.0f));
+    Check(singleFocusVisual.right <= singleNeighborVisual.left,
+        "a 2x single hover must push its unscaled neighbor out of the enlarged icon");
     Check(!magnification::ShouldSuppressMagnification(
               false, false, false) &&
             magnification::ShouldSuppressMagnification(
@@ -4137,6 +4232,13 @@ int main(int argc, char** argv)
     const RECT baseIsland{ 80, 190, 300, 300 };
     const RECT expandedIsland = magnification::ExpandInteractionBounds(
         baseIsland, DockPosition::Bottom, 64);
+    const RECT unexpandedIsland = magnification::ExpandInteractionBounds(
+        baseIsland, DockPosition::Bottom, 64, 1.0f);
+    const RECT unexpandedViewport = magnification::ExpandPerpendicularBounds(
+        baseIsland, DockPosition::Bottom, 64, 1.0f);
+    Check(EqualRect(&baseIsland, &unexpandedIsland) &&
+            EqualRect(&baseIsland, &unexpandedViewport),
+        "disabled Dock magnification must not keep an invisible expanded hit-test corridor");
     Check(expandedIsland.left < baseIsland.left &&
             expandedIsland.right > baseIsland.right &&
             expandedIsland.top < baseIsland.top,
@@ -4150,45 +4252,48 @@ int main(int argc, char** argv)
     const std::array<int, 8> magnificationIconSizes{
         1, 32, 64, 77, 96, 128, 192, 256,
     };
-    const std::array<float, 4> magnificationScales{
-        1.0f,
-        magnification::kSecondNeighborScale,
-        magnification::kFirstNeighborScale,
-        magnification::kFocusScale,
-    };
     bool hoverPresentationCoversRetainedFocus = true;
-    for (const int iconSize : magnificationIconSizes)
+    for (const float maximumScale : { 1.0f, magnification::kFocusScale, 2.0f })
     {
-        const int maximumAxisShift =
-            magnification::MaximumAxisShift(iconSize);
-        for (const DockPosition position : dockPositions)
+        const std::array<float, 4> magnificationScales{
+            1.0f,
+            magnification::ScaleForAxisDistance(2.0f, 1, maximumScale),
+            magnification::ScaleForAxisDistance(1.0f, 1, maximumScale),
+            maximumScale,
+        };
+        for (const int iconSize : magnificationIconSizes)
         {
-            const RECT interactionBounds =
-                magnification::ExpandInteractionBounds(
-                    baseIsland, position, iconSize);
-            const RECT presentationBounds =
-                magnification::ExpandHoverPresentationBounds(
-                    interactionBounds);
-            for (const float scale : magnificationScales)
+            const int maximumAxisShift =
+                magnification::MaximumAxisShift(iconSize, maximumScale);
+            for (const DockPosition position : dockPositions)
             {
-                for (const int axisShift : {
-                        -maximumAxisShift,
-                        maximumAxisShift })
+                const RECT interactionBounds =
+                    magnification::ExpandInteractionBounds(
+                        baseIsland, position, iconSize, maximumScale);
+                const RECT presentationBounds =
+                    magnification::ExpandHoverPresentationBounds(
+                        interactionBounds);
+                for (const float scale : magnificationScales)
                 {
-                    const RECT maximumVisual =
-                        magnification::MagnifyRect(
-                            baseIsland, position,
-                            scale, iconSize,
-                            axisShift);
-                    const RECT retainedVisual =
-                        magnification::ExpandFocusRetentionBounds(
-                            maximumVisual);
-                    hoverPresentationCoversRetainedFocus =
-                        hoverPresentationCoversRetainedFocus &&
-                        presentationBounds.left <= retainedVisual.left &&
-                        presentationBounds.top <= retainedVisual.top &&
-                        presentationBounds.right >= retainedVisual.right &&
-                        presentationBounds.bottom >= retainedVisual.bottom;
+                    for (const int axisShift : {
+                            -maximumAxisShift,
+                            maximumAxisShift })
+                    {
+                        const RECT maximumVisual =
+                            magnification::MagnifyRect(
+                                baseIsland, position,
+                                scale, iconSize,
+                                axisShift);
+                        const RECT retainedVisual =
+                            magnification::ExpandFocusRetentionBounds(
+                                maximumVisual);
+                        hoverPresentationCoversRetainedFocus =
+                            hoverPresentationCoversRetainedFocus &&
+                            presentationBounds.left <= retainedVisual.left &&
+                            presentationBounds.top <= retainedVisual.top &&
+                            presentationBounds.right >= retainedVisual.right &&
+                            presentationBounds.bottom >= retainedVisual.bottom;
+                    }
                 }
             }
         }

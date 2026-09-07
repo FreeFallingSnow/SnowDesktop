@@ -340,6 +340,12 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                 localize, cardStyle());
         dockPage_->SetActions(dockPageActions_);
     };
+    const auto ensureAnimation = [&]() {
+        if (animationPage_) return;
+        animationPage_ = std::make_unique<snowdesktop::winui::AnimationPerformancePagePresenter>(
+            localize, cardStyle(), [this](const SettingsRoute& route) { RequestRoute(route); });
+        animationPage_->SetActions(dockPageActions_);
+    };
     const auto ensureHomeAbout = [&]() {
         if (homeAboutPage_)
             return;
@@ -391,6 +397,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::General:
     case SettingsPage::Desktop:
         ensureGeneral();
+        break;
+    case SettingsPage::AnimationPerformance:
+        ensureAnimation();
         break;
     case SettingsPage::DesktopPages:
         ensureGeneral();
@@ -462,6 +471,11 @@ void SettingsShell::Close() noexcept
             dockPage_->Deactivate();
             dockPage_->Close();
         }
+        if (animationPage_)
+        {
+            animationPage_->Deactivate();
+            animationPage_->Close();
+        }
         if (homeAboutPage_)
         {
             homeAboutPage_->Deactivate();
@@ -504,6 +518,7 @@ void SettingsShell::Close() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     widgetSettingsPage_.reset();
@@ -554,6 +569,11 @@ void SettingsShell::ReleaseSessionResources() noexcept
             dockPage_->Deactivate();
             dockPage_->Close();
         }
+        if (animationPage_)
+        {
+            animationPage_->Deactivate();
+            animationPage_->Close();
+        }
         if (homeAboutPage_)
         {
             homeAboutPage_->Deactivate();
@@ -597,6 +617,7 @@ void SettingsShell::ReleaseSessionResources() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     widgetSettingsPage_.reset();
@@ -621,6 +642,7 @@ void SettingsShell::RefreshLocalizedText()
 
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
+    AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
     PersonalizationItem().Content(
         winrt::box_value(Localize("app.settings.appearance")));
     AppearanceThemeItem().Content(
@@ -674,6 +696,8 @@ void SettingsShell::RefreshLocalizedText()
         desktopPage_->RefreshLocalizedText();
     if (dockPage_)
         dockPage_->RefreshLocalizedText();
+    if (animationPage_)
+        animationPage_->RefreshLocalizedText();
     if (homeAboutPage_)
         homeAboutPage_->RefreshLocalizedText();
     if (pageLayoutPage_)
@@ -847,6 +871,8 @@ void SettingsShell::SetDockPageActions(
     dockPageActions_ = std::move(actions);
     if (dockPage_)
         dockPage_->SetActions(dockPageActions_);
+    if (animationPage_)
+        animationPage_->SetActions(dockPageActions_);
 }
 
 void SettingsShell::SetHomeAboutPageActions(
@@ -1125,6 +1151,8 @@ void SettingsShell::SuspendInteraction() noexcept
             desktopPage_->Deactivate();
         if (dockPage_)
             dockPage_->Deactivate();
+        if (animationPage_)
+            animationPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
         if (pageLayoutPage_)
@@ -1182,6 +1210,8 @@ bool SettingsShell::ApplySnapshot(
             desktopPage_->ApplySnapshot(snapshot);
         if (dockPage_)
             dockPage_->ApplySnapshot(snapshot);
+        if (animationPage_)
+            animationPage_->ApplySnapshot(snapshot);
         if (homeAboutPage_)
             homeAboutPage_->ApplySnapshot(snapshot);
         const bool routeChanged = previousRoute != navigation_.Route();
@@ -1609,6 +1639,7 @@ void SettingsShell::HookEvents()
                 return;
             for (const SettingsPage page : {
                      SettingsPage::Home, SettingsPage::General,
+                     SettingsPage::AnimationPerformance,
                      SettingsPage::AppearanceTheme,
                      SettingsPage::AppearanceWidgets,
                      SettingsPage::AppearanceDesktopIcons,
@@ -1977,6 +2008,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         !usesDockPresenter(pageRoute.page);
     if (leavingDock && dockPage_)
         dockPage_->Deactivate();
+    if (renderedPageRoute_ && animationPage_ &&
+        renderedPageRoute_->page == SettingsPage::AnimationPerformance &&
+        pageRoute.page != SettingsPage::AnimationPerformance)
+        animationPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
             renderedPageRoute_->page == SettingsPage::About ||
@@ -2048,6 +2083,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     switch (navigation_.Route().page)
     {
+    case SettingsPage::AnimationPerformance:
+        if (animationPage_)
+        {
+            PageCards().Children().Append(animationPage_->Content());
+            animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                RegisterFocusTarget(std::move(id), element);
+            });
+            animationPage_->Activate();
+        }
+        break;
     case SettingsPage::Home:
         if (homeAboutPage_)
         {
@@ -2220,6 +2265,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 generalPage_->DockShortcutContent());
             PageCards().Children().Append(dockPage_->DockContent());
+            muxc::HyperlinkButton animationLink{};
+            animationLink.Content(winrt::box_value(Localize("settings.nav.animation")));
+            animationLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            animationLink.Click([weak = get_weak()](const auto&, const auto&) {
+                if (const auto shell = weak.get())
+                    shell->RequestRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, "animation.hover"));
+            });
+            PageCards().Children().Append(animationLink);
             generalPage_->RegisterFocusTargets(
                 [this](std::string focusId,
                        const mux::FrameworkElement& element) {
@@ -2493,6 +2546,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
         return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:
         return Localize("settings.nav.categories");
+    case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
     case SettingsPage::Taskbar: return Localize("settings.nav.taskbar");
     case SettingsPage::DockAndTaskbar:
@@ -2512,6 +2566,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
 {
     switch (page)
     {
+    case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
     case SettingsPage::General:
         return Localize("settings.page.general.description");
@@ -2559,6 +2614,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     {
     case SettingsPage::Home: return HomeItem();
     case SettingsPage::General: return GeneralItem();
+    case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();
     case SettingsPage::AppearanceWidgets: return AppearanceWidgetsItem();
