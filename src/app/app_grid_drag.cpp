@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_drop_search.h"
 #include "../widgets/collection_group_rules.h"
 
 // Grid geometry, drag-group planning and cross-monitor migration.
@@ -373,8 +374,16 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
  * @param targetCell 初始目标单元格。
  * @return 最佳的可用单元格。
  */
-GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
+GridCell DesktopApp::FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const
 {
+    const bool exactPlacement = !containers_.empty() &&
+        sourceList.origin == containers_.front().get() &&
+        std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+            [&](const DragSourceEntry& entry) {
+                return entry.kind == DropSourceKind::DesktopIcon && !entry.fromDock &&
+                    entry.desktopIndex < items_.size() &&
+                    items_[entry.desktopIndex].largeIcon.has_value();
+            });
     const POINT current = dragSession_.CurrentPoint();
     const POINT mouseDown = dragSession_.MouseDownPoint();
     const auto direction =
@@ -388,67 +397,11 @@ GridCell DesktopApp::FindBestDropCell(GridCell targetCell) const
         targetCell,
         direction,
         dragSession_.StaticSceneRevision() };
-    GridCell cachedCell;
-    const bool cacheActive = dragSession_.IsActive();
-    if (bestDropCellCache_.TryGet(
-            cacheActive, cacheKey, cachedCell))
-        return cachedCell;
-    const auto finish = [this, cacheActive, &cacheKey](
-                            const GridCell& result) {
-        bestDropCellCache_.Store(
-            cacheActive, cacheKey, result);
-        return result;
-    };
-
-    if (!BuildSelectedMove(targetCell).empty())
-        return finish(targetCell);
-
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    if (!page) return finish(targetCell);
-    const int maxCol = page->columns - 1;
-    const int maxRow = page->rows - 1;
-
-    const int primaryCol = direction.column;
-    const int primaryRow = direction.row;
-
-    for (int dist = 1; dist <= 8; ++dist)
-    {
-        GridCell probe = targetCell;
-        probe.column += primaryCol * dist;
-        probe.row += primaryRow * dist;
-        if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow) break;
-        if (!BuildSelectedMove(probe).empty())
-            return finish(probe);
-    }
-
-    int oppCol = -primaryCol, oppRow = -primaryRow;
-    for (int dist = 1; dist <= 8; ++dist)
-    {
-        GridCell probe = targetCell;
-        probe.column += oppCol * dist;
-        probe.row += oppRow * dist;
-        if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow) break;
-        if (!BuildSelectedMove(probe).empty())
-            return finish(probe);
-    }
-
-    for (int dist = 1; dist <= 6; ++dist)
-    {
-        for (int dc = -dist; dc <= dist; ++dc)
-        {
-            for (int dr = -dist; dr <= dist; ++dr)
-            {
-                if (std::abs(dc) != dist && std::abs(dr) != dist) continue;
-                GridCell probe = targetCell;
-                probe.column += dc;
-                probe.row += dr;
-                if (probe.column < 0 || probe.column > maxCol || probe.row < 0 || probe.row > maxRow) continue;
-                if (!BuildSelectedMove(probe).empty())
-                    return finish(probe);
-            }
-        }
-    }
-    return finish(targetCell);
+    return snowdesktop::desktop_drop_cache::FindBestCell(
+        bestDropCellCache_, dragSession_.IsActive(), cacheKey,
+        exactPlacement, page ? page->columns : 0, page ? page->rows : 0,
+        [this](const GridCell& cell) { return !BuildSelectedMove(cell).empty(); });
 }
 
 /**

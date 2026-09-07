@@ -456,6 +456,7 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     if (ctrlDown) return _LW("core.drag.release_copy_here");
 
     GridCell bestCell = app_->FindBestDropCell(
+        sourceList,
         app_->ResolveDesktopRequestCell(sourceList, dragPoint));
 
     // When dragging from a widget (not from desktop itself), the selected items

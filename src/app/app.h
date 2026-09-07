@@ -2186,10 +2186,11 @@ private:
     static int GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal);
     /**
      * @brief 根据目标单元格查找最佳的放置位置。
+     * @param sourceList 本次拖动的来源（桌面大图标仅接受请求落点）
      * @param targetCell 目标单元格
      * @return 最佳放置单元格
      */
-    GridCell FindBestDropCell(GridCell targetCell) const;
+    GridCell FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const;
     /** @brief 待处理的网格移动项（索引 + 目标单元格）。 */
     struct PendingGridMove { size_t index; GridCell cell; };
     /**
