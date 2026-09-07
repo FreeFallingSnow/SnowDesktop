@@ -15,7 +15,7 @@ SnowDesktop's embedded Regular font:
 | Asset | Fluent glyph composition |
 | --- | --- |
 | `general.svg` | Settings 24 Regular + Filled |
-| `animation-performance.svg` | Top Speed 24 Regular + Filled |
+| `animation-performance.svg` | Filmstrip Play 24 Regular + Filled |
 | `appearance.svg` | Paint Brush 24 Regular + Filled |
 | `appearance-theme.svg` | Dark Theme 24 Regular + Filled |
 | `appearance-widgets.svg` | Window Apps 24 Regular + Filled |

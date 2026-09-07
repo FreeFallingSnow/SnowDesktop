@@ -23,6 +23,7 @@ struct Card
 {
     muxc::Border root{nullptr};
     muxc::StackPanel content{nullptr};
+    muxc::Grid header{nullptr};
     muxc::TextBlock title{nullptr};
     void Initialize(const mux::Style& style, const muxc::StackPanel& parent)
     {
@@ -30,10 +31,20 @@ struct Card
         root.Style(style);
         content = muxc::StackPanel{};
         content.Spacing(16);
+        header = muxc::Grid{};
+        header.ColumnSpacing(12);
+        muxc::ColumnDefinition heading{};
+        heading.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        muxc::ColumnDefinition action{};
+        action.Width(mux::GridLengthHelper::Auto());
+        header.ColumnDefinitions().Append(heading);
+        header.ColumnDefinitions().Append(action);
         title = muxc::TextBlock{};
         title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         title.TextWrapping(mux::TextWrapping::Wrap);
-        content.Children().Append(title);
+        title.VerticalAlignment(mux::VerticalAlignment::Center);
+        header.Children().Append(title);
+        content.Children().Append(header);
         root.Child(content);
         parent.Children().Append(root);
     }
@@ -109,8 +120,10 @@ struct AnimationPerformancePagePresenter::Impl
         dockNotice.TextWrapping(mux::TextWrapping::Wrap);
         dockCard.content.Children().Append(dockNotice);
         dockLink = muxc::HyperlinkButton{};
-        dockLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        dockCard.content.Children().Append(dockLink);
+        dockLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        dockLink.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(dockLink, 1);
+        dockCard.header.Children().Append(dockLink);
         const auto linkToken = dockLink.Click([this](const auto&, const auto&) {
             if (active && !closed && this->navigate)
                 this->navigate(SettingsRoute::ForPage(SettingsPage::Dock, "dock.enable"));
