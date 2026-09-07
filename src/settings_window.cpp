@@ -32,6 +32,16 @@ struct SettingsWindow::Impl
 
     void EndSession() noexcept
     {
+        try
+        {
+            if (options.largeIconSettings)
+            {
+                snowdesktop::LargeIconSettingsRequest request;
+                request.action = "close";
+                options.largeIconSettings(std::move(request));
+            }
+        }
+        catch (...) {}
         window = nullptr;
         closing = false;
         if (channel) channel->Close();

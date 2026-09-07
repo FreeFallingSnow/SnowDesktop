@@ -29,6 +29,8 @@
 #include "settings_window.h"
 #include "settings_window_open_rules.h"
 #include "settings_controller.h"
+#include "large_icon_settings.h"
+#include "large_icon_assets.h"
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "display_topology_refresh.h"
@@ -1605,7 +1607,25 @@ private:
     /** @brief 从磁盘文件加载布局信息（槽位记录、页面配置等）。 */
     void LoadLayoutSlots();
     /** @brief 将当前布局信息保存到磁盘文件。 */
-    void SaveLayoutSlots();
+    bool SaveLayoutSlots();
+    bool CanEditLargeIcons() const;
+    bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
+    void OpenLargeIconSettings(size_t itemIndex);
+    RECT GetLargeIconFrameRect(const DesktopItem& item) const;
+    void DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state);
+    void DrawLargeIconTitles(ID2D1RenderTarget* context);
+    snowdesktop::LargeIconSettingsSnapshot EditLargeIcon(snowdesktop::LargeIconSettingsRequest request);
+    const snowdesktop::LargeIconConfig& EffectiveLargeIconConfig(const DesktopItem& item) const;
+    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {});
+    void ProcessLargeIconAssets();
+    void UpdateLargeIconHover();
+    void TriggerLargeIconLaunch(size_t index);
+    bool HandleLargeIconPointerDown(POINT point);
+    bool HandleLargeIconPointerMove(POINT point);
+    bool HandleLargeIconPointerUp();
+    void CancelLargeIconGesture();
+    void BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconConfig config);
+    void DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context);
     /** @brief 记住已保存的页面 ID，用于维护页面顺序。 @param pageId 页面标识 */
     void RememberSavedPageId(const std::wstring& pageId);
 
@@ -3218,6 +3238,30 @@ private:
     std::unique_ptr<snowdesktop::widget_runtime::WidgetSettingsService>
         widgetSettingsService_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
+    snowdesktop::LargeIconEditSession largeIconEdit_;
+    std::uint64_t largeIconSessionSerial_ = 0;
+    std::unique_ptr<snowdesktop::LargeIconAssets> largeIconAssets_;
+    struct LargeIconRuntime
+    {
+        std::shared_ptr<snowdesktop::LargeIconAsset> asset;
+        std::wstring signature;
+        std::uint64_t generation = 0;
+        float hover = 0, from = 0, target = 0;
+        double transitionStart = 0, launchStart = 0;
+        bool pending = false;
+        std::string error;
+    };
+    std::unordered_map<std::wstring, LargeIconRuntime> largeIconRuntime_;
+    std::uint64_t largeIconAssetSerial_ = 0;
+    snowdesktop::UiScheduleToken largeIconAnimationToken_ = 0;
+    struct LargeIconGesture
+    {
+        std::wstring key;
+        snowdesktop::LargeIconConfig config;
+        GridCell cell;
+        bool creating = false, resizing = false, valid = false;
+    };
+    std::optional<LargeIconGesture> largeIconGesture_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>
         steamEntitlementService_;
     std::unique_ptr<AsyncHttpService> settingsUpdateHttpService_;

@@ -206,11 +206,15 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::AppearanceIconBeautification:
     case SettingsPage::DesktopPages:
     case SettingsPage::AnimationPerformance:
+    case SettingsPage::LargeIcon:
         break;
     default:
         return false;
     }
 
+    if (page == SettingsPage::LargeIcon)
+        return !itemKey.empty() && widgetInstanceId.empty();
+    if (!itemKey.empty()) return false;
     if (page == SettingsPage::WidgetSettings)
         return !widgetInstanceId.empty();
     return widgetInstanceId.empty();
@@ -242,6 +246,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
         return "appearance-icon-beautification";
     case SettingsPage::DesktopPages: return "desktop-pages";
     case SettingsPage::AnimationPerformance: return "animation-performance";
+    case SettingsPage::LargeIcon: return "large-icon";
     }
     return "home";
 }

@@ -92,6 +92,9 @@ constexpr wchar_t kDesktopIconClsidApplications[] = L"{4234D49B-0245-4DF3-B780-3
 
 // ── 右键菜单命令ID ────────────────────────────
 constexpr UINT kContextOpenCommand = 41001;
+constexpr UINT kContextLargeIconCreate = 41970;
+constexpr UINT kContextLargeIconSettings = 41971;
+constexpr UINT kContextLargeIconRestore = 41972;
 constexpr UINT kContextRenameCommand = 41002;
 constexpr UINT kContextCutCommand = 41003;
 constexpr UINT kContextCopyCommand = 41004;
@@ -229,6 +232,7 @@ constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
 constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
 constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;
+constexpr UINT kLargeIconAssetsReadyMessage = WM_APP + 97;
 constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;

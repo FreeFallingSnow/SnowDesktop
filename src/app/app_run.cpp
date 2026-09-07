@@ -612,6 +612,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 GetDataFilePath(L"SnowDesktop.entitlement.bin")));
 
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
+    settingsHostOptions.largeIconSettings = [this](auto request) { return EditLargeIcon(std::move(request)); };
     settingsHostOptions.windowTitle = _LW("app.settings.title");
     settingsHostOptions.localize = [](std::string_view key) {
         const std::string ownedKey(key);

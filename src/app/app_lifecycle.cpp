@@ -11,6 +11,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
     dockWindowActivationObservationToken_ = 0;
     dockWindowActivationObservations_.clear();

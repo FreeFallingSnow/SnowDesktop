@@ -72,7 +72,7 @@ void DesktopApp::DrawStaticBackground(
             const auto titleLayers =
                 snowdesktop::item_render_layer_rules::
                     ResolveTitleLayerPlan(selected);
-            if (titleLayers.drawInForeground)
+            if (titleLayers.drawInForeground && !di->largeIcon)
             {
                 foregroundTitles.push_back(
                     { icon, di->bounds });
@@ -212,6 +212,8 @@ void DesktopApp::DrawDesktopForeground(
     }
 
     DrawDynamicOverlays(ctx, hiddenMode);
+    if (!hiddenMode) DrawLargeIconTitles(ctx);
+    if (!hiddenMode) DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);
     if (showWidgetAddedHint_)

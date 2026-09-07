@@ -22,6 +22,25 @@ void DesktopApp::LayoutItems()
         auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (page)
         {
+            if (item.largeIcon)
+            {
+                const GridSpan desired{std::clamp(item.largeIcon->columns, 1, page->columns),
+                    std::clamp(item.largeIcon->rows, 1, page->rows)};
+                GridCell anchor = item.gridCell;
+                anchor.column = std::clamp(anchor.column, 0, page->columns - desired.columns);
+                anchor.row = std::clamp(anchor.row, 0, page->rows - desired.rows);
+                std::unordered_set<std::wstring> occupied;
+                for (const auto& other : items_)
+                    if (&other != &item && !IsItemInAnyWidget(other))
+                        MarkGridArea(occupied, other.gridCell, other.gridSpan);
+                for (const auto& widget : widgets_)
+                    if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
+                if (!AreGridSlotsMarked(occupied, anchor, desired))
+                {
+                    item.gridSpan = desired;
+                    item.gridCell = std::move(anchor);
+                }
+            }
             item.gridSpan.columns = std::clamp(item.gridSpan.columns, 1, std::max(1, page->columns));
             item.gridSpan.rows    = std::clamp(item.gridSpan.rows,    1, std::max(1, page->rows));
             item.gridCell.column  = std::clamp(item.gridCell.column,  0, std::max(0, page->columns - item.gridSpan.columns));
@@ -93,6 +112,14 @@ void DesktopApp::RebuildContainersAndItems()
 
     // Collect keys of items that belong to widgets.
     RefreshCollectedKeysCache();
+    for (auto& item : items_)
+        if (item.largeIcon && (IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId))
+        {
+            if (largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
+            item.largeIcon.reset();
+            item.gridSpan = {1, 1};
+            item.bounds = GetGridRect(gridPages_, item.gridCell, item.gridSpan);
+        }
     const auto& collectedKeys = collectedKeysCache_;
 
     // DesktopGrid

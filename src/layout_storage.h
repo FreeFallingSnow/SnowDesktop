@@ -1,5 +1,7 @@
 #pragma once
 
+#include "large_icon_config.h"
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -25,6 +27,7 @@ struct ItemRecord
     std::optional<int> row;
     int width = 1;
     int height = 1;
+    std::optional<LargeIconConfig> largeIcon;
 };
 
 struct WidgetRecord

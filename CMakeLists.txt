@@ -189,6 +189,9 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_keyboard_input.cpp
     src/app/app_keyboard_navigation.cpp
     src/app/app_layout.cpp
+    src/app/app_large_icons.cpp
+    src/app/app_large_icon_interaction.cpp
+    src/large_icon_assets.cpp
     src/app/app_lifecycle.cpp
     src/app/app_lua_panel.cpp
     src/app/app_lua_panel_render.cpp
@@ -322,6 +325,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/hotkey_recorder.h
     src/winui/hotkey_recorder_rules.h
     src/winui/page_layout_page_presenter.cpp
+    src/winui/large_icon_page_presenter.cpp
+    src/winui/large_icon_page_presenter.h
     src/winui/page_layout_page_presenter.h
     src/winui/personalization_page_presenter.cpp
     src/winui/personalization_page_presenter.h

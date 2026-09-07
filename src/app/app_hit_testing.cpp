@@ -27,7 +27,8 @@ DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
-        RECT selRect = GetItemSelectionRect(di->bounds, di->selected);
+        RECT selRect = di->largeIcon ? GetLargeIconFrameRect(*di)
+            : GetItemSelectionRect(di->bounds, di->selected);
         if (!PtInRect(&selRect, pt)) continue;
         if (!di->layoutKey.empty() &&
             collectedKeysCache_.count(

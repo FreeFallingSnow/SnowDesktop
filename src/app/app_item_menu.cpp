@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../large_icon_steam.h"
 #include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
 #include "shell_item_action_rules.h"
@@ -225,6 +226,19 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
+    const bool largeIconMenu = selectedCount == 1 && !dockFrequentItem && !dockApplicationItem &&
+        !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
+        !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
+    if (largeIconMenu)
+    {
+        if (items_[itemIndex].largeIcon)
+        {
+            AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
+            AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
+        }
+        else AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
     AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -439,6 +453,32 @@ void DesktopApp::ShowItemContextMenu(
 
     switch (command)
     {
+    case kContextLargeIconCreate:
+        if (largeIconMenu)
+        {
+            if (!CanEditLargeIcons()) { OpenLargeIconSettings(itemIndex); break; }
+            snowdesktop::LargeIconConfig config;
+            const auto& style = CurrentPersonalization();
+            config.radius = style.cornerRadius;
+            config.titleSize = itemFontSizeCu_;
+            config.borderWidth = style.widgetBorderWidth;
+            config.borderOpacity = style.widgetBorderAlpha;
+            config.borderColor = (static_cast<UINT>(style.widgetBorderR * 255) << 16) |
+                (static_cast<UINT>(style.widgetBorderG * 255) << 8) | static_cast<UINT>(style.widgetBorderB * 255);
+            wchar_t steamUrl[2048]{};
+            GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), items_[itemIndex].parsingName.c_str());
+            if (snowdesktop::large_icon_steam::AppId(steamUrl)) { config.content = 2; config.fit = 1; }
+            if (SetLargeIconConfig(itemIndex, config)) OpenLargeIconSettings(itemIndex);
+            else BeginLargeIconPlacement(itemIndex, config);
+        }
+        break;
+    case kContextLargeIconSettings:
+        if (largeIconMenu) OpenLargeIconSettings(itemIndex);
+        break;
+    case kContextLargeIconRestore:
+        if (largeIconMenu && !SetLargeIconConfig(itemIndex, std::nullopt))
+            MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        break;
     case kContextOpenCommand:
     {
         if (!canOpen)

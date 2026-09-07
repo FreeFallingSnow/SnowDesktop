@@ -92,25 +92,29 @@ void DesktopApp::SortIconsByName(bool ascending)
                 widget.gridCell.pageId == page.id)
                 MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
 
-        int searchSlot = 0;
+        std::vector<PendingGridMove> placements;
         for (size_t itemIndex : order)
         {
-            items_[itemIndex].gridSpan = { 1, 1 };
+            const auto span = items_[itemIndex].gridSpan;
             bool placed = false;
-            for (int slot = searchSlot; slot < page.columns * page.rows; ++slot)
+            for (int slot = 0; slot < page.columns * page.rows; ++slot)
             {
-                GridCell cell{ page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows) };
-                if (cell.column >= page.columns || cell.row >= page.rows) continue;
-                if (AreGridSlotsMarked(usedSlots, cell, items_[itemIndex].gridSpan)) continue;
-                items_[itemIndex].gridCell = cell;
-                items_[itemIndex].slot = cell.column * std::max(1, page.rows) + cell.row;
-                MarkGridArea(usedSlots, cell, items_[itemIndex].gridSpan);
-                searchSlot = slot + 1;
+                GridCell cell{page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows)};
+                if (cell.column + span.columns > page.columns || cell.row + span.rows > page.rows) continue;
+                if (AreGridSlotsMarked(usedSlots, cell, span)) continue;
+                placements.push_back({itemIndex, cell});
+                MarkGridArea(usedSlots, cell, span);
                 placed = true;
                 break;
             }
-            if (!placed)
-                MarkGridArea(usedSlots, items_[itemIndex].gridCell, items_[itemIndex].gridSpan);
+            // Sorting is transactional: a packed page may have no valid new
+            // arrangement. Preserve every original position in that case.
+            if (!placed) return;
+        }
+        for (const auto& placement : placements)
+        {
+            items_[placement.index].gridCell = placement.cell;
+            items_[placement.index].slot = SlotFromCell(gridPages_, placement.cell);
         }
     };
 
@@ -152,25 +156,29 @@ void DesktopApp::SortIconsByType(bool ascending)
                 widget.gridCell.pageId == page.id)
                 MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
 
-        int searchSlot = 0;
+        std::vector<PendingGridMove> placements;
         for (size_t itemIndex : order)
         {
-            items_[itemIndex].gridSpan = { 1, 1 };
+            const auto span = items_[itemIndex].gridSpan;
             bool placed = false;
-            for (int slot = searchSlot; slot < page.columns * page.rows; ++slot)
+            for (int slot = 0; slot < page.columns * page.rows; ++slot)
             {
-                GridCell cell{ page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows) };
-                if (cell.column >= page.columns || cell.row >= page.rows) continue;
-                if (AreGridSlotsMarked(usedSlots, cell, items_[itemIndex].gridSpan)) continue;
-                items_[itemIndex].gridCell = cell;
-                items_[itemIndex].slot = cell.column * std::max(1, page.rows) + cell.row;
-                MarkGridArea(usedSlots, cell, items_[itemIndex].gridSpan);
-                searchSlot = slot + 1;
+                GridCell cell{page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows)};
+                if (cell.column + span.columns > page.columns || cell.row + span.rows > page.rows) continue;
+                if (AreGridSlotsMarked(usedSlots, cell, span)) continue;
+                placements.push_back({itemIndex, cell});
+                MarkGridArea(usedSlots, cell, span);
                 placed = true;
                 break;
             }
-            if (!placed)
-                MarkGridArea(usedSlots, items_[itemIndex].gridCell, items_[itemIndex].gridSpan);
+            // Sorting is transactional: a packed page may have no valid new
+            // arrangement. Preserve every original position in that case.
+            if (!placed) return;
+        }
+        for (const auto& placement : placements)
+        {
+            items_[placement.index].gridCell = placement.cell;
+            items_[placement.index].slot = SlotFromCell(gridPages_, placement.cell);
         }
     };
 

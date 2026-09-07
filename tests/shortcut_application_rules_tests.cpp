@@ -1,5 +1,6 @@
 #include "shortcut_application_rules.h"
 #include "shortcut_icon_resource.h"
+#include "large_icon_steam.h"
 
 #include <windows.h>
 
@@ -90,6 +91,19 @@ void CheckInternetShortcutIconResource()
 
 int main()
 {
+    namespace steam = snowdesktop::large_icon_steam;
+    Check(steam::AppId(L"steam://rungameid/570") == 570u && steam::AppId(L"STEAM://RUN/730//") == 730u,
+        "large icon Steam covers recognize both launch URL forms");
+    for (const auto url : {L"steam://rungameid/12345678901234567", L"steam://run/0", L"steam://run/-1", L"https://store.steampowered.com/app/570", L"steam://run/123evil"})
+        Check(!steam::AppId(url), "cover fetching rejects non-store shortcut IDs and malformed launch IDs");
+    JsonValue metadata;
+    Check(ParseJson(R"({"response":{"store_items":[{"appid":570,"assets":{"asset_url_format":"steam/apps/570/${FILENAME}?t=123","library_capsule_2x":"abc123/library_600x900_2x.jpg","header":"def456/header.jpg"}}]}})", metadata),
+        "hashed Steam asset metadata fixture is valid JSON");
+    Check(steam::AssetUrl(metadata, 570, true) == "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/570/abc123/library_600x900_2x.jpg?t=123" &&
+        steam::AssetUrl(metadata, 570, false).find("def456/header.jpg") != std::string::npos && steam::AssetUrl(metadata, 730, true).empty(),
+        "cover metadata keeps hash directories, orientation and exact AppID identity");
+    Check(!steam::SafeAssetPath("../private") && !steam::SafeAssetPath("https://other.example/image.jpg") && !steam::SafeAssetPath("/root/image.png"),
+        "Steam metadata cannot replace the trusted download host or escape relative asset paths");
     constexpr std::wstring_view appUserModelId =
         L"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
 

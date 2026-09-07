@@ -231,6 +231,7 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
             {
                 item.gridCell = known->second.cell;
                 item.gridSpan = known->second.span;
+                item.largeIcon = known->second.largeIcon;
                 item.slot = SlotFromCell(gridPages_, item.gridCell);
             }
         }

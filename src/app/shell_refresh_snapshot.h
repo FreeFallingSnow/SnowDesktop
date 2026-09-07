@@ -96,6 +96,7 @@ inline void PreserveRuntime(DesktopItem& item, DesktopItem& previous)
     item.isCut = previous.isCut;
     item.gridCell = previous.gridCell;
     item.gridSpan = previous.gridSpan;
+    item.largeIcon = previous.largeIcon;
     item.slot = previous.slot;
     item.bounds = previous.bounds;
     if (item.sysIconIndex == previous.sysIconIndex)

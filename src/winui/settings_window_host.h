@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "../large_icon_settings.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
@@ -60,6 +61,7 @@ struct SettingsWindowHostOptions
     WidgetsPageBackendOptions widgetsPage;
     BackupDataPageBackendOptions backupDataPage;
     PageLayoutPageActions pageLayoutPage;
+    LargeIconSettingsAction largeIconSettings;
 
     // The settings child supplies IPC adapters; the application supplies the
     // concrete backends. UI callbacks in the configured options stay local.

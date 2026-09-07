@@ -405,6 +405,10 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         ensureGeneral();
         ensurePageLayout();
         break;
+    case SettingsPage::LargeIcon:
+        if (!largeIconPage_) largeIconPage_ = std::make_unique<snowdesktop::winui::LargeIconPagePresenter>(
+            localize, cardStyle(), largeIconSettingsAction_);
+        break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
     case SettingsPage::AppearanceWidgets:
@@ -521,6 +525,7 @@ void SettingsShell::Close() noexcept
     animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
+    largeIconPage_.reset();
     widgetSettingsPage_.reset();
     widgetSettingsService_ = nullptr;
     widgetsPage_.reset();
@@ -620,6 +625,7 @@ void SettingsShell::ReleaseSessionResources() noexcept
     animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
+    largeIconPage_.reset();
     widgetSettingsPage_.reset();
     widgetsPage_.reset();
     backupDataPage_.reset();
@@ -702,6 +708,7 @@ void SettingsShell::RefreshLocalizedText()
         homeAboutPage_->RefreshLocalizedText();
     if (pageLayoutPage_)
         pageLayoutPage_->RefreshLocalizedText();
+    if (largeIconPage_) largeIconPage_->RefreshLocalizedText();
     if (widgetSettingsPage_)
         widgetSettingsPage_->RefreshLocalizedText();
     if (widgetsPage_)
@@ -889,6 +896,11 @@ void SettingsShell::SetPageLayoutPageActions(
     pageLayoutPageActions_ = std::move(actions);
     if (pageLayoutPage_)
         pageLayoutPage_->SetActions(pageLayoutPageActions_);
+}
+
+void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action)
+{
+    largeIconSettingsAction_ = std::move(action);
 }
 
 bool SettingsShell::ApplyHomeAboutStatusPatch(
@@ -1157,6 +1169,7 @@ void SettingsShell::SuspendInteraction() noexcept
             homeAboutPage_->Deactivate();
         if (pageLayoutPage_)
             pageLayoutPage_->Deactivate();
+        if (largeIconPage_) largeIconPage_->Deactivate();
         if (widgetSettingsPage_)
             widgetSettingsPage_->Deactivate();
         if (widgetsPage_)
@@ -2028,6 +2041,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::DesktopPages;
     if (leavingPageLayout && pageLayoutPage_)
         pageLayoutPage_->Deactivate();
+    if (largeIconPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::LargeIcon &&
+        (pageRoute.page != SettingsPage::LargeIcon || pageRoute.itemKey != renderedPageRoute_->itemKey))
+        largeIconPage_->Deactivate();
     const bool leavingWidgetSettings = renderedPageRoute_ &&
         renderedPageRoute_->page == SettingsPage::WidgetSettings &&
         pageRoute.page != SettingsPage::WidgetSettings;
@@ -2198,6 +2214,13 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 });
             pageLayoutPage_->Activate();
             generalPage_->Activate();
+        }
+        break;
+    case SettingsPage::LargeIcon:
+        if (largeIconPage_)
+        {
+            largeIconPage_->Activate(pageRoute.itemKey);
+            PageCards().Children().Append(largeIconPage_->Content());
         }
         break;
     case SettingsPage::AppearanceDesktopIcons:
@@ -2545,6 +2568,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::AppearanceIconBeautification:
         return Localize("app.settings.icon_beautify");
     case SettingsPage::Desktop: return Localize("settings.nav.desktop");
+    case SettingsPage::LargeIcon: return Localize("largeIcon.settings");
     case SettingsPage::DesktopPages:
         return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:
@@ -2626,6 +2650,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::AppearanceIconBeautification:
         return AppearanceIconBeautificationItem();
     case SettingsPage::Desktop: return DesktopItem();
+    case SettingsPage::LargeIcon: return AppearanceDesktopIconsItem();
     case SettingsPage::DesktopPages: return PagesItem();
     case SettingsPage::DesktopCategories: return CategoriesItem();
     case SettingsPage::Dock:

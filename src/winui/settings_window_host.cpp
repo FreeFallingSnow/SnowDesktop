@@ -2014,6 +2014,7 @@ struct SettingsWindowHost::Impl
                 std::move(primaryButtonText));
         };
         shell->SetPageLayoutPageActions(std::move(pageLayout));
+        shell->SetLargeIconSettingsAction(options.largeIconSettings);
 
         PersonalizationPageActions personalization;
         personalization.update = [weak](

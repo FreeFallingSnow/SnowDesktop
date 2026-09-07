@@ -195,6 +195,8 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    if (HandleLargeIconPointerMove(current)) return;
+    UpdateLargeIconHover();
     UpdateSystemTaskbarRevealGuard();
     const bool activeWidgetGesture =
         (widgetAction_ == WidgetAction::Move ||

@@ -812,6 +812,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
+    if (HandleLargeIconPointerUp()) return;
     if (middleButtonWidgetMove_) return;
     (void)wp;
     int dropPreviewMods = 0;

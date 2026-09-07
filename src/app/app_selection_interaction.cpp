@@ -551,7 +551,8 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             DesktopItem* item = icon->GetDesktopItem();
             if (!item || IsItemInAnyWidget(*item) || IsRectEmptyRect(item->bounds))
                 continue;
-            RECT selectionRect = GetItemSelectionRect(item->bounds, false);
+            RECT selectionRect = item->largeIcon ? GetLargeIconFrameRect(*item)
+                : GetItemSelectionRect(item->bounds, false);
             item->selected = RectsIntersect(selectionRect, marqueeRect_);
         }
     }

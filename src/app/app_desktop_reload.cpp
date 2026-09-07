@@ -815,6 +815,12 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             continue;
         }
 
+        if (item.largeIcon)
+        {
+            item.gridSpan = {std::clamp(item.largeIcon->columns, 1, page->columns), std::clamp(item.largeIcon->rows, 1, page->rows)};
+            item.gridCell.column = std::clamp(item.gridCell.column, 0, page->columns - item.gridSpan.columns);
+            item.gridCell.row = std::clamp(item.gridCell.row, 0, page->rows - item.gridSpan.rows);
+        }
         bool validSlot = page != nullptr &&
             item.gridCell.column + item.gridSpan.columns <= page->columns &&
             item.gridCell.row + item.gridSpan.rows <= page->rows &&
@@ -829,7 +835,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         else
         {
             item.gridCell = {};
-            item.gridSpan = {1, 1};
+            if (!item.largeIcon) item.gridSpan = {1, 1};
         }
     }
 
@@ -936,6 +942,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             item->gridCell.pageId = newPageId;
             item->gridCell.column = 0;
             item->gridCell.row    = 0;
+            if (item->largeIcon)
+                item->gridSpan = {std::clamp(item->largeIcon->columns, 1, lastPage.columns), std::clamp(item->largeIcon->rows, 1, lastPage.rows)};
             MarkGridArea(usedSlots, item->gridCell, item->gridSpan);
             overflowSlots[newPageId] = 1;
         }

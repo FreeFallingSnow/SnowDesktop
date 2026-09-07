@@ -4,6 +4,7 @@
 #include "settings_controller.h"
 #include "widget_settings_service.h"
 #include "page_layout_settings.h"
+#include "large_icon_settings.h"
 #include "settings_search_index.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
@@ -58,7 +59,10 @@ SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale, v.itemIconSizeScale, v.itemFontSizeCu,
     v.listItemFontSizeCu, v.itemFontWeight, v.shortcutArrowMode, v.iconBeautify);
 SD_IPC_FIELDS(SettingsRoute,
-    v.page, v.widgetInstanceId, v.focusId);
+    v.page, v.widgetInstanceId, v.focusId, v.itemKey);
+SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path);
+SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
+    v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error);
 SD_IPC_FIELDS(SettingsActionResult,
     v.status, v.completedDomains, v.failedDomains, v.message);
 SD_IPC_FIELDS(SettingsValues,

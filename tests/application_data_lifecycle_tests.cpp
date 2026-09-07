@@ -439,6 +439,35 @@ int main()
                 invalid.name).c_str());
     }
     snowdesktop::layout_storage::Document typedLayout;
+    {
+        snowdesktop::LargeIconConfig large;
+        large.columns = 5;
+        large.rows = 3;
+        large.opacity = 0;
+        large.manualColor = 0x12abff;
+        large.image = "imported-123.png";
+        large.localOnly = true;
+        large.titleMode = 1;
+        const std::string encoded = snowdesktop::EncodeLargeIconConfig(large);
+        snowdesktop::layout_storage::Document roundTrip;
+        const std::string document = "{\"layoutSchemaVersion\":1,\"items\":[{\"key\":\"game\",\"page\":\"p\",\"x\":0,\"y\":0,\"w\":2,\"h\":2,\"largeIcon\":" + encoded + "}]}";
+        Expect(snowdesktop::layout_storage::ParseDocument(document, roundTrip, &layoutError) &&
+            roundTrip.items[0].largeIcon == large && roundTrip.items[0].width == 2,
+            "large icon settings preserve desired span independently of adapted layout and without entitlement data");
+        for (const auto invalid : {R"({"version":2})", R"({"version":1,"columns":0})",
+                 R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
+                 R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})"})
+        {
+            JsonValue value;
+            snowdesktop::LargeIconConfig candidate;
+            Expect(ParseJson(invalid, value) && !snowdesktop::DecodeLargeIconConfig(value, candidate),
+                "large icon codec rejects unsupported versions, unsafe asset references and invalid numeric boundaries");
+        }
+        Expect(snowdesktop::layout_storage::ParseDocument(
+            R"({"items":[{"key":"ordinary","w":3,"h":2}]})", roundTrip, &layoutError) &&
+            !roundTrip.items[0].largeIcon,
+            "an ordinary item's saved span alone never enables the premium presentation");
+    }
     Expect(snowdesktop::layout_storage::ParseDocument(
             firstLayout, typedLayout, &layoutError) &&
             typedLayout.sourceSchemaVersion == 0 &&

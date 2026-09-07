@@ -303,6 +303,9 @@ struct BackendServer::Impl
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
         });
+        channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
+            return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
+        });
         channel.Bind<PageGridChangeImpact, std::wstring, int, int>("pages.analyze", [this](std::wstring id, int columns, int rows) {
             return options.pageLayoutPage.analyzeGrid ? options.pageLayoutPage.analyzeGrid(id, columns, rows) : PageGridChangeImpact{};
         });
@@ -427,6 +430,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
+    options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
+        return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
+    };
     options.pageLayoutPage.analyzeGrid = [&channel](std::wstring_view id, int columns, int rows) { return channel.Call<PageGridChangeImpact>("pages.analyze", std::wstring(id), columns, rows); };
     options.pageLayoutPage.applyOrder = [&channel](Token revision, const std::vector<std::wstring>& ids) { return channel.Call<PageLayoutOperationResult>("pages.order", revision, ids); };
     options.pageLayoutPage.applyGrid = [&channel](Token revision, std::wstring_view id, int columns, int rows) { return channel.Call<PageLayoutOperationResult>("pages.grid", revision, std::wstring(id), columns, rows); };

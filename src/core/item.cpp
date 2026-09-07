@@ -110,6 +110,13 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     if (!app_ || !item_) return;
     if (rect.left >= rect.right || rect.top >= rect.bottom) return;
 
+    if (item_->largeIcon && dynamic_cast<DesktopGrid*>(GetContainer()) && !quickNavLayout && !demoCollection &&
+        !iconOnlyHighlight && !centerIconVertically && forcedIconSize <= 0)
+    {
+        app_->DrawLargeIcon(context, *item_, rect, state);
+        return;
+    }
+
     const bool hovered = (state == 1);
     const bool selected = (state == 2 || state == 3);
     const bool dragged = (state == 3);

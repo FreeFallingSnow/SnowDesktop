@@ -124,6 +124,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SETCURSOR:
     {
+        if (largeIconGesture_ && LOWORD(lp) == HTCLIENT)
+        {
+            SetCursor(LoadCursorW(nullptr, largeIconGesture_->valid ? IDC_SIZENWSE : IDC_NO));
+            return TRUE;
+        }
         if (LOWORD(lp) != HTCLIENT) break;
         bool resizeCursor = detailColumnResizeActive_;
         bool cursorPointAvailable = false;
@@ -484,6 +489,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
         }
         OnMouseLeave();
+        UpdateLargeIconHover();
         return 0;
     }
     case WM_LBUTTONUP:
@@ -990,6 +996,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (largeIconGesture_ && (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
+            CancelLargeIconGesture();
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||
             !IsOwnedPointerCaptureWindow(
@@ -1070,6 +1078,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case kIconLoadedMessage:
         OnIconLoaded(wp, lp);
+        return 0;
+    case kLargeIconAssetsReadyMessage:
+        ProcessLargeIconAssets();
         return 0;
     case kDemoIconDecodedMessage:
         OnDemoIconDecoded(lp);
