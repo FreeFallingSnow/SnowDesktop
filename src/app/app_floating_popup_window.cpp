@@ -773,6 +773,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
             ShouldShowFloatingPopupWindow() &&
             floatingPopupHwnd_ &&
             IsWindowVisible(floatingPopupHwnd_));
+        collectionPopupBackdropCompositor_.CommitVisualChanges();
         return;
     }
 
@@ -798,6 +799,9 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
         visual.visible && ShouldShowFloatingPopupWindow() &&
         floatingPopupHwnd_ &&
         IsWindowVisible(floatingPopupHwnd_));
+    // Explicitly submit the same logical frame as the content. Relying on
+    // WUC's implicit commit cycle can leave the glass behind a busy UI thread.
+    collectionPopupBackdropCompositor_.CommitVisualChanges();
 }
 
 void DesktopApp::UpdateCollectionPopupBackdrop()
@@ -865,7 +869,8 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     collectionPopupBackdropCompositor_.AddPanel(
         panel, cornerRadius, collectionPopupBlurRadius_,
         reinterpret_cast<std::uintptr_t>(this));
-    collectionPopupBackdropCompositor_.EndFrame();
+    // Include geometry and the current pose in one backdrop transaction.
+    collectionPopupBackdropCompositor_.EndFrame(false);
     ApplyCollectionPopupBackdropAnimationFrame();
 }
 

@@ -1258,7 +1258,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     }
     quickNavBackdropCompositor_.SetVisible(
         visual.visible);
-    quickNavBackdropCompositor_.CommitVisualChanges();
     UpdateQuickNavigationWindowRegion(
         quickNavigationAnimation_.IsAnimating() ||
             !visual.visible);
@@ -1300,6 +1299,9 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
                 CommitQuickNavigationCompositionFrame();
         }
     }
+
+    // Both layers now contain this frame's geometry and pose.
+    quickNavBackdropCompositor_.CommitVisualChanges();
 
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
