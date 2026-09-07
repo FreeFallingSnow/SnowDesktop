@@ -1936,8 +1936,15 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopIconRenderRulesTests
         icon_render_rules
-        SOURCES tests/icon_render_rules_tests.cpp
+        SOURCES
+            tests/icon_render_rules_tests.cpp
+            tests/large_icon_assets_tests.cpp
+            src/large_icon_assets.cpp
+            src/icon_beautify.cpp
+            src/preview_png_writer.cpp
+            src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32
         LABELS rules shell ui)
 
     snowdesktop_add_test(

@@ -543,9 +543,9 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                 }
                 else
                 {
-                    size_t itemIndex = app_->FindItemIndexByKey(dockItem->GetReference());
-                    if (itemIndex < app_->items_.size())
-                        span = app_->items_[itemIndex].gridSpan;
+                    // A retained desktop source can be large, but its Dock
+                    // entry has a separate, ordinary presentation.
+                    span = {1, 1};
                 }
                 span.columns = std::max(1, span.columns);
                 span.rows = std::max(1, span.rows);

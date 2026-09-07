@@ -530,6 +530,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
+        if (largeIconGesture_) { CancelLargeIconGesture(); return 0; }
         OnRightButtonDown(nullptr);
         return 0;
     case WM_RBUTTONUP:

@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "Délai de survol (ms)",
     "largeIcon.enterMs": "Durée d’entrée (ms)",
     "largeIcon.exitMs": "Durée de sortie (ms)",
-    "largeIcon.retry": "Réessayer l’enregistrement"
+    "largeIcon.retry": "Réessayer l’enregistrement",
+    "largeIcon.loading": "Chargement de l’image…",
+    "largeIcon.source.original": "Icône d’origine",
+    "largeIcon.source.local": "Image locale importée",
+    "largeIcon.source.steam-local": "Cache Steam local",
+    "largeIcon.source.steam-online": "Illustration Steam en ligne",
+    "largeIcon.source.cache": "Cache SnowDesktop",
+    "largeIcon.advancedBackground": "Arrière-plan avancé au survol",
+    "largeIcon.hoverOpacityLinked": "Calculer à partir de l’opacité normale",
+    "largeIcon.placementHint": "Déplacez le pointeur pour choisir une position ; ajustez la taille avec les flèches ; cliquez ou appuyez sur Entrée pour confirmer, Échap pour annuler.",
+    "largeIcon.restoreContent": "Rétablir l’icône d’origine"
 }

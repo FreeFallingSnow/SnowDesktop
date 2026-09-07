@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "游標停留延遲（毫秒）",
     "largeIcon.enterMs": "進入時間（毫秒）",
     "largeIcon.exitMs": "離開時間（毫秒）",
-    "largeIcon.retry": "重試儲存"
+    "largeIcon.retry": "重試儲存",
+    "largeIcon.loading": "正在載入圖片…",
+    "largeIcon.source.original": "原始圖示",
+    "largeIcon.source.local": "匯入的本機圖片",
+    "largeIcon.source.steam-local": "Steam 本機快取",
+    "largeIcon.source.steam-online": "Steam 線上素材",
+    "largeIcon.source.cache": "SnowDesktop 快取",
+    "largeIcon.advancedBackground": "懸停背景進階設定",
+    "largeIcon.hoverOpacityLinked": "隨一般狀態不透明度自動調整",
+    "largeIcon.placementHint": "移動滑鼠選擇位置；方向鍵調整寬高；按一下或按 Enter 確認，Esc 取消。",
+    "largeIcon.restoreContent": "恢復原始圖示"
 }

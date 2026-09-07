@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "ホバーの遅延（ミリ秒）",
     "largeIcon.enterMs": "開始の遷移時間（ミリ秒）",
     "largeIcon.exitMs": "終了の遷移時間（ミリ秒）",
-    "largeIcon.retry": "保存を再試行"
+    "largeIcon.retry": "保存を再試行",
+    "largeIcon.loading": "画像を読み込み中…",
+    "largeIcon.source.original": "元のアイコン",
+    "largeIcon.source.local": "読み込んだローカル画像",
+    "largeIcon.source.steam-local": "Steam のローカルキャッシュ",
+    "largeIcon.source.steam-online": "Steam のオンライン画像",
+    "largeIcon.source.cache": "SnowDesktop のキャッシュ",
+    "largeIcon.advancedBackground": "ホバー背景の詳細設定",
+    "largeIcon.hoverOpacityLinked": "通常時の不透明度に連動",
+    "largeIcon.placementHint": "マウスで配置場所を選択し、矢印キーで幅と高さを調整します。クリックまたは Enter で確定、Esc でキャンセルします。",
+    "largeIcon.restoreContent": "元のアイコンに戻す"
 }

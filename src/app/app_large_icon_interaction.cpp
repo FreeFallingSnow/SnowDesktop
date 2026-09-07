@@ -41,9 +41,10 @@ bool DesktopApp::HandleLargeIconPointerDown(POINT point)
     if (!CanEditLargeIcons() || HasActiveContextMenuSession() || IsPointOccludedByOpenPopup(point)) return false;
     const auto index = HitTestItem(point);
     if (index < 0 || static_cast<size_t>(index) >= items_.size() || !items_[index].largeIcon) return false;
-    auto handle = GetLargeIconFrameRect(items_[index]);
-    const auto size = std::max(10, static_cast<int>(14 * GetItemLayoutScale(items_[index].bounds)));
-    handle.left = handle.right - size; handle.top = handle.bottom - size;
+    DesktopWidget geometry;
+    geometry.bounds = items_[index].bounds; geometry.gridCell = items_[index].gridCell; geometry.showTitle = false;
+    if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+    const auto handle = GetStandaloneWidgetResizeHandleRect(geometry);
     if (!PtInRect(&handle, point)) return false;
     largeIconGesture_ = LargeIconGesture{items_[index].layoutKey, *items_[index].largeIcon, items_[index].gridCell, false, true, true};
     SetCapture(hwnd_);
@@ -102,6 +103,23 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         const UINT rgb = gesture.valid ? 0x68b5ff : 0xf16d70;
         DrawD2DRoundedRectangle(context, rect, static_cast<float>(gesture.config.radius),
             D2D1::ColorF(rgb, .2f), D2D1::ColorF(rgb, .95f), 2);
+        if (gesture.creating)
+        {
+            ComPtr<IDWriteTextFormat> format;
+            ComPtr<ID2D1SolidColorBrush> brush;
+            dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, 14.f, L"", &format);
+            context->CreateSolidColorBrush(D2D1::ColorF(0xffffff), &brush);
+            const auto* page = FindGridPage(gridPages_, gesture.cell.pageId);
+            if (page && format && brush)
+            {
+                RECT hint = page->bounds; hint.left += 12; hint.right -= 12; hint.top = std::max(hint.top, hint.bottom - 66);
+                DrawD2DRoundedRectangle(context, hint, 6, D2D1::ColorF(0x20242b, .95f), D2D1::ColorF(0xffffff, .2f));
+                const std::wstring message = _LW("largeIcon.placementHint");
+                format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                context->DrawText(message.c_str(), static_cast<UINT32>(message.size()), format.Get(), ToD2DRect(hint), brush.Get());
+            }
+        }
         return;
     }
     if (!CanEditLargeIcons() || dragSession_.IsActive() || HasActiveContextMenuSession()) return;
@@ -110,13 +128,21 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         if (!item.largeIcon || IsItemInAnyWidget(item) || IsRectEmptyRect(item.bounds)) continue;
         auto rect = GetLargeIconFrameRect(item);
         if (!item.selected && !PtInRect(&rect, lastMousePoint_)) continue;
-        rect.left = rect.right - 12; rect.top = rect.bottom - 12;
+        DesktopWidget geometry;
+        geometry.bounds = item.bounds; geometry.gridCell = item.gridCell; geometry.showTitle = false;
+        if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+        rect = GetStandaloneWidgetResizeHandleRect(geometry);
         DrawD2DRoundedRectangle(context, rect, 3, D2D1::ColorF(0xffffff, .75f), D2D1::ColorF(0x202020, .4f));
     }
 }
 
 void DesktopApp::UpdateLargeIconHover()
 {
+    if (!CanEditLargeIcons())
+    {
+        CancelLargeIconGesture();
+        largeIconEdit_.preview.reset();
+    }
     const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     bool moving = false;
     for (auto it = largeIconRuntime_.begin(); it != largeIconRuntime_.end();)
@@ -124,6 +150,7 @@ void DesktopApp::UpdateLargeIconHover()
         const auto index = FindItemIndexByKey(it->first);
         if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index]))
         {
+            if (largeIconAssets_) largeIconAssets_->Cancel(it->first);
             if (it->second.asset) EraseD2DIconCacheForBitmap(it->second.asset->bitmap);
             it = largeIconRuntime_.erase(it); continue;
         }

@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 
 #include <limits>
+#include <atomic>
 
 namespace snowdesktop::preview_png
 {
@@ -49,9 +50,10 @@ bool Save(const std::filesystem::path& output,
         return false;
     }
 
+    static std::atomic<std::uint64_t> sequence{0};
     const std::filesystem::path temporary = parent /
         (L".snowdesktop-preview-" + std::to_wstring(GetCurrentProcessId()) +
-            L"-" + std::to_wstring(GetTickCount64()) + L".tmp");
+            L"-" + std::to_wstring(sequence.fetch_add(1)) + L".tmp");
     ComPtr<IWICStream> stream;
     result = factory->CreateStream(&stream);
     if (SUCCEEDED(result))

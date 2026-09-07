@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "悬停延迟（毫秒）",
     "largeIcon.enterMs": "进入时长（毫秒）",
     "largeIcon.exitMs": "退出时长（毫秒）",
-    "largeIcon.retry": "重试保存"
+    "largeIcon.retry": "重试保存",
+    "largeIcon.loading": "正在加载图片…",
+    "largeIcon.source.original": "原始图标",
+    "largeIcon.source.local": "导入的本地图片",
+    "largeIcon.source.steam-local": "Steam 本地缓存",
+    "largeIcon.source.steam-online": "Steam 在线素材",
+    "largeIcon.source.cache": "SnowDesktop 缓存",
+    "largeIcon.advancedBackground": "悬停背景高级设置",
+    "largeIcon.hoverOpacityLinked": "随常态不透明度自动调整",
+    "largeIcon.placementHint": "移动鼠标选择落点；方向键调整宽高；单击或 Enter 确认，Esc 取消。",
+    "largeIcon.restoreContent": "恢复原始图标"
 }

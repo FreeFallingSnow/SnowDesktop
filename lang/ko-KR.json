@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "마우스 올리기 지연(ms)",
     "largeIcon.enterMs": "진입 전환 시간(ms)",
     "largeIcon.exitMs": "종료 전환 시간(ms)",
-    "largeIcon.retry": "저장 다시 시도"
+    "largeIcon.retry": "저장 다시 시도",
+    "largeIcon.loading": "이미지 불러오는 중…",
+    "largeIcon.source.original": "원본 아이콘",
+    "largeIcon.source.local": "가져온 로컬 이미지",
+    "largeIcon.source.steam-local": "Steam 로컬 캐시",
+    "largeIcon.source.steam-online": "Steam 온라인 이미지",
+    "largeIcon.source.cache": "SnowDesktop 캐시",
+    "largeIcon.advancedBackground": "마우스 오버 배경 고급 설정",
+    "largeIcon.hoverOpacityLinked": "기본 불투명도에 맞춰 자동 조정",
+    "largeIcon.placementHint": "마우스로 위치를 선택하고 방향키로 크기를 조절하세요. 클릭 또는 Enter로 확인하고 Esc로 취소합니다.",
+    "largeIcon.restoreContent": "원본 아이콘 복원"
 }

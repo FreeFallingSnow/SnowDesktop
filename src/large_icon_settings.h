@@ -16,6 +16,10 @@ struct LargeIconSettingsRequest
 struct LargeIconSettingsSnapshot
 {
     std::wstring key, name, imagePath;
+    std::wstring landscapePath, portraitPath;
+    std::string source, landscapeSource, portraitSource;
+    std::uint32_t accent = 0x505866;
+    bool steam = false;
     std::uint64_t session = 0, revision = 0;
     bool available = false, editable = false, succeeded = false;
     int maxColumns = 1, maxRows = 1;

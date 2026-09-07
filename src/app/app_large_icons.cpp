@@ -1,14 +1,16 @@
 #include "app.h"
 #include "../animation_settings.h"
 #include "../large_icon_steam.h"
+#include "../large_icon_render_rules.h"
 
-void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath)
+void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant)
 {
     if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index])) return;
     auto& item = items_[index];
     const auto& config = *item.largeIcon;
     snowdesktop::LargeIconAssetRequest request;
     request.itemKey = item.layoutKey; request.parsingName = item.parsingName;
+    request.variant = variant;
     request.content = config.content; request.reference = config.image; request.lastGood = config.cachedCover;
     request.refresh = refresh; request.localOnly = config.localOnly; request.importPath = std::move(importPath);
     request.language = snowdesktop::large_icon_steam::Language(Locale::Instance().GetEffectiveLanguage());
@@ -17,22 +19,37 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
     request.pixels = config.content == 0 ? snowdesktop::icon_render_rules::SourcePixelsForTarget(
         static_cast<int>(std::min(width, height) * config.contentScale)) : std::clamp(std::max(width, height), 256, 2048);
     request.portrait = config.steamOrientation == 2 || (config.steamOrientation == 0 && double(width) / height < 1.195);
-    if (config.content == 2)
+    if (variant) { request.content = 2; request.pixels = 256; request.portrait = variant == 2; }
+    if (request.content == 2)
     {
         wchar_t url[2048]{};
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
         request.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
     }
     auto& runtime = largeIconRuntime_[item.layoutKey];
+    std::error_code stampError;
+    const auto stamp = std::filesystem::last_write_time(item.parsingName, stampError);
     const std::wstring signature = item.parsingName + L":" + std::to_wstring(config.content) + L":" +
         Utf8ToWide(config.image) + L":" + std::to_wstring(request.appId) + L":" + std::to_wstring(request.pixels) +
-        L":" + std::to_wstring(request.portrait) + L":" + std::to_wstring(request.localOnly) + L":" + Utf8ToWide(request.language);
-    if (!refresh && request.importPath.empty() && runtime.signature == signature) return;
-    runtime.signature = signature; runtime.pending = true;
-    request.generation = runtime.generation = ++largeIconAssetSerial_;
+        L":" + std::to_wstring(request.portrait) + L":" + std::to_wstring(request.localOnly) + L":" + Utf8ToWide(request.language) +
+        L":" + (stampError ? L"" : std::to_wstring(stamp.time_since_epoch().count())) + L":" + std::to_wstring(item.sysIconIndex);
+    auto& savedSignature = variant ? runtime.previewSignatures[variant - 1] : runtime.signature;
+    if (!refresh && request.importPath.empty() && savedSignature == signature &&
+        (variant || runtime.pending || runtime.retryAt == 0 ||
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() < runtime.retryAt)) return;
+    if (!variant && request.importPath.empty() && config.content == 0 && runtime.asset && runtime.asset->source != "original")
+    { EraseD2DIconCacheForBitmap(runtime.asset->bitmap); runtime.asset.reset(); }
+    savedSignature = signature;
+    if (!variant) runtime.pending = true;
+    request.generation = ++largeIconAssetSerial_;
+    (variant ? runtime.previewGenerations[variant - 1] : runtime.generation) = request.generation;
     if (!largeIconAssets_)
         largeIconAssets_ = std::make_unique<snowdesktop::LargeIconAssets>(GetDataSubdirectoryPath(L"large-icons"),
             [window = hwnd_] { PostMessageW(window, kLargeIconAssetsReadyMessage, 0, 0); });
+    std::vector<std::string> retained;
+    for (const auto& current : items_) if (current.largeIcon)
+    { retained.push_back(current.largeIcon->image); retained.push_back(current.largeIcon->cachedCover); }
+    largeIconAssets_->RetainReferences(std::move(retained));
     largeIconAssets_->Request(std::move(request));
 }
 
@@ -45,9 +62,18 @@ void DesktopApp::ProcessLargeIconAssets()
         const auto index = FindItemIndexByKey(result.request.itemKey);
         auto runtime = largeIconRuntime_.find(result.request.itemKey);
         if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index]) ||
-            runtime == largeIconRuntime_.end() || runtime->second.generation != result.request.generation) continue;
+            runtime == largeIconRuntime_.end()) continue;
         auto& state = runtime->second;
+        if (result.request.variant)
+        {
+            const auto i = result.request.variant - 1;
+            if (state.previewGenerations[i] == result.request.generation) state.previews[i] = std::move(result.asset);
+            continue;
+        }
+        if (state.generation != result.request.generation) continue;
         state.pending = false; state.error = result.error;
+        state.retryAt = result.error.empty() ? 0 : snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 120000;
+        if (state.retryAt) SetTimer(hwnd_, kLargeIconRetryTimerId, 120000, nullptr);
         if (!result.asset) continue;
         if (!result.request.importPath.empty())
         {
@@ -55,7 +81,6 @@ void DesktopApp::ProcessLargeIconAssets()
             auto config = *items_[index].largeIcon;
             config.content = 1; config.image = result.asset->reference; config.fit = 1;
             if (!SetLargeIconConfig(index, config)) { state.error = "largeIcon.saveFailed"; continue; }
-            if (largeIconEdit_.key == result.request.itemKey) ++largeIconEdit_.revision;
         }
         if (state.asset && state.asset != result.asset) EraseD2DIconCacheForBitmap(state.asset->bitmap);
         state.asset = std::move(result.asset);
@@ -80,9 +105,15 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
     auto& item = items_[index];
     if (config && (!CanEditLargeIcons() || !snowdesktop::ValidateLargeIconConfig(*config) ||
         IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId)) return false;
+    if (config && config->content == 2)
+    {
+        wchar_t url[2048]{};
+        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
+        if (!snowdesktop::large_icon_steam::AppId(url)) return false;
+    }
     const bool sameDesiredSize = config && item.largeIcon && config->columns == item.largeIcon->columns && config->rows == item.largeIcon->rows;
     const GridSpan span = sameDesiredSize ? item.gridSpan : config ? GridSpan{config->columns, config->rows} : GridSpan{1, 1};
-    if (config)
+    if (config && !sameDesiredSize)
     {
         const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (!page || item.gridCell.column + span.columns > page->columns ||
@@ -97,25 +128,23 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
     }
     const auto previous = item.largeIcon;
     const auto previousSpan = item.gridSpan;
+    const auto previousRecords = layoutRecords_;
     item.largeIcon = std::move(config);
     item.gridSpan = span;
     if (!SaveLayoutSlots())
     {
         item.largeIcon = previous;
         item.gridSpan = previousSpan;
-        auto record = layoutRecords_.find(item.layoutKey);
-        if (record != layoutRecords_.end())
-        {
-            record->second.largeIcon = previous;
-            record->second.span = previousSpan;
-        }
+        layoutRecords_ = previousRecords;
         return false;
     }
     if (!item.largeIcon && largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
+    else if (largeIconEdit_.key == item.layoutKey) ++largeIconEdit_.revision;
     LayoutItems();
     if (items_[index].largeIcon) RequestLargeIconAsset(index);
     else if (const auto runtime = largeIconRuntime_.find(items_[index].layoutKey); runtime != largeIconRuntime_.end())
     {
+        if (largeIconAssets_) largeIconAssets_->Cancel(items_[index].layoutKey);
         if (runtime->second.asset) EraseD2DIconCacheForBitmap(runtime->second.asset->bitmap);
         largeIconRuntime_.erase(runtime);
     }
@@ -160,6 +189,11 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.available = true;
     result.editable = CanEditLargeIcons();
     result.name = item.name;
+    wchar_t steamUrl[2048]{};
+    GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), item.parsingName.c_str());
+    result.steam = snowdesktop::large_icon_steam::AppId(steamUrl).has_value();
+    result.maxColumns = std::max(item.largeIcon->columns, item.gridSpan.columns);
+    result.maxRows = std::max(item.largeIcon->rows, item.gridSpan.rows);
     if (const auto* page = FindGridPage(gridPages_, item.gridCell.pageId))
     {
         result.maxColumns = page->columns - item.gridCell.column;
@@ -190,6 +224,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     else if (request.action == "refresh")
     {
         RequestLargeIconAsset(index, true);
+        if (result.steam) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, true, {}, variant);
         result.succeeded = true;
     }
     else if (request.action == "import")
@@ -229,7 +264,6 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         else if (SetLargeIconConfig(index, std::move(config)))
         {
             largeIconEdit_.preview.reset();
-            ++largeIconEdit_.revision;
             result.succeeded = true;
         }
         else result.error = "largeIcon.saveFailed";
@@ -239,12 +273,21 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.revision = largeIconEdit_.revision;
     result.config = snowdesktop::EncodeLargeIconConfig(EffectiveLargeIconConfig(item));
     RequestLargeIconAsset(index);
+    if (result.editable && result.steam) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
     if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
         if (runtime->second.asset)
         {
-            const auto path = std::filesystem::path(GetDataSubdirectoryPath(L"large-icons")) / Utf8ToWide(runtime->second.asset->reference);
+            const auto path = std::filesystem::path(GetDataSubdirectoryPath(L"large-icons")) / Utf8ToWide(runtime->second.asset->previewReference);
             result.imagePath = L"file:///" + path.generic_wstring();
+            result.source = runtime->second.asset->source;
+            result.accent = runtime->second.asset->accent;
+        }
+        for (int i = 0; i < 2; ++i) if (const auto& asset = runtime->second.previews[i])
+        {
+            const auto path = std::filesystem::path(GetDataSubdirectoryPath(L"large-icons")) / Utf8ToWide(asset->previewReference);
+            (i == 0 ? result.landscapePath : result.portraitPath) = L"file:///" + path.generic_wstring();
+            (i == 0 ? result.landscapeSource : result.portraitSource) = asset->source;
         }
         if (result.error.empty() && !runtime->second.error.empty()) result.error = runtime->second.error;
     }
@@ -269,7 +312,6 @@ RECT DesktopApp::GetLargeIconFrameRect(const DesktopItem& item) const
 void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state)
 {
     RequestLargeIconAsset(FindItemIndexByKey(item.layoutKey));
-    UpdateLargeIconHover();
     const auto& c = EffectiveLargeIconConfig(item);
     DesktopWidget geometry;
     geometry.bounds = bounds;
@@ -303,8 +345,8 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     icon.bottom = icon.top + edge;
     const bool animate = snowdesktop::animation::RuntimeAnimationsEnabled();
     const bool leftReveal = animate && !cover && c.content == 0 && (c.titleMode == 1 || c.hoverContent == 1) &&
-        frame.right - frame.left >= edge + std::max(100.f * scale, static_cast<float>(c.titleSize * scale * 4)) + 36 * scale &&
-        frame.right - frame.left >= (frame.bottom - frame.top) * 1.2;
+        snowdesktop::large_icon_render_rules::CanRevealTitle(static_cast<float>(frame.right - frame.left),
+            static_cast<float>(frame.bottom - frame.top), static_cast<float>(edge), static_cast<float>(c.titleSize) * scale, scale);
     float contentZoom = 1;
     if (animate && ((cover && c.coverHover == 1) || (!cover && c.hoverContent == 2))) contentZoom += .06f * hover * static_cast<float>(c.amplitude);
     if (c.press && animate && mouseDown_ && PtInRect(&frame, lastMousePoint_) && !dragSession_.IsActive()) contentZoom *= .96f;
@@ -355,7 +397,8 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         title.left = leftReveal ? static_cast<LONG>(frame.left + edge + 24 * scale) : frame.left;
         title.right -= static_cast<LONG>(12 * scale);
         if (cover) title.top = static_cast<LONG>(frame.bottom - c.titleSize * scale * 3.2);
-        DrawD2DRoundedRectangle(context, title, 4 * scale, color(0x20242b, .78 * hover), color(0, 0));
+        DrawD2DRoundedRectangle(context, title, 4 * scale,
+            color(snowdesktop::large_icon_render_rules::TitleBackdrop(c.autoTitleColor ? 0xffffff : c.titleColor), .88 * hover), color(0, 0));
         ComPtr<IDWriteTextFormat> format;
         dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(c.titleSize) * scale, L"", &format);
@@ -407,24 +450,45 @@ void DesktopApp::DrawLargeIconTitles(ID2D1RenderTarget* context)
         if (hover <= .01f) continue;
         const float scale = GetItemLayoutScale(item.bounds);
         const int width = std::min<int>(page->bounds.right - page->bounds.left, std::max(160, static_cast<int>(260 * scale)));
-        const int height = static_cast<int>(c.titleSize * scale * 3.2 + 12);
-        const int left = std::clamp(static_cast<int>((frame.left + frame.right - width) / 2),
-            static_cast<int>(page->bounds.left), static_cast<int>(page->bounds.right - width));
-        int top = frame.bottom + 5;
-        if (top + height > page->bounds.bottom) top = frame.top - height - 5;
-        top = std::max(top, static_cast<int>(page->bounds.top));
-        RECT title{left, top, left + width, top + height};
-        DrawD2DRoundedRectangle(context, title, 6 * scale, D2D1::ColorF(0x20242b, .96f * hover), D2D1::ColorF(0xffffff, .18f * hover));
         ComPtr<IDWriteTextFormat> format;
         if (FAILED(dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(c.titleSize) * scale, L"", &format))) continue;
         format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
+        const auto name = ShouldUseDemoIdentity(item) ? GetDemoIdentityTitle(item.layoutKey) : item.name;
+        const float edge = std::min(frame.right - frame.left, frame.bottom - frame.top) * static_cast<float>(c.contentScale);
+        if (snowdesktop::animation::RuntimeAnimationsEnabled() && c.content == 0 && (c.titleMode == 1 || c.hoverContent == 1) &&
+            snowdesktop::large_icon_render_rules::CanRevealTitle(static_cast<float>(frame.right - frame.left),
+                static_cast<float>(frame.bottom - frame.top), edge, static_cast<float>(c.titleSize) * scale, scale))
+        {
+            ComPtr<IDWriteTextLayout> inner;
+            DWRITE_TEXT_METRICS metrics{};
+            const float available = static_cast<float>(frame.right - frame.left) - edge - 48 * scale;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()), format.Get(),
+                available, 100000.f, &inner)) && SUCCEEDED(inner->GetMetrics(&metrics)) && metrics.lineCount <= 2) continue;
+        }
+        ComPtr<IDWriteTextLayout> text;
+        if (FAILED(dwriteFactory_->CreateTextLayout(name.c_str(), static_cast<UINT32>(name.size()), format.Get(),
+            static_cast<float>(width - 12), 100000.f, &text))) continue;
+        DWRITE_TEXT_METRICS metrics{};
+        if (FAILED(text->GetMetrics(&metrics))) continue;
+        const int height = std::min(static_cast<int>(page->bounds.bottom - page->bounds.top), static_cast<int>(std::ceil(metrics.height)) + 12);
+        const int left = std::clamp(static_cast<int>((frame.left + frame.right - width) / 2),
+            static_cast<int>(page->bounds.left), static_cast<int>(page->bounds.right - width));
+        int top = frame.bottom + 5;
+        if (top + height > page->bounds.bottom) top = frame.top - height - 5;
+        top = std::clamp(top, static_cast<int>(page->bounds.top), static_cast<int>(page->bounds.bottom - height));
+        RECT title{left, top, left + width, top + height};
+        DrawD2DRoundedRectangle(context, title, 6 * scale,
+            D2D1::ColorF(snowdesktop::large_icon_render_rules::TitleBackdrop(c.autoTitleColor ? 0xffffff : c.titleColor), .96f * hover),
+            D2D1::ColorF(0xffffff, .18f * hover));
         ComPtr<ID2D1SolidColorBrush> brush;
         context->CreateSolidColorBrush(D2D1::ColorF(c.autoTitleColor ? 0xffffff : c.titleColor, hover), &brush);
-        const auto name = ShouldUseDemoIdentity(item) ? GetDemoIdentityTitle(item.layoutKey) : item.name;
-        if (brush) context->DrawText(name.c_str(), static_cast<UINT32>(name.size()), format.Get(),
-            D2D1::RectF(static_cast<float>(title.left + 6), static_cast<float>(title.top),
-                static_cast<float>(title.right - 6), static_cast<float>(title.bottom)), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if (brush)
+        {
+            context->PushAxisAlignedClip(ToD2DRect(title), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            context->DrawTextLayout(D2D1::Point2F(static_cast<float>(title.left + 6), static_cast<float>(title.top + 6)), text.Get(), brush.Get());
+            context->PopAxisAlignedClip();
+        }
     }
 }

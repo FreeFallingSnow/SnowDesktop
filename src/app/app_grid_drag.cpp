@@ -316,6 +316,10 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
     const int groupRows = std::max(1, maxRow - minRow);
     const bool stacked = (groupColumns == 1 && groupRows == 1 && selectedIndexes.size() > 1);
     const int spreadCols = stacked ? std::min(static_cast<int>(selectedIndexes.size()), page->columns) : groupColumns;
+    const bool hasLargeIcon = std::any_of(selectedIndexes.begin(), selectedIndexes.end(),
+        [&](size_t index) { return items_[index].largeIcon.has_value(); });
+    if (hasLargeIcon && (targetCell.column < 0 || targetCell.row < 0 ||
+        targetCell.column + spreadCols > page->columns || targetCell.row + groupRows > page->rows)) return moves;
     targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - spreadCols));
     targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - groupRows));
 
@@ -352,6 +356,8 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
         }
 
         if (!IsGridAreaValid(movedCell, items_[itemIndex].gridSpan) ||
+            movedCell.column + items_[itemIndex].gridSpan.columns > page->columns ||
+            movedCell.row + items_[itemIndex].gridSpan.rows > page->rows ||
             IsGridAreaOccupiedByUnselected(movedCell, items_[itemIndex].gridSpan))
         {
             moves.clear();

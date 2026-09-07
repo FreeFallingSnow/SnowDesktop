@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "Hover delay (ms)",
     "largeIcon.enterMs": "Enter duration (ms)",
     "largeIcon.exitMs": "Exit duration (ms)",
-    "largeIcon.retry": "Retry saving"
+    "largeIcon.retry": "Retry saving",
+    "largeIcon.loading": "Loading image…",
+    "largeIcon.source.original": "Original icon",
+    "largeIcon.source.local": "Imported local image",
+    "largeIcon.source.steam-local": "Local Steam cache",
+    "largeIcon.source.steam-online": "Online Steam artwork",
+    "largeIcon.source.cache": "SnowDesktop cache",
+    "largeIcon.advancedBackground": "Advanced hover background",
+    "largeIcon.hoverOpacityLinked": "Derive from normal opacity",
+    "largeIcon.placementHint": "Move the pointer to choose a position; use arrow keys to resize; click or press Enter to confirm, Esc to cancel.",
+    "largeIcon.restoreContent": "Restore original icon"
 }

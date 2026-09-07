@@ -70,7 +70,7 @@ DragSourceList DesktopApp::BuildDragSourceList(
                     const DesktopItem& item = items_[entry.desktopIndex];
                     entry.filePath = item.parsingName;
                     entry.originalCell = item.gridCell;
-                    entry.originalSpan = item.gridSpan;
+                    entry.originalSpan = {1, 1}; // A Dock entry always has ordinary icon geometry.
                     entry.protectedDesktopIcon = IsProtectedDesktopIcon(item);
                 }
             }

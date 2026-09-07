@@ -96,6 +96,15 @@ void TestCodec()
         "controller IPC preserves replacement marker, draft fields and language array");
 
     using namespace snowdesktop::widget_runtime;
+    snowdesktop::LargeIconSettingsSnapshot large;
+    large.key = L"图标 / 日本語"; large.session = UINT64_MAX; large.revision = 47;
+    large.config = snowdesktop::EncodeLargeIconConfig({}); large.landscapePath = L"file:///C:/图片/preview.png";
+    large.portraitSource = "steam-local"; large.accent = 0x445566; large.steam = true;
+    const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
+    Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
+        largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
+        largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent,
+        "large-icon editing guards, Unicode references and thumbnail provenance survive private IPC");
     WidgetSettingsSnapshot widget;
     widget.widgetId = L"music-1";
     widget.generation = 3;

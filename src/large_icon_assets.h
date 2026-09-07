@@ -14,13 +14,14 @@ struct LargeIconAsset
     HBITMAP bitmap = nullptr;
     int width = 0, height = 0;
     std::uint32_t accent = 0x505866;
-    std::string reference, source;
+    std::string reference, previewReference, source;
     ~LargeIconAsset() { if (bitmap) DeleteObject(bitmap); }
 };
 struct LargeIconAssetRequest
 {
     std::wstring itemKey, parsingName;
     std::uint64_t generation = 0;
+    int variant = 0; // 0: desktop content, 1/2: landscape/portrait chooser
     int content = 0, pixels = 256;
     std::uint32_t appId = 0;
     bool portrait = false, localOnly = false, refresh = false;
@@ -36,9 +37,12 @@ struct LargeIconAssetResult
 class LargeIconAssets
 {
 public:
-    explicit LargeIconAssets(std::filesystem::path directory, std::function<void()> ready);
+    explicit LargeIconAssets(std::filesystem::path directory, std::function<void()> ready,
+        std::filesystem::path steamDirectory = {});
     ~LargeIconAssets();
     void Request(LargeIconAssetRequest request);
+    void Cancel(const std::wstring& itemKey);
+    void RetainReferences(std::vector<std::string> references);
     std::vector<LargeIconAssetResult> TakeCompleted();
     void Stop();
 private:

@@ -15,6 +15,7 @@ void DesktopApp::DrawStaticBackground(
     bool hiddenMode)
 {
     snowdesktop::performance::Scope performanceScope("desktop", "background");
+    UpdateLargeIconHover();
     auto intersectsUpdate =
         [&](RECT bounds, int overdraw = 0) {
         if (!updateRect)
@@ -77,7 +78,7 @@ void DesktopApp::DrawStaticBackground(
                 foregroundTitles.push_back(
                     { icon, di->bounds });
             }
-            if (!intersectsUpdate(di->bounds, 8))
+            if (!intersectsUpdate(di->largeIcon ? GetLargeIconFrameRect(*di) : di->bounds, 8))
                 continue;
             int state = selected ? 2 : (hovered ? 1 : 0);
             icon->Draw(

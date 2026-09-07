@@ -1,8 +1,10 @@
 #include "icon_render_rules.h"
+#include "large_icon_render_rules.h"
 
 #include <iostream>
 
 namespace rules = snowdesktop::icon_render_rules;
+int RunLargeIconAssetTests();
 
 namespace
 {
@@ -19,6 +21,12 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    failures += RunLargeIconAssetTests();
+    using namespace snowdesktop::large_icon_render_rules;
+    Check(CanRevealTitle(400, 180, 108, 12, 1), "wide large icons can reveal names without resizing content");
+    Check(!CanRevealTitle(100, 400, 60, 12, 1), "portrait frames keep floating titles");
+    Check(!CanRevealTitle(180, 100, 100, 18, 1), "insufficient text room keeps floating titles");
+    Check(TitleBackdrop(0) != TitleBackdrop(0xffffff), "manual dark titles receive a readable light backdrop");
     Check(rules::SourcePixelsForTarget(32) == 64,
         "small icons use the baseline source bucket");
     Check(rules::SourcePixelsForTarget(65) == 96,

@@ -1616,7 +1616,7 @@ private:
     void DrawLargeIconTitles(ID2D1RenderTarget* context);
     snowdesktop::LargeIconSettingsSnapshot EditLargeIcon(snowdesktop::LargeIconSettingsRequest request);
     const snowdesktop::LargeIconConfig& EffectiveLargeIconConfig(const DesktopItem& item) const;
-    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {});
+    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0);
     void ProcessLargeIconAssets();
     void UpdateLargeIconHover();
     void TriggerLargeIconLaunch(size_t index);
@@ -3246,6 +3246,10 @@ private:
         std::shared_ptr<snowdesktop::LargeIconAsset> asset;
         std::wstring signature;
         std::uint64_t generation = 0;
+        std::array<std::shared_ptr<snowdesktop::LargeIconAsset>, 2> previews;
+        std::array<std::wstring, 2> previewSignatures;
+        std::array<std::uint64_t, 2> previewGenerations{};
+        double retryAt = 0;
         float hover = 0, from = 0, target = 0;
         double transitionStart = 0, launchStart = 0;
         bool pending = false;

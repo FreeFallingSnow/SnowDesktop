@@ -1487,5 +1487,15 @@
     "largeIcon.delayMs": "Verzögerung bei Mauszeigerkontakt (ms)",
     "largeIcon.enterMs": "Einblenddauer (ms)",
     "largeIcon.exitMs": "Ausblenddauer (ms)",
-    "largeIcon.retry": "Speichern erneut versuchen"
+    "largeIcon.retry": "Speichern erneut versuchen",
+    "largeIcon.loading": "Bild wird geladen…",
+    "largeIcon.source.original": "Originalsymbol",
+    "largeIcon.source.local": "Importiertes lokales Bild",
+    "largeIcon.source.steam-local": "Lokaler Steam-Cache",
+    "largeIcon.source.steam-online": "Steam-Grafik aus dem Internet",
+    "largeIcon.source.cache": "SnowDesktop-Cache",
+    "largeIcon.advancedBackground": "Erweiterter Hintergrund beim Zeigen",
+    "largeIcon.hoverOpacityLinked": "Von der normalen Deckkraft ableiten",
+    "largeIcon.placementHint": "Position mit der Maus wählen; Größe mit Pfeiltasten ändern; mit Klick oder Eingabetaste bestätigen, mit Esc abbrechen.",
+    "largeIcon.restoreContent": "Originalsymbol wiederherstellen"
 }
