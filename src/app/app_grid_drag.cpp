@@ -501,6 +501,10 @@ void DesktopApp::UpdateDragGroupOrigin()
  */
 void DesktopApp::MigrateSelectedItemsToLastMonitorPage()
 {
+    // Page turning during a large-icon drag is a preview only. Retain the
+    // entire group's source cells/spans until its accepted drop commits them;
+    // this also makes cancellation leave the original layout intact.
+    if (std::any_of(items_.begin(), items_.end(), [](const auto& item) { return item.selected && item.largeIcon; })) return;
     if (gridPages_.empty() || lastMonitorPageId_.empty()) return;
     const GridPage* targetPage = FindGridPage(gridPages_, lastMonitorPageId_);
     if (!targetPage) return;

@@ -13,6 +13,10 @@
 namespace
 {
 std::atomic<int> requests = 0;
+std::mutex networkMutex;
+std::condition_variable_any networkChanged;
+bool networkBlocked = false;
+int activeRequests = 0, peakRequests = 0;
 int failures = 0;
 void Check(bool condition, const char* message)
 {
@@ -58,6 +62,13 @@ namespace snowdesktop::http_stream
 Result StreamHttpGet(const Options& options, std::stop_token token, const HeadCallback& head, const ChunkSink&)
 {
     ++requests;
+    {
+        std::unique_lock lock(networkMutex);
+        peakRequests = std::max(peakRequests, ++activeRequests);
+        networkChanged.notify_all();
+        networkChanged.wait(lock, token, [] { return !networkBlocked; });
+        --activeRequests;
+    }
     Result result; result.head.status = 404; result.head.finalUrl = options.url;
     result.cancelled = token.stop_requested(); result.responseAccepted = head(result.head);
     return result;
@@ -166,6 +177,50 @@ int RunLargeIconAssetTests()
         queue.assets.Request(request);
         auto giantResult = queue.Wait(1);
         Check(!giantResult.empty() && !giantResult[0].asset, "sources over sixteen million pixels are rejected before pixel conversion");
+
+        // Hold the two workers at a deterministic boundary. This proves the
+        // concurrency cap and coalescing without sleep-based timing guesses.
+        { std::lock_guard lock(networkMutex); networkBlocked = true; peakRequests = 0; }
+        const int beforeBatch = requests;
+        for (int i = 0; i < 4; ++i)
+        {
+            LargeIconAssetRequest cover;
+            cover.itemKey = L"concurrent-" + std::to_wstring(i); cover.content = 2;
+            cover.appId = 99994 + i; cover.generation = 100 + i;
+            queue.assets.Request(cover);
+            if (i == 0)
+            {
+                cover.itemKey = L"shared-request"; cover.generation = 104;
+                queue.assets.Request(cover);
+            }
+        }
+        {
+            std::unique_lock lock(networkMutex);
+            Check(networkChanged.wait_for(lock, std::chrono::seconds(10), [] { return activeRequests == 2; }),
+                "two concurrent resource workers reach the network boundary");
+            Check(peakRequests == 2, "cover acquisition never exceeds two simultaneous tasks");
+            networkBlocked = false;
+        }
+        networkChanged.notify_all();
+        auto batch = queue.Wait(5);
+        Check(requests == beforeBatch + 4, "the same AppID, artwork type and language share one metadata request");
+
+        { std::lock_guard lock(networkMutex); networkBlocked = true; }
+        LargeIconAssetRequest stale;
+        stale.itemKey = L"superseded"; stale.content = 2; stale.appId = 99999; stale.generation = 201;
+        queue.assets.Request(stale);
+        {
+            std::unique_lock lock(networkMutex);
+            Check(networkChanged.wait_for(lock, std::chrono::seconds(10), [] { return activeRequests == 1; }),
+                "old cover work starts before the source is changed");
+        }
+        stale.content = 1; stale.reference = result[0].asset ? result[0].asset->reference : "missing.png"; stale.generation = 202;
+        queue.assets.Request(stale);
+        auto latest = queue.Wait(1);
+        Check(!latest.empty() && latest[0].request.generation == 202 && latest[0].asset,
+            "a superseded cover callback cannot replace the newer user image request");
+        { std::lock_guard lock(networkMutex); networkBlocked = false; }
+        networkChanged.notify_all();
     }
     if (root.parent_path() == fs::temp_directory_path() && root.filename().wstring().starts_with(L"SnowDesktop-large-icons-"))
         fs::remove_all(root);

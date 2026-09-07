@@ -78,6 +78,31 @@ void DesktopApp::LayoutItems()
         widget.bounds = GetGridRect(gridPages_, widget.gridCell, widget.gridSpan);
     }
 
+    // A monitor/grid resize can clamp several anchors into the same cells.
+    // Resolve that collision using the existing overflow-page placement path;
+    // never perform this automatic adaptation during a live drag preview.
+    bool largeIconCollision = false;
+    if (!dragSession_.IsActive())
+        for (const auto& item : items_)
+        {
+            if (!item.largeIcon || IsItemInAnyWidget(item) || !FindGridPage(gridPages_, item.gridCell.pageId)) continue;
+            std::unordered_set<std::wstring> occupied;
+            for (const auto& other : items_)
+                if (&other != &item && !IsItemInAnyWidget(other)) MarkGridArea(occupied, other.gridCell, other.gridSpan);
+            for (const auto& widget : widgets_) if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
+            if (AreGridSlotsMarked(occupied, item.gridCell, item.gridSpan)) { largeIconCollision = true; break; }
+        }
+    if (largeIconCollision)
+    {
+        RelayoutDisplacedItems();
+        for (auto& item : items_)
+        {
+            item.slot = SlotFromCell(gridPages_, item.gridCell);
+            item.bounds = GetGridRect(gridPages_, item.gridCell, item.gridSpan);
+        }
+        for (auto& widget : widgets_)
+            widget.bounds = IsGroupedWidget(widget) ? RECT{} : GetGridRect(gridPages_, widget.gridCell, widget.gridSpan);
+    }
     RebuildContainersAndItems();
 }
 

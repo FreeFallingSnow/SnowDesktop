@@ -20,23 +20,25 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
         static_cast<int>(std::min(width, height) * config.contentScale)) : std::clamp(std::max(width, height), 256, 2048);
     request.portrait = config.steamOrientation == 2 || (config.steamOrientation == 0 && double(width) / height < 1.195);
     if (variant) { request.content = 2; request.pixels = 256; request.portrait = variant == 2; }
+    auto& runtime = largeIconRuntime_[item.layoutKey];
+    const auto stamp = item.modifiedTime ? (std::uint64_t(item.modifiedTime->dwHighDateTime) << 32) |
+        item.modifiedTime->dwLowDateTime : 0;
+    const std::wstring signature = item.parsingName + L":" + std::to_wstring(config.content) + L":" +
+        Utf8ToWide(config.image) + L":" + std::to_wstring(request.pixels) +
+        L":" + std::to_wstring(request.portrait) + L":" + std::to_wstring(request.localOnly) + L":" + Utf8ToWide(request.language) +
+        L":" + std::to_wstring(stamp) + L":" + std::to_wstring(item.sysIconIndex);
+    auto& savedSignature = variant ? runtime.previewSignatures[variant - 1] : runtime.signature;
+    if (!refresh && request.importPath.empty() && savedSignature == signature &&
+        (variant || runtime.pending || runtime.retryAt == 0 ||
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() < runtime.retryAt)) return;
+    // Paint/animation frames compare only model values. Read shortcut contents
+    // only when a new resource generation is actually needed.
     if (request.content == 2)
     {
         wchar_t url[2048]{};
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
         request.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
     }
-    auto& runtime = largeIconRuntime_[item.layoutKey];
-    std::error_code stampError;
-    const auto stamp = std::filesystem::last_write_time(item.parsingName, stampError);
-    const std::wstring signature = item.parsingName + L":" + std::to_wstring(config.content) + L":" +
-        Utf8ToWide(config.image) + L":" + std::to_wstring(request.appId) + L":" + std::to_wstring(request.pixels) +
-        L":" + std::to_wstring(request.portrait) + L":" + std::to_wstring(request.localOnly) + L":" + Utf8ToWide(request.language) +
-        L":" + (stampError ? L"" : std::to_wstring(stamp.time_since_epoch().count())) + L":" + std::to_wstring(item.sysIconIndex);
-    auto& savedSignature = variant ? runtime.previewSignatures[variant - 1] : runtime.signature;
-    if (!refresh && request.importPath.empty() && savedSignature == signature &&
-        (variant || runtime.pending || runtime.retryAt == 0 ||
-            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() < runtime.retryAt)) return;
     if (!variant && request.importPath.empty() && config.content == 0 && runtime.asset && runtime.asset->source != "original")
     { EraseD2DIconCacheForBitmap(runtime.asset->bitmap); runtime.asset.reset(); }
     savedSignature = signature;
@@ -84,7 +86,8 @@ void DesktopApp::ProcessLargeIconAssets()
         }
         if (state.asset && state.asset != result.asset) EraseD2DIconCacheForBitmap(state.asset->bitmap);
         state.asset = std::move(result.asset);
-        if (items_[index].largeIcon->content == 2 && items_[index].largeIcon->cachedCover != state.asset->reference)
+        if (items_[index].largeIcon->content == 2 && state.asset->reference.starts_with("steam-") &&
+            items_[index].largeIcon->cachedCover != state.asset->reference)
         {
             items_[index].largeIcon->cachedCover = state.asset->reference;
             persist = true;
@@ -139,7 +142,8 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
         return false;
     }
     if (!item.largeIcon && largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
-    else if (largeIconEdit_.key == item.layoutKey) ++largeIconEdit_.revision;
+    else if (largeIconEdit_.key == item.layoutKey)
+    { largeIconEdit_.preview.reset(); ++largeIconEdit_.revision; }
     LayoutItems();
     if (items_[index].largeIcon) RequestLargeIconAsset(index);
     else if (const auto runtime = largeIconRuntime_.find(items_[index].layoutKey); runtime != largeIconRuntime_.end())
@@ -323,7 +327,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     const auto runtime = largeIconRuntime_.find(item.layoutKey);
     const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
     const float hover = runtime != largeIconRuntime_.end() ? runtime->second.hover : 0;
-    const bool cover = c.content != 0 && asset;
+    const bool cover = c.content != 0 && asset && !asset->reference.starts_with("raw-");
     const float alpha = item.isCut ? .4f : (state == 3 ? .6f : 1.f);
     auto color = [](std::uint32_t rgb, double opacity) { return D2D1::ColorF(rgb, static_cast<float>(opacity)); };
     const auto neutral = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
@@ -349,13 +353,17 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
             static_cast<float>(frame.bottom - frame.top), static_cast<float>(edge), static_cast<float>(c.titleSize) * scale, scale);
     float contentZoom = 1;
     if (animate && ((cover && c.coverHover == 1) || (!cover && c.hoverContent == 2))) contentZoom += .06f * hover * static_cast<float>(c.amplitude);
-    if (c.press && animate && mouseDown_ && PtInRect(&frame, lastMousePoint_) && !dragSession_.IsActive()) contentZoom *= .96f;
+    const auto* pressedIcon = dynamic_cast<const DesktopIcon*>(mouseDownHit_);
+    if (c.press && animate && mouseDown_ && pressedIcon && pressedIcon->GetDesktopItem() == &item &&
+        PtInRect(&frame, lastMousePoint_) && !dragSession_.IsActive()) contentZoom *= .96f;
     if (leftReveal) OffsetRect(&icon, static_cast<int>((frame.left + 12 * scale - icon.left) * hover), 0);
     else if (animate && !cover && c.hoverContent == 3) OffsetRect(&icon, 0, static_cast<int>(-6 * scale * hover * c.amplitude));
-    if (runtime != largeIconRuntime_.end() && runtime->second.launchStart > 0 && c.launch == 1)
+    float launchOffset = 0;
+    if (animate && runtime != largeIconRuntime_.end() && runtime->second.launchStart > 0 && c.launch == 1)
     {
         const double progress = std::clamp((snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - runtime->second.launchStart) / 450., 0., 1.);
-        OffsetRect(&icon, 0, static_cast<int>(-std::sin(progress * 3.141592653589793) * 9 * scale * c.amplitude));
+        launchOffset = static_cast<float>(-std::sin(progress * 3.141592653589793) * 9 * scale * c.amplitude);
+        OffsetRect(&icon, 0, static_cast<int>(launchOffset));
     }
     InflateRect(&icon, static_cast<int>(edge * (contentZoom - 1) / 2), static_cast<int>(edge * (contentZoom - 1) / 2));
     ComPtr<ID2D1Factory> factory; context->GetFactory(&factory);
@@ -376,8 +384,8 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
             {
                 const float factor = std::min(fw / size.width, fh / size.height) * contentZoom;
                 const float w = size.width * factor, h = size.height * factor;
-                const auto destination = D2D1::RectF((target.left + target.right - w) / 2, (target.top + target.bottom - h) / 2,
-                    (target.left + target.right + w) / 2, (target.top + target.bottom + h) / 2);
+                const auto destination = D2D1::RectF((target.left + target.right - w) / 2, (target.top + target.bottom - h) / 2 + launchOffset,
+                    (target.left + target.right + w) / 2, (target.top + target.bottom + h) / 2 + launchOffset);
                 context->DrawBitmap(bitmap, destination, alpha);
             }
             else
@@ -386,7 +394,9 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
                 const float w = std::min(size.width, fw / factor), h = std::min(size.height, fh / factor);
                 const float left = static_cast<float>((size.width - w) * c.focusX), top = static_cast<float>((size.height - h) * c.focusY);
                 const auto source = D2D1::RectF(left, top, left + w, top + h);
-                context->DrawBitmap(bitmap, target, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &source);
+                auto destination = target;
+                destination.top += launchOffset; destination.bottom += launchOffset;
+                context->DrawBitmap(bitmap, destination, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &source);
             }
         }
     }
@@ -418,10 +428,10 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         }
     }
     if (clip) context->PopLayer();
-    if (c.border)
+    if (c.border || (c.hoverFrame == 2 && hover > 0))
         DrawD2DRoundedRectangle(context, frame, radius, color(0, 0), color(c.borderColor,
-            alpha * std::min(1., c.borderOpacity + (c.hoverFrame == 2 ? hover * .4 : 0))), static_cast<float>(c.borderWidth) * scale);
-    if (runtime != largeIconRuntime_.end() && runtime->second.launchStart > 0 && c.launch == 2)
+            alpha * std::min(1., (c.border ? c.borderOpacity : 0) + (c.hoverFrame == 2 ? hover * .4 : 0))), static_cast<float>(c.borderWidth) * scale);
+    if (animate && runtime != largeIconRuntime_.end() && runtime->second.launchStart > 0 && c.launch == 2)
     {
         const double progress = std::clamp((snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - runtime->second.launchStart) / 450., 0., 1.);
         DrawD2DRoundedRectangle(context, frame, radius, color(0, 0), color(0xffffff, std::sin(progress * 3.141592653589793) * .65), 2 * scale);

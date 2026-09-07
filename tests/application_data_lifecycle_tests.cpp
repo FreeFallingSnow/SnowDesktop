@@ -1824,6 +1824,8 @@ int main()
     Write(fullBackupData / longBackupRelative,
         "{ \"longPath\": true }\n");
 
+    Write(fullBackupData / L"large-icons" / L"import-user.png", "retained original image bytes");
+    Write(fullBackupData / L"large-icons" / L"steam-999-portrait-english.png", "retained offline cover bytes");
     snowdesktop::backup::FullDataBackupManager fullBackupManager(
         fullBackupState, fullBackupData, "1.0.1.0", "portable");
 
@@ -1853,6 +1855,9 @@ int main()
         "a rejected backup commit gate removes its staging directory");
 
     const auto createdFullBackup = fullBackupManager.Create();
+    Expect(Read(createdFullBackup.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
+        Read(createdFullBackup.backup.data / L"large-icons" / L"steam-999-portrait-english.png") == "retained offline cover bytes",
+        "complete backups retain user image sources and the currently needed offline covers");
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.root / L"backup.json"),

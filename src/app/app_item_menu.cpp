@@ -468,8 +468,18 @@ void DesktopApp::ShowItemContextMenu(
             wchar_t steamUrl[2048]{};
             GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), items_[itemIndex].parsingName.c_str());
             if (snowdesktop::large_icon_steam::AppId(steamUrl)) { config.content = 2; config.fit = 1; }
-            if (SetLargeIconConfig(itemIndex, config)) OpenLargeIconSettings(itemIndex);
-            else BeginLargeIconPlacement(itemIndex, config);
+            const auto& item = items_[itemIndex];
+            const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+            std::unordered_set<std::wstring> occupied;
+            for (size_t i = 0; i < items_.size(); ++i)
+                if (i != itemIndex && !IsItemInAnyWidget(items_[i])) MarkGridArea(occupied, items_[i].gridCell, items_[i].gridSpan);
+            for (const auto& widget : widgets_) if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
+            const GridSpan span{config.columns, config.rows};
+            const bool fits = page && item.gridCell.column + span.columns <= page->columns &&
+                item.gridCell.row + span.rows <= page->rows && !AreGridSlotsMarked(occupied, item.gridCell, span);
+            if (!fits) BeginLargeIconPlacement(itemIndex, config);
+            else if (SetLargeIconConfig(itemIndex, config)) OpenLargeIconSettings(itemIndex);
+            else MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
     case kContextLargeIconSettings:

@@ -539,6 +539,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         OnUrlDropDownloadCompleted(lp);
         return 0;
     case kSteamEntitlementChangedMessage:
+        UpdateLargeIconHover();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         if (settingsWindow_)
             settingsWindow_->RefreshGeneralRuntimeState();
         return 0;

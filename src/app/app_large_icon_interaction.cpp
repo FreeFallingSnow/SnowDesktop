@@ -61,7 +61,8 @@ bool DesktopApp::HandleLargeIconPointerMove(POINT point)
     if (index >= items_.size() || (!gesture.creating && !items_[index].largeIcon)) { CancelLargeIconGesture(); return true; }
     GridCell hovered = CellFromPointForDrag(point);
     const auto* page = FindGridPage(gridPages_, gesture.resizing ? gesture.cell.pageId : hovered.pageId);
-    if (!page) { gesture.valid = false; InvalidateRect(hwnd_, nullptr, FALSE); return true; }
+    if (!page || (gesture.resizing && hovered.pageId != page->id))
+    { gesture.valid = false; InvalidateRect(hwnd_, nullptr, FALSE); return true; }
     if (gesture.creating) gesture.cell = hovered;
     else
     {

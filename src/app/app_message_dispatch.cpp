@@ -130,6 +130,22 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
         if (LOWORD(lp) != HTCLIENT) break;
+        if (CanEditLargeIcons() && !HasActiveContextMenuSession() && !desktopIconsHidden_)
+        {
+            POINT pointer{};
+            if (GetCursorPos(&pointer) && ScreenToClient(hwnd_, &pointer) && !IsPointOccludedByOpenPopup(pointer))
+            {
+                const auto index = HitTestItem(pointer);
+                if (index >= 0 && static_cast<size_t>(index) < items_.size() && items_[index].largeIcon)
+                {
+                    DesktopWidget geometry;
+                    geometry.bounds = items_[index].bounds; geometry.gridCell = items_[index].gridCell; geometry.showTitle = false;
+                    if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+                    const auto handle = GetStandaloneWidgetResizeHandleRect(geometry);
+                    if (PtInRect(&handle, pointer)) { SetCursor(LoadCursorW(nullptr, IDC_SIZENWSE)); return TRUE; }
+                }
+            }
+        }
         bool resizeCursor = detailColumnResizeActive_;
         bool cursorPointAvailable = false;
         bool pointInsideCollectionPopup = false;

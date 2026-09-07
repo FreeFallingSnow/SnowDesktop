@@ -1897,6 +1897,9 @@ void TestShellRefreshPreservesCurrentItemState()
     previous.name = L"kept.txt";
     previous.gridCell = { L"current-page", 3, 4 };
     previous.gridSpan = { 2, 1 };
+    previous.largeIcon = snowdesktop::LargeIconConfig{};
+    previous.largeIcon->columns = 4; previous.largeIcon->rows = 3;
+    previous.largeIcon->image = "import-kept.png";
     previous.slot = 8;
     previous.selected = true;
     previous.isCut = true;
@@ -1913,6 +1916,8 @@ void TestShellRefreshPreservesCurrentItemState()
     read.fileSize = previous.fileSize;
     read.modifiedTime = previous.modifiedTime;
     snowdesktop::shell_refresh::PreserveRuntime(read, previous);
+    Check(read.largeIcon && read.largeIcon->columns == 4 && read.largeIcon->rows == 3 &&
+        read.largeIcon->image == "import-kept.png", "Shell refresh preserves desired large-icon spans and owned image references");
     Check(read.gridCell.pageId == L"current-page" && read.gridCell.column == 3 &&
             read.gridCell.row == 4 && read.gridSpan.columns == 2 && read.slot == 8 &&
             read.selected && read.isCut && read.iconBitmap == bitmap &&
@@ -1998,6 +2003,8 @@ void TestRenameUpdatesOnlyMatchingModels()
     items[1].selected = true;
     items[1].slot = 17;
     items[1].gridCell = { L"page", 3, 2 };
+    items[1].largeIcon = snowdesktop::LargeIconConfig{};
+    items[1].largeIcon->manualColor = 0x123456;
     items[1].iconState = IconState::FullQuality;
     items[1].iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
     items[1].childPidl.reset(ILCloneFull(
@@ -2025,6 +2032,8 @@ void TestRenameUpdatesOnlyMatchingModels()
 
     const auto changes = snowdesktop::rename_model_update::Apply(
         result, L"C:\\DESKTOP\\AFTER.TXT", items, widgets, dock, &popup);
+    Check(items[1].largeIcon && items[1].largeIcon->manualColor == 0x123456 && !items[0].largeIcon,
+        "renaming migrates the same large-icon instance without copying its style onto unrelated items");
     Check(!changes.needsReload && changes.desktopItems == std::vector<size_t>{1} &&
             changes.folders == std::vector<std::wstring>{L"mapped"} && changes.popup,
         "one renamed path must identify only its desktop, mapped and popup views");

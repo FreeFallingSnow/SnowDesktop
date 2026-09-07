@@ -4,6 +4,7 @@
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Microsoft.UI.Composition.h>
+#include <winrt/Windows.System.h>
 #include "../large_icon_render_rules.h"
 
 namespace snowdesktop::winui
@@ -23,9 +24,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::ContentControl editorHost;
     c::TextBlock status;
     c::Border preview;
+    c::Canvas previewStage;
     c::Canvas previewCanvas;
     c::Image previewImage;
     c::TextBlock previewTitle, previewSource;
+    c::Border floatingTitleBackdrop, innerTitleBackdrop;
+    c::TextBlock floatingTitle;
     std::array<c::Image, 2> coverImages;
     std::array<c::TextBlock, 2> coverSources;
     std::array<std::wstring, 2> coverPaths;
@@ -33,9 +37,18 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     m::Imaging::BitmapImage previewBitmap{nullptr};
     std::vector<std::function<void()>> syncControls;
     x::DispatcherTimer timer;
-    bool active = false, submitting = false, syncing = false, hovered = false, pressed = false;
+    bool active = false, submitting = false, syncing = false, hovered = false, pressed = false, previewDirty = false;
 
     std::wstring L(std::string_view key) { return localize ? localize(key) : std::wstring{}; }
+    std::wstring SourceLabel(std::string_view source)
+    {
+        if (source == "original") return L("largeIcon.source.original");
+        if (source == "local") return L("largeIcon.source.local");
+        if (source == "steam-local") return L("largeIcon.source.steam-local");
+        if (source == "steam-online") return L("largeIcon.source.steam-online");
+        if (source == "cache") return L("largeIcon.source.cache");
+        return L("largeIcon.unavailable");
+    }
     static winrt::Windows::UI::Color Color(std::uint32_t rgb, double alpha = 1)
     { return {static_cast<uint8_t>(alpha * 255), static_cast<uint8_t>(rgb >> 16), static_cast<uint8_t>(rgb >> 8), static_cast<uint8_t>(rgb)}; }
 
@@ -44,6 +57,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!action || submitting) return false;
         submitting = true;
         const bool polling = operation == "status";
+        const bool previewing = operation == "preview";
+        const bool finishesPreview = operation == "commit" || operation == "cancel" || operation == "read";
         const auto oldRevision = snapshot.revision;
         const auto oldError = snapshot.error;
         LargeIconSettingsRequest request{snapshot.key, snapshot.session, snapshot.revision,
@@ -51,6 +66,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         try { snapshot = action(std::move(request)); }
         catch (...) { snapshot.succeeded = false; snapshot.error = "largeIcon.unavailable"; }
         submitting = false;
+        if (snapshot.succeeded && previewing) previewDirty = true;
+        if ((snapshot.succeeded && finishesPreview) || !snapshot.editable || !snapshot.available) previewDirty = false;
         if (polling && snapshot.succeeded && snapshot.revision != oldRevision)
         { ReloadDraft(); Build(); }
         else if (polling && snapshot.error.empty() && (oldError == "largeIcon.saveFailed" || oldError == "largeIcon.invalid" || oldError == "largeIcon.stale")) snapshot.error = oldError;
@@ -66,9 +83,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
 
     void UpdatePreview()
     {
-        const double width = std::min(300., 260. * draft.columns / std::max(1, draft.rows));
-        const double height = std::min(260., 300. * draft.rows / std::max(1, draft.columns));
-        preview.Width(std::max(30., width)); preview.Height(std::max(30., height));
+        const double width = std::max(30., std::min(300., 260. * draft.columns / std::max(1, draft.rows)));
+        const double height = std::max(30., std::min(260., 300. * draft.rows / std::max(1, draft.columns)));
+        preview.Width(width); preview.Height(height);
+        previewStage.Width(330); previewStage.Height(height + std::max(60., draft.titleSize * 2.8 + 20));
+        c::Canvas::SetLeft(preview, (330 - width) / 2);
         previewCanvas.Width(preview.Width()); previewCanvas.Height(preview.Height());
         preview.CornerRadius(x::CornerRadius{draft.radius});
         const unsigned neutral = root.ActualTheme() == x::ElementTheme::Light ? 0xc9ced6u : 0x414751u;
@@ -97,7 +116,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const double sw = previewBitmap ? std::max(1, previewBitmap.PixelWidth()) : 1;
         const double sh = previewBitmap ? std::max(1, previewBitmap.PixelHeight()) : 1;
         const double edge = std::min(width, height) * draft.contentScale;
-        const bool raw = draft.content == 0;
+        const bool raw = draft.content == 0 || snapshot.source == "original";
         const double factor = raw ? std::min({1., edge / sw, edge / sh}) :
             draft.fit == 0 ? std::min(width / sw, height / sh) : std::max(width / sw, height / sh);
         const bool left = raw && (draft.titleMode == 1 || draft.hoverContent == 1) &&
@@ -113,11 +132,20 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         previewTitle.TextTrimming(x::TextTrimming::CharacterEllipsis);
         const auto textColor = draft.autoTitleColor ? 0xffffffu : draft.titleColor;
         previewTitle.Foreground(m::SolidColorBrush(Color(textColor)));
-        previewTitle.Visibility(hovered ? x::Visibility::Visible : x::Visibility::Collapsed);
+        innerTitleBackdrop.Visibility(hovered && (left || (!raw && draft.coverHover == 2)) ? x::Visibility::Visible : x::Visibility::Collapsed);
         previewTitle.Width(std::max(1., width - (left ? edge + 36 : 12)));
-        c::Canvas::SetLeft(previewTitle, left ? edge + 24 : 6);
-        c::Canvas::SetTop(previewTitle, left ? std::max(0., (height - draft.titleSize * 2.7) / 2) : std::max(0., height - draft.titleSize * 2.7));
-        previewSource.Text(snapshot.source.empty() ? L("largeIcon.loading") : L("largeIcon.source." + snapshot.source));
+        innerTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .88)));
+        c::Canvas::SetLeft(innerTitleBackdrop, left ? edge + 24 : 6);
+        c::Canvas::SetTop(innerTitleBackdrop, left ? std::max(0., (height - draft.titleSize * 2.7) / 2) : std::max(0., height - draft.titleSize * 2.7));
+        floatingTitle.Text(snapshot.name); floatingTitle.FontSize(draft.titleSize);
+        floatingTitle.TextWrapping(x::TextWrapping::Wrap); floatingTitle.MaxLines(2); floatingTitle.TextTrimming(x::TextTrimming::CharacterEllipsis);
+        floatingTitle.Foreground(m::SolidColorBrush(Color(textColor)));
+        floatingTitleBackdrop.Visibility(hovered && !left ? x::Visibility::Visible : x::Visibility::Collapsed);
+        floatingTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .96)));
+        floatingTitleBackdrop.Width(300); floatingTitleBackdrop.Padding(x::Thickness{6}); floatingTitleBackdrop.CornerRadius(x::CornerRadius{6});
+        floatingTitleBackdrop.IsHitTestVisible(false);
+        c::Canvas::SetLeft(floatingTitleBackdrop, 15); c::Canvas::SetTop(floatingTitleBackdrop, height + 6);
+        previewSource.Text(snapshot.source.empty() ? L("largeIcon.loading") : SourceLabel(snapshot.source));
         for (int i = 0; i < 2; ++i)
         {
             const auto& path = i == 0 ? snapshot.landscapePath : snapshot.portraitPath;
@@ -128,7 +156,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 else { m::Imaging::BitmapImage image; image.UriSource(winrt::Windows::Foundation::Uri(path)); coverImages[i].Source(image); }
             }
             const auto& source = i == 0 ? snapshot.landscapeSource : snapshot.portraitSource;
-            coverSources[i].Text(source.empty() ? L("largeIcon.unavailable") : L("largeIcon.source." + source));
+            coverSources[i].Text(SourceLabel(source));
         }
     }
 
@@ -174,7 +202,9 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 self->Send("preview");
             }
         });
-        const auto commit = [weak](auto const&, auto const&) { if (auto self = weak.lock()) self->Send("commit"); };
+        const auto commit = [weak](auto const&, auto const&) {
+            if (auto self = weak.lock(); self && self->active && !self->syncing && self->previewDirty) self->Send("commit");
+        };
         input.PointerCaptureLost(commit); input.KeyUp(commit); input.LostFocus(commit);
         syncControls.push_back([this, input, member] { input.Value(draft.*member); });
         panel.Children().Append(input);
@@ -221,9 +251,16 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         picker.IsAlphaEnabled(false); picker.Color(Color(draft.*member)); flyout.Content(picker); button.Flyout(flyout);
         std::weak_ptr<Impl> weak = shared_from_this();
         picker.ColorChanged([weak, member](auto const&, auto const& args) {
-            if (auto self = weak.lock()) { const auto v = args.NewColor(); self->draft.*member = (v.R << 16) | (v.G << 8) | v.B; self->Send("preview"); }
+            if (auto self = weak.lock(); self && self->active && !self->syncing) { const auto v = args.NewColor(); self->draft.*member = (v.R << 16) | (v.G << 8) | v.B; self->Send("preview"); }
         });
-        flyout.Closed([weak](auto const&, auto const&) { if (auto self = weak.lock()) self->Send("commit"); });
+        picker.KeyDown([weak, flyout](auto const&, auto const& args) {
+            if (args.Key() == winrt::Windows::System::VirtualKey::Escape)
+                if (auto self = weak.lock()) { self->Send("cancel"); self->ReloadDraft(); self->UpdatePreview(); args.Handled(true); flyout.Hide(); }
+        });
+        flyout.Closed([weak](auto const&, auto const&) {
+            if (auto self = weak.lock(); self && self->active && !self->syncing && self->previewDirty) self->Send("commit");
+        });
+        syncControls.push_back([this, picker, member] { picker.Color(Color(draft.*member)); });
         panel.Children().Append(button);
     }
     void Button(c::StackPanel panel, const char* key, std::function<void(Impl&)> callback)
@@ -238,9 +275,13 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         syncing = true;
         syncControls.clear(); root.Children().Clear(); editors.Children().Clear();
         root.Spacing(16); editors.Spacing(16);
-        previewCanvas.Children().Clear(); previewCanvas.Children().Append(previewImage); previewCanvas.Children().Append(previewTitle);
+        previewStage.Children().Clear(); previewCanvas.Children().Clear();
+        innerTitleBackdrop.Child(previewTitle); floatingTitleBackdrop.Child(floatingTitle);
+        previewCanvas.Children().Append(previewImage); previewCanvas.Children().Append(innerTitleBackdrop);
         preview.Child(previewCanvas); preview.HorizontalAlignment(x::HorizontalAlignment::Center);
-        root.Children().Append(preview);
+        previewStage.HorizontalAlignment(x::HorizontalAlignment::Center);
+        previewStage.Children().Append(preview); previewStage.Children().Append(floatingTitleBackdrop);
+        root.Children().Append(previewStage);
         root.Children().Append(previewSource);
         c::TextBlock name; name.Text(snapshot.name); name.TextWrapping(x::TextWrapping::Wrap);
         root.Children().Append(name); status.TextWrapping(x::TextWrapping::Wrap);
@@ -345,8 +386,9 @@ void LargeIconPagePresenter::Activate(std::wstring key)
 void LargeIconPagePresenter::Deactivate()
 {
     impl_->timer.Stop();
-    if (impl_->active) impl_->Send("cancel");
+    const bool wasActive = impl_->active;
     impl_->active = false;
+    if (wasActive) impl_->Send("cancel");
 }
 void LargeIconPagePresenter::RefreshLocalizedText() { if (impl_->active) impl_->Build(); }
 }

@@ -234,6 +234,7 @@ struct LargeIconAssets::Impl
     std::unordered_map<std::string, Cached> cache;
     std::vector<std::weak_ptr<LargeIconAsset>> allocations;
     std::unordered_set<std::string> retained;
+    std::unordered_map<std::string, std::filesystem::file_time_type> lastUse;
     std::vector<LargeIconAssetResult> completed;
     std::array<std::jthread, 2> workers;
     std::array<std::mutex, 64> sourceMutexes;
@@ -264,14 +265,15 @@ struct LargeIconAssets::Impl
             const auto bytes = it->file_size(ec);
             if (ec) break;
             total += bytes;
-            if (!pinned.contains(name)) candidates.push_back({it->path(), bytes, it->last_write_time(ec)});
+            if (!pinned.contains(name)) candidates.push_back({it->path(), bytes,
+                lastUse.contains(name) ? lastUse.at(name) : it->last_write_time(ec)});
         }
         std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.touched < b.touched; });
         constexpr std::uint64_t quota = 512ull * 1024 * 1024;
         for (const auto& file : candidates)
         {
             if (total <= quota) break;
-            if (std::filesystem::remove(file.path, ec)) total -= file.bytes;
+            if (std::filesystem::remove(file.path, ec)) { total -= file.bytes; lastUse.erase(file.path.filename().string()); }
         }
     }
 
@@ -344,6 +346,14 @@ struct LargeIconAssets::Impl
         if (auto old = Decode(output, r.pixels, {}, reference, "cache")) return old;
         if (IsManagedLargeIconImage(r.lastGood) && !r.lastGood.empty())
             if (auto old = Decode(directory / Wide(r.lastGood), r.pixels, {}, r.lastGood, "cache")) return old;
+        if (r.variant == 0 && !r.parsingName.empty())
+        {
+            auto original = r; original.content = 0; original.pixels = std::min(r.pixels, 256);
+            const auto rawReference = Reference(original);
+            const auto rawPath = directory / Wide(rawReference);
+            if (auto raw = Decode(rawPath, original.pixels, {}, rawReference, "original")) return raw;
+            if (auto raw = RawIcon(original, rawPath, rawReference)) return raw;
+        }
         error = "largeIcon.unavailable";
         return {};
     }
@@ -386,6 +396,7 @@ struct LargeIconAssets::Impl
                 }
                 if (asset)
                 {
+                    lastUse[asset->reference] = lastUse[asset->previewReference] = std::filesystem::file_time_type::clock::now();
                     auto bytes = [&] {
                         std::erase_if(allocations, [](const auto& allocation) { return allocation.expired(); });
                         std::uint64_t size = 0;
@@ -406,7 +417,12 @@ struct LargeIconAssets::Impl
                     { allocations.push_back(asset); if (error.empty()) cache[key] = {asset, ++clock}; }
                     else { asset.reset(); error = "largeIcon.unavailable"; }
                 }
-                for (auto& listener : pending.at(key).listeners) completed.push_back({std::move(listener), asset, error});
+                for (auto& listener : pending.at(key).listeners)
+                {
+                    const auto current = currentRequests.find(ListenerKey(listener));
+                    if (current != currentRequests.end() && current->second == listener.generation)
+                        completed.push_back({std::move(listener), asset, error});
+                }
                 pending.erase(key);
                 CollectDisk();
             }
@@ -448,6 +464,7 @@ void LargeIconAssets::Request(LargeIconAssetRequest request)
         if (!request.refresh && cached != impl_->cache.end())
         {
             cached->second.touched = ++impl_->clock;
+            impl_->lastUse[cached->second.asset->reference] = impl_->lastUse[cached->second.asset->previewReference] = std::filesystem::file_time_type::clock::now();
             impl_->completed.push_back({std::move(request), cached->second.asset, {}}); notify = true;
         }
         else
