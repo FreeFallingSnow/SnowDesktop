@@ -76,12 +76,14 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
 {
     wchar_t localeName[LOCALE_NAME_MAX_LENGTH]{};
     GetUserDefaultLocaleName(localeName, LOCALE_NAME_MAX_LENGTH);
-    const std::wstring wideLocale(localeName);
+    char localeUtf8[LOCALE_NAME_MAX_LENGTH * 4]{};
+    WideCharToMultiByte(CP_UTF8, 0, localeName, -1, localeUtf8,
+        static_cast<int>(sizeof(localeUtf8)), nullptr, nullptr);
     std::vector<std::string> languages;
     for (const auto& entry : kLauncherMessages)
         languages.emplace_back(entry.language);
     std::string language = snowdesktop::localization::ResolveBestLanguage(
-        languages, std::string(wideLocale.begin(), wideLocale.end()));
+        languages, localeUtf8);
     if (language.empty())
         language = "en-US";
     std::wstring message;
@@ -239,8 +241,7 @@ int RunLauncher(bool& maintenance)
                 std::to_string(launchError) + ")");
         ShowLaunchFailure(installRoot,
             "cannot launch runtime (Win32 error " +
-                std::to_string(launchError) + "): " +
-                applied.executable.string());
+                std::to_string(launchError) + ")");
         return static_cast<int>(launchError);
     }
     return 0;
