@@ -225,7 +225,19 @@ void DesktopApp::DestroyPersistentDockHost(
     if (collectionPopupDockHost_ == &host)
         collectionPopupDockHost_ = nullptr;
     if (quickNavigationDockHost_ == &host)
+    {
         quickNavigationDockHost_ = nullptr;
+        StopQuickNavigationAnimationTimeline();
+        if (quickNavigationAnimation_.IsClosing())
+            FinalizeCloseQuickNavigation();
+        else if (quickNavigationOpen_)
+        {
+            quickNavigationAnimation_.ShowImmediately();
+            ApplyQuickNavigationAnimationFrame();
+        }
+        quickNavigationAnimationDockRect_ = {};
+        ConfigureQuickNavigationAnimation();
+    }
     host.active = false;
     host.promoted = false;
     host.passivelyRevealed = false;

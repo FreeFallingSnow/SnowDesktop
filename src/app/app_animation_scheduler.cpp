@@ -35,7 +35,6 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
     const double durationScale = motion::RuntimeDurationScale();
     popupAnimation_.Configure(fade, durationScale);
     luaWidgetPanelAnimation_.Configure(fade, durationScale);
-    quickNavigationAnimation_.Configure(fade, durationScale);
 
     // Finish the old timeline when its duration/effect changes.
     // Closing finalizers also preserve queued actions and pending popup opens.
@@ -60,12 +59,12 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
                 ResetLuaWidgetPanelAnimationCache();
             }
         }
+    }
+    if (windowChanged)
+    {
         if (quickNavigationAnimation_.IsAnimating())
         {
-            if (quickNavigationAnimationCompletionToken_)
-                uiAnimationScheduler_.Cancel(quickNavigationAnimationCompletionToken_);
-            quickNavigationAnimationCompletionToken_ = 0;
-            quickNavigationAnimationCompositorDriven_ = false;
+            StopQuickNavigationAnimationTimeline();
             if (quickNavigationAnimation_.IsClosing()) FinalizeCloseQuickNavigation();
             else
             {
@@ -74,6 +73,7 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
             }
         }
     }
+    ConfigureQuickNavigationAnimation();
     if (widgetEngine_)
         widgetEngine_->ApplyHostAnimationPreferences();
     if (windowChanged && dockWindowTransition_)

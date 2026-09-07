@@ -2,8 +2,101 @@
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
 #include "quick_navigation_theme.h"
+#include "dock_genie_rules.h"
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
+
+void DesktopApp::ClearQuickNavigationGenie()
+{
+    quickNavBackdropCompositor_.ClearGenieTransform();
+    if (quickNavGenieStrips_.empty())
+        return;
+    if (quickNavDcompVisual_)
+    {
+        quickNavDcompVisual_->RemoveAllVisuals();
+        quickNavDcompVisual_->SetContent(quickNavDcompSurface_.Get());
+        quickNavDcompVisual_->SetTransform(quickNavDcompScaleTransform_.Get());
+    }
+    quickNavGenieStrips_.clear();
+    quickNavGenieStripEdge_ = -1;
+}
+
+bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
+{
+    namespace genie = snowdesktop::dock_genie;
+    if (!quickNavDcompDevice_ || !quickNavDcompVisual_ ||
+        !quickNavDcompSurface_ || !quickNavDcompEffect_)
+        return false;
+
+    if (quickNavGenieStripEdge_ != quickNavigationAnimationDockEdge_)
+        ClearQuickNavigationGenie();
+    const auto edge = static_cast<genie::Edge>(quickNavigationAnimationDockEdge_);
+    const float width = static_cast<float>(quickNavCompWidth_);
+    const float height = static_cast<float>(quickNavCompHeight_);
+    HRESULT hr = S_OK;
+    if (quickNavGenieStrips_.empty())
+    {
+        // All strips share the live panel surface. Search updates need no
+        // capture, and glass uses these same source intervals and matrices.
+        for (size_t i = 0; i < genie::StripCount && SUCCEEDED(hr); ++i)
+        {
+            ComPtr<IDCompositionVisual2> strip;
+            hr = quickNavDcompDevice_->CreateVisual(&strip);
+            if (FAILED(hr)) break;
+            quickNavGenieStrips_.push_back(strip);
+            const float begin = static_cast<float>(i) / genie::StripCount;
+            const float end = static_cast<float>(i + 1) / genie::StripCount;
+            const D2D1_RECT_F clip = genie::Vertical(edge)
+                ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.35f),
+                    width, std::min(height, end * height + 0.35f))
+                : D2D1::RectF(std::max(0.0f, begin * width - 0.35f), 0,
+                    std::min(width, end * width + 0.35f), height);
+            hr = strip->SetContent(quickNavDcompSurface_.Get());
+            if (SUCCEEDED(hr)) hr = strip->SetClip(clip);
+            if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+            if (SUCCEEDED(hr)) hr = strip->SetBitmapInterpolationMode(
+                DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+            if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->AddVisual(strip.Get(), TRUE, nullptr);
+        }
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetContent(nullptr);
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetX(0.0f);
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetY(0.0f);
+        if (FAILED(hr))
+        {
+            ClearQuickNavigationGenie();
+            return false;
+        }
+        quickNavGenieStripEdge_ = quickNavigationAnimationDockEdge_;
+    }
+    const auto rect = [](const RECT& value) {
+        return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
+            static_cast<double>(value.right), static_cast<double>(value.bottom)};
+    };
+    for (size_t i = 0; i < quickNavGenieStrips_.size() && SUCCEEDED(hr); ++i)
+    {
+        const auto matrix = genie::StripMatrix(rect(quickNavigationRect_),
+            rect(quickNavigationAnimationDockRect_), edge, collapsed, width, height,
+            static_cast<double>(i) / genie::StripCount,
+            static_cast<double>(i + 1) / genie::StripCount,
+            quickNavigationHostRect_.left, quickNavigationHostRect_.top);
+        hr = quickNavGenieStrips_[i]->SetTransform(D2D1_MATRIX_3X2_F{
+            matrix.m11, matrix.m12, matrix.m21, matrix.m22, matrix.dx, matrix.dy});
+    }
+    if (SUCCEEDED(hr)) hr = quickNavDcompEffect_->SetOpacity(opacity);
+    if (FAILED(hr)) return false;
+    if (quickNavGlassTheme_ && quickNavBackdropCompositor_.IsAvailable())
+    {
+        RECT panel = quickNavigationRect_;
+        RECT dock = quickNavigationAnimationDockRect_;
+        OffsetRect(&panel, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
+        OffsetRect(&dock, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
+        if (!quickNavBackdropCompositor_.SetGenieTransform(panel, dock,
+                quickNavigationAnimationDockEdge_, collapsed, opacity))
+            return false;
+    }
+    return CommitQuickNavigationCompositionFrame();
+}
 
 void DesktopApp::EnsureQuickNavTextFormats()
 {
@@ -80,13 +173,8 @@ void DesktopApp::EnsureQuickNavTextFormats()
  */
 void DesktopApp::ResetQuickNavCompositionResources()
 {
-    if (quickNavigationAnimationCompletionToken_)
-    {
-        uiAnimationScheduler_.Cancel(
-            quickNavigationAnimationCompletionToken_);
-    }
-    quickNavigationAnimationCompletionToken_ = 0;
-    quickNavigationAnimationCompositorDriven_ = false;
+    ClearQuickNavigationGenie();
+    StopQuickNavigationAnimationTimeline();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     quickNavSysIconCache_.clear();
@@ -110,6 +198,7 @@ void DesktopApp::RecoverQuickNavCompositionFailure(const wchar_t* stage, HRESULT
     WriteDiagnosticLogEntry(buf);
 
     ResetQuickNavCompositionResources();
+    EnsureUiAnimationFrame();
 
     if (!quickNavCompositionRenderRecoveryPending_ && quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
     {
@@ -234,6 +323,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     if (quickNavDcompSurface_ && quickNavCompWidth_ == width && quickNavCompHeight_ == height)
         return S_OK;
 
+    ClearQuickNavigationGenie();
     ComPtr<IDCompositionSurface> surface;
     HRESULT hr = quickNavDcompDevice_->CreateSurface(width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);

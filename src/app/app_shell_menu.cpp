@@ -469,13 +469,21 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
-    RECT transitionBounds{}, dockBounds{}, overlap{};
-    const bool intersectsTransition = transitionWindow &&
-        GetWindowRect(transitionWindow, &transitionBounds) &&
-        GetWindowRect(host.hwnd, &dockBounds) &&
-        IntersectRect(&overlap, &transitionBounds, &dockBounds);
-    if (transitionWindow && IsWindow(transitionWindow) &&
-        intersectsTransition && ShouldShowPersistentDockHost(host) &&
+    const HWND navigationWindow =
+        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::DockSearch &&
+        quickNavigationAnimation_.IsAnimating()
+            ? quickNavigationHwnd_ : nullptr;
+    RECT dockBounds{};
+    const bool hasDockBounds = GetWindowRect(host.hwnd, &dockBounds) != FALSE;
+    const auto intersectsPresentation = [&dockBounds, hasDockBounds](HWND window) {
+        RECT bounds{}, overlap{};
+        return hasDockBounds && window && IsWindow(window) &&
+            GetWindowRect(window, &bounds) &&
+            IntersectRect(&overlap, &bounds, &dockBounds);
+    };
+    const bool intersectsTransition = intersectsPresentation(transitionWindow);
+    const bool intersectsNavigation = intersectsPresentation(navigationWindow);
+    if ((intersectsTransition || intersectsNavigation) && ShouldShowPersistentDockHost(host) &&
         IsWindowVisible(host.hwnd))
     {
         // Borrow the presentation band without changing the Dock's summon,
@@ -491,13 +499,25 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         // An already-topmost pair deliberately does not raise itself above
         // menus on policy refresh. Lower the transition below its complete
         // pair instead of inserting it between the content and glass helper.
-        if (snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
+        if (intersectsTransition &&
+            snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
             !snowdesktop::popup_window_pair_z_order::IsAbove(
                 pairEnd, transitionWindow))
         {
             SetWindowPos(transitionWindow, pairEnd, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
                     SWP_NOOWNERZORDER);
+        }
+        if (intersectsNavigation &&
+            snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
+            !snowdesktop::popup_window_pair_z_order::IsAbove(pairEnd, navigationWindow))
+        {
+            // Quick Navigation has a separate glass HWND. Lower its complete
+            // pair, only when necessary, so another Dock already above it is
+            // never crossed while processing a later host. Reordering leaves
+            // keyboard focus alone; the native edit is transparent in motion.
+            quickNavBackdropCompositor_.SetPopupWindowPairZOrder(
+                navigationWindow, pairEnd, true);
         }
         ApplyDragPreviewLayerPolicy();
         return;

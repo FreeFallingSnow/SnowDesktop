@@ -59,6 +59,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_NCHITTEST:
         if (!quickNavigationOpen_)
             return HTTRANSPARENT;
+        // During the warp, controls are not at their final hit rectangles.
+        // Keep keyboard focus in the hidden edit, but let Dock clicks through.
+        if (quickNavigationAnimation_.IsAnimating() &&
+            quickNavigationAnimation_.GetEffect() ==
+                snowdesktop::quick_navigation_animation_rules::Effect::Genie)
+            return HTTRANSPARENT;
         {
             POINT point{
                 GET_X_LPARAM(lp) - virtualLeft_,

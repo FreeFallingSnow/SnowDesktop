@@ -79,6 +79,15 @@ public:
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
+    /**
+     * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
+     *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
+     */
+    [[nodiscard]] bool SetGenieTransform(
+        const RECT& panelFrame, const RECT& dockFrame,
+        int edge, float collapsed, float opacity);
+    /** @brief 恢复普通面板及根视觉；与后续正常属性更新一起提交。 */
+    void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /**

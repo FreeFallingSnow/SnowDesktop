@@ -411,6 +411,13 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // native animations. This also disconnects a previous animation during a
     // rapid open/close reversal and hides the native search edit until rest.
     ApplyQuickNavigationAnimationFrame();
+    if (quickNavigationAnimation_.GetEffect() ==
+        snowdesktop::quick_navigation_animation_rules::Effect::Genie)
+    {
+        // Content and native glass share the scheduler's progress and warp;
+        // a separate uniform compositor timeline would separate the layers.
+        return false;
+    }
     if (!quickNavDcompDevice_ || !quickNavDcompVisual_ ||
         !quickNavDcompEffect_ || !quickNavDcompScaleTransform_)
     {

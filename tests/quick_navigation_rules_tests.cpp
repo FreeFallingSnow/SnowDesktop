@@ -495,6 +495,101 @@ void TestAnimationRules()
         "reset returns to hidden");
 }
 
+void TestAnimationEffects()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    struct EffectCase
+    {
+        bool dockSource;
+        int windowEffect;
+        int popupEffect;
+        Effect expected;
+    };
+    const EffectCase cases[] = {
+        {true, 1, 0, Effect::Scale},
+        {true, 2, 2, Effect::Fade},
+        {true, 3, 1, Effect::Genie},
+        {true, 0, 0, Effect::None},
+        {true, 0, 1, Effect::Fade},
+        {true, 0, 2, Effect::Scale},
+        {false, 3, 0, Effect::None},
+        {false, 3, 1, Effect::Fade},
+        {false, 3, 2, Effect::Scale},
+    };
+    for (const auto& item : cases)
+    {
+        Check(ResolveEffect(true, item.dockSource, item.windowEffect,
+                item.popupEffect) == item.expected,
+            "only a Dock source with a valid anchor may override popup animation preferences");
+        Check(ResolveEffect(false, item.dockSource, item.windowEffect,
+                item.popupEffect) == Effect::None,
+            "global animation disable must override both Dock and popup effects");
+    }
+
+    State genie;
+    genie.Configure(Effect::Genie, 0.7, true);
+    Check(genie.GetEffect() == Effect::Genie &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(true)), 252.0f) &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(false)), 252.0f),
+        "Dock Genie uses the window transition's 360ms duration with the selected speed in both directions");
+    genie.Configure(Effect::Fade, 1.0, true);
+    Check(genie.DurationMilliseconds(true) == 180.0 &&
+            genie.DurationMilliseconds(false) == 180.0,
+        "Dock fade matches the window transition duration");
+    genie.Configure(Effect::Scale, 1.0, true);
+    Check(genie.DurationMilliseconds(true) == 240.0 &&
+            genie.DurationMilliseconds(false) == 240.0,
+        "Dock scale matches the window transition duration");
+    genie.Configure(true, 1.0);
+    Check(genie.GetEffect() == Effect::Fade && genie.HiddenScale() == 1.0f &&
+            genie.DurationMilliseconds(true) == kOpenDurationMs &&
+            genie.DurationMilliseconds(false) == kCloseDurationMs,
+        "legacy fade configuration must restore the original popup timings");
+    genie.Configure(false, 1.0);
+    Check(genie.GetEffect() == Effect::Scale && genie.HiddenScale() == kMinimumScale,
+        "legacy scale configuration keeps its original hidden scale");
+
+    genie.Configure(Effect::Genie, 1.0, true);
+    genie.Open(1000);
+    genie.Advance(1090);
+    const Visual quarterOpen = genie.GetVisual();
+    Check(NearlyEqual(quarterOpen.progress, 0.25f) &&
+            quarterOpen.scale == 1.0f && quarterOpen.opacity == 1.0f,
+        "Genie leaves geometric deformation to the renderer and becomes opaque early in opening");
+    genie.Close(1090);
+    Check(genie.IsClosing() &&
+            NearlyEqual(genie.GetVisual().progress, quarterOpen.progress),
+        "reversing Genie into close must preserve its current deformation progress");
+    genie.Advance(1135);
+    const Visual closing = genie.GetVisual();
+    Check(NearlyEqual(closing.progress, 0.125f) &&
+            closing.opacity > 0.0f && closing.opacity < 1.0f && closing.scale == 1.0f,
+        "closing Genie fades only near the collapsed end");
+    genie.Open(1135);
+    Check(genie.IsOpening() && NearlyEqual(genie.GetVisual().progress, closing.progress) &&
+            NearlyEqual(genie.GetVisual().opacity, closing.opacity),
+        "reopening Genie must preserve both deformation and opacity");
+    genie.Advance(1450);
+    Check(!genie.IsAnimating() && genie.GetVisual().opacity == 1.0f,
+        "reversed Genie completes using only its remaining duration");
+    genie.Close(2000);
+    genie.Advance(2360);
+    Check(genie.IsHidden() && !genie.IsAnimating() && genie.GetVisual().opacity == 0.0f,
+        "completed Genie close must release the visible animation state");
+
+    genie.Open(3000);
+    genie.Advance(3090);
+    genie.Configure(Effect::None, 1.0);
+    Check(!genie.IsAnimating() && genie.GetVisual().progress == 1.0f,
+        "disabling an in-flight animation must settle its requested visible state");
+    genie.Close(3100);
+    Check(genie.IsHidden() && !genie.IsAnimating(),
+        "None must close immediately without scheduling animation work");
+    genie.Open(3200);
+    Check(genie.GetVisual().opacity == 1.0f && !genie.IsAnimating(),
+        "None must open immediately at full opacity");
+}
+
 void TestDeactivateRules()
 {
     Check(!rules::ShouldCloseOnDeactivate(
@@ -564,6 +659,7 @@ int main()
     TestMappingSectionsFollowTabOrder();
     TestSectionLayout();
     TestAnimationRules();
+    TestAnimationEffects();
     TestDeactivateRules();
     TestSearchEditKeyboardRouting();
     TestAnimatedPointerHitRules();

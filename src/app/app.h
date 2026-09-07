@@ -1478,6 +1478,10 @@ private:
         std::function<void()> action);
     /** @brief 将快速导航动画的当前视觉状态同步到内容、毛玻璃和搜索框。 */
     void ApplyQuickNavigationAnimationFrame();
+    void ConfigureQuickNavigationAnimation();
+    void StopQuickNavigationAnimationTimeline();
+    void ClearQuickNavigationGenie();
+    bool ApplyQuickNavigationGenieFrame(float collapsed, float opacity);
     /** @brief 尝试由系统合成器自驱快速导航内容与毛玻璃动画。 */
     bool StartQuickNavigationCompositionAnimation();
     /** @brief 动画结束后释放快速导航窗口和临时数据。 */
@@ -3591,6 +3595,8 @@ private:
     ComPtr<IDCompositionEffectGroup> quickNavDcompEffect_;
     ComPtr<IDCompositionScaleTransform> quickNavDcompScaleTransform_;
     ComPtr<IDCompositionSurface> quickNavDcompSurface_;
+    std::vector<ComPtr<IDCompositionVisual2>> quickNavGenieStrips_;
+    int quickNavGenieStripEdge_ = -1;
     UINT quickNavCompWidth_ = 0;
     UINT quickNavCompHeight_ = 0;
     bool quickNavCompositionRenderRecoveryPending_ = false;
@@ -4013,6 +4019,9 @@ private:
     POINT quickNavigationOpenPoint_{};
     /** @brief 快速导航缩放动画锚点（app 坐标；Dock 搜索入口固定到搜索图标中心）。 */
     POINT quickNavigationAnimationAnchorPoint_{};
+    RECT quickNavigationAnimationDockRect_{};
+    int quickNavigationAnimationDockEdge_ = 0;
+    bool quickNavigationGenieFailed_ = false;
     BYTE quickNavigationLastEditAnimationOpacity_ = 0;
     bool quickNavigationHasLastEditAnimationFrame_ = false;
     RECT quickNavigationRect_{};

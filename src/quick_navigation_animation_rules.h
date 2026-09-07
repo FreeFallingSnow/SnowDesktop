@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dock_genie_rules.h"
+
 #include <algorithm>
 #include <cstdint>
 
@@ -8,6 +10,31 @@ namespace snowdesktop::quick_navigation_animation_rules
 constexpr std::uint64_t kOpenDurationMs = 140;
 constexpr std::uint64_t kCloseDurationMs = 110;
 constexpr float kMinimumScale = 0.08f;
+
+enum class Effect { None, Fade, Scale, Genie };
+
+constexpr Effect ResolveEffect(bool animationsEnabled,
+    bool dockSourceAndAnchorValid, int windowEffect, int popupEffect)
+{
+    if (!animationsEnabled)
+        return Effect::None;
+    if (dockSourceAndAnchorValid)
+    {
+        switch (windowEffect)
+        {
+        case 1: return Effect::Scale;
+        case 2: return Effect::Fade;
+        case 3: return Effect::Genie;
+        default: break;
+        }
+    }
+    switch (popupEffect)
+    {
+    case 1: return Effect::Fade;
+    case 2: return Effect::Scale;
+    default: return Effect::None;
+    }
+}
 
 inline float ClampUnit(float value)
 {
@@ -52,18 +79,47 @@ struct Visual
 class State
 {
 public:
+    void Configure(Effect effect, double durationScale, bool dockTiming = false)
+    {
+        effect_ = effect;
+        dockTiming_ = dockTiming;
+        durationScale_ = std::clamp(durationScale, 0.1, 10.0);
+        if (effect_ == Effect::None)
+        {
+            if (targetVisible_)
+                ShowImmediately();
+            else
+                ResetHidden();
+        }
+    }
     void Configure(bool fade, double durationScale)
     {
-        fade_ = fade;
-        durationScale_ = std::clamp(durationScale, 0.1, 10.0);
+        Configure(fade ? Effect::Fade : Effect::Scale, durationScale);
     }
+    [[nodiscard]] Effect GetEffect() const { return effect_; }
     [[nodiscard]] double DurationMilliseconds(bool opening) const
     {
+        if (effect_ == Effect::None)
+            return 0.0;
+        if (dockTiming_)
+        {
+            // Match DockWindowTransition's full minimize/restore durations.
+            return (effect_ == Effect::Genie ? 360.0 :
+                effect_ == Effect::Fade ? 180.0 : 240.0) * durationScale_;
+        }
         return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_;
     }
-    [[nodiscard]] float HiddenScale() const { return fade_ ? 1.0f : kMinimumScale; }
+    [[nodiscard]] float HiddenScale() const
+    {
+        return effect_ == Effect::Scale ? kMinimumScale : 1.0f;
+    }
     void Open(std::uint64_t now)
     {
+        if (effect_ == Effect::None)
+        {
+            ShowImmediately();
+            return;
+        }
         Advance(now);
         targetVisible_ = true;
         animating_ = progress_ < 1.0f;
@@ -72,6 +128,11 @@ public:
 
     void Close(std::uint64_t now)
     {
+        if (effect_ == Effect::None)
+        {
+            ResetHidden();
+            return;
+        }
         Advance(now);
         targetVisible_ = false;
         animating_ = progress_ > 0.0f;
@@ -127,8 +188,10 @@ public:
         const float eased = EaseInOutSmooth(progress_);
         return {
             progress_,
-            eased,
-            fade_ ? 1.0f : kMinimumScale + (1.0f - kMinimumScale) * eased,
+            effect_ == Effect::Genie
+                ? static_cast<float>(dock_genie::Opacity(1.0 - eased)) : eased,
+            effect_ == Effect::Scale
+                ? kMinimumScale + (1.0f - kMinimumScale) * eased : 1.0f,
             targetVisible_ || progress_ > 0.0f
         };
     }
@@ -159,7 +222,8 @@ public:
     }
 
 private:
-    bool fade_ = false;
+    Effect effect_ = Effect::Scale;
+    bool dockTiming_ = false;
     double durationScale_ = 1.0;
     float progress_ = 0.0f;
     bool targetVisible_ = false;
