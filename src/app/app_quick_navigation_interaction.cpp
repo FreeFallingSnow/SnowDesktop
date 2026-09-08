@@ -493,15 +493,7 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
             SelectOnly(static_cast<int>(
                 selectedEntry.itemIndex));
             InvalidateRect(hwnd_, nullptr, FALSE);
-            if (IsProtectedDesktopIcon(
-                    items_[selectedEntry.itemIndex]))
-                ShowShellContextMenu(
-                    screenPoint,
-                    static_cast<int>(
-                        selectedEntry.itemIndex),
-                    true);
-            else
-                ShowItemContextMenu(
+            ShowItemContextMenu(
                     screenPoint,
                     static_cast<int>(
                         selectedEntry.itemIndex),

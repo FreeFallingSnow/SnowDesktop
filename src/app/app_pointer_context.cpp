@@ -309,13 +309,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                             dockItem->IsSelected();
                         items_[itemIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
-                        if (IsProtectedDesktopIcon(items_[itemIndex]))
-                            ShowShellContextMenu(
-                                screenPt,
-                                static_cast<int>(itemIndex),
-                                false, dockItemBounds);
-                        else
-                            ShowItemContextMenu(
+                        ShowItemContextMenu(
                                 screenPt,
                                 static_cast<int>(itemIndex),
                                 false, false, dockItemBounds,
@@ -355,14 +349,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 items_[itemIndex].bounds = dock->GetElementVisualRect(
                     frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                if (IsProtectedDesktopIcon(items_[itemIndex]))
-                    ShowShellContextMenu(
-                        screenPt,
-                        static_cast<int>(itemIndex),
-                        false, dock->GetElementVisualRect(
-                            frequentItem->GetBounds(), pt));
-                else
-                    ShowItemContextMenu(
+                ShowItemContextMenu(
                         screenPt,
                         static_cast<int>(itemIndex),
                         true, false,
@@ -552,10 +539,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     if (!items_[itemIndex].selected)
                         SelectOnly(static_cast<int>(itemIndex));
                     InvalidateRect(hwnd_, nullptr, FALSE);
-                    if (IsProtectedDesktopIcon(items_[itemIndex]))
-                        ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
-                    else
-                        ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
                     return;
                 }
             }
@@ -867,10 +851,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (!items_[itemIndex].selected)
                 SelectOnly(static_cast<int>(itemIndex));
             InvalidateRect(hwnd_, nullptr, FALSE);
-            if (IsProtectedDesktopIcon(items_[itemIndex]))
-                ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
-            else
-                ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+            ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
             return;
         }
     }

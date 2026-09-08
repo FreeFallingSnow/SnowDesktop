@@ -6,6 +6,9 @@
 #include "shell_item_action_rules.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
+#include "../namespace_menu_actions.h"
+
+namespace { constexpr UINT kContextNamespaceActionFirst = 42000; }
 
 // Desktop-item and Shell-backed context menus.
 
@@ -204,8 +207,35 @@ void DesktopApp::ShowItemContextMenu(
             ShortcutRequestsAdministrator(itemPath);
     const bool canOpen =
         selectedCount == 1 && !administratorShortcut;
-    const bool canShowProperties =
-        selectedCount == 1 && canFile && !itemPath.empty();
+    const bool namespaceItem = selectedCount == 1 &&
+        (!items_[itemIndex].desktopIconClsid.empty() || IsProtectedDesktopIcon(items_[itemIndex]));
+    // Query supported verbs without displaying the native popup. Keep its site,
+    // menu and COM object alive until a selected command has been invoked.
+    snowdesktop::ShellContextMenuSite namespaceSite;
+    ComPtr<IContextMenu> namespaceContext;
+    struct NativeMenuOwner { HMENU value = nullptr; ~NativeMenuOwner() { if (value) DestroyMenu(value); } } namespaceNative;
+    std::vector<std::pair<UINT, snowdesktop::namespace_menu_actions::Command>> namespaceActions;
+    if (namespaceItem && desktopFolder_)
+    {
+        const HWND owner = ShellDialogOwnerHwnd();
+        namespaceSite.Initialize(desktopFolder_.Get(), owner);
+        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[itemIndex].childPidl.get());
+        if (child && SUCCEEDED(desktopFolder_->GetUIObjectOf(namespaceSite.HostWindow() ? namespaceSite.HostWindow() : owner,
+            1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(namespaceContext.GetAddressOf()))))
+        {
+            namespaceSite.Attach(namespaceContext.Get()); namespaceNative.value = CreatePopupMenu();
+            if (SUCCEEDED(namespaceContext->QueryContextMenu(namespaceNative.value, 0, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU)))
+            {
+                const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
+                for (size_t i = 0; i < std::size(verbs); ++i)
+                    if (auto action = snowdesktop::namespace_menu_actions::Find(namespaceContext.Get(), namespaceNative.value, verbs[i]))
+                        namespaceActions.emplace_back(i == 4 ? kContextPropertiesCommand : kContextNamespaceActionFirst + static_cast<UINT>(i), std::move(*action));
+            }
+        }
+    }
+    const auto namespaceProperty = std::find_if(namespaceActions.begin(), namespaceActions.end(), [](const auto& entry) { return entry.first == kContextPropertiesCommand; });
+    const bool canShowProperties = (selectedCount == 1 && canFile && !itemPath.empty()) ||
+        (namespaceProperty != namespaceActions.end() && namespaceProperty->second.enabled);
     const auto removalAction =
         snowdesktop::shell_item_action_rules::
             ResolveRemovalAction(
@@ -277,30 +307,39 @@ void DesktopApp::ShowItemContextMenu(
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
-    AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextCopyPathCommand, _LW("app.menu.copy_path"));
-    AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
+    if (!namespaceItem)
+    {
+        AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextCopyPathCommand, _LW("app.menu.copy_path"));
+        AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextRunAsAdministratorCommand,
-        _LW("app.menu.run_as_administrator"));
+    if (!namespaceItem)
+    {
+        AppendMenuW(menu,
+            canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextRunAsAdministratorCommand,
+            _LW("app.menu.run_as_administrator"));
+    }
     AppendMenuW(menu,
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand, _LW("app.menu.properties"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        selectedCount == 1 && canFile && !dockMapping
-            ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextRenameCommand, _LW("app.menu.rename"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextCutCommand, _LW("app.menu.cut"));
-    AppendMenuW(menu,
-        canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextCopyCommand, _LW("app.menu.copy"));
+    if (!namespaceItem)
+    {
+        AppendMenuW(menu,
+            selectedCount == 1 && canFile && !dockMapping
+                ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextRenameCommand, _LW("app.menu.rename"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu,
+            canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextCutCommand, _LW("app.menu.cut"));
+        AppendMenuW(menu,
+            canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextCopyCommand, _LW("app.menu.copy"));
+    }
     AppendMenuW(menu,
         canRemove ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextDeleteCommand,
@@ -387,6 +426,17 @@ void DesktopApp::ShowItemContextMenu(
             _LW("app.dock.close_application"));
     }
 
+    for (const auto& [id, action] : namespaceActions)
+    {
+        if (id == kContextPropertiesCommand) continue;
+        // Keep commonly used system actions next to Open, before generic file commands.
+        MENUITEMINFOW info{sizeof(info)}; info.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE;
+        info.wID = id; info.dwTypeData = const_cast<wchar_t*>(action.label.c_str());
+        info.fState = action.enabled ? MFS_ENABLED : MFS_GRAYED;
+        InsertMenuItemW(menu, kContextPropertiesCommand, FALSE, &info);
+        SetMenuItemIcon(menu, id, id == kContextNamespaceActionFirst + 1 ? L"\uF2ED" : id == kContextNamespaceActionFirst ? L"\uF085" : L"\uF6FF");
+    }
+    if (namespaceItem && namespaceProperty == namespaceActions.end()) DeleteMenu(menu, kContextPropertiesCommand, MF_BYCOMMAND);
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
@@ -554,6 +604,25 @@ void DesktopApp::ShowItemContextMenu(
         RefreshDockFolderPopupGeometry();
     };
 
+    const auto nativeAction = std::find_if(namespaceActions.begin(), namespaceActions.end(), [command](const auto& entry) { return entry.first == command; });
+    if (namespaceContext && nativeAction != namespaceActions.end())
+    {
+        if (nativeAction->second.enabled)
+        {
+            RestoreDesktopWindowLayer();
+            CMINVOKECOMMANDINFOEX invoke{sizeof(invoke)};
+            invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+            invoke.hwnd = ShellDialogOwnerHwnd(); invoke.nShow = SW_SHOWNORMAL; invoke.ptInvoke = screenPoint;
+            invoke.lpVerb = MAKEINTRESOURCEA(nativeAction->second.offset);
+            invoke.lpVerbW = MAKEINTRESOURCEW(nativeAction->second.offset);
+            const auto directory = snowdesktop::DesktopShellInvocationDirectory(); std::string ansiDirectory;
+            snowdesktop::SetShellInvocationDirectory(invoke, directory, ansiDirectory);
+            // No no-confirmation flags: Windows owns its usual confirmation/UAC UI.
+            InvokeShellMenuCommand(namespaceContext.Get(), invoke, &namespaceSite);
+            RequestShellRefresh();
+        }
+        return;
+    }
     applyLargeIconCommand(command);
     switch (command)
     {

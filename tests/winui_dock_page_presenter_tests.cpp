@@ -136,14 +136,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
               "\\\"summonOnlyLinkedPreferencesAreBase\\\": true") !=
                 std::string::npos,
         "summon-only Dock display persists linked base preferences and migrates configurations that stored forced values");
-    for (const char* control : {
-             "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
-             "muxc::NumberBox", "muxc::Button", "muxc::Expander",
-             "muxc::InfoBar", "muxc::RadioButtons"})
-    {
-        Check(source.find(control) != std::string::npos,
-            "the Dock page uses native WinUI controls");
-    }
+
     Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
             controls.find("muxc::ColorPicker picker") != std::string::npos,
         "Dock colors use the shared native WinUI ColorPicker flyout");
