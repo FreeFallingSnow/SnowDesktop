@@ -3451,6 +3451,22 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         return false;
     }
 
+    if (snapshot && impl_->shell &&
+        route.page == SettingsPage::General &&
+        route.focusId == "general.advancedFeatures.unlockRequired" &&
+        impl_->options.advancedFeatureStatus)
+    {
+        // Opening settings is asynchronous; unlocking may have finished meanwhile.
+        const auto status = impl_->options.advancedFeatureStatus();
+        if (status.bridgeAvailable && !status.registered)
+        {
+            (void)impl_->shell->ShowInfoForGeneration(snapshot->generation,
+                shell_impl::SettingsShellInfoSeverity::Informational,
+                impl_->L("settings.general.advancedFeatures"),
+                impl_->L("settings.general.advancedFeatures.unlockRequired"));
+        }
+    }
+
     if (!reloadResult.Succeeded())
         impl_->ShowActionError(reloadResult);
     if (!openResult.Succeeded())

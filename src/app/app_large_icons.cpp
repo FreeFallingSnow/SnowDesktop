@@ -220,7 +220,7 @@ void DesktopApp::OpenLargeIconSettings(size_t index)
     if (access == EntryAccess::Unlock)
     {
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
-            snowdesktop::SettingsPage::General, "general.advancedFeatures"));
+            snowdesktop::SettingsPage::General, "general.advancedFeatures.unlockRequired"));
         return;
     }
     if (index >= items_.size() || !items_[index].largeIcon) return;

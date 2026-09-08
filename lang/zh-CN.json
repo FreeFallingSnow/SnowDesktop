@@ -1187,6 +1187,7 @@
     "settings.general.advancedFeatures.portable": "可通过 Steam 版解锁",
     "settings.general.advancedFeatures.register": "通过 Steam 注册",
     "settings.general.advancedFeatures.unlock": "解锁",
+    "settings.general.advancedFeatures.unlockRequired": "请解锁后启用高级功能",
     "settings.general.advancedFeatures.reminder": "请启动 Steam，登录拥有 SnowDesktop 的账户，然后手动注册。",
     "settings.general.advancedFeatures.notOwned": "当前 Steam 账户未拥有 SnowDesktop。",
     "settings.general.advancedFeatures.failed": "Steam 注册失败。请启动 Steam 后重试。",

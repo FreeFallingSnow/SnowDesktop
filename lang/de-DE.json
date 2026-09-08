@@ -1187,6 +1187,7 @@
     "settings.general.advancedFeatures.portable": "Mit der Steam-Version verfügbar",
     "settings.general.advancedFeatures.register": "Über Steam registrieren",
     "settings.general.advancedFeatures.unlock": "Freischalten",
+    "settings.general.advancedFeatures.unlockRequired": "Bitte schalten Sie die erweiterten Funktionen frei, bevor Sie sie aktivieren.",
     "settings.general.advancedFeatures.reminder": "Starten Sie Steam, melden Sie sich mit einem Konto an, das SnowDesktop besitzt, und registrieren Sie sich dann manuell.",
     "settings.general.advancedFeatures.notOwned": "Das aktuelle Steam-Konto besitzt SnowDesktop nicht.",
     "settings.general.advancedFeatures.failed": "Die Steam-Registrierung ist fehlgeschlagen. Starten Sie Steam und versuchen Sie es erneut.",

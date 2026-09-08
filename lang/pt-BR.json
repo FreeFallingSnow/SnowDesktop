@@ -1187,6 +1187,7 @@
     "settings.general.advancedFeatures.portable": "Disponível na versão da Steam",
     "settings.general.advancedFeatures.register": "Registrar pela Steam",
     "settings.general.advancedFeatures.unlock": "Desbloquear",
+    "settings.general.advancedFeatures.unlockRequired": "Desbloqueie os recursos avançados antes de ativá-los.",
     "settings.general.advancedFeatures.reminder": "Abra a Steam, entre com uma conta que possua o SnowDesktop e faça o registro manualmente.",
     "settings.general.advancedFeatures.notOwned": "A conta atual da Steam não possui o SnowDesktop.",
     "settings.general.advancedFeatures.failed": "Falha no registro pela Steam. Abra a Steam e tente novamente.",

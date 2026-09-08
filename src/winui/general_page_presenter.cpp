@@ -1064,7 +1064,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
     registerAliases(impl_->registerAdvancedFeaturesButton,
-        {"general.advancedFeatures"});
+        {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
     registerAliases(impl_->softwareDesktopToggle,
         {"desktop.softwareDesktop", "general.softwareDesktop"});
     registerAliases(impl_->languageCombo, {"general.language"});

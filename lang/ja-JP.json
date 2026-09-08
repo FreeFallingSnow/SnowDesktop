@@ -1187,6 +1187,7 @@
     "settings.general.advancedFeatures.portable": "Steam 版で利用可能",
     "settings.general.advancedFeatures.register": "Steam で登録",
     "settings.general.advancedFeatures.unlock": "アンロック",
+    "settings.general.advancedFeatures.unlockRequired": "高度な機能を有効にするには、先にアンロックしてください。",
     "settings.general.advancedFeatures.reminder": "Steam を起動し、SnowDesktop を所有するアカウントでサインインしてから、手動で登録してください。",
     "settings.general.advancedFeatures.notOwned": "現在の Steam アカウントは SnowDesktop を所有していません。",
     "settings.general.advancedFeatures.failed": "Steam での登録に失敗しました。Steam を起動して、もう一度お試しください。",
