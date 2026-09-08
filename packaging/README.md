@@ -1,15 +1,13 @@
 # SnowDesktop 统一发布流程
 
 `scripts\release.bat` 是人工发布入口。它打开一个无需额外依赖的
-PowerShell TUI，集中显示当前版本、源码分支、工作区、二进制 Release 仓库和
-发行包状态，并提供以下动作：
+PowerShell TUI，集中显示当前版本、源码分支、工作区和发行包状态，并提供以下动作：
 
 1. 使用仓库标准入口 `scripts\build.bat` 构建 Release；
 2. 生成携带版、MSIX、调试符号和 Partner Center 上传包；
-3. 将携带版内容同步到 `release\` 二进制仓库，但不立即提交；
-4. 将 `release/vA.B.C.0` 压缩合并到本地 `main` 并创建本地标签；
-5. 在人工测试本地 `main` 后，推送源码及二进制仓库；
-6. 可选创建 GitHub Release 并上传公开附件。
+3. 将 `release/vA.B.C.0` 压缩合并到本地 `main` 并创建本地标签；
+4. 在人工测试本地 `main` 后，推送源码仓库的 `main` 与版本标签；
+5. 可选在 [SnowDesktop 主仓库](https://github.com/FreeFallingSnow/SnowDesktop) 创建 GitHub Release 并上传公开附件。
 
 本地压缩合并与远程发布是两个独立步骤。选择远程动作时必须再次输入当前
 版本号，避免跳过本地检查。
@@ -29,16 +27,17 @@ scripts\release.bat package-steam
 scripts\release.bat steam-preview
 scripts\release.bat steam-upload-public -Yes `
   -ConfirmVersion 1.0.0.0 -ConfirmPublicBranch public
-scripts\release.bat sync-release
 scripts\release.bat prepare
 scripts\release.bat prepare -ReloadShell
 scripts\release.bat open
 ```
 
-其中 `prepare` 等价于“构建打包 + 本地同步二进制 Release 仓库”，不会创建
-提交或推送。如果二进制 Release 仓库在同步前已有未提交修改，Agent 必须先
-审查，再为 `sync-release` 或 `prepare` 增加
-`-Yes -ConfirmVersion A.B.C.0`。
+`prepare` 与 `package` 均构建并生成发行包，不创建提交或推送。发布流程不再读取、
+同步或推送本地 `release\` 目录，也不依赖该目录存在。
+
+旧 `sync-release` 命令已移除；调用方应删除同步步骤。`status -Json` 不再返回
+`ReleaseExists`、`ReleaseBranch`、`ReleaseStatus`、`ReleaseDirty` 和 `ReleaseOrigin`；
+发布状态改为记录 `sourceRepositoryPublishedAt`。已有状态文件中的旧字段仅作为历史记录保留。
 
 发布 CLI 默认不会关闭 SnowDesktop 或重启 Explorer。构建产物被正在运行的
 SnowDesktop 或 Explorer 任务栏 Hook 占用时，应先正常退出应用；需要自动解除占用时，
@@ -63,7 +62,7 @@ scripts\release.bat steam-upload-public -Yes `
 ```
 
 `squash` 只执行本地压缩合并和本地标签创建。`publish` 仅适用于已经测试过的
-本地 `main`，它依次推送源码 `main`/标签，并提交和推送二进制 Release 仓库。
+本地 `main`，它只推送官方源码仓库的 `main` 和当前版本标签。
 
 `github-release` 优先使用已安装并登录的 GitHub CLI (`gh`)；没有 `gh` 时也
 可使用环境变量 `GITHUB_TOKEN` 调用 GitHub API。不要把令牌写进参数、脚本或
@@ -131,7 +130,6 @@ artifacts\
    ├─ release-summary.md
    ├─ release-notes.md
    ├─ release-state.json
-   ├─ release-repository-status.txt
    └─ logs\
 ```
 

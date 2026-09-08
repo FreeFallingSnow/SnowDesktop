@@ -11,7 +11,7 @@
 - `steam_local_deploy.ps1`：默认只读预检，将构建载荷显式部署为 Steam 安装根内隔离的 `steam-local-dev` runtime；
 - `release.bat`：无参数打开发布 TUI，带参数作为 Agent/自动化 CLI。
 
-- `release_manager.ps1`：统一发布状态、打包、仓库同步、合并及发布流程；
+- `release_manager.ps1`：统一发布状态、打包、本地合并及官方源码仓库发布流程；
 - `package_release.ps1`：生成携带版、MSIX、符号包和商店上传包；
 - `package_steam.ps1`：生成 Steam 专属载荷，只允许在 `SnowDesktop.Runtime` 中携带 `steam_api64.dll`，拒绝 SDK 头文件、导入库、工具和 `steam_appid.txt`；
 - `steam_pipe.ps1`：为 Steam 专属载荷生成 SteamPipe VDF，支持不上传的 Preview、固定私有开发分支上传和独立确认的公开分支上传；

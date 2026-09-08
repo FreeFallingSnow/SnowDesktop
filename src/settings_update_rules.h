@@ -143,7 +143,7 @@ inline ReleaseStatus ParseGitHubRelease(
     if (!tag || !tag->IsString() || !url || !url->IsString()) return {};
 
     constexpr std::string_view kReleasePrefix =
-        "https://github.com/FreeFallingSnow/SnowDesktop_Release/";
+        "https://github.com/FreeFallingSnow/SnowDesktop/";
     if (!std::string_view(url->string).starts_with(kReleasePrefix)) return {};
 
     std::array<unsigned, 4> current{};

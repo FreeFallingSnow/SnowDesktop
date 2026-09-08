@@ -347,20 +347,13 @@ void TestReleaseManagerShellReload(const std::string& manager,
             manager.find("-ReloadShellBeforeBuild:$ReloadShell") !=
                 std::string::npos,
         "release CLI and TUI only treat the build-directory hook as build occupancy");
-    Check(manager.find("SnowDesktop.Runtime") != std::string::npos &&
-            manager.find("SnowDesktopWorkshopManager.exe") !=
-                std::string::npos &&
-            manager.find("Remove-Item -LiteralPath $legacyPath") !=
-                std::string::npos,
-        "release repository synchronization mirrors the runtime directory and removes obsolete root helpers");
-    Check(manager.find("$thirdPartyLicenses = Join-Path $temporary \"licenses\"") !=
-                std::string::npos &&
-            manager.find("-Source $thirdPartyLicenses") !=
-                std::string::npos &&
-            manager.find("-Destination (Join-Path $releaseRepository \"licenses\")") !=
-                std::string::npos &&
-            manager.find("-LogPath $syncLog") != std::string::npos,
-        "release repository synchronization mirrors third-party licenses without nesting the licenses directory");
+    // Prevent retired binary-repository writes from returning to package/publish.
+    Check(manager.find("$releaseRepository") == std::string::npos &&
+            manager.find("$binaryRemote") == std::string::npos &&
+            manager.find("Sync-ReleaseRepository") == std::string::npos &&
+            manager.find("SnowDesktop_Release") == std::string::npos &&
+            manager.find("sync-release") == std::string::npos,
+        "release automation cannot inspect, synchronize, or publish the retired repository");
     Check(documentation.find(
               "scripts\\release.bat package -ReloadShell") !=
             std::string::npos &&
