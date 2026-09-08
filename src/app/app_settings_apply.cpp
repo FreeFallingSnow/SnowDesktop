@@ -2099,6 +2099,22 @@ bool DesktopApp::IsRetainedContainer(
         return false;
     if (!desktopIconsHidden_)
         return true;
+    if (dynamic_cast<const DesktopGrid*>(container))
+    {
+        if (!dragSession_.IsActive()) return false;
+        const auto& sources = dragSession_.Items();
+        if (sources.empty())
+        {
+            const auto* target = HitTestIcon(dragSession_.CurrentPoint());
+            return target && target->GetDesktopItem() &&
+                IsRetainedLargeIcon(*target->GetDesktopItem());
+        }
+        return std::all_of(sources.begin(), sources.end(), [&](const Item* item) {
+            const auto* icon = dynamic_cast<const DesktopIcon*>(item);
+            return icon && icon->GetDesktopItem() &&
+                IsRetainedLargeIcon(*icon->GetDesktopItem());
+        });
+    }
     if (dynamic_cast<const DockContainer*>(container))
         return dockSettings_.keepWhenDesktopHidden ||
             IsDockContainerEffectivelyFloating(

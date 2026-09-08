@@ -308,6 +308,8 @@
 
 新增“跟随组件圆角”开关，新建默认开启；关闭后显示比例滑杆。运行时跟随组件当前圆角及 DPI，独立比例继续保存。存量项目缺少该字段时保持独立圆角，可主动开启跟随。`LargeIconConfig` 增加可选布尔值 `showOnHoverOnly`、`keepWhenDesktopHidden`、`followComponentRadius`，保留自身版本 2 和现有布局根版本；缺省均为 false，以免改变存量外观。沿用现有宿主授权检查，失效不清除存量配置。旧宿主忽略且可能丢弃新增字段，回退前保存新版完整布局备份；无 Lua API 或 capability 变更。
 
+隐藏桌面时，保留的大图标可拖到空网格，已隐藏的普通图标不可作为拖放目标。外部文件只能交给可见的保留图标处理，不能落到隐藏桌面的空位。大图标整个外框支持 Shell 拖入处理，多格图标不只接受左上角占格的落点。
+
 ### 系统图标菜单
 
 此电脑、控制面板、回收站等 Shell 命名空间图标使用宿主自定义菜单，可转换为大图标。单选时从当前系统 Shell 菜单按规范动词提取“管理”“清空回收站”“映射网络驱动器”“断开网络驱动器”和“属性”，仅提供当前对象实际支持的命令，沿用系统名称与禁用状态；其他命令在“更多选项”中保留。执行由原始 IContextMenu 及 Shell site 完成，不绕过系统确认或 UAC。目录、文件、命名空间的复制、删除及隐藏权限仍按原有规则判断。规范动词接口参考 [Microsoft IContextMenu 文档](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-implement-the-icontextmenu-interface)。

@@ -57,6 +57,13 @@ int main(int argc, char** argv)
         c.keepWhenDesktopHidden = true;
         Check(Visible(c, true, true, true, false, false, false) && !Visible(c, true, true, false, false, false, false) &&
             !Visible(c, true, false, true, true, true, true), "retained hover-only icons still respect hover and desktop ownership");
+        using snowdesktop::large_icon_visibility_rules::AllowsHiddenDesktopDrop;
+        Check(AllowsHiddenDesktopDrop(false, false, false) && AllowsHiddenDesktopDrop(false, true, true) &&
+            !AllowsHiddenDesktopDrop(false, true, false),
+            "retained icons may move to empty cells but cannot target hidden ordinary icons");
+        Check(AllowsHiddenDesktopDrop(true, true, true) && AllowsHiddenDesktopDrop(true, false, true) &&
+            !AllowsHiddenDesktopDrop(true, false, false) && !AllowsHiddenDesktopDrop(true, true, false),
+            "external drops require a retained icon even outside its anchor cell");
         JsonValue encoded; snowdesktop::LargeIconConfig restored;
         Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
             "visibility and radius inheritance survive layout codec round trips");

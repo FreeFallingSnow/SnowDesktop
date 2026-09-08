@@ -15,6 +15,7 @@
 #include "constants.h"
 #include "utils.h"
 #include "../l10n.h"
+#include "../large_icon_visibility_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -296,6 +297,16 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     outSlot = nullptr;
     HitRegion region = HitTestAtPoint(pt, outSlot);
+    if (app_ && app_->desktopIconsHidden_ && region != HitRegion::None)
+    {
+        const auto* target = app_->HitTestIcon(pt);
+        const bool retainedTarget = target && target->GetDesktopItem() &&
+            app_->IsRetainedLargeIcon(*target->GetDesktopItem());
+        if (!snowdesktop::large_icon_visibility_rules::AllowsHiddenDesktopDrop(
+                app_->dragSession_.Items().empty(),
+                region != HitRegion::Empty, retainedTarget))
+            return HitRegion::Blocked;
+    }
     if (app_ && app_->dragSession_.IsActive() &&
         (app_->dragSession_.SourceList().
                 hasCollectionGroupEntries ||
@@ -313,20 +324,29 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
         !app_ || !app_->dragSession_.IsActive() ||
         app_->dragSession_.SourceList().
             SupportsDesktopShellHandoff();
-    if (region == HitRegion::SortBefore && app_ &&
+    if (region != HitRegion::None && app_ &&
         supportsShellHandoff)
     {
         // Check for Handoff: mouse on an unselected icon
         int hit = app_->HitTestItem(pt);
-        if (hit >= 0 && !(*items_)[hit].selected)
+        if (hit >= 0 && !(*items_)[hit].selected &&
+            (region == HitRegion::SortBefore || (*items_)[hit].largeIcon))
         {
-            RECT iconRect = app_->GetItemIconRect((*items_)[hit].bounds);
-            RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                        iconRect.right + 4, iconRect.bottom + 4 };
+            const auto& item = (*items_)[hit];
+            RECT iconRect = app_->GetItemIconRect(item.bounds);
+            RECT hf = item.largeIcon ? app_->GetLargeIconFrameRect(item)
+                : RECT{iconRect.left - 4, iconRect.top - 2,
+                       iconRect.right + 4, iconRect.bottom + 4};
             if (PtInRect(&hf, pt))
                 region = HitRegion::Handoff;
         }
     }
+    // A retained desktop is not a destination for creating hidden ordinary
+    // files. External input must actually resolve to a Shell handoff.
+    if (app_ && app_->desktopIconsHidden_ &&
+        app_->dragSession_.Items().empty() &&
+        region != HitRegion::None && region != HitRegion::Handoff)
+        return HitRegion::Blocked;
     return region;
 }
 
