@@ -2,7 +2,7 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-A Windows desktop organization and personalization tool. SnowDesktop replaces native Explorer desktop icons with a custom Direct2D-rendered desktop and supports multi-monitor grid layouts, embeddable widgets, and Lua script extensions.
+Keep your Windows desktop tidy and make it your own. Automatically group desktop files by type, keep apps and folders together, and use Dock to launch apps and switch windows. Add useful widgets, glass themes, and a separate layout for each monitor to suit the way you work.
 
 ## 📦 Installation
 
@@ -33,24 +33,22 @@ See the [official edition comparison](https://snowdesktop.com/compare/) for deta
 
 ## ✨ Feature Highlights
 
-- 🖥️ **Flexible desktop layouts**: Organize desktop items and widgets on a grid with adjustable rows, columns, and icon spacing. Each display can have its own pages and layouts, with support for display hot-plugging and browsing offline pages.
-- 🗂️ **Desktop organization widgets**:
-  - **Collections**: Keep applications and desktop shortcuts in resizable containers. Drag items in or out, reorder them, and rename each collection to organize frequently used content by purpose.
-  - **Collection groups**: Combine multiple collections into one tabbed widget. Search their contents, reorder tabs with drag-and-drop, and switch between several workspaces without taking up more desktop space.
-  - **Desktop file categories**: Automatically group desktop content by file type. Switch between list and icon views, then use category tabs, search, sorting, date groups, box selection, and drag-and-drop.
-  - **Folder mappings**: Map any folder directly onto the desktop and browse, search, or manage its contents like a desktop widget without moving the original files.
-  - **File groups**: Bring desktop file categories and multiple mapped folders into one widget. Two-level source and category tabs keep content easy to reach while reducing window switching and desktop clutter.
-- 🚀 **Dock and floating Dock**:
-  - **Flexible placement**: Dock the bar to the top, bottom, left, or right edge in island or edge-attached mode, and show it on a selected display or across all displays.
-  - **Everything you use, close at hand**: Add application shortcuts, folder stacks, and collections; surface frequent items; and access Windows or quick search. Items can be added and reordered with drag-and-drop.
-  - **Fast window switching**: See running applications in one place, hover for window previews, and quickly activate, minimize, or close a window.
-  - **Natural interaction**: Enjoy icon magnification, transition animations, and folder pop-ups. The floating Dock can also be summoned temporarily with a hotkey or screen-edge gesture.
-- 🔎 **Quick navigation**: Search desktop items, applications, and Everything file results from a keyboard shortcut, then browse and launch content by sources such as Desktop, Mappings, and Dock.
-- 🧩 **Lua widget platform**:
-  - **Widget management**: Install, enable, update, roll back, and manage widget packages and offline catalogs.
-  - **Built-in widgets**: Includes analog and digital clocks, a month calendar, agenda, reminders, system monitoring, media controls, sticky notes, Pomodoro, an RSS reader, and a quick launcher.
-- 🎨 **Personalization**: Configure light and dark themes, glass and acrylic backgrounds, widget styling, Dock appearance, and a dynamic taskbar.
-- 💾 **Backup and migration**: Back up and restore layouts, settings, widget packages, and widget data, or migrate them between installed, portable, and other data directories.
+- 🖥️ **Give every display its own layout**: Arrange different content on each display and set the grid rows and columns for each page. Adjust icon spacing and widget positions to suit your needs. When you need more room, add pages and flip through them to reach more content.
+- 🗂️ **Put files and shortcuts where they truly belong**:
+  - **Collections**: Group frequently used apps and shortcuts by purpose, so your desktop tools are easy to find.
+  - **Collection groups**: Switch between collections with tabs, keeping tools for work, study, or entertainment in the same desktop area.
+  - **Desktop file categories**: Automatically group desktop files by type, making documents, images, and other content easier to find.
+  - **Folder mapping**: Show the contents of frequently used folders on your desktop, so you can view and manage files without repeatedly opening folder windows.
+  - **File groups**: Bring desktop files and several folders together, and search across them to find the files you need.
+- 🚀 **Reach applications and windows from one place**: Dock can attach to any edge of the screen, or appear as a floating Dock only when needed. Add apps, folder stacks, and collections; see running programs; and use window previews to activate, minimize, or close windows.
+- 🔎 **Quick Navigation**: Quick Navigation finds desktop items and installed apps by name. Install and run Everything on your PC to also search the files it has indexed.
+- 🧩 **Use practical widgets on the desktop**:
+  - **Built-in widgets**: SnowDesktop includes analog and digital clocks, a monthly calendar, schedules, reminders, system monitoring, media controls, notes, a Pomodoro timer, an RSS reader, quick launchers, and more.
+  - **Widget management and Lua extensions**: Install widgets from local packages, enable or disable them, apply updates, and switch back to a retained older version. You can also write your own widgets in Lua.
+- 🎨 **Personalization**:
+  - **Themes and styles**: Choose light or dark themes, and adjust widget and Dock colors, transparency, rounded corners, and backgrounds with glass or acrylic effects.
+  - **Windows 11 taskbar**: On Windows 11, customize the system taskbar with transparent, dark, light, or glass styles and adjust the light or dark appearance of its icons and text. Set rules to change its look automatically: keep it transparent until an app window is visible or maximized, for example, or apply a chosen style when Start, Search, or Task View opens. App window rules are evaluated separately for each display.
+- 💾 **Backup and migration**: Back up and restore SnowDesktop layouts, settings, widget packages, and widget data.
 
 ## 🛠️ Build
 
