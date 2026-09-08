@@ -43,6 +43,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         LargeIconConfig result; JsonValue json;
         if (ParseJson(snapshot.defaultConfig, json)) DecodeLargeIconConfig(json, result);
+        result.effect = large_icon_preset_rules::DefaultEffect(draft);
         return result;
     }
     bool Supported(int direction)
@@ -176,7 +177,15 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     template<class T> std::function<void(Impl&)> Reset(T LargeIconConfig::* member)
     {
         return [member](Impl& self) {
-            const auto defaults = self.Defaults(); self.draft.*member = defaults.*member;
+            const auto defaults = self.Defaults();
+            if constexpr (std::is_same_v<T, int>)
+                if (member == &LargeIconConfig::backgroundStyle)
+                {
+                    if (large_icon_preset_rules::ApplyBackground(self.draft, defaults.backgroundStyle, self.snapshot.editable,
+                            self.snapshot.hasEdgeColor, self.snapshot.accent, self.snapshot.edgeColor)) self.Send("commit");
+                    return;
+                }
+            self.draft.*member = defaults.*member;
             if constexpr (std::is_same_v<T, bool>)
             {
                 if (member == &LargeIconConfig::themeColor && self.draft.themeColor) self.draft.themeGradient = false;

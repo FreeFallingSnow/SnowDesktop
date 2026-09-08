@@ -22,6 +22,10 @@ inline int Background(const LargeIconConfig& c)
 }
 inline int Effect(const LargeIconConfig& c)
 { return IsLargeIconFill(c) && c.effect == 2 ? 0 : c.effect; }
+// Creation and explicit reset use the current content mode. Layout decoding
+// retains its historical defaults and never opts existing items into animation.
+inline int DefaultEffect(const LargeIconConfig& c)
+{ return IsLargeIconFill(c) ? 3 : 2; }
 inline bool BackgroundVisible(int value, bool hasEdge, const LargeIconConfig& c)
 { return value != -4 || hasEdge || Background(c) == -4; }
 // Convert only an editing copy. Loading a layout, losing entitlement or opening
@@ -44,6 +48,7 @@ inline bool ApplyBackground(LargeIconConfig& c, int value, bool editable, bool h
         (value == -4 && !hasEdge && Background(c) != -4)) return false;
     PrepareForEditing(c, accent, hasEdge, edge);
     c.backgroundStyle = value;
+    if (IsLargeIconFill(c) && c.effect == 2) c.effect = DefaultEffect(c);
     return true;
 }
 inline bool ApplyEffect(LargeIconConfig& c, int value, bool editable)

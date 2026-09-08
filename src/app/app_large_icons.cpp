@@ -4,6 +4,7 @@
 #include "../large_icon_render_rules.h"
 #include "../large_icon_renderer.h"
 #include "../large_icon_edit_rules.h"
+#include "../large_icon_preset_rules.h"
 #include "../large_icon_visibility_rules.h"
 
 void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant)
@@ -204,6 +205,7 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), items_[index].parsingName.c_str());
         if (snowdesktop::large_icon_steam::AppId(url)) { config.backgroundStyle = -2; config.content = 2; config.fit = 1; }
     }
+    config.effect = snowdesktop::large_icon_preset_rules::DefaultEffect(config);
     return config;
 }
 

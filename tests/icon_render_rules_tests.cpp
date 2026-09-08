@@ -306,6 +306,25 @@ int main(int argc, char** argv)
     Check(!Visible(Field::Title, config) && !Visible(Field::ManualTitle, config), "image fill hides unsupported title controls");
     namespace presets = snowdesktop::large_icon_preset_rules;
     config = {};
+    Check(presets::DefaultEffect(config) == 2, "new foreground icons and explicit effect resets default to dynamic title");
+    {
+        auto c = config; c.effect = presets::DefaultEffect(c);
+        Check(presets::ApplyBackground(c, -2, true, true) && c.effect == 3 && presets::DefaultEffect(c) == 3,
+            "choosing image fill replaces unsupported default title with gentle zoom");
+        for (int effect : {0, 1, 3, 4, 5})
+        {
+            c = config; c.effect = effect;
+            Check(presets::ApplyBackground(c, -2, true, true) && c.effect == effect,
+                "entering fill preserves other explicitly selected effects including none");
+        }
+        c.content = 2;
+        Check(presets::DefaultEffect(c) == 3, "Steam fill has the same zoom default as local image fill");
+        c.backgroundStyle = -5;
+        Check(presets::DefaultEffect(c) == 2, "Steam foreground resets use title according to current mode rather than item type");
+        JsonValue legacy; snowdesktop::LargeIconConfig loaded;
+        Check(ParseJson("{\"version\":2}", legacy) && snowdesktop::DecodeLargeIconConfig(legacy, loaded) && loaded.effect == 0,
+            "new creation defaults never enable effects in existing layouts missing the effect field");
+    }
     Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -5, "new large icons occupy one cell with neutral preset");
     Check(DefaultBackground(config, 0x008800, true, 0x0112ff).color == 0xe8ecf4, "neutral default never auto-selects detected plate color");
     config.columns = 4; config.rows = 3; config.radiusPercent = 78;
