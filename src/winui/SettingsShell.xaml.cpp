@@ -172,7 +172,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.advancedFeatures.unavailable", L"Steam Bridge unavailable"},
     LocalizedFallback{"settings.general.advancedFeatures.portable", L"Available with the Steam version"},
     LocalizedFallback{"settings.general.advancedFeatures.register", L"Register through Steam"},
-    LocalizedFallback{"settings.general.advancedFeatures.viewOnSteam", L"View on Steam"},
+    LocalizedFallback{"settings.general.advancedFeatures.unlock", L"Unlock"},
     LocalizedFallback{"settings.general.advancedFeatures.reminder", L"Start Steam and sign in to an account that owns SnowDesktop, then register manually."},
     LocalizedFallback{"settings.general.advancedFeatures.notOwned", L"The current Steam account does not own SnowDesktop."},
     LocalizedFallback{"settings.general.advancedFeatures.failed", L"Steam registration failed. Start Steam and try again."},

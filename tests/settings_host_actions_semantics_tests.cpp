@@ -290,19 +290,17 @@ int main(int argc, char** argv)
             host.find("Action::OpenStartupAppsSettings") ==
                 std::string::npos,
         "the General WinUI presenter owns auto-start changes and receives runtime startup and Steam entitlement state");
-    Check(run.find("target.cardVisible = deploymentKind !=") !=
-                std::string::npos &&
-            run.find("RuntimeDeploymentKind::Packaged &&") !=
+    Check(run.find("target.cardVisible = source.registered || source.bridgeAvailable ||") !=
                 std::string::npos &&
             run.find("target.validUntil = source.validUntil") !=
                 std::string::npos &&
             run.find("RuntimeDeploymentKind::Portable") !=
                 std::string::npos &&
-            run.find("target.offerSteamStore = deploymentKind ==") !=
+            run.find("target.offerSteamStore = !source.registered && !source.bridgeAvailable &&") !=
                 std::string::npos &&
             host.find("descriptor.focusId == \"general.advancedFeatures\"") !=
                 std::string::npos,
-        "portable builds offer the Steam Store while packaged builds hide the advanced-feature card and its Settings search entry");
+        "only locked portable builds without a Bridge offer the Steam Store; other builds without either entitlement or a Bridge hide the card and its search entry");
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&

@@ -219,12 +219,10 @@ ToGeneralAdvancedFeatureStatus(
     target.bridgeAvailable = source.bridgeAvailable;
     target.registered = source.registered;
     target.validUntil = source.validUntil;
-    target.cardVisible = deploymentKind !=
-        snowdesktop::deployment::RuntimeDeploymentKind::Packaged &&
-        (source.bridgeAvailable || deploymentKind ==
-            snowdesktop::deployment::RuntimeDeploymentKind::Portable);
-    target.offerSteamStore = deploymentKind ==
-        snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    target.cardVisible = source.registered || source.bridgeAvailable ||
+        deploymentKind == snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    target.offerSteamStore = !source.registered && !source.bridgeAvailable &&
+        deploymentKind == snowdesktop::deployment::RuntimeDeploymentKind::Portable;
     switch (source.state)
     {
     case SourceState::BridgeUnavailable:

@@ -355,10 +355,14 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "advancedFeaturesCard.root.Visibility(status.cardVisible") !=
                 std::string::npos &&
             presenter.find(
-              "settings.general.advancedFeatures.viewOnSteam") !=
+              "settings.general.advancedFeatures.unlock") !=
                 std::string::npos &&
             presenter.find(
               "GeneralAdvancedFeatureState::RegistrationFailed") !=
+                std::string::npos &&
+            presenter.find("if (advancedFeatureStoreAction)") !=
+                std::string::npos &&
+            presenter.find("!status.registered && !status.bridgeAvailable") !=
                 std::string::npos &&
             presenter.find("if (status.registered)") !=
                 std::string::npos &&

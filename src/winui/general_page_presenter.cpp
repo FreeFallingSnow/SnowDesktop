@@ -2,7 +2,6 @@
 
 #include "general_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../steam_app_identity.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
@@ -116,7 +115,6 @@ struct GeneralPagePresenter::Impl
     muxc::StackPanel advancedFeatureControls{nullptr};
     muxc::TextBlock advancedFeatureStatus{nullptr};
     muxc::Button registerAdvancedFeaturesButton{nullptr};
-    muxc::HyperlinkButton advancedFeatureStoreLink{nullptr};
     muxc::ToggleSwitch softwareDesktopToggle{nullptr};
     muxc::ToggleSwitch doubleClickHideToggle{nullptr};
     muxc::ComboBox languageCombo{nullptr};
@@ -163,12 +161,12 @@ struct GeneralPagePresenter::Impl
     bool dockEnabled = false;
     bool hasSnapshot = false;
     bool updatingControls = false;
+    bool advancedFeatureStoreAction = false;
     bool active = false;
     bool closed = false;
 
     winrt::event_token autoStartToken{};
     winrt::event_token registerAdvancedFeaturesToken{};
-    winrt::event_token advancedFeatureStoreToken{};
     winrt::event_token softwareDesktopToken{};
     winrt::event_token doubleClickHideToken{};
     winrt::event_token languageSelectionToken{};
@@ -227,13 +225,6 @@ struct GeneralPagePresenter::Impl
             mux::HorizontalAlignment::Right);
         advancedFeaturesCard.content.Children().Append(
             advancedFeatureRow.root);
-        advancedFeatureStoreLink = muxc::HyperlinkButton{};
-        advancedFeatureStoreLink.Content(
-            winrt::box_value(SnowDesktopSteamStoreUrl()));
-        advancedFeatureStoreLink.HorizontalAlignment(
-            mux::HorizontalAlignment::Left);
-        advancedFeatureStoreLink.UseSystemFocusVisuals(true);
-        advancedFeaturesCard.content.Children().Append(advancedFeatureStoreLink);
         advancedFeatureNotice = muxc::InfoBar{};
         advancedFeatureNotice.IsClosable(false);
         advancedFeatureNotice.IsOpen(false);
@@ -374,14 +365,14 @@ struct GeneralPagePresenter::Impl
             [this](const auto&, const auto&) {
                 if (closed || !active)
                     return;
-                if (actions.registerAdvancedFeatures)
+                if (advancedFeatureStoreAction)
+                {
+                    if (actions.openAdvancedFeaturesStore)
+                        actions.openAdvancedFeaturesStore();
+                }
+                else if (actions.registerAdvancedFeatures)
                     actions.registerAdvancedFeatures();
                 RefreshAdvancedFeatureStatus();
-            });
-        advancedFeatureStoreToken = advancedFeatureStoreLink.Click(
-            [this](const auto&, const auto&) {
-                if (!closed && active && actions.openAdvancedFeaturesStore)
-                    actions.openAdvancedFeaturesStore();
             });
         softwareDesktopToken = softwareDesktopToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -812,7 +803,7 @@ struct GeneralPagePresenter::Impl
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (!status.cardVisible)
         {
-            advancedFeatureStoreLink.Visibility(mux::Visibility::Collapsed);
+            advancedFeatureStoreAction = false;
             registerAdvancedFeaturesButton.Visibility(
                 mux::Visibility::Collapsed);
             advancedFeatureNotice.Visibility(mux::Visibility::Collapsed);
@@ -831,7 +822,16 @@ struct GeneralPagePresenter::Impl
             "settings.general.advancedFeatures.reminder";
         auto severity = muxc::InfoBarSeverity::Informational;
 
-        if (status.registered)
+        advancedFeatureStoreAction = status.offerSteamStore &&
+            !status.registered && !status.bridgeAvailable;
+        if (advancedFeatureStoreAction)
+        {
+            statusKey = "settings.general.advancedFeatures.portable";
+            buttonKey = "settings.general.advancedFeatures.unlock";
+            showButton = true;
+            buttonEnabled = true;
+        }
+        else if (status.registered)
         {
             statusKey = "settings.general.advancedFeatures.registered";
         }
@@ -868,19 +868,10 @@ struct GeneralPagePresenter::Impl
                     noticeKey = "settings.general.advancedFeatures.failed";
                 break;
             case GeneralAdvancedFeatureState::BridgeUnavailable:
-                if (status.offerSteamStore)
-                {
-                    statusKey =
-                        "settings.general.advancedFeatures.portable";
-                }
                 break;
             }
         }
 
-        advancedFeatureStoreLink.Visibility(status.offerSteamStore
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        muxa::AutomationProperties::SetName(advancedFeatureStoreLink,
-            L("settings.general.advancedFeatures.viewOnSteam"));
         std::wstring statusText = L(statusKey);
         if (status.registered)
         {
@@ -976,7 +967,6 @@ struct GeneralPagePresenter::Impl
             autoStartToggle.Toggled(autoStartToken);
             registerAdvancedFeaturesButton.Click(
                 registerAdvancedFeaturesToken);
-            advancedFeatureStoreLink.Click(advancedFeatureStoreToken);
             softwareDesktopToggle.Toggled(softwareDesktopToken);
             doubleClickHideToggle.Toggled(doubleClickHideToken);
             languageCombo.SelectionChanged(languageSelectionToken);
