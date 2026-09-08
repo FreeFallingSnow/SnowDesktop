@@ -18,24 +18,6 @@ namespace controls = presenter_controls;
 namespace
 {
 
-std::wstring FormatOne(std::wstring text, std::wstring_view value)
-{
-    constexpr std::wstring_view token = L"{0}";
-    if (const std::size_t position = text.find(token);
-        position != std::wstring::npos)
-    {
-        text.replace(position, token.size(), value);
-        return text;
-    }
-    if (!value.empty())
-    {
-        if (!text.empty())
-            text.push_back(L' ');
-        text.append(value);
-    }
-    return text;
-}
-
 struct HomeCard
 {
     muxc::Button root{nullptr};
@@ -195,10 +177,6 @@ struct HomeAboutPagePresenter::Impl
     controls::SettingRow versionRow;
     muxc::StackPanel versionControls{nullptr};
     muxc::Button versionButton{nullptr};
-    muxc::StackPanel versionStatusRow{nullptr};
-    muxc::ProgressRing updateProgress{nullptr};
-    muxc::TextBlock updateStatus{nullptr};
-    muxc::InfoBar updateInfoBar{nullptr};
     muxc::Button checkUpdateButton{nullptr};
 
     Section debugTitleSection;
@@ -242,9 +220,6 @@ struct HomeAboutPagePresenter::Impl
     std::wstring applicationVersion;
     std::optional<std::size_t> installedWidgetCount;
     bool packaged = false;
-    SettingsUpdateState updateState = SettingsUpdateState::Unknown;
-    std::wstring availableVersion;
-    std::wstring updateDetail;
     SettingsBackupState backupState = SettingsBackupState::Unknown;
     std::size_t backupCount = 0;
     std::wstring backupDetail;
@@ -397,23 +372,6 @@ struct HomeAboutPagePresenter::Impl
         versionButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         versionButton.VerticalAlignment(mux::VerticalAlignment::Center);
         versionButton.UseSystemFocusVisuals(true);
-        versionStatusRow = muxc::StackPanel{};
-        versionStatusRow.Orientation(muxc::Orientation::Horizontal);
-        versionStatusRow.Spacing(8.0);
-        updateProgress = muxc::ProgressRing{};
-        updateProgress.Width(18.0);
-        updateProgress.Height(18.0);
-        updateProgress.IsActive(false);
-        updateProgress.Visibility(mux::Visibility::Collapsed);
-        updateStatus = MakeBodyText(0.72);
-        updateStatus.VerticalAlignment(mux::VerticalAlignment::Center);
-        muxa::AutomationProperties::SetLiveSetting(updateStatus,
-            muxa::Peers::AutomationLiveSetting::Polite);
-        versionStatusRow.Children().Append(updateProgress);
-        versionStatusRow.Children().Append(updateStatus);
-        updateInfoBar = muxc::InfoBar{};
-        updateInfoBar.IsClosable(false);
-        updateInfoBar.IsOpen(false);
         checkUpdateButton = muxc::Button{};
         checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         checkUpdateButton.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -421,8 +379,6 @@ struct HomeAboutPagePresenter::Impl
         versionActions.Children().Append(versionButton);
         versionActions.Children().Append(checkUpdateButton);
         versionControls.Children().Append(versionActions);
-        versionControls.Children().Append(versionStatusRow);
-        versionControls.Children().Append(updateInfoBar);
         versionRow.Initialize(versionControls);
         versionSection.content.Children().Append(versionRow.root);
 
@@ -535,8 +491,7 @@ struct HomeAboutPagePresenter::Impl
 
         checkUpdateToken = checkUpdateButton.Click(
             [this](const auto&, const auto&) {
-                if (packaged &&
-                    updateState != SettingsUpdateState::Checking)
+                if (packaged)
                     Invoke(HomeAboutCommand::CheckForUpdates);
             });
         versionClickToken = versionButton.Click(
@@ -636,29 +591,6 @@ struct HomeAboutPagePresenter::Impl
         }
     }
 
-    [[nodiscard]] std::wstring UpdateSummary() const
-    {
-        if (!updateDetail.empty())
-            return updateDetail;
-        switch (updateState)
-        {
-        case SettingsUpdateState::Checking:
-            return L("app.settings.checking", L"Checking...");
-        case SettingsUpdateState::UpToDate:
-            return L("app.settings.already_latest", L"Already up to date");
-        case SettingsUpdateState::UpdateAvailable:
-            return FormatOne(L("app.settings.new_version",
-                L"New version v{0} available"), availableVersion);
-        case SettingsUpdateState::ManagedByStore:
-            return {};
-        case SettingsUpdateState::Failed:
-            return L("settings.home.update.failed",
-                L"Could not check for updates");
-        default:
-            return L("settings.home.update.unknown", L"Not checked");
-        }
-    }
-
     [[nodiscard]] std::wstring BackupSummary() const
     {
         if (!backupDetail.empty())
@@ -728,12 +660,7 @@ struct HomeAboutPagePresenter::Impl
             ? std::to_wstring(*installedWidgetCount)
             : L("settings.home.widgets.unknown", L"Status unavailable"));
 
-        const bool updateRunning =
-            updateState == SettingsUpdateState::Checking;
-        updateCard.progress.IsActive(updateRunning);
-        updateCard.progress.Visibility(updateRunning
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateCard.value.Text(UpdateSummary());
+        updateCard.value.Text(applicationVersion);
         const bool backupRunning =
             backupState == SettingsBackupState::Running;
         backupCard.progress.IsActive(backupRunning);
@@ -748,33 +675,10 @@ struct HomeAboutPagePresenter::Impl
         SetAutomation(versionButton, version,
             L("settings.page.debug.description",
                 L"Click five times to unlock Debug."));
-        updateProgress.IsActive(updateRunning);
-        const bool showUpdateStatus = packaged &&
-            updateState != SettingsUpdateState::Unknown &&
-            updateState != SettingsUpdateState::ManagedByStore;
-        versionStatusRow.Visibility(showUpdateStatus
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateProgress.Visibility(updateRunning && packaged
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateStatus.Text(UpdateSummary());
-        checkUpdateButton.IsEnabled(!updateRunning);
         checkUpdateButton.Visibility(packaged
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         SetButtonText(checkUpdateButton,
             "app.settings.check_update", L"Check for Updates");
-        const bool showUpdateInfo =
-            packaged &&
-            (updateState == SettingsUpdateState::UpdateAvailable ||
-                updateState == SettingsUpdateState::Failed);
-        updateInfoBar.Visibility(showUpdateInfo
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateInfoBar.IsOpen(showUpdateInfo);
-        updateInfoBar.Severity(
-            updateState == SettingsUpdateState::Failed
-                ? muxc::InfoBarSeverity::Error
-                : muxc::InfoBarSeverity::Informational);
-        updateInfoBar.Message(showUpdateInfo ? UpdateSummary() : L"");
-
         updatingControls = true;
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
@@ -798,7 +702,6 @@ struct HomeAboutPagePresenter::Impl
         updateCardHelp(widgetCard);
         updateCardHelp(updateCard);
         updateCardHelp(backupCard);
-        SetAutomation(updateStatus, updateStatus.Text());
     }
 
     void RefreshLocalizedText()
@@ -820,7 +723,7 @@ struct HomeAboutPagePresenter::Impl
         SetHomeCardText(updateCard,
             "settings.home.update", L"Updates",
             "settings.home.update.description",
-            L"Review the installed version and update status.");
+            L"Review the installed version.");
         SetHomeCardText(backupCard,
             "settings.home.backup", L"Backup status",
             "settings.home.backup.description",
@@ -895,8 +798,6 @@ struct HomeAboutPagePresenter::Impl
             crashButton, crashDescription.Text());
         SetAutomation(crashExpander,
             crashTitle.Text(), crashDescription.Text());
-        SetAutomation(updateInfoBar,
-            L("app.settings.version", L"Version"));
         RenderStatus();
     }
 
@@ -907,9 +808,6 @@ struct HomeAboutPagePresenter::Impl
         applicationVersion.clear();
         installedWidgetCount.reset();
         packaged = false;
-        updateState = SettingsUpdateState::Unknown;
-        availableVersion.clear();
-        updateDetail.clear();
         backupState = SettingsBackupState::Unknown;
         backupCount = 0;
         backupDetail.clear();
@@ -962,23 +860,6 @@ struct HomeAboutPagePresenter::Impl
             installedWidgetCount = *patch.installedWidgetCount;
         if (patch.packaged)
             packaged = *patch.packaged;
-        if (patch.updateState)
-        {
-            if (*patch.updateState != updateState)
-            {
-                updateDetail.clear();
-                if (*patch.updateState !=
-                    SettingsUpdateState::UpdateAvailable)
-                {
-                    availableVersion.clear();
-                }
-            }
-            updateState = *patch.updateState;
-        }
-        if (patch.availableVersion)
-            availableVersion = *patch.availableVersion;
-        if (patch.updateDetail)
-            updateDetail = *patch.updateDetail;
         if (patch.backupState)
         {
             if (*patch.backupState != backupState)
@@ -1053,10 +934,7 @@ struct HomeAboutPagePresenter::Impl
             animationToggle.Toggled(animationToken);
             resetUnlockButton.Click(resetUnlockToken);
             crashButton.Click(crashToken);
-            updateCard.progress.IsActive(false);
             backupCard.progress.IsActive(false);
-            updateProgress.IsActive(false);
-            updateInfoBar.IsOpen(false);
         }
         catch (...)
         {

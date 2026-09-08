@@ -95,7 +95,7 @@ SD_IPC_FIELDS(winui::GeneralAdvancedFeatureStatus,
     v.validUntil, v.cardVisible, v.offerSteamStore);
 SD_IPC_FIELDS(winui::HomeAboutStatusPatch,
     v.generation, v.revision, v.applicationVersion, v.installedWidgetCount,
-    v.packaged, v.updateState, v.availableVersion, v.updateDetail,
+    v.packaged,
     v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
     v.animationDiagnosticsStatus);
 SD_IPC_FIELDS(winui::LayoutBackupEntry,

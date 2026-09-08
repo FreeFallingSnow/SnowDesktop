@@ -692,10 +692,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
         patch.installedWidgetCount = widgets_.size();
         patch.packaged = snowdesktop::deployment::IsPackaged();
-        patch.updateState = settingsUpdateState_;
-        patch.availableVersion = settingsUpdateAvailableVersion_;
-        patch.updateDetail = settingsUpdateDetailKey_.empty()
-            ? std::wstring{} : _LW(settingsUpdateDetailKey_.c_str());
         patch.animationDiagnosticsEnabled =
             uiAnimationScheduler_.DiagnosticsEnabled();
         patch.animationDiagnosticsStatus =
@@ -769,8 +765,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.refreshExternalState = [this]() {
         if (!settingsController_)
             return;
-        if (const auto snapshot = settingsController_->Snapshot())
-            PrepareSettingsUpdateSession(snapshot->generation);
         GeneralSettings general = generalSettings_;
         general.autoStartEnabled = QueryAutoStartEnabled();
         if (settingsController_->SynchronizeGeneral(general))

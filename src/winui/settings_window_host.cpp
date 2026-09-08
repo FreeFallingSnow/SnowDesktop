@@ -2202,10 +2202,6 @@ struct SettingsWindowHost::Impl
             case HomeAboutCommand::CheckForUpdates:
                 request.action = SettingsHostActions::Action::CheckForUpdates;
                 break;
-            case HomeAboutCommand::CancelUpdateCheck:
-                request.action =
-                    SettingsHostActions::Action::CancelUpdateCheck;
-                break;
             case HomeAboutCommand::OpenProject:
                 request.action = SettingsHostActions::Action::OpenProject;
                 break;

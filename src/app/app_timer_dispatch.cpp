@@ -487,9 +487,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
         TrimHiddenDesktopWidgetSurfaces();
-        PollSettingsUpdateCheck();
         if (uiAnimationScheduler_.DiagnosticsEnabled())
-            PublishSettingsUpdateStatus();
+            PublishHomeAboutStatus();
         PollSteamWorkshopSubscriptions();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =

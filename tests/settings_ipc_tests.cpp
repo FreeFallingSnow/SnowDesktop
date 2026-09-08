@@ -229,6 +229,32 @@ void TestChannel()
     Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
 }
 
+void TestRetiredUpdateProtocol()
+{
+    HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+    if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) ||
+        !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+        throw std::runtime_error("test pipe creation failed");
+    {
+        Channel channel;
+        channel.Open(mainRead, mainWrite, CurrentProcessHandle());
+        // Version 7 carried network-update fields removed from About status.
+        // An old peer must disconnect before its payload can be interpreted.
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{7},
+            std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
+        DWORD written = 0;
+        Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
+                  &written, nullptr) && written == header.size(),
+            "retired update-protocol frame reaches the channel");
+        const auto deadline = GetTickCount64() + 2000;
+        while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
+        Check(!channel.Connected(),
+            "settings peers carrying retired update fields disconnect before dispatch");
+    }
+    CloseHandle(uiWrite);
+    CloseHandle(uiRead);
+}
+
 void TestStalledPeer()
 {
     HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
@@ -370,6 +396,7 @@ int RunSettingsIpcTests()
     TestCodec();
     TestLargeIconEditing();
     TestChannel();
+    TestRetiredUpdateProtocol();
     TestStalledPeer();
     TestProcessLifecycle();
     return failures;

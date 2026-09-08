@@ -222,8 +222,8 @@ public:
         OpenDataDirectory,
         SetAutoStartEnabled,
         CheckForUpdates,
-        CancelUpdateCheck,
-        OpenProject,
+        // Value 16 belonged to the removed network-update cancellation.
+        OpenProject = 17,
         OpenLicense,
         OpenThirdPartyNotices,
         SetAnimationDiagnostics,

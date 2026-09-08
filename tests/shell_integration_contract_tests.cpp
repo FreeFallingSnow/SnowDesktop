@@ -258,7 +258,7 @@ int main(int argc, char** argv)
         "} // namespace");
     const std::string_view applyAutoStart = FunctionBody(settingsApply,
         "DesktopApp::ApplyAutoStartEnabled(",
-        "DesktopApp::StartSettingsUpdateCheck()");
+        "DesktopApp::OpenStoreUpdates()");
     const std::string_view establishedCleanup = FunctionBody(settingsApply,
         "void SuppressLegacySourcesForEstablishedTask() noexcept",
         "struct ReconciledAutoStart");

@@ -82,10 +82,6 @@ DesktopApp::~DesktopApp()
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
 {
     steamEntitlementService_.reset();
-    CancelSettingsUpdateCheck();
-    if (settingsUpdateHttpService_)
-        settingsUpdateHttpService_->Stop();
-    settingsUpdateHttpService_.reset();
     settingsWindow_.reset();
     if (widgetSettingsService_)
     {

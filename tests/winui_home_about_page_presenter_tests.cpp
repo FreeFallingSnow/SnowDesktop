@@ -52,14 +52,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("muxc::Button") != std::string::npos &&
             source.find("muxc::HyperlinkButton") != std::string::npos &&
             source.find("muxc::ToggleSwitch") != std::string::npos &&
-            source.find("muxc::InfoBar") != std::string::npos &&
             source.find("muxc::ProgressRing") != std::string::npos,
         "Home, About and Debug use cached native WinUI controls");
 
     Check(model.find("HomeAboutStatusPatch") != std::string::npos &&
             model.find("std::optional<std::size_t> installedWidgetCount") !=
                 std::string::npos &&
-            model.find("SettingsUpdateState") != std::string::npos &&
             model.find("std::optional<bool> packaged") !=
                 std::string::npos &&
             model.find("SettingsBackupState") != std::string::npos &&
@@ -73,9 +71,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos,
         "host status patches are typed and reject stale async results");
     const auto updateStart = application.find(
-        "DesktopApp::StartSettingsUpdateCheck()");
+        "DesktopApp::OpenStoreUpdates()");
     const auto updateCancel = application.find(
-        "DesktopApp::CancelSettingsUpdateCheck()", updateStart);
+        "DesktopApp::PublishHomeAboutStatus()", updateStart);
     const std::string_view updateAction =
         updateStart != std::string::npos &&
             updateCancel != std::string::npos
@@ -87,29 +85,23 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             updateAction.find("GetStoreProductPageUri()") !=
                 std::string_view::npos &&
-            updateAction.find("SettingsUpdateState::ManagedByStore") !=
-                std::string_view::npos &&
             updateAction.find("api.github.com") == std::string_view::npos &&
             updateAction.find("AsyncHttpService") == std::string_view::npos &&
             applicationRun.find(
                 "patch.packaged = snowdesktop::deployment::IsPackaged()") !=
                 std::string::npos,
         "packaged About updates open Microsoft Store while portable actions never start GitHub HTTP");
-    Check(source.find("if (packaged &&") != std::string::npos &&
-            source.find("versionStatusRow.Visibility(showUpdateStatus") !=
-                std::string::npos &&
-            source.find("checkUpdateButton.Visibility(packaged") !=
-                std::string::npos &&
-            source.find("updateInfoBar.Visibility(showUpdateInfo") !=
-                std::string::npos &&
-            source.find("updateState != SettingsUpdateState::Unknown") !=
-                std::string::npos,
-        "the About update controls stay hidden for portable builds");
-    Check(source.find("app.settings.store_managed_updates") ==
-                std::string::npos &&
-            source.find("updateState != SettingsUpdateState::ManagedByStore") !=
-                std::string::npos,
-        "opening Store updates does not add a managed-by message to About");
+    // Keep the retired updater absent across the whole host, not just its button.
+    Check(application.find("ParseGitHubRelease") == std::string::npos &&
+            application.find("settingsUpdateHttpService_") == std::string::npos &&
+            application.find("PollSettingsUpdateCheck") == std::string::npos &&
+            model.find("SettingsUpdateState") == std::string::npos &&
+            source.find("updateInfoBar") == std::string::npos &&
+            source.find("app.settings.store_managed_updates") == std::string::npos,
+        "retired network update parsing, polling, and status UI remain absent");
+    Check(source.find("if (packaged)") != std::string::npos &&
+            source.find("checkUpdateButton.Visibility(packaged") != std::string::npos,
+        "the Store update action stays hidden and inert for portable builds");
     Check(model.find("HomeAboutLinkUri") != std::string::npos &&
             model.find("space.bilibili.com/32837853") !=
                 std::string::npos &&
@@ -169,20 +161,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.third_party_libs") != std::string::npos &&
             source.find("RenderStatus();") != std::string::npos,
         "static and enum-derived status text refresh dynamically");
-    Check(source.find("updateProgress.IsActive(updateRunning)") !=
-                std::string::npos &&
-            source.find("updateState == SettingsUpdateState::Checking") !=
-                std::string::npos &&
-            source.find("checkUpdateButton.IsEnabled(!updateRunning)") !=
-                std::string::npos &&
-            source.find("HomeAboutCommand::CancelUpdateCheck") ==
-                std::string::npos &&
-            source.find("updateInfoBar.IsOpen(showUpdateInfo)") !=
-                std::string::npos &&
-            source.find("backupCard.progress.IsActive(backupRunning)") !=
-                std::string::npos,
-        "host-published states drive feedback and checking disables update");
-
     for (const char* aboutItem : {
              "app.settings.about_description",
              "逍遥飘雪（郭云哲）", // l10n-allow: fixed author name contract

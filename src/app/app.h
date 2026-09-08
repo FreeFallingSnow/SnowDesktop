@@ -159,7 +159,6 @@ class IWidgetSettingsBackend;
 class WidgetSettingsService;
 }
 
-class AsyncHttpService;
 
 namespace snowdesktop
 {
@@ -1372,11 +1371,8 @@ private:
     [[nodiscard]] bool QueryAutoStartEnabled() const noexcept;
     [[nodiscard]] snowdesktop::AutoStartApplyResult ApplyAutoStartEnabled(
         bool enabled);
-    snowdesktop::SettingsActionResult StartSettingsUpdateCheck();
-    void CancelSettingsUpdateCheck() noexcept;
-    void PrepareSettingsUpdateSession(std::uint64_t generation);
-    void PollSettingsUpdateCheck();
-    void PublishSettingsUpdateStatus();
+    snowdesktop::SettingsActionResult OpenStoreUpdates();
+    void PublishHomeAboutStatus();
     [[nodiscard]] std::wstring BuildAnimationDiagnosticsStatus() const;
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
@@ -3294,16 +3290,7 @@ private:
     std::optional<LargeIconGesture> largeIconGesture_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>
         steamEntitlementService_;
-    std::unique_ptr<AsyncHttpService> settingsUpdateHttpService_;
-    int settingsUpdateRequestId_ = 0;
-    std::uint64_t settingsUpdateRequestGeneration_ = 0;
-    std::uint64_t settingsUpdateSessionGeneration_ = 0;
-    std::uint64_t settingsUpdateStatusRevision_ = 1;
-    snowdesktop::winui::SettingsUpdateState settingsUpdateState_ =
-        snowdesktop::winui::SettingsUpdateState::Unknown;
-    std::wstring settingsUpdateAvailableVersion_;
-    std::string settingsUpdateDetailKey_;
-    std::wstring settingsUpdateDownloadUrl_;
+    std::uint64_t homeAboutStatusRevision_ = 1;
     std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
         widgetAccessibilityProvider_;
     struct PendingLuaWidgetConsent

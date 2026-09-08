@@ -2,7 +2,6 @@
 #include "../atomic_file.h"
 #include "../auto_start_manager.h"
 #include "../deployment_context.h"
-#include "../http_runtime.h"
 #include "../layout_storage.h"
 #include "../page_navigation_rules.h"
 #include "../settings_update_rules.h"
@@ -19,8 +18,6 @@ constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr wchar_t kAutoStartApprovalSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\"
     L"StartupApproved\\Run";
-constexpr wchar_t kSettingsUpdateRequestOwner[] =
-    L"snowdesktop.settings.update";
 
 std::wstring RegisteredExecutablePath(std::wstring_view command) noexcept
 {
@@ -534,152 +531,36 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
             : "app.settings.auto_start_disable_failed"));
 }
 
-snowdesktop::SettingsActionResult DesktopApp::StartSettingsUpdateCheck()
+snowdesktop::SettingsActionResult DesktopApp::OpenStoreUpdates()
 {
     using snowdesktop::SettingsActionResult;
-    using snowdesktop::winui::SettingsUpdateState;
-
+    // Portable deployments have no managed update action.
     if (!snowdesktop::deployment::IsPackaged())
-    {
-        // The portable build has no update row in the legacy settings UI.
-        // Keep this typed action inert if a stale accessibility invocation
-        // reaches the host; portable settings must not start GitHub HTTP.
         return SettingsActionResult::Success();
-    }
 
+    const std::wstring target =
+        snowdesktop::deployment::GetStoreProductPageUri();
+    if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
+            controlHwnd_, L"open", target.c_str(), nullptr, nullptr,
+            SW_SHOWNORMAL)) <= 32)
     {
-        const std::wstring target =
-            snowdesktop::deployment::GetStoreProductPageUri();
-        if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
-                controlHwnd_, L"open", target.c_str(), nullptr, nullptr,
-                SW_SHOWNORMAL)) <= 32)
-        {
-            return SettingsActionResult::Failure(
-                _LW("app.settings.update_connect_failed"));
-        }
-        settingsUpdateState_ = SettingsUpdateState::ManagedByStore;
-        PublishSettingsUpdateStatus();
-        return SettingsActionResult::Success();
+        return SettingsActionResult::Failure(
+            _LW("settings.about.link.openFailed"));
     }
+    return SettingsActionResult::Success();
 }
 
-void DesktopApp::CancelSettingsUpdateCheck() noexcept
-{
-    if (settingsUpdateRequestId_ != 0 && settingsUpdateHttpService_)
-    {
-        (void)settingsUpdateHttpService_->Cancel(
-            kSettingsUpdateRequestOwner, settingsUpdateRequestId_);
-    }
-    settingsUpdateRequestId_ = 0;
-    settingsUpdateRequestGeneration_ = 0;
-    if (settingsUpdateState_ ==
-        snowdesktop::winui::SettingsUpdateState::Checking)
-    {
-        settingsUpdateState_ =
-            snowdesktop::winui::SettingsUpdateState::Unknown;
-        settingsUpdateDetailKey_.clear();
-        PublishSettingsUpdateStatus();
-    }
-}
-
-void DesktopApp::PrepareSettingsUpdateSession(std::uint64_t generation)
-{
-    if (generation == 0 || generation == settingsUpdateSessionGeneration_)
-        return;
-    CancelSettingsUpdateCheck();
-    settingsUpdateSessionGeneration_ = generation;
-    settingsUpdateAvailableVersion_.clear();
-    settingsUpdateDownloadUrl_.clear();
-    settingsUpdateDetailKey_.clear();
-    settingsUpdateState_ =
-        snowdesktop::winui::SettingsUpdateState::Unknown;
-    PublishSettingsUpdateStatus();
-}
-
-void DesktopApp::PollSettingsUpdateCheck()
-{
-    if (!settingsUpdateHttpService_) return;
-
-    const auto snapshot = settingsController_
-        ? settingsController_->Snapshot() : nullptr;
-    if (settingsUpdateRequestId_ != 0 &&
-        (!snapshot || !snapshot->sessionActive ||
-            snapshot->generation != settingsUpdateRequestGeneration_))
-    {
-        CancelSettingsUpdateCheck();
-    }
-
-    for (HttpResponse& response : settingsUpdateHttpService_->Drain())
-    {
-        if (response.id != settingsUpdateRequestId_) continue;
-        const std::uint64_t generation = settingsUpdateRequestGeneration_;
-        settingsUpdateRequestId_ = 0;
-        settingsUpdateRequestGeneration_ = 0;
-        if (!snapshot || !snapshot->sessionActive ||
-            snapshot->generation != generation)
-        {
-            continue;
-        }
-
-        settingsUpdateDetailKey_.clear();
-        if (!response.error.empty() || response.status < 200 ||
-            response.status >= 300)
-        {
-            settingsUpdateState_ =
-                snowdesktop::winui::SettingsUpdateState::Failed;
-            settingsUpdateDetailKey_ =
-                "app.settings.update_receive_failed";
-        }
-        else if (response.body.empty())
-        {
-            settingsUpdateState_ =
-                snowdesktop::winui::SettingsUpdateState::Failed;
-            settingsUpdateDetailKey_ =
-                "app.settings.update_empty_response";
-        }
-        else
-        {
-            const auto release =
-                snowdesktop::settings_update_rules::ParseGitHubRelease(
-                    response.body, SNOWDESKTOP_VERSION);
-            if (!release.parsed)
-            {
-                settingsUpdateState_ =
-                    snowdesktop::winui::SettingsUpdateState::Failed;
-                settingsUpdateDetailKey_ =
-                    "app.settings.update_parse_failed";
-            }
-            else
-            {
-                settingsUpdateState_ = release.updateAvailable
-                    ? snowdesktop::winui::SettingsUpdateState::UpdateAvailable
-                    : snowdesktop::winui::SettingsUpdateState::UpToDate;
-                settingsUpdateAvailableVersion_ =
-                    Utf8ToWide(release.version);
-                settingsUpdateDownloadUrl_ = release.updateAvailable
-                    ? Utf8ToWide(release.downloadUrl)
-                    : std::wstring{};
-            }
-        }
-        PublishSettingsUpdateStatus();
-    }
-}
-
-void DesktopApp::PublishSettingsUpdateStatus()
+void DesktopApp::PublishHomeAboutStatus()
 {
     const auto snapshot = settingsController_
         ? settingsController_->Snapshot() : nullptr;
     if (!snapshot || !snapshot->sessionActive || !settingsWindow_) return;
     snowdesktop::winui::HomeAboutStatusPatch patch;
     patch.generation = snapshot->generation;
-    settingsUpdateStatusRevision_ = std::max(
-        settingsUpdateStatusRevision_ + 1, snapshot->revision + 1);
-    patch.revision = settingsUpdateStatusRevision_;
+    homeAboutStatusRevision_ = std::max(
+        homeAboutStatusRevision_ + 1, snapshot->revision + 1);
+    patch.revision = homeAboutStatusRevision_;
     patch.packaged = snowdesktop::deployment::IsPackaged();
-    patch.updateState = settingsUpdateState_;
-    patch.availableVersion = settingsUpdateAvailableVersion_;
-    patch.updateDetail = settingsUpdateDetailKey_.empty()
-        ? std::wstring{} : _LW(settingsUpdateDetailKey_.c_str());
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
     patch.animationDiagnosticsStatus =
@@ -1231,10 +1112,7 @@ public:
             break;
         }
         case Action::CheckForUpdates:
-            return app_.StartSettingsUpdateCheck();
-        case Action::CancelUpdateCheck:
-            app_.CancelSettingsUpdateCheck();
-            break;
+            return app_.OpenStoreUpdates();
         case Action::OpenProject:
             if (reinterpret_cast<INT_PTR>(ShellExecuteW(
                     app_.controlHwnd_, L"open",
@@ -1273,7 +1151,7 @@ public:
         case Action::SetAnimationDiagnostics:
             app_.uiAnimationScheduler_.SetDiagnosticsEnabled(
                 request.boolValue);
-            app_.PublishSettingsUpdateStatus();
+            app_.PublishHomeAboutStatus();
             break;
         case Action::TriggerCrashTest:
             TriggerCrashForTesting();
@@ -1491,8 +1369,6 @@ void DesktopApp::InitializeSettingsController()
         generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
     }
-    settingsUpdateState_ =
-        snowdesktop::winui::SettingsUpdateState::Unknown;
     if (!result.Succeeded())
     {
         std::wstring message =
@@ -1943,7 +1819,7 @@ void DesktopApp::ApplyLanguageChange()
     LoadCategorySettingsAndApply();
     const bool widgetRuntimeReloadAllowed = !settingsWindow_ ||
         settingsWindow_->PrepareLanguageChange();
-    PublishSettingsUpdateStatus();
+    PublishHomeAboutStatus();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
