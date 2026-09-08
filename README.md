@@ -6,9 +6,9 @@
 ## 📦 安装
 
 <p>
-  <a href="https://store.steampowered.com/app/5080330/SnowDesktop/"><img src="https://img.shields.io/badge/Steam-171A21?style=for-the-badge&amp;logo=steam&amp;logoColor=white" alt="Steam 商店" height="56"></a>
+  <a href="https://store.steampowered.com/app/5080330/SnowDesktop/"><img src="https://img.shields.io/badge/Steam-171A21?style=for-the-badge&amp;logo=steam&amp;logoColor=white" alt="Steam 商店" width="137" height="44"></a>
   &nbsp;
-  <a href="https://apps.microsoft.com/detail/9PLLGJVL4LC3"><img src="https://get.microsoft.com/images/zh-cn%20dark.svg" alt="从 Microsoft 获取" height="56"></a>
+  <a href="https://apps.microsoft.com/detail/9PLLGJVL4LC3"><img src="https://get.microsoft.com/images/zh-cn%20dark.svg" alt="从 Microsoft 获取" height="44"></a>
 </p>
 
 [官网](https://snowdesktop.com/) | [GitHub](https://github.com/FreeFallingSnow/SnowDesktop)
