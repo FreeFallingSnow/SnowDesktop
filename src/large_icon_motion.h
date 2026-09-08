@@ -11,6 +11,10 @@ struct LargeIconMotion
 {
     float hover = 0, from = 0, target = 0;
     double transitionStart = 0;
+    float shine = -1; // Inactive sentinel; phase is runtime-only, never persisted.
+    double shineStart = 0;
+    bool shineHovered = false;
+    int activeEffect = 0;
     float tiltX = 0, tiltY = 0, tiltFromX = 0, tiltFromY = 0, tiltTargetX = 0, tiltTargetY = 0;
     double tiltStart = 0, tiltDuration = 0;
 
@@ -40,7 +44,25 @@ struct LargeIconMotion
     bool Advance(double now, bool hovered, bool visible, bool enabled,
         double durationScale, const LargeIconConfig& config, bool menuTitle = false)
     {
-        if (!visible || config.effect == 0 || (config.effect == 2 && IsLargeIconFill(config)) || (config.effect == 1 && !enabled))
+        if (activeEffect != config.effect)
+        {
+            activeEffect = config.effect;
+            hover = from = target = 0; transitionStart = now;
+            shine = -1; shineHovered = false;
+        }
+        if (config.effect == 5)
+        {
+            hover = from = target = 0;
+            if (!visible || !enabled || durationScale <= 0 || config.shineStrength <= 0 || !hovered)
+            { shine = -1; shineHovered = false; return false; }
+            if (!shineHovered) { shineStart = now; shineHovered = true; }
+            const double progress = std::max(0., (now - shineStart) / (config.shineDurationMs * durationScale));
+            shine = progress < 1 ? static_cast<float>(progress) : -1.f;
+            return progress < 1;
+        }
+        if (!visible || config.effect == 0 || (config.effect == 2 && IsLargeIconFill(config)) ||
+            ((config.effect == 1 || config.effect == 3) && !enabled) ||
+            (config.effect == 3 && config.zoomAmount <= 0) || (config.effect == 4 && config.glowStrength <= 0))
         { hover = from = target = 0; transitionStart = now; return false; }
         // Explicit context-menu invocation reveals the name immediately and
         // holds a settled pose. Closing resumes the ordinary hover transition.
@@ -60,7 +82,7 @@ struct LargeIconMotion
         if (next != target)
         {
             from = hover; target = next;
-            transitionStart = now + (hovered && hover == 0 ? config.delayMs * speed : 0);
+            transitionStart = now + (hovered && hover == 0 && config.effect == 2 ? config.delayMs * speed : 0);
         }
         const double duration = (target ? config.enterMs : config.exitMs) * std::max(0., durationScale) * speed;
         const double progress = now < transitionStart ? 0 : duration <= 0 ? 1 : std::clamp((now - transitionStart) / duration, 0., 1.);

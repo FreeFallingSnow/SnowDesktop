@@ -130,6 +130,80 @@ void Save(const char* directory, const char* name, const std::vector<unsigned>& 
     const bool saved = snowdesktop::preview_png::Save(std::filesystem::path(directory) / name, Canvas::width, Canvas::height, pixels, error);
     Check(saved, error.c_str());
 }
+
+void CheckNewEffects(Canvas& canvas, const char* outputDirectory)
+{
+    snowdesktop::LargeIconConfig config;
+    snowdesktop::large_icon_renderer::View view;
+    view.frame = {100, 60, 300, 260}; view.backgroundResolved = true; view.background.opacity = 0;
+    auto image = canvas.Image(64, 64); view.bitmap = image.Get();
+    const auto idle = canvas.Draw(config, view);
+    config.effect = 3;
+    Check(canvas.Draw(config, view) == idle, "zoom leaves resting content unchanged");
+    view.hover = 1;
+    const auto zoomed = canvas.Draw(config, view);
+    const auto originalBounds = RedBounds(idle), zoomBounds = RedBounds(zoomed);
+    Check(zoomBounds.left < originalBounds.left && zoomBounds.right > originalBounds.right &&
+        zoomBounds.top < originalBounds.top && zoomBounds.bottom > originalBounds.bottom,
+        "gentle zoom increases actual bitmap coverage around its center");
+    Check(Visible(zoomed, {0, 0, 100, Canvas::height}) == 0 &&
+        Visible(zoomed, {300, 0, Canvas::width, Canvas::height}) == 0, "zoom does not enlarge the outer frame");
+    Save(outputDirectory, "09-gentle-zoom.png", zoomed);
+    view.animations = false;
+    Check(canvas.Draw(config, view) == idle, "renderer suppresses zoom when animations are disabled");
+    view.animations = true; config.effect = 4; view.accent = 0x38aaff;
+    const auto glow = canvas.Draw(config, view);
+    Check(Pixel(glow, 101, 160) != Pixel(idle, 101, 160) && Pixel(glow, 200, 160) == Pixel(idle, 200, 160),
+        "edge glow changes only the frame edge and leaves central image content intact");
+    Check(Pixel(glow, 100, 60) == 0 && Visible(glow, {0, 0, 99, Canvas::height}) == 0 &&
+        Visible(glow, {301, 0, Canvas::width, Canvas::height}) == 0, "glow follows rounded geometry without outside bleed");
+    Save(outputDirectory, "10-edge-glow.png", glow);
+    view.animations = false;
+    Check(canvas.Draw(config, view) == glow, "static glow remains available with reduced motion");
+    view.animations = true; config.glowStrength = 0;
+    Check(canvas.Draw(config, view) == idle, "zero-strength glow leaves no extra outline");
+    config.glowStrength = .45; view.hover = 0;
+    Check(canvas.Draw(config, view) == idle, "glow vanishes fully after hover exit");
+    config.effect = 5; view.shine = .5f;
+    const auto shine = canvas.Draw(config, view);
+    Check(((Pixel(shine, 200, 160) >> 8) & 255) > ((Pixel(idle, 200, 160) >> 8) & 255),
+        "one-shot shine brightens the image in the moving band");
+    Check(Pixel(shine, 130, 160) == 0 && Pixel(shine, 270, 160) == 0,
+        "shine never paints the frame's transparent foreground margins");
+    Save(outputDirectory, "11-one-shot-shine.png", shine);
+    view.shine = -1;
+    Check(canvas.Draw(config, view) == idle, "inactive sweep has no residual light");
+    view.shine = .5f; view.animations = false;
+    Check(canvas.Draw(config, view) == idle, "renderer suppresses sweep with reduced motion");
+    view.animations = true;
+    auto alphaImage = canvas.Image(128, 64, true);
+    config.backgroundStyle = -2; config.focusX = 1; config.radius = 32;
+    view.bitmap = alphaImage.Get(); view.shine = -1;
+    const auto fill = canvas.Draw(config, view);
+    for (float phase : {.2f, .5f, .8f})
+    {
+        view.shine = phase;
+        const auto sweptFill = canvas.Draw(config, view);
+        Check(Pixel(sweptFill, 280, 160) == 0 && Pixel(sweptFill, 150, 80) == 0 && Pixel(sweptFill, 100, 60) == 0,
+            "sweep mask follows off-center cover crop and preserves transparent source regions");
+        if (phase == .5f)
+        {
+            Check(((Pixel(sweptFill, 180, 160) >> 8) & 255) > ((Pixel(fill, 180, 160) >> 8) & 255),
+                "cropped sweep lights the visible source at its actual destination");
+            Save(outputDirectory, "12-cropped-alpha-shine.png", sweptFill);
+        }
+    }
+    config.fit = 0; config.fillScale = .5;
+    view.frame = {100, 60, 380, 300}; view.scale = 2; view.opacity = .5f;
+    const auto contained = canvas.Draw(config, view);
+    Check(Visible(contained, {105, 65, 375, 110}) == 0 && Visible(contained, {105, 250, 375, 295}) == 0,
+        "scaled contain sweep preserves letterboxing at high DPI and item opacity");
+    config.effect = 3; config.contentScale = 1; config.fillScale = 3; view.hover = 1;
+    view.bitmap = image.Get(); config.fit = 1; config.radiusPercent = 100;
+    const auto clippedZoom = canvas.Draw(config, view);
+    Check(Pixel(clippedZoom, 105, 65) == 0 && Pixel(clippedZoom, 240, 180) != 0 &&
+        Visible(clippedZoom, {0, 0, 99, Canvas::height}) == 0, "magnified fill remains inside percentage radius at high DPI");
+}
 }
 
 int RunLargeIconRenderingTests(const char* outputDirectory)
@@ -265,9 +339,11 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         pixels = canvas.Draw(config, view);
         Check((Pixel(pixels, 130, 210) >> 24) >= 165, "transparent source pixels retain the default background at 200 percent DPI");
         Save(outputDirectory, "06-transparent-200dpi.png", pixels);
+        CheckNewEffects(canvas, outputDirectory);
 
         // Exercise the real device-context effects without a desktop window.
         Canvas gpu(true);
+        CheckNewEffects(gpu, nullptr);
         config = {}; config.effect = 1; config.radiusPercent = 0;
         view = {}; view.frame = {100, 60, 380, 300}; view.opacity = .7f;
         auto gpuIcon = gpu.Image(64, 64); view.bitmap = gpuIcon.Get();

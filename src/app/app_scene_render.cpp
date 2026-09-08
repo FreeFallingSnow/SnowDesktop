@@ -3,6 +3,7 @@
 #include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
 #include "../drag_visual_rules.h"
+#include "../large_icon_render_rules.h"
 #include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -475,7 +476,23 @@ void DesktopApp::DrawDynamicOverlays(
         if (targetRegion == HitRegion::Handoff && targetSlot)
         {
             RECT bounds = targetSlot->GetBounds();
-            DrawD2DRoundedRectangle(ctx, bounds, 6.0f,
+            float radius = 6.f;
+            if (dynamic_cast<DesktopGrid*>(targetContainer))
+            {
+                // The pointer may be in a covered cell whose Slot is empty.
+                // Resolve the same actual item used by Shell handoff hit testing.
+                const auto* icon = HitTestIcon(dragSession_.CurrentPoint());
+                const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                if (item && item->largeIcon)
+                {
+                    bounds = GetLargeIconFrameRect(*item);
+                    const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+                        EffectiveLargeIconConfig(*item), CurrentPersonalization().cornerRadius);
+                    radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
+                        bounds.right - bounds.left, bounds.bottom - bounds.top, GetItemLayoutScale(item->bounds)));
+                }
+            }
+            DrawD2DRoundedRectangle(ctx, bounds, radius,
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
         }

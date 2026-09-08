@@ -289,6 +289,8 @@ void DesktopApp::ShowItemContextMenu(
                 AppendMenuW(effects, MF_STRING | (enabled ? 0 : MF_GRAYED) |
                     (presets::Effect(config) == option.value ? MF_CHECKED : 0),
                     kContextLargeIconEffectFirst + static_cast<UINT>(i), _LW(option.label));
+                constexpr const wchar_t* glyphs[]{L"\uF05E", L"\uF1B2", L"\uF031", L"\uF00E", L"\uF185", L"\uF0D0"};
+                SetMenuItemIcon(effects, kContextLargeIconEffectFirst + static_cast<UINT>(i), glyphs[i]);
             }
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundSettings"));
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));

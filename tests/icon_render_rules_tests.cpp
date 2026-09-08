@@ -132,6 +132,90 @@ int main(int argc, char** argv)
     Check(!snowdesktop::large_icon_transform::Resolve(400, 180, 1, 1, 0).active, "zero-strength 3D skips effect rendering");
     config = {};
     const MeasureTitle measured = [](double w, double h) { return TitleSize{96, 32, w >= 96 && h >= 32}; };
+    {
+        using namespace snowdesktop::large_icon_settings_rules;
+        namespace presets = snowdesktop::large_icon_preset_rules;
+        // Protect saved appearance, host authorization and the finite animation
+        // lifecycle shared by both ordinary foreground and image-fill icons.
+        for (int effect : {3, 4, 5}) for (bool fill : {false, true})
+        {
+            auto c = config; c.backgroundStyle = fill ? -2 : -5;
+            const auto locked = c;
+            Check(!presets::ApplyEffect(c, effect, false) && c == locked, "locked edits cannot select new effects");
+            Check(presets::ApplyEffect(c, effect, true), "new effects support foreground and fill sources");
+            c.zoomAmount = .07; c.glowStrength = .62; c.shineStrength = .35; c.shineDurationMs = 650;
+            JsonValue encoded; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
+                "new effect selection and independent strengths survive persistence");
+            Check(Visible(Field::Zoom, c) == (effect == 3) && Visible(Field::Glow, c) == (effect == 4) &&
+                Visible(Field::Shine, c) == (effect == 5) && !Visible(Field::Title, c) && !Visible(Field::Tilt, c),
+                "settings disclose only the selected effect parameters");
+            Check(presets::ApplyEffect(c, 0, true) && presets::ApplyEffect(c, effect, true) && c == restored,
+                "quick switching retains the last detailed parameters");
+            c.effect = 6;
+            Check(!snowdesktop::ValidateLargeIconConfig(c), "unsupported effect values cannot enter layout state");
+        }
+        auto c = config;
+        JsonValue legacy; snowdesktop::LargeIconConfig restored;
+        Check(ParseJson("{\"version\":2,\"effect\":1}", legacy) && snowdesktop::DecodeLargeIconConfig(legacy, restored) &&
+            restored.effect == 1 && restored.zoomAmount == .04 && restored.glowStrength == .45 && restored.shineStrength == .22 && restored.shineDurationMs == 450,
+            "old layouts keep their existing effect while new parameters receive independent defaults");
+        c.zoomAmount = .11; Check(!snowdesktop::ValidateLargeIconConfig(c), "excessive zoom is rejected");
+        c = config; c.glowStrength = std::numeric_limits<double>::quiet_NaN();
+        Check(!snowdesktop::ValidateLargeIconConfig(c), "non-finite glow is rejected");
+        c = config; c.shineStrength = 1.1; Check(!snowdesktop::ValidateLargeIconConfig(c), "excessive shine opacity is rejected");
+        c = config; c.shineDurationMs = 0; Check(!snowdesktop::ValidateLargeIconConfig(c), "zero-duration shine is rejected");
+        for (int effect : {3, 4})
+        {
+            c = config; c.effect = effect; snowdesktop::LargeIconMotion m;
+            Check(m.Advance(1000, true, true, true, 1, c), "zoom and glow start a finite hover transition");
+            m.Advance(1060, true, true, true, 1, c);
+            Check(std::abs(m.hover - .5f) < .0001, "new hover effects respond without title delay");
+            m.Advance(1060, false, true, true, 1, c);
+            Check(std::abs(m.hover - .5f) < .0001, "new effects reverse from the current pose");
+            Check(!m.Advance(1300, false, true, true, 1, c) && m.hover == 0, "new effects stop refreshing after exit");
+            m.Advance(1400, true, true, true, 1, c);
+            Check(!m.Advance(1700, true, true, true, 1, c) && m.hover == 1, "settled hover does not refresh continuously");
+            Check(!m.Advance(1800, true, true, false, 1, c) && m.hover == (effect == 4 ? 1 : 0),
+                "reduced motion disables zoom and shows static glow");
+            Check(!m.Advance(1900, true, false, true, 1, c) && m.hover == 0, "hidden effects clear their pose without scheduling frames");
+            c.zoomAmount = c.glowStrength = 0;
+            Check(!m.Advance(2000, true, true, true, 1, c), "zero-strength effects schedule no frames");
+        }
+        c = config; c.effect = 5; snowdesktop::LargeIconMotion sweep;
+        Check(sweep.Advance(1000, true, true, true, 1, c) && sweep.shine == 0, "shine starts once on entry");
+        sweep.Advance(1225, true, true, true, 1, c);
+        Check(sweep.shine == .5f, "shine uses its own saved duration");
+        Check(!sweep.Advance(1450, true, true, true, 1, c) && sweep.shine < 0 &&
+            !sweep.Advance(4000, true, true, true, 1, c), "completed shine clears and never loops while hovered");
+        sweep.Advance(4100, false, true, true, 1, c);
+        Check(sweep.Advance(4101, true, true, true, 2, c), "reentry starts a new sweep");
+        sweep.Advance(4551, true, true, true, 2, c);
+        Check(sweep.shine == .5f, "shine obeys the global duration multiplier");
+        Check(!sweep.Advance(4560, true, false, true, 1, c) && sweep.shine < 0, "hidden or blocked items cancel the sweep");
+        Check(!sweep.Advance(4600, true, true, false, 1, c) && sweep.shine < 0, "reduced motion disables shine");
+        Check(!sweep.Advance(4700, true, true, true, 0, c), "zero global duration schedules no sweep");
+        c.shineStrength = 0; Check(!sweep.Advance(4800, true, true, true, 1, c), "invisible shine schedules no sweep");
+        c.shineStrength = .22; sweep.Advance(4900, true, true, true, 1, c);
+        c.effect = 0;
+        Check(!sweep.Advance(4901, true, true, true, 1, c) && sweep.shine < 0, "switching effects clears an in-flight sweep");
+        c.effect = 5;
+        Check(sweep.Advance(4902, true, true, true, 1, c) && sweep.shine == 0, "switching back starts from the new effect state");
+        c = config; c.iconX = .2; c.iconY = .8;
+        const auto idle = ResolveContent(c, 400, 180, 64, 64, 1, true, 0);
+        c.effect = 3;
+        const auto zoom = ResolveContent(c, 400, 180, 64, 64, 1, true, 1);
+        Check(std::abs(zoom.width - idle.width * 1.04) < .0001 &&
+            std::abs(zoom.x + zoom.width / 2 - idle.x - idle.width / 2) < .0001 &&
+            std::abs(zoom.y + zoom.height / 2 - idle.y - idle.height / 2) < .0001,
+            "zoom preserves the saved foreground center and changes only its content size");
+        c.backgroundStyle = -2; c.focusX = 1; c.focusY = 0;
+        const auto crop = ResolveContent(c, 400, 180, 800, 200, 1, false, 1);
+        const auto restingCrop = ResolveContent(c, 400, 180, 800, 200, 1, false, 0);
+        Check(crop.width == 400 && crop.height == 180 && crop.sourceWidth < restingCrop.sourceWidth &&
+            std::abs(crop.sourceX + crop.sourceWidth - 800) < .0001 && crop.sourceY == 0,
+            "zoomed fill keeps the frame and crop focus while sampling a smaller source region");
+    }
     auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
     Check(geometry.width == 32 && geometry.x == 184 && geometry.y == 74, "small original stays centered without upscaling");
     config.iconX = 0; config.iconY = 1;

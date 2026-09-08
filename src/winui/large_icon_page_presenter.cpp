@@ -446,8 +446,14 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Slider(icon, "largeIcon.positionX", &LargeIconConfig::iconX, 0, 100, 1, 100, L"%", Field::ForegroundPosition);
         Slider(icon, "largeIcon.positionY", &LargeIconConfig::iconY, 0, 100, 1, 100, L"%", Field::ForegroundPosition);
         auto effects = Group("largeIcon.effectsSection");
-        Choice(effects, "largeIcon.effect", &LargeIconConfig::effect, {{0,"largeIcon.noEffect"},{1,"largeIcon.tilt"},{2,"largeIcon.dynamicTitle"}});
+        Choice(effects, "largeIcon.effect", &LargeIconConfig::effect,
+            {{0,"largeIcon.noEffect"},{1,"largeIcon.tilt"},{2,"largeIcon.dynamicTitle"},
+             {3,"largeIcon.zoom"},{4,"largeIcon.edgeGlow"},{5,"largeIcon.shine"}});
         Slider(effects, "largeIcon.amplitude", &LargeIconConfig::amplitude, 0, 100, 1, 50, L"%", Field::Tilt, 1);
+        Slider(effects, "largeIcon.zoomAmount", &LargeIconConfig::zoomAmount, 0, 10, 1, 100, L"%", Field::Zoom, 1);
+        Slider(effects, "largeIcon.amplitude", &LargeIconConfig::glowStrength, 0, 100, 1, 100, L"%", Field::Glow, 1);
+        Slider(effects, "largeIcon.amplitude", &LargeIconConfig::shineStrength, 0, 100, 1, 100, L"%", Field::Shine, 1);
+        Slider(effects, "largeIcon.shineDuration", &LargeIconConfig::shineDurationMs, 150, 1500, 50, 1, L"ms", Field::Shine, 1);
         Choice(effects, "largeIcon.direction", &LargeIconConfig::titleDirection, {{2,"largeIcon.auto"},{0,"largeIcon.left"},{1,"largeIcon.up"}}, Field::Title, 1);
         Slider(effects, "largeIcon.titleSize", &LargeIconConfig::revealTitleSize, 8, 72, 1, 1, L"", Field::Title, 1);
         Slider(effects, "largeIcon.titleWeight", &LargeIconConfig::titleWeight, 100, 900, 100, 1, L"", Field::Title, 1);

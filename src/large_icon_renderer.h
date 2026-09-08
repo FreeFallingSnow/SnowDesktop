@@ -14,6 +14,7 @@ struct View
 {
     RECT frame{};
     float scale = 1, opacity = 1, hover = 0;
+    float shine = -1;
     bool original = true, animations = true, selected = false;
     unsigned neutral = 0x414751, accent = 0, edgeColor = 0, componentForeground = 0xffffff;
     bool hasEdgeColor = false, backgroundResolved = false;

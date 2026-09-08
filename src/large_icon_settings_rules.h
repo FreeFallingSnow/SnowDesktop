@@ -7,7 +7,7 @@ enum class Field
 {
     Always, Fill, FillImage, Crop, Steam,
     Custom, Gradient, Solid, Blur, Border, Edge, Foreground, ForegroundImage, ForegroundPosition,
-    Title, ManualTitle, Tilt, Radius
+    Title, ManualTitle, Tilt, Zoom, Glow, Shine, Radius
 };
 inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
 {
@@ -31,6 +31,9 @@ inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
     case Field::Title: return !fill && c.effect == 2;
     case Field::ManualTitle: return !fill && c.effect == 2 && !c.autoTitleColor;
     case Field::Tilt: return c.effect == 1;
+    case Field::Zoom: return c.effect == 3;
+    case Field::Glow: return c.effect == 4;
+    case Field::Shine: return c.effect == 5;
     default: return true;
     }
 }

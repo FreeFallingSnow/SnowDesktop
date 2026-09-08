@@ -434,6 +434,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         // The first cached ghost may be captured before the desktop's hover
         // reset. Always capture its idle pose so inner text never sticks there.
         view.hover = state == 3 ? 0 : runtime->second.motion.hover;
+        view.shine = state == 3 ? -1.f : runtime->second.motion.shine;
         if (const auto& asset = runtime->second.asset; asset && !demo)
         {
             view.bitmap = GetOrCreateD2DBitmap(context, asset->bitmap, false);

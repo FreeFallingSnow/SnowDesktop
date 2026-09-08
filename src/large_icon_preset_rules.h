@@ -13,7 +13,8 @@ inline constexpr std::array backgrounds{
     Option{10, "app.settings.dark_acrylic"}, Option{11, "app.settings.light_acrylic"},
     Option{9, "app.settings.custom"}};
 inline constexpr std::array effects{
-    Option{0, "largeIcon.noEffect"}, Option{1, "largeIcon.tilt"}, Option{2, "largeIcon.dynamicTitle"}};
+    Option{0, "largeIcon.noEffect"}, Option{1, "largeIcon.tilt"}, Option{2, "largeIcon.dynamicTitle"},
+    Option{3, "largeIcon.zoom"}, Option{4, "largeIcon.edgeGlow"}, Option{5, "largeIcon.shine"}};
 inline int Background(const LargeIconConfig& c)
 {
     if (c.backgroundStyle != -3) return c.backgroundStyle;
@@ -47,7 +48,8 @@ inline bool ApplyBackground(LargeIconConfig& c, int value, bool editable, bool h
 }
 inline bool ApplyEffect(LargeIconConfig& c, int value, bool editable)
 {
-    if (!editable || value < 0 || value > 2 || (value == 2 && IsLargeIconFill(c))) return false;
+    if (!editable || std::none_of(effects.begin(), effects.end(),
+            [value](auto option) { return option.value == value; }) || (value == 2 && IsLargeIconFill(c))) return false;
     c.effect = value;
     return true;
 }

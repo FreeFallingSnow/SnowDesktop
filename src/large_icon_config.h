@@ -78,7 +78,9 @@ struct LargeIconConfig
     double edgeWidth = 1, edgeStrength = .3;
     PanelGradient gradient;
     double gradientOpacity = 1; // Independent multiplier; preserves individual stop opacity.
-    int effect = 0; // none, 3D, dynamic title
+    int effect = 0; // none, 3D, dynamic title, gentle zoom, edge glow, one-shot shine
+    double zoomAmount = .04, glowStrength = .45, shineStrength = .22;
+    int shineDurationMs = 450;
     int titleDirection = 0; // left, up
     bool autoTitleDirection = true;
     int titleWeight = 600;
@@ -111,6 +113,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
     LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient); LI_FIELD(gradientOpacity);
     LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(autoTitleDirection); LI_FIELD(titleWeight);
+    LI_FIELD(zoomAmount); LI_FIELD(glowStrength); LI_FIELD(shineStrength); LI_FIELD(shineDurationMs);
 #undef LI_FIELD
 }
 
@@ -153,7 +156,9 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         range(c.iconX, 0, 1) && range(c.iconY, 0, 1) && c.material >= 0 && c.material <= 2 &&
         c.componentTheme >= 0 && c.componentTheme <= 1 && range(c.blurRadius, 4, 48) &&
         range(c.edgeWidth, .5, 4) && range(c.edgeStrength, 0, 1) && ValidatePanelGradient(c.gradient) && range(c.gradientOpacity, 0, 1) &&
-        c.effect >= 0 && c.effect <= 2 && c.titleDirection >= 0 && c.titleDirection <= 1 &&
+        c.effect >= 0 && c.effect <= 5 && range(c.zoomAmount, 0, .10) &&
+        range(c.glowStrength, 0, 1) && range(c.shineStrength, 0, 1) &&
+        c.shineDurationMs >= 150 && c.shineDurationMs <= 1500 && c.titleDirection >= 0 && c.titleDirection <= 1 &&
         c.titleWeight >= 100 && c.titleWeight <= 900 && c.titleWeight % 100 == 0;
 }
 

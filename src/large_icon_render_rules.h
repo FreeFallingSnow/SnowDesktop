@@ -99,13 +99,14 @@ inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, do
     ContentGeometry r;
     if (width <= 0 || height <= 0 || scale <= 0) return r;
     const bool fill = IsLargeIconFill(c);
+    const double zoom = c.effect == 3 ? 1 + c.zoomAmount * std::clamp(hover, 0., 1.) : 1;
     const double edge = std::max(1., std::min(width, height) * c.contentScale);
     sourceWidth = sourceWidth > 0 ? sourceWidth : edge;
     sourceHeight = sourceHeight > 0 ? sourceHeight : edge;
     r.sourceWidth = sourceWidth; r.sourceHeight = sourceHeight;
     if (fill && c.fit == 1)
     {
-        const double factor = std::max(width / sourceWidth, height / sourceHeight) * c.fillScale;
+        const double factor = std::max(width / sourceWidth, height / sourceHeight) * c.fillScale * zoom;
         r.width = std::min(width, sourceWidth * factor); r.height = std::min(height, sourceHeight * factor); r.cropped = true;
         r.x = (width - r.width) / 2; r.y = (height - r.height) / 2;
         r.sourceWidth = r.width / factor; r.sourceHeight = r.height / factor;
@@ -114,11 +115,18 @@ inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, do
     }
     else
     {
-        const double factor = fill ? std::min(width / sourceWidth, height / sourceHeight) * c.fillScale :
+        const double factor = fill ? std::min(width / sourceWidth, height / sourceHeight) * c.fillScale * zoom :
             std::min({original ? 1. : 1.e12, edge / sourceWidth, edge / sourceHeight});
         r.width = sourceWidth * factor; r.height = sourceHeight * factor;
         r.x = (width - r.width) * (fill || c.effect == 2 ? .5 : c.iconX);
         r.y = (height - r.height) * (fill || c.effect == 2 ? .5 : c.iconY);
+        if (!fill && zoom != 1)
+        {
+            // Magnify about the saved content center, without moving the frame
+            // or replacing the user's foreground position with a centered one.
+            r.x -= r.width * (zoom - 1) / 2; r.y -= r.height * (zoom - 1) / 2;
+            r.width *= zoom; r.height *= zoom;
+        }
         if (fill)
         {
             // Flatten any overscan before title motion, including zoomed contain.
