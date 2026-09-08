@@ -3,6 +3,7 @@
 #include "personalization_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
+#include "appearance_sections.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -147,6 +148,7 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
+    AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
     bool panelGradientEnabled = false;
 
@@ -292,6 +294,7 @@ struct PersonalizationPagePresenter::Impl
             collectionPopupThemeRow.root);
 
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
+        appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
         InitializeColorControl(backgroundColor,
             &PersonalizationSettings::widgetBgR,
             &PersonalizationSettings::widgetBgG,
@@ -300,8 +303,7 @@ struct PersonalizationPagePresenter::Impl
             &PersonalizationSettings::widgetBorderR,
             &PersonalizationSettings::widgetBorderG,
             &PersonalizationSettings::widgetBorderB);
-        widgetAppearanceCard.content.Children().Append(
-            backgroundColor.editor.row.root);
+        appearanceSections.colors.Children().Append(backgroundColor.editor.row.root);
 
         InitializeContinuousControl(widgetAlpha,
             &PersonalizationSettings::widgetAlpha, 0.0, 100.0, 1.0, 0.01);
@@ -332,11 +334,10 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(edgeHighlightStrength, L"%");
         SetUnit(gradientEndAlpha, L"%");
         SetUnit(blurRadius, L"px");
-        widgetAppearanceCard.content.Children().Append(widgetAlpha.row.root);
-        widgetAppearanceCard.content.Children().Append(
-            borderColor.editor.row.root);
-        widgetAppearanceCard.content.Children().Append(borderAlpha.row.root);
-        widgetAppearanceCard.content.Children().Append(borderWidth.row.root);
+        appearanceSections.colors.Children().Append(widgetAlpha.row.root);
+        appearanceSections.border.Children().Append(borderColor.editor.row.root);
+        appearanceSections.border.Children().Append(borderAlpha.row.root);
+        appearanceSections.border.Children().Append(borderWidth.row.root);
 
         edgeHighlightToggle = muxc::ToggleSwitch{};
         edgeHighlightToggle.HorizontalAlignment(
@@ -344,11 +345,9 @@ struct PersonalizationPagePresenter::Impl
         edgeHighlightRow.Initialize(edgeHighlightToggle);
         edgeHighlightRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
-        widgetAppearanceCard.content.Children().Append(edgeHighlightRow.root);
-        widgetAppearanceCard.content.Children().Append(
-            edgeHighlightWidth.row.root);
-        widgetAppearanceCard.content.Children().Append(
-            edgeHighlightStrength.row.root);
+        appearanceSections.border.Children().Append(edgeHighlightRow.root);
+        appearanceSections.border.Children().Append(edgeHighlightWidth.row.root);
+        appearanceSections.border.Children().Append(edgeHighlightStrength.row.root);
 
         panelGradientEditor = PanelGradientEditor::Create(
             [this](std::string_view key) { return L(key, L""); },
@@ -356,16 +355,14 @@ struct PersonalizationPagePresenter::Impl
                 Emit(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [gradient](PersonalizationSettings& settings) { settings.panelGradient = gradient; });
                 panelGradientEnabled = gradient.enabled; UpdateDependentStates();
-            });
-        widgetAppearanceCard.content.Children().Append(panelGradientEditor->Content());
+            }, false, {}, true);
+        appearanceSections.colors.Children().InsertAt(0, panelGradientEditor->Content());
         gradientToggle = muxc::ToggleSwitch{};
         gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         gradientToggleRow.Initialize(gradientToggle);
         gradientToggleRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        widgetAppearanceCard.content.Children().Append(
-            gradientToggleRow.root);
-        widgetAppearanceCard.content.Children().Append(
-            gradientEndAlpha.row.root);
+        appearanceSections.bottomBar.Children().Append(gradientToggleRow.root);
+        appearanceSections.bottomBar.Children().Append(gradientEndAlpha.row.root);
 
         glassToggle = muxc::ToggleSwitch{};
         glassToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -375,16 +372,16 @@ struct PersonalizationPagePresenter::Impl
         acrylicRow.Initialize(acrylicToggle);
         glassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        widgetAppearanceCard.content.Children().Append(glassRow.root);
-        widgetAppearanceCard.content.Children().Append(blurRadius.row.root);
-        widgetAppearanceCard.content.Children().Append(acrylicRow.root);
+        appearanceSections.material.Children().Append(glassRow.root);
+        appearanceSections.material.Children().Append(blurRadius.row.root);
+        appearanceSections.material.Children().Append(acrylicRow.root);
 
         contentThemeCombo = muxc::ComboBox{};
         contentThemeCombo.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         contentThemeCombo.MaxWidth(520.0);
         contentThemeRow.Initialize(contentThemeCombo);
-        widgetAppearanceCard.content.Children().Append(contentThemeRow.root);
+        appearanceSections.material.Children().Append(contentThemeRow.root);
 
         InitializeCard(contextMenuCard, cardStyle, themeRoot);
         contextMenuCombo = muxc::ComboBox{};
@@ -840,6 +837,7 @@ struct PersonalizationPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         backgroundColor.editor.row.root.Visibility(panelGradientEnabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        appearanceSections.PlaceOpacity(widgetAlpha.row.root, panelGradientEnabled);
         widgetAlpha.row.root.Visibility(panelGradientEnabled && !gradientToggle.IsOn() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         widgetAlpha.row.SetText(L(panelGradientEnabled ? "panelGradient.barStartOpacity" : "app.settings.bg_opacity", L"Background opacity"));
         backgroundColor.editor.SetEnabled(custom);
@@ -858,6 +856,12 @@ struct PersonalizationPagePresenter::Impl
         blurRadius.row.SetEnabled(custom && glassToggle.IsOn());
         acrylicRow.SetEnabled(custom && glassToggle.IsOn());
         contentThemeRow.SetEnabled(custom);
+        const auto visible = [](bool value) { return value ? mux::Visibility::Visible : mux::Visibility::Collapsed; };
+        edgeHighlightWidth.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
+        edgeHighlightStrength.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
+        gradientEndAlpha.row.root.Visibility(visible(gradientToggle.IsOn()));
+        blurRadius.row.root.Visibility(visible(glassToggle.IsOn() && !acrylicToggle.IsOn()));
+        acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
     }
 
     void SetCardText(
@@ -914,6 +918,7 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
         if (panelGradientEditor) panelGradientEditor->RefreshLocalizedText();
         if (closed)
             return;
@@ -1080,6 +1085,12 @@ struct PersonalizationPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
+        if (id.find(".border") != std::string_view::npos || id.find(".edgeHighlight") != std::string_view::npos)
+            appearanceSections.borderGroup.IsExpanded(true);
+        if (id == "personalization.glass" || id == "personalization.blurRadius" || id == "personalization.acrylic" || id == "personalization.contentTheme")
+            appearanceSections.materialGroup.IsExpanded(true);
+        if (id == "personalization.gradientEndAlpha" || id == "personalization.enableGradient")
+            appearanceSections.bottomBarGroup.IsExpanded(true);
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;

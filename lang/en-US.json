@@ -1568,5 +1568,9 @@
     "largeIcon.gradientColors": "Start and end colors",
     "largeIcon.gradientOpacity": "Overall opacity",
     "largeIcon.hideDetails": "Collapse",
-    "largeIcon.showDetails": "Expand"
+    "largeIcon.showDetails": "Expand",
+    "largeIcon.backgroundSettings": "Background settings",
+    "largeIcon.detailedSettings": "Detailed settings",
+    "appearance.border": "Border",
+    "appearance.bottomBar": "Bottom bar gradient"
 }

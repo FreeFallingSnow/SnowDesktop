@@ -1568,5 +1568,9 @@
     "largeIcon.gradientColors": "Anfangs- und Endfarbe",
     "largeIcon.gradientOpacity": "Gesamtdeckkraft",
     "largeIcon.hideDetails": "Einklappen",
-    "largeIcon.showDetails": "Ausklappen"
+    "largeIcon.showDetails": "Ausklappen",
+    "largeIcon.backgroundSettings": "Hintergrundeinstellungen",
+    "largeIcon.detailedSettings": "Detaillierte Einstellungen",
+    "appearance.border": "Rahmen",
+    "appearance.bottomBar": "Farbverlauf der unteren Leiste"
 }

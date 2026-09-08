@@ -1568,5 +1568,9 @@
     "largeIcon.gradientColors": "Cores inicial e final",
     "largeIcon.gradientOpacity": "Opacidade geral",
     "largeIcon.hideDetails": "Recolher",
-    "largeIcon.showDetails": "Expandir"
+    "largeIcon.showDetails": "Expandir",
+    "largeIcon.backgroundSettings": "Configurações do fundo",
+    "largeIcon.detailedSettings": "Configurações detalhadas",
+    "appearance.border": "Borda",
+    "appearance.bottomBar": "Gradiente da barra inferior"
 }

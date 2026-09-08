@@ -399,33 +399,6 @@ void TestDeclarativeBehavior(const std::string& source)
                 std::string::npos,
         "preset combos apply immediately without a second Apply button");
 
-    std::size_t order = 0;
-    for (const char* fragment : {
-             "appearanceCard.content.Children().Append(followGlobalRow.root)",
-             "appearanceCard.content.Children().Append(appearanceThemeRow.root)",
-             "backgroundColorEditor->row.root",
-             "customAppearanceHost.Children().Append(backgroundOpacity.row.root)",
-             "customAppearanceHost.Children().Append(borderColorEditor->row.root)",
-             "customAppearanceHost.Children().Append(borderOpacity.row.root)",
-             "customAppearanceHost.Children().Append(borderWidth.row.root)",
-             "customAppearanceHost.Children().Append(edgeHighlightRow.root)",
-             "customAppearanceHost.Children().Append(edgeHighlightWidth.row.root)",
-             "edgeHighlightStrength.row.root",
-             "customAppearanceHost.Children().Append(gradientEndOpacity.row.root)",
-             "customAppearanceHost.Children().Append(glassRow.root)",
-             "customAppearanceHost.Children().Append(acrylicRow.root)",
-             "customAppearanceHost.Children().Append(contentThemeRow.root)",
-             "root.Children().Append(appearanceCard.root)",
-             "root.Children().Append(stylePreviewCard.root)",
-             "root.Children().Append(scriptSettingsTitle)",
-             "root.Children().Append(fieldsHost)",
-             "root.Children().Append(resetCard.root)"})
-    {
-        const auto next = source.find(fragment, order);
-        Check(next != std::string::npos,
-            "custom appearance, preset, fields, and reset controls retain the legacy order");
-        if (next != std::string::npos) order = next + 1;
-    }
     Check(ContainsAll(source, {
               "patch.borderWidth = preset.widgetBorderWidth",
               "patch.edgeHighlightEnabled =",

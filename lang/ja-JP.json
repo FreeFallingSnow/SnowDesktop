@@ -1568,5 +1568,9 @@
     "largeIcon.gradientColors": "開始色と終了色",
     "largeIcon.gradientOpacity": "全体の不透明度",
     "largeIcon.hideDetails": "折りたたむ",
-    "largeIcon.showDetails": "展開"
+    "largeIcon.showDetails": "展開",
+    "largeIcon.backgroundSettings": "背景設定",
+    "largeIcon.detailedSettings": "詳細設定",
+    "appearance.border": "枠線",
+    "appearance.bottomBar": "下部バーのグラデーション"
 }

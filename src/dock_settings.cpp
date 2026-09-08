@@ -1,4 +1,5 @@
 #include "dock_settings.h"
+#include "dock_gradient_storage.h"
 
 #include "data_paths.h"
 #include "deployment_context.h"
@@ -1062,12 +1063,17 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     ReadDynamicRule(text, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    JsonValue gradientDocument;
+    if (!ParseJson(text, gradientDocument) ||
+        !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
     NormalizeDockSettings(settings);
     return true;
 }
 
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
 {
+    std::ostringstream gradientFields;
+    if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
@@ -1141,6 +1147,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     WriteDynamicRule(file, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    file << gradientFields.str();
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
     return true;

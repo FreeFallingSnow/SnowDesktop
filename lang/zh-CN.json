@@ -1568,5 +1568,9 @@
     "largeIcon.gradientColors": "起止颜色",
     "largeIcon.gradientOpacity": "整体不透明度",
     "largeIcon.hideDetails": "收起",
-    "largeIcon.showDetails": "展开"
+    "largeIcon.showDetails": "展开",
+    "largeIcon.backgroundSettings": "背景设置",
+    "largeIcon.detailedSettings": "详细设置",
+    "appearance.border": "边框",
+    "appearance.bottomBar": "底栏渐变"
 }

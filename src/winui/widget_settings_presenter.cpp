@@ -5,6 +5,7 @@
 #include "../personalization.h"
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
+#include "appearance_sections.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -429,6 +430,7 @@ struct WidgetSettingsPresenter::Impl
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         backgroundColorEditor;
     AppearanceScalarControl backgroundOpacity;
+    AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         borderColorEditor;
@@ -687,6 +689,7 @@ struct WidgetSettingsPresenter::Impl
         customAppearanceHost = muxc::StackPanel{};
         customAppearanceHost.Spacing(10.0);
         appearanceCard.content.Children().Append(customAppearanceHost);
+        appearanceSections.Initialize(customAppearanceHost, true, true);
 
         backgroundColorEditor =
             std::make_unique<presenter_controls::ColorFlyoutEditor>();
@@ -701,11 +704,10 @@ struct WidgetSettingsPresenter::Impl
                 if (mode == SettingsUpdateMode::PreviewAndCommit)
                     (void)CommitTransientOwner(owner);
             });
-        customAppearanceHost.Children().Append(
-            backgroundColorEditor->row.root);
+        appearanceSections.colors.Children().Append(backgroundColorEditor->row.root);
 
         InitializeAppearanceScalar(backgroundOpacity);
-        customAppearanceHost.Children().Append(backgroundOpacity.row.root);
+        appearanceSections.colors.Children().Append(backgroundOpacity.row.root);
         panelGradientEditor = PanelGradientEditor::Create(
             [this](std::string_view key) { return L(key, {}); },
             [this](const PanelGradient& gradient, bool commit) {
@@ -716,8 +718,8 @@ struct WidgetSettingsPresenter::Impl
                 QueueTransientAppearance(owner, std::move(patch));
                 if (commit) (void)CommitTransientOwner(owner);
                 UpdateBackgroundControls(gradient.enabled);
-            });
-        customAppearanceHost.Children().Append(panelGradientEditor->Content());
+            }, false, {}, true);
+        appearanceSections.colors.Children().InsertAt(0, panelGradientEditor->Content());
 
         borderColorEditor =
             std::make_unique<presenter_controls::ColorFlyoutEditor>();
@@ -732,14 +734,14 @@ struct WidgetSettingsPresenter::Impl
                 if (mode == SettingsUpdateMode::PreviewAndCommit)
                     (void)CommitTransientOwner(owner);
             });
-        customAppearanceHost.Children().Append(borderColorEditor->row.root);
+        appearanceSections.border.Children().Append(borderColorEditor->row.root);
 
         InitializeAppearanceScalar(borderOpacity);
-        customAppearanceHost.Children().Append(borderOpacity.row.root);
+        appearanceSections.border.Children().Append(borderOpacity.row.root);
         InitializeAppearanceScalar(borderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
             0.5, 1.0, L"px");
-        customAppearanceHost.Children().Append(borderWidth.row.root);
+        appearanceSections.border.Children().Append(borderWidth.row.root);
 
         edgeHighlightEnabled = muxc::ToggleSwitch{};
         edgeHighlightEnabled.HorizontalAlignment(
@@ -747,36 +749,35 @@ struct WidgetSettingsPresenter::Impl
         edgeHighlightRow.Initialize(edgeHighlightEnabled);
         edgeHighlightRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
-        customAppearanceHost.Children().Append(edgeHighlightRow.root);
+        appearanceSections.border.Children().Append(edgeHighlightRow.root);
 
         InitializeAppearanceScalar(edgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
             0.5, 1.0, L"px");
-        customAppearanceHost.Children().Append(edgeHighlightWidth.row.root);
+        appearanceSections.border.Children().Append(edgeHighlightWidth.row.root);
         InitializeAppearanceScalar(edgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01, L"%");
-        customAppearanceHost.Children().Append(
-            edgeHighlightStrength.row.root);
+        appearanceSections.border.Children().Append(edgeHighlightStrength.row.root);
         InitializeAppearanceScalar(gradientEndOpacity);
-        customAppearanceHost.Children().Append(gradientEndOpacity.row.root);
+        appearanceSections.bottomBar.Children().Append(gradientEndOpacity.row.root);
 
         glassEnabled = muxc::ToggleSwitch{};
         glassEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         glassRow.Initialize(glassEnabled);
         glassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        customAppearanceHost.Children().Append(glassRow.root);
+        appearanceSections.material.Children().Append(glassRow.root);
 
         acrylicEnabled = muxc::ToggleSwitch{};
         acrylicEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         acrylicRow.Initialize(acrylicEnabled);
         acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        customAppearanceHost.Children().Append(acrylicRow.root);
+        appearanceSections.material.Children().Append(acrylicRow.root);
 
         contentTheme = muxc::ComboBox{};
         contentTheme.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         contentTheme.MaxWidth(520.0);
         contentThemeRow.Initialize(contentTheme);
-        customAppearanceHost.Children().Append(contentThemeRow.root);
+        appearanceSections.material.Children().Append(contentThemeRow.root);
         root.Children().Append(appearanceCard.root);
 
         InitializeCard(stylePreviewCard);
@@ -914,6 +915,8 @@ struct WidgetSettingsPresenter::Impl
         edgeHighlightToggled = edgeHighlightEnabled.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = edgeHighlightEnabled.IsOn();
+                edgeHighlightWidth.row.root.Visibility(enabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+                edgeHighlightStrength.row.root.Visibility(enabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
                 edgeHighlightWidth.row.SetEnabled(enabled);
                 edgeHighlightStrength.row.SetEnabled(
                     enabled);
@@ -1813,6 +1816,7 @@ struct WidgetSettingsPresenter::Impl
 
     void UpdateBackgroundControls(bool gradientEnabled)
     {
+        appearanceSections.PlaceOpacity(backgroundOpacity.row.root, gradientEnabled);
         backgroundColorEditor->row.root.Visibility(gradientEnabled
             ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         backgroundOpacity.row.root.Visibility(gradientEnabled && currentHostAppearance.gradientEndOpacity <= .001f
@@ -1886,6 +1890,8 @@ struct WidgetSettingsPresenter::Impl
             snapshot.hostAppearance.edgeHighlightWidth);
         PatchAppearanceScalar(edgeHighlightStrength,
             snapshot.hostAppearance.edgeHighlightStrength);
+        edgeHighlightWidth.row.root.Visibility(snapshot.hostAppearance.edgeHighlightEnabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeHighlightStrength.row.root.Visibility(snapshot.hostAppearance.edgeHighlightEnabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         edgeHighlightWidth.row.SetEnabled(
             snapshot.hostAppearance.edgeHighlightEnabled);
         edgeHighlightStrength.row.SetEnabled(
@@ -1894,6 +1900,7 @@ struct WidgetSettingsPresenter::Impl
             snapshot.hostAppearance.gradientEndOpacity);
         glassEnabled.IsOn(snapshot.hostAppearance.glassEnabled);
         acrylicEnabled.IsOn(snapshot.hostAppearance.acrylicEnabled);
+        acrylicRow.root.Visibility(snapshot.hostAppearance.glassEnabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         contentTheme.SelectedIndex(std::clamp(
             snapshot.hostAppearance.contentTheme, 0, 1));
 
@@ -2809,6 +2816,7 @@ struct WidgetSettingsPresenter::Impl
             cancelText);
         backgroundOpacity.row.SetText(
             L("app.settings.bg_opacity", L"Background opacity"));
+        appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, {}); });
         panelGradientEditor->RefreshLocalizedText();
         UpdateBackgroundControls(currentHostAppearance.panelGradient.enabled);
         borderColorEditor->SetText(

@@ -1568,5 +1568,9 @@
     "largeIcon.gradientColors": "시작 및 끝 색상",
     "largeIcon.gradientOpacity": "전체 불투명도",
     "largeIcon.hideDetails": "접기",
-    "largeIcon.showDetails": "펼치기"
+    "largeIcon.showDetails": "펼치기",
+    "largeIcon.backgroundSettings": "배경 설정",
+    "largeIcon.detailedSettings": "세부 설정",
+    "appearance.border": "테두리",
+    "appearance.bottomBar": "하단 표시줄 그라데이션"
 }

@@ -240,6 +240,7 @@ void DesktopApp::ShowItemContextMenu(
             const auto runtime = largeIconRuntime_.find(largeIconKey);
             const bool hasEdge = runtime != largeIconRuntime_.end() && runtime->second.asset && runtime->second.asset->hasEdgeColor;
             const bool editable = CanEditLargeIcons();
+            HMENU settings = CreatePopupMenu();
             HMENU backgrounds = CreatePopupMenu(), effects = CreatePopupMenu();
             for (size_t i = 0; i < presets::backgrounds.size(); ++i)
             {
@@ -257,11 +258,14 @@ void DesktopApp::ShowItemContextMenu(
                     (presets::Effect(config) == option.value ? MF_CHECKED : 0),
                     kContextLargeIconEffectFirst + static_cast<UINT>(i), _LW(option.label));
             }
-            AppendMenuW(menu, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundStyle"));
-            AppendMenuW(menu, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
-            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(backgrounds), L"\uF53F");
-            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(effects), L"\uF0D0");
-            AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
+            AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundSettings"));
+            AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
+            AppendMenuW(settings, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.detailedSettings"));
+            SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(backgrounds), L"\uF53F");
+            SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(effects), L"\uF0D0");
+            SetMenuItemIcon(settings, kContextLargeIconSettings, L"\uF013");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(settings), _LW("largeIcon.settings"));
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(settings), L"\uF013");
             AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
         }
         else AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
@@ -499,8 +503,13 @@ void DesktopApp::ShowItemContextMenu(
                 presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
                 asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0) :
                 presets::ApplyEffect(config, static_cast<int>(command - kContextLargeIconEffectFirst), CanEditLargeIcons());
-            if (changed && !SetLargeIconConfig(index, config))
-                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+            if (changed)
+            {
+                if (!SetLargeIconConfig(index, config))
+                    MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                else if (backgroundCommand && config.backgroundStyle == kAppearancePresetCustom)
+                    OpenLargeIconSettings(index);
+            }
         }
     }
     switch (command)
@@ -525,7 +534,7 @@ void DesktopApp::ShowItemContextMenu(
         }
         break;
     case kContextLargeIconSettings:
-        if (largeIconMenu) OpenLargeIconSettings(itemIndex);
+        if (largeIconMenu) OpenLargeIconSettings(FindItemIndexByKey(largeIconKey));
         break;
     case kContextLargeIconRestore:
         if (largeIconMenu && !SetLargeIconConfig(itemIndex, std::nullopt))

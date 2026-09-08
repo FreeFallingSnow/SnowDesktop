@@ -1,5 +1,6 @@
 #include "general_settings.h"
 #include "personalization.h"
+#include "dock_gradient_storage.h"
 
 #include <windows.h>
 
@@ -29,6 +30,38 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    {
+        // A gradient must survive restart independently in every taskbar rule,
+        // including its inactive colors after switching back to solid fill.
+        DockSettings saved;
+        auto gradients = snowdesktop::TaskbarGradients(saved);
+        for (size_t i = 0; i < gradients.size(); ++i)
+        {
+            gradients[i]->enabled = i != 2;
+            gradients[i]->angle = 37.5 + i * 45;
+            gradients[i]->start = .125;
+            gradients[i]->end = .875;
+            gradients[i]->stops = {{0, 0xff2233, .15}, {.4, 0x3355ff, .8}, {1, 0x11aa22, .45}};
+        }
+        std::ostringstream serialized;
+        Check(snowdesktop::WriteTaskbarGradients(serialized, saved), "serialize all taskbar gradients");
+        JsonValue document;
+        Check(ParseJson("{" + serialized.str() + "\"schema\":1}", document), "taskbar gradient fields form valid JSON");
+        DockSettings restored;
+        Check(snowdesktop::ReadTaskbarGradients(document, restored), "read taskbar gradient fields");
+        auto loaded = snowdesktop::TaskbarGradients(restored);
+        for (size_t i = 0; i < gradients.size(); ++i)
+            Check(*loaded[i] == *gradients[i], "taskbar gradients preserve colors, opacity, direction, range and enabled state per rule");
+        document.object[snowdesktop::kTaskbarGradientKeys[3]].object["angle"].number = 900;
+        Check(!snowdesktop::ReadTaskbarGradients(document, restored), "reject a damaged taskbar gradient");
+        for (size_t i = 0; i < gradients.size(); ++i)
+            Check(*loaded[i] == *gradients[i], "invalid gradient load never partially overwrites other scenarios");
+        Check(ParseJson("{}", document) && snowdesktop::ReadTaskbarGradients(document, restored), "legacy taskbar settings remain readable");
+        for (const auto* value : loaded) Check(!value->enabled, "legacy taskbar settings default to no gradient");
+        gradients[2]->stops[1].position = 1;
+        std::ostringstream invalid;
+        Check(!snowdesktop::WriteTaskbarGradients(invalid, saved) && invalid.str().empty(), "invalid taskbar gradients are rejected before writing any fields");
+    }
     std::error_code error;
     const auto path = std::filesystem::temp_directory_path(error) /
         (L"SnowDesktopGeneralSettingsTests-" +

@@ -34,6 +34,7 @@ public:
     ~PanelGradientEditor() { Close(); }
     void Close() noexcept { preview_.Close(); change_ = {}; localize_ = {}; }
     Panel Content() const { return root_; }
+    const PanelGradient& Value() const { return value_; }
     void SetValue(const PanelGradient& value, bool force = false)
     {
         if (!ValidatePanelGradient(value) || (dirty_ && !force && value != value_)) return;
@@ -231,15 +232,21 @@ private:
         namespace c = x::Controls;
         syncing_ = true; sync_.clear(); root_.Children().Clear(); root_.Spacing(4);
         std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
-        c::ToggleSwitch enabled; enabled.IsOn(value_.enabled); enabled.MinWidth(0);
-        enabled.HorizontalAlignment(x::HorizontalAlignment::Right);
-        enabled.Toggled([weak, enabled](auto const&, auto const&) {
-            if (auto self = weak.lock()) self->Apply([&](auto& v) { v.enabled = enabled.IsOn(); }, true);
-        });
-        sync_.push_back([this, enabled] { enabled.IsOn(value_.enabled); });
-        if (!required_) Row("panelGradient.enabled", enabled, [weak] {
-            if (auto self = weak.lock()) self->Apply([](auto& v) { v.enabled = false; }, true);
-        }, 0);
+        if (!required_)
+        {
+            c::ComboBox fill;
+            fill.HorizontalAlignment(x::HorizontalAlignment::Right);
+            fill.Items().Append(winrt::box_value(L("largeIcon.solidBackground")));
+            fill.Items().Append(winrt::box_value(L("largeIcon.gradientBackground")));
+            fill.SelectedIndex(value_.enabled ? 1 : 0);
+            fill.SelectionChanged([weak, fill](auto const&, auto const&) {
+                if (auto self = weak.lock()) self->Apply([&](auto& v) { v.enabled = fill.SelectedIndex() == 1; }, true);
+            });
+            sync_.push_back([this, fill] { fill.SelectedIndex(value_.enabled ? 1 : 0); });
+            Row("largeIcon.defaultBackground", fill, [weak] {
+                if (auto self = weak.lock()) self->Apply([](auto& v) { v.enabled = false; }, true);
+            }, 0);
+        }
         if (value_.enabled)
         {
             if (!compact_) { Stop(0, true, false); Stop(value_.stops.size() - 1, false, true); }
