@@ -7,9 +7,9 @@ A Windows desktop organization and personalization tool. SnowDesktop replaces na
 ## 📦 Installation
 
 <p>
-  <a href="https://apps.microsoft.com/detail/9PLLGJVL4LC3"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" height="56"></a>
-  &nbsp;
   <a href="https://store.steampowered.com/app/5080330/SnowDesktop/"><img src="https://img.shields.io/badge/Steam-171A21?style=for-the-badge&amp;logo=steam&amp;logoColor=white" alt="Steam Store" height="56"></a>
+  &nbsp;
+  <a href="https://apps.microsoft.com/detail/9PLLGJVL4LC3"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" height="56"></a>
 </p>
 
 [Official website](https://snowdesktop.com/) | [GitHub](https://github.com/FreeFallingSnow/SnowDesktop)
