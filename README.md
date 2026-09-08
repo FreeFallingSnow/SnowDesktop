@@ -5,11 +5,13 @@
 一款 Windows 桌面整理美化工具：用 Direct2D 渲染的自定义桌面，替代 Explorer 原生图标，支持多显示器网格布局、可嵌入组件和 Lua 脚本扩展。
 ## 📦 安装
 
-[![从 Microsoft 获取](https://get.microsoft.com/images/zh-cn%20dark.svg)](https://apps.microsoft.com/detail/9PLLGJVL4LC3)
+<p>
+  <a href="https://apps.microsoft.com/detail/9PLLGJVL4LC3"><img src="https://get.microsoft.com/images/zh-cn%20dark.svg" alt="从 Microsoft 获取" height="56"></a>
+  &nbsp;
+  <a href="https://store.steampowered.com/app/5080330/SnowDesktop/"><img src="https://img.shields.io/badge/Steam-171A21?style=for-the-badge&amp;logo=steam&amp;logoColor=white" alt="Steam 商店" height="56"></a>
+</p>
 
-[Steam 商店（即将推出，可加入愿望单）](https://store.steampowered.com/app/5080330/SnowDesktop/)
-
-[源码仓库](https://github.com/FreeFallingSnow/SnowDesktop)
+[官网](https://snowdesktop.com/) | [GitHub](https://github.com/FreeFallingSnow/SnowDesktop)
 
 ## ✨ 功能亮点
 
