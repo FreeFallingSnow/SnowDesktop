@@ -84,6 +84,10 @@ int main(int argc, char** argv)
         root / "src" / "app" / "app_message_dispatch.cpp");
     const std::string controlDispatch = ReadFile(
         root / "src" / "app" / "app_desktop_reload.cpp");
+    const std::string largeIcons = ReadFile(
+        root / "src" / "app" / "app_large_icons.cpp");
+    const std::string timerDispatch = ReadFile(
+        root / "src" / "app" / "app_timer_dispatch.cpp");
     const std::string shellOperations = ReadFile(
         root / "src" / "app" / "app_shell_file_operation.cpp");
     const std::string constants = ReadFile(root / "src" / "constants.h");
@@ -94,6 +98,7 @@ int main(int argc, char** argv)
             !settingsHost.empty() && !dockPresenter.empty() &&
             !presenterControls.empty() &&
             !messageDispatch.empty() && !controlDispatch.empty() &&
+            !largeIcons.empty() && !timerDispatch.empty() &&
             !shellOperations.empty() && !constants.empty(),
         "shell integration sources are readable");
 
@@ -353,6 +358,27 @@ int main(int argc, char** argv)
     const std::string_view controlHandler = FunctionBody(controlDispatch,
         "LRESULT DesktopApp::HandleControlMessage(",
         "void DesktopApp::ReloadItems(");
+    // The asset worker survives overlay recreation; worker/decode unit tests
+    // cannot catch completion messages or retries bound to a destroyed HWND.
+    const auto assetRequest = WithoutWhitespace(FunctionBody(largeIcons,
+        "void DesktopApp::RequestLargeIconAsset(",
+        "void DesktopApp::ProcessLargeIconAssets("));
+    Check(assetRequest.find("[window=controlHwnd_]") != std::string::npos &&
+            assetRequest.find("[window=hwnd_]") == std::string::npos &&
+            WithoutWhitespace(controlHandler).find(
+                "casekLargeIconAssetsReadyMessage:ProcessLargeIconAssets();") != std::string::npos,
+        "large-icon asset completion reaches the control window across overlay recreation");
+    const auto assetCompletion = WithoutWhitespace(FunctionBody(largeIcons,
+        "void DesktopApp::ProcessLargeIconAssets(",
+        "bool DesktopApp::CanEditLargeIcons("));
+    Check(assetCompletion.find("SetTimer(controlHwnd_,kLargeIconRetryTimerId,") != std::string::npos &&
+            WithoutWhitespace(timerDispatch).find("KillTimer(controlHwnd_,kLargeIconRetryTimerId)") != std::string::npos,
+        "large-icon failure retry timers share the stable control-window lifetime");
+    const auto assetEdit = WithoutWhitespace(FunctionBody(largeIcons,
+        "snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(",
+        "const snowdesktop::LargeIconConfig& DesktopApp::EffectiveLargeIconConfig("));
+    Check(assetEdit.find("ProcessLargeIconAssets();") < assetEdit.find("FindItemIndexByKey("),
+        "settings reads drain missed asset wakes before resolving an editable item");
     Check(controlHandler.find("case WM_SETTINGCHANGE:") !=
                 std::string_view::npos &&
             controlHandler.find("if (traySettings || immersiveColor)") !=

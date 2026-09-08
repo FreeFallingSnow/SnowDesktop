@@ -1097,9 +1097,6 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kIconLoadedMessage:
         OnIconLoaded(wp, lp);
         return 0;
-    case kLargeIconAssetsReadyMessage:
-        ProcessLargeIconAssets();
-        return 0;
     case kDemoIconDecodedMessage:
         OnDemoIconDecoded(lp);
         return 0;

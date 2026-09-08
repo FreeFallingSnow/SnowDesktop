@@ -306,7 +306,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
 {
     if (timerId == kLargeIconRetryTimerId)
     {
-        KillTimer(hwnd_, kLargeIconRetryTimerId);
+        KillTimer(controlHwnd_, kLargeIconRetryTimerId);
         for (size_t index = 0; index < items_.size(); ++index)
             if (items_[index].largeIcon) RequestLargeIconAsset(index);
         return;

@@ -529,6 +529,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case kLargeIconAssetsReadyMessage:
+        ProcessLargeIconAssets();
+        return 0;
     case kForegroundInteractionChangedMessage:
         HandleDockForegroundInteractionChanged();
         return 0;

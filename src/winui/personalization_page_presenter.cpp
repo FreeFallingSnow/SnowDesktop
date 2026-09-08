@@ -376,8 +376,6 @@ struct PersonalizationPagePresenter::Impl
         contentThemeCombo.MaxWidth(520.0);
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
-        contentThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        contentThemeCombo.HorizontalAlignment(mux::HorizontalAlignment::Right);
 
         InitializeCard(contextMenuCard, cardStyle, themeRoot);
         contextMenuCombo = muxc::ComboBox{};
@@ -393,13 +391,11 @@ struct PersonalizationPagePresenter::Impl
         for (const auto& combo : {
                  quickNavigationThemeCombo, collectionPopupThemeCombo})
         {
-            combo.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             combo.MaxWidth(520.0);
         }
         quickNavigationThemeRow.Initialize(quickNavigationThemeCombo);
         collectionPopupThemeRow.Initialize(collectionPopupThemeCombo);
-        quickNavigationThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        collectionPopupThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         themeTargetsCard.content.Children().Append(
             quickNavigationThemeRow.root);
 
@@ -420,9 +416,9 @@ struct PersonalizationPagePresenter::Impl
         popupThemeCard.content.Children().Append(popupAppearanceEditor->Content());
         InitializeCard(dockThemeCard, cardStyle, themeRoot);
         dockAppearanceCombo = muxc::ComboBox{};
-        dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        dockAppearanceCombo.MaxWidth(520.0);
         dockAppearanceRow.Initialize(dockAppearanceCombo);
-        dockAppearanceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
         dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {

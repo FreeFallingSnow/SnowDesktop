@@ -235,13 +235,27 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         pixels = canvas.Draw(config, view);
         Check(Visible(pixels, {105, 65, 295, 120}) == 0 && Red(Pixel(pixels, 200, 160)),
             "contain fill leaves gaps transparent without an automatic base");
-        view.bitmap = nullptr; view.selected = true;
+        auto emptyImage = canvas.Image(16, 16);
+        const std::vector<unsigned> emptyPixels(16 * 16, 0);
+        Require(emptyImage->CopyFromMemory(nullptr, emptyPixels.data(), 16 * 4), "transparent image fixture");
+        view.bitmap = emptyImage.Get(); view.selected = true;
         int placeholders = 0; view.placeholder = [&](ID2D1RenderTarget*, RECT, float) { ++placeholders; };
         pixels = canvas.Draw(config, view);
         Check(Visible(pixels, {105, 65, 114, 74}) == 0 && Pixel(pixels, 200, 160) == 0 &&
             Visible(pixels, {190, 59, 210, 62}) > 0,
             "transparent selected frame keeps an independent outline without a top-left badge");
-        Check(placeholders == 0, "unavailable fill remains transparent instead of drawing a generic placeholder");
+        view.bitmap = nullptr; view.selected = false; config.radiusPercent = 100;
+        view.opacity = .5f;
+        pixels = canvas.Draw(config, view);
+        Check((Pixel(pixels, 200, 160) >> 24) >= 81 && (Pixel(pixels, 200, 160) >> 24) <= 84 &&
+            Pixel(pixels, 110, 80) == 0,
+            "missing fill asset draws a rounded neutral placeholder with the item opacity");
+        Check(placeholders == 0 && backgroundCalls == 0,
+            "missing fill does not invoke component material or the independent foreground layer");
+        view.bitmap = emptyImage.Get();
+        pixels = canvas.Draw(config, view);
+        Check(Visible(pixels, view.frame) == 0,
+            "a loaded transparent image removes the temporary missing-asset background");
         config.backgroundStyle = -1;
         canvas.Draw(config, view);
         Check(backgroundCalls == 1, "component-series background dispatches to the shared engine");

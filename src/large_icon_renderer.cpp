@@ -36,6 +36,15 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
                 target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
         }
     }
+    else if (!view.bitmap)
+    {
+        // A missing asset is different from an intentionally transparent image.
+        // Keep loading/failed items visible without invoking component material
+        // or a separate foreground layer. Loaded images retain their own alpha.
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(view.neutral, .65f * view.opacity), &brush)))
+            target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
+    }
 
     ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
     ComPtr<ID2D1RoundedRectangleGeometry> clip;

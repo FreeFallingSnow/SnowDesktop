@@ -62,7 +62,9 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
     (variant ? runtime.previewGenerations[variant - 1] : runtime.generation) = request.generation;
     if (!largeIconAssets_)
         largeIconAssets_ = std::make_unique<snowdesktop::LargeIconAssets>(GetDataSubdirectoryPath(L"large-icons"),
-            [window = hwnd_] { PostMessageW(window, kLargeIconAssetsReadyMessage, 0, 0); });
+            // The service outlives desktop-overlay recreation. Completion must
+            // reach the stable control window even after Explorer restarts.
+            [window = controlHwnd_] { PostMessageW(window, kLargeIconAssetsReadyMessage, 0, 0); });
     std::vector<std::string> retained;
     for (const auto& current : items_) if (current.largeIcon)
     { retained.push_back(current.largeIcon->image); retained.push_back(current.largeIcon->foregroundImage); retained.push_back(current.largeIcon->cachedCover); }
@@ -73,8 +75,10 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
 void DesktopApp::ProcessLargeIconAssets()
 {
     if (!largeIconAssets_) return;
+    auto completed = largeIconAssets_->TakeCompleted();
+    if (completed.empty()) return;
     bool persist = false;
-    for (auto& result : largeIconAssets_->TakeCompleted())
+    for (auto& result : completed)
     {
         const auto index = FindItemIndexByKey(result.request.itemKey);
         auto runtime = largeIconRuntime_.find(result.request.itemKey);
@@ -84,13 +88,17 @@ void DesktopApp::ProcessLargeIconAssets()
         if (result.request.variant)
         {
             const auto i = result.request.variant - 1;
-            if (state.previewGenerations[i] == result.request.generation) state.previews[i] = std::move(result.asset);
+            if (state.previewGenerations[i] == result.request.generation)
+            {
+                state.previews[i] = std::move(result.asset);
+                state.previewGenerations[i] = 0;
+            }
             continue;
         }
         if (state.generation != result.request.generation) continue;
         state.pending = false; state.error = result.error;
         state.retryAt = result.error.empty() ? 0 : snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 120000;
-        if (state.retryAt) SetTimer(hwnd_, kLargeIconRetryTimerId, 120000, nullptr);
+        if (state.retryAt) SetTimer(controlHwnd_, kLargeIconRetryTimerId, 120000, nullptr);
         if (!result.asset) continue;
         if (!result.request.importPath.empty())
         {
@@ -110,7 +118,8 @@ void DesktopApp::ProcessLargeIconAssets()
         }
     }
     if (persist) SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateDragStaticScene();
+    if (hwnd_ && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 bool DesktopApp::CanEditLargeIcons() const
@@ -214,6 +223,9 @@ void DesktopApp::OpenLargeIconSettings(size_t index)
 
 snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::LargeIconSettingsRequest request)
 {
+    // Settings reads also drain completed work if a wake was delayed or lost.
+    // Do this before resolving the item: an import may commit its new config.
+    ProcessLargeIconAssets();
     snowdesktop::LargeIconSettingsSnapshot result;
     if (request.action == "close")
     {
@@ -335,7 +347,8 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         EffectiveLargeIconConfig(item).content == 2) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
     if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
-        result.loading = runtime->second.pending;
+        result.loading = runtime->second.pending || runtime->second.previewGenerations[0] != 0 ||
+            runtime->second.previewGenerations[1] != 0;
         if (runtime->second.asset)
         {
             const auto path = std::filesystem::path(GetDataSubdirectoryPath(L"large-icons")) / Utf8ToWide(runtime->second.asset->previewReference);
