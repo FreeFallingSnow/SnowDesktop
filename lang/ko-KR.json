@@ -519,7 +519,6 @@
   "app.settings.already_latest": "이미 최신 상태입니다.",
   "app.settings.new_version": "새 버전 v{0} 사용 가능",
   "app.settings.checking": "확인 중...",
-  "app.settings.store_managed_updates": "업데이트는 Microsoft Store에서 자동으로 관리됩니다.",
   "app.settings.crash_test": "충돌 테스트",
   "app.settings.trigger_crash": "크래시 유발(액세스 위반)",
   "app.settings.crash_test_desc": "액세스 위반을 트리거하려면 아래 버튼을 클릭하세요. crash.log 및 crashdumps\\*.dmp가 올바르게 생성되었는지 확인합니다.",

@@ -519,7 +519,6 @@
     "app.settings.already_latest": "已是最新版本",
     "app.settings.new_version": "发现新版本 v{0}",
     "app.settings.checking": "检查中…",
-    "app.settings.store_managed_updates": "更新由 Microsoft Store 自动管理",
     "app.settings.crash_test": "崩溃测试",
     "app.settings.trigger_crash": "触发崩溃（访问违规）",
     "app.settings.crash_test_desc": "点击下方按钮会立即触发一次访问违规崩溃，用于验证 crash.log 与 crashdumps\\*.dmp 是否正常生成。",

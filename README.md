@@ -11,8 +11,6 @@
 
 [源码仓库](https://github.com/FreeFallingSnow/SnowDesktop)
 
-[发行版仓库](https://github.com/FreeFallingSnow/SnowDesktop_Release)
-
 ## ✨ 功能亮点
 
 - 🖥️ **自由桌面布局**：使用可调行列与图标间距的网格整理桌面项目和组件；每台显示器可拥有独立页面和布局，并支持屏幕热插拔及离线页面浏览。

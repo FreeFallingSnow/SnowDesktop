@@ -519,7 +519,6 @@
   "app.settings.already_latest": "Déjà à jour",
   "app.settings.new_version": "Nouvelle version v{0} disponible",
   "app.settings.checking": "Vérification…",
-  "app.settings.store_managed_updates": "Les mises à jour sont gérées automatiquement par le Microsoft Store",
   "app.settings.crash_test": "Test de plantage",
   "app.settings.trigger_crash": "Déclencher un plantage (violation d’accès)",
   "app.settings.crash_test_desc": "Cliquez sur le bouton ci-dessous pour déclencher une violation d'accès. Vérifiez que crash.log et crashdumps\\*.dmp sont générés correctement.",

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -22,7 +23,9 @@ std::string ReadText(const std::filesystem::path& path)
     std::ifstream input(path, std::ios::binary);
     std::ostringstream output;
     output << input.rdbuf();
-    return output.str();
+    std::string text = output.str();
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
 }
 
 void TestPinnedToolchain(const std::string& cmake,
@@ -193,7 +196,15 @@ void TestPackagers(const std::string& module,
                 std::string::npos &&
             steam.find("$payloadSkillPublisher") !=
                 std::string::npos,
-        "SDK-enabled releases include the ownership bridge while only the Steam payload includes the Workshop manager and complete Agent publishing CLI");
+        "SDK-enabled portable builds retain ownership verification while only the Steam payload includes the Workshop manager and complete publishing CLI");
+    Check(release.find("$AllowOwnershipBridge -and") != std::string::npos &&
+            release.find("Copy-Payload -Destination $portableStage -AllowOwnershipBridge") !=
+                std::string::npos &&
+            release.find("Copy-Payload -Destination $msixStage -AllowOwnershipBridge") ==
+                std::string::npos &&
+            release.find("MSIX payload must not contain Steam bridge files") !=
+                std::string::npos,
+        "MSIX cannot opt into the portable Steam bridge and rejects leaked Steam files");
     Check(release.find("SnowDesktopLauncher.exe") == std::string::npos &&
             release.find("SnowDesktop.runtime-context.json") ==
                 std::string::npos &&

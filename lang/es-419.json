@@ -519,7 +519,6 @@
   "app.settings.already_latest": "Ya actualizado",
   "app.settings.new_version": "Nueva versión v{0} disponible",
   "app.settings.checking": "Comprobando...",
-  "app.settings.store_managed_updates": "Las actualizaciones son administradas automáticamente por Microsoft Store",
   "app.settings.crash_test": "Prueba de bloqueo",
   "app.settings.trigger_crash": "Provocar bloqueo (infracción de acceso)",
   "app.settings.crash_test_desc": "Haz clic en el botón de abajo para provocar una infracción de acceso. Comprueba que crash.log y crashdumps\\*.dmp se generen correctamente.",

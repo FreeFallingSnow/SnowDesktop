@@ -519,7 +519,6 @@
     "app.settings.already_latest": "Already up to date",
     "app.settings.new_version": "New version v{0} available",
     "app.settings.checking": "Checking...",
-    "app.settings.store_managed_updates": "Updates are managed automatically by Microsoft Store",
     "app.settings.crash_test": "Crash Test",
     "app.settings.trigger_crash": "Trigger Crash (Access Violation)",
     "app.settings.crash_test_desc": "Click the button below to trigger an access violation. Verify that crash.log and crashdumps\\*.dmp are generated correctly.",

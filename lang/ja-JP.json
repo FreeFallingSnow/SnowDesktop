@@ -519,7 +519,6 @@
   "app.settings.already_latest": "すでに最新です",
   "app.settings.new_version": "新しいバージョン v{0} が利用可能になりました",
   "app.settings.checking": "チェック中...",
-  "app.settings.store_managed_updates": "更新プログラムは Microsoft Store によって自動的に管理されます",
   "app.settings.crash_test": "クラッシュ テスト",
   "app.settings.trigger_crash": "クラッシュを発生させる（アクセス違反）",
   "app.settings.crash_test_desc": "アクセス違反をトリガーするには、下のボタンをクリックしてください。 crash.log と crashdumps\\*.dmp が正しく生成されていることを確認します。",

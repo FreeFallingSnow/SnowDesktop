@@ -12,8 +12,6 @@ A Windows desktop organization and personalization tool. SnowDesktop replaces na
 
 [Source repository](https://github.com/FreeFallingSnow/SnowDesktop)
 
-[Release repository](https://github.com/FreeFallingSnow/SnowDesktop_Release)
-
 ## ✨ Feature Highlights
 
 - 🖥️ **Flexible desktop layouts**: Organize desktop items and widgets on a grid with adjustable rows, columns, and icon spacing. Each display can have its own pages and layouts, with support for display hot-plugging and browsing offline pages.

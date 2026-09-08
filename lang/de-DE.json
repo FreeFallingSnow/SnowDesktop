@@ -519,7 +519,6 @@
   "app.settings.already_latest": "Bereits auf dem neuesten Stand",
   "app.settings.new_version": "Neue Version v{0} verfügbar",
   "app.settings.checking": "Überprüfung...",
-  "app.settings.store_managed_updates": "Updates werden automatisch vom Microsoft Store verwaltet",
   "app.settings.crash_test": "Crashtest",
   "app.settings.trigger_crash": "Absturz auslösen (Zugriffsverletzung)",
   "app.settings.crash_test_desc": "Klicken Sie auf die Schaltfläche unten, um eine Zugriffsverletzung auszulösen. Stellen Sie sicher, dass crash.log und crashdumps\\*.dmp korrekt generiert werden.",

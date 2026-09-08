@@ -58,8 +58,8 @@ enum class HomeAboutLink : std::uint8_t
     AuthorGitHub,
     Douyin,
     Xiaohongshu,
-    ReleaseRepository,
-    SourceRepository,
+    // Value 4 belonged to the retired release-repository link.
+    SourceRepository = 5,
     QqGroup,
     EverythingSdk,
     DearImGui,
@@ -86,8 +86,6 @@ enum class HomeAboutLink : std::uint8_t
     case HomeAboutLink::Xiaohongshu:
         return L"https://www.xiaohongshu.com/user/profile/"
                L"6819eed7000000000403bf0e";
-    case HomeAboutLink::ReleaseRepository:
-        return L"https://github.com/FreeFallingSnow/SnowDesktop_Release";
     case HomeAboutLink::SourceRepository:
         return L"https://github.com/FreeFallingSnow/SnowDesktop";
     case HomeAboutLink::QqGroup:

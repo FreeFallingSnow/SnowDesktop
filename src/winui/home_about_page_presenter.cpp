@@ -374,9 +374,7 @@ struct HomeAboutPagePresenter::Impl
 
         InitializeSection(projectSection, cardStyle, aboutRoot);
         (void)AddLink(projectSection.content,
-            HomeAboutLink::ReleaseRepository, {}, L"GitHub (Release)");
-        (void)AddLink(projectSection.content,
-            HomeAboutLink::SourceRepository, {}, L"GitHub (Source)");
+            HomeAboutLink::SourceRepository, {}, L"GitHub");
         (void)AddLink(projectSection.content,
             HomeAboutLink::OfficialWebsite,
             "settings.about.officialWebsite", L"Official website");
@@ -391,6 +389,10 @@ struct HomeAboutPagePresenter::Impl
         versionControls = muxc::StackPanel{};
         versionControls.Spacing(7.0);
         versionControls.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::StackPanel versionActions;
+        versionActions.Orientation(muxc::Orientation::Horizontal);
+        versionActions.Spacing(8.0);
+        versionActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         versionButton = muxc::Button{};
         versionButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         versionButton.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -416,10 +418,11 @@ struct HomeAboutPagePresenter::Impl
         checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         checkUpdateButton.VerticalAlignment(mux::VerticalAlignment::Center);
         checkUpdateButton.UseSystemFocusVisuals(true);
-        versionControls.Children().Append(versionButton);
+        versionActions.Children().Append(versionButton);
+        versionActions.Children().Append(checkUpdateButton);
+        versionControls.Children().Append(versionActions);
         versionControls.Children().Append(versionStatusRow);
         versionControls.Children().Append(updateInfoBar);
-        versionControls.Children().Append(checkUpdateButton);
         versionRow.Initialize(versionControls);
         versionSection.content.Children().Append(versionRow.root);
 
@@ -647,8 +650,7 @@ struct HomeAboutPagePresenter::Impl
             return FormatOne(L("app.settings.new_version",
                 L"New version v{0} available"), availableVersion);
         case SettingsUpdateState::ManagedByStore:
-            return L("app.settings.store_managed_updates",
-                L"Updates are managed automatically by Microsoft Store");
+            return {};
         case SettingsUpdateState::Failed:
             return L("settings.home.update.failed",
                 L"Could not check for updates");
@@ -748,7 +750,8 @@ struct HomeAboutPagePresenter::Impl
                 L"Click five times to unlock Debug."));
         updateProgress.IsActive(updateRunning);
         const bool showUpdateStatus = packaged &&
-            updateState != SettingsUpdateState::Unknown;
+            updateState != SettingsUpdateState::Unknown &&
+            updateState != SettingsUpdateState::ManagedByStore;
         versionStatusRow.Visibility(showUpdateStatus
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         updateProgress.Visibility(updateRunning && packaged

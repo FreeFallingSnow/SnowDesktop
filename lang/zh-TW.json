@@ -519,7 +519,6 @@
   "app.settings.already_latest": "已是最新版本",
   "app.settings.new_version": "發現新版本 v{0}",
   "app.settings.checking": "檢查中...",
-  "app.settings.store_managed_updates": "更新由 Microsoft Store 自動管理",
   "app.settings.crash_test": "崩潰測試",
   "app.settings.trigger_crash": "觸發崩潰（存取違規）",
   "app.settings.crash_test_desc": "點選下方按鈕會立即觸發一次存取違規崩潰，用於驗證 crash.log 與 crashdumps\\*.dmp 是否正常產生。",
