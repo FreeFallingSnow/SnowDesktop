@@ -407,7 +407,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::LargeIcon:
         if (!largeIconPage_) largeIconPage_ = std::make_unique<snowdesktop::winui::LargeIconPagePresenter>(
-            localize, cardStyle(), largeIconSettingsAction_);
+            localize, cardStyle(), largeIconSettingsAction_, [this] {
+                if (!closed_ && navigation_.Route().page == SettingsPage::LargeIcon) RenderPageHeading();
+            });
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
@@ -978,6 +980,9 @@ bool SettingsShell::EnsureWidgetSettingsPresenter() noexcept
                     .as<mux::Style>());
 
         snowdesktop::winui::WidgetSettingsPresenterCallbacks callbacks;
+        callbacks.nameChanged = [this] {
+            if (!closed_ && navigation_.Route().page == SettingsPage::WidgetSettings) RenderPageHeading();
+        };
         callbacks.mutationCompleted =
             [this](std::string,
                    snowdesktop::widget_runtime::WidgetSettingMutationResult
@@ -1793,7 +1798,6 @@ void SettingsShell::RenderRoute(
     bool scheduleFocus)
 {
     RenderNavigationSelection();
-    RenderBreadcrumb();
     const auto route = navigation_.Route();
     if (renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceDesktopIcons && route.page == SettingsPage::LargeIcon)
     {
@@ -1804,20 +1808,21 @@ void SettingsShell::RenderRoute(
     }
     restoreLargeIconParent_ = renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::LargeIcon &&
         route.page == SettingsPage::AppearanceDesktopIcons;
-    std::wstring title = PageTitleText(route.page);
-    if (route.page == SettingsPage::WidgetSettings &&
-        !route.widgetInstanceId.empty())
-    {
-        title += L" · ";
-        title += route.widgetInstanceId;
-    }
-    PageTitle().Text(title);
-    PageSubtitle().Text(PageDescriptionText(route.page));
+    RenderPageHeading();
     RenderPageHeaderIcon();
-    muxa::AutomationProperties::SetName(PageTitle(), title);
     RenderPageCards(forcePageCards);
     if (scheduleFocus)
         ScheduleFocus();
+}
+
+void SettingsShell::RenderPageHeading()
+{
+    const auto page = navigation_.Route().page;
+    const auto title = PageTitleText(page);
+    PageTitle().Text(title);
+    PageSubtitle().Text(PageDescriptionText(page));
+    muxa::AutomationProperties::SetName(PageTitle(), title);
+    RenderBreadcrumb();
 }
 
 void SettingsShell::RenderNavigationSelection()
@@ -1968,7 +1973,8 @@ void SettingsShell::RenderBreadcrumb()
             SettingsRoute::ForPage(SettingsPage::Widgets));
         items.Append(winrt::box_value(Localize("settings.nav.widgets")));
         breadcrumbRoutes_.push_back(route);
-        items.Append(winrt::box_value(PageTitleText(SettingsPage::WidgetSettings)));
+        const auto name = PageSubjectName(SettingsPage::WidgetSettings);
+        items.Append(winrt::box_value(name.empty() ? PageTitleText(SettingsPage::WidgetSettings) : name));
     }
     if (route.page == SettingsPage::LargeIcon)
     {
@@ -2579,8 +2585,22 @@ std::wstring SettingsShell::Localize(std::string_view key) const
     return DefaultLocalizedString(key);
 }
 
+std::wstring SettingsShell::PageSubjectName(SettingsPage page) const
+{
+    const auto& route = navigation_.Route();
+    if (page != route.page) return {};
+    if (page == SettingsPage::LargeIcon && largeIconPage_)
+        return std::wstring(largeIconPage_->NameForKey(route.itemKey));
+    if (page == SettingsPage::WidgetSettings && widgetSettingsPage_ &&
+        widgetSettingsPage_->WidgetId() == route.widgetInstanceId)
+        return std::wstring(winrt::to_hstring(widgetSettingsPage_->WidgetName()));
+    return {};
+}
+
 std::wstring SettingsShell::PageTitleText(SettingsPage page) const
 {
+    if (const auto name = PageSubjectName(page); !name.empty())
+        return page == SettingsPage::WidgetSettings ? Localize("app.settings.widgets") + L" · " + name : name;
     switch (page)
     {
     case SettingsPage::Home: return Localize("settings.nav.home");
@@ -2596,7 +2616,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::AppearanceIconBeautification:
         return Localize("app.settings.icon_beautify");
     case SettingsPage::Desktop: return Localize("settings.nav.desktop");
-    case SettingsPage::LargeIcon: return Localize("largeIcon.settings");
+    case SettingsPage::LargeIcon: return Localize("app.settings.desktop_icons");
     case SettingsPage::DesktopPages:
         return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:

@@ -419,7 +419,6 @@ struct WidgetSettingsPresenter::Impl
     std::shared_ptr<WidgetSettingsDispatchBridge> dispatch;
 
     muxc::StackPanel root{nullptr};
-    muxc::TextBlock widgetHeading{nullptr};
     SettingsCard appearanceCard;
     muxc::TextBlock appearanceTitle{nullptr};
     presenter_controls::SettingRow followGlobalRow;
@@ -661,17 +660,10 @@ struct WidgetSettingsPresenter::Impl
         root = muxc::StackPanel{};
         root.Spacing(8.0);
 
-        widgetHeading = muxc::TextBlock{};
-        widgetHeading.FontSize(24.0);
-        widgetHeading.FontWeight(
-            winrt::Windows::UI::Text::FontWeights::SemiBold());
-        widgetHeading.TextWrapping(mux::TextWrapping::Wrap);
-        widgetHeading.Margin({4.0, 4.0, 4.0, 8.0});
-        root.Children().Append(widgetHeading);
-
         InitializeCard(appearanceCard);
         appearanceTitle = MakeSectionTitle();
-        appearanceCard.content.Children().Append(appearanceTitle);
+        appearanceTitle.Margin({4.0, 8.0, 4.0, 0.0});
+        root.Children().Append(appearanceTitle);
 
         followGlobal = muxc::ToggleSwitch{};
         followGlobal.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -827,6 +819,7 @@ struct WidgetSettingsPresenter::Impl
         root.Children().Append(resetCard.root);
 
         appearanceCard.root.Visibility(mux::Visibility::Collapsed);
+        appearanceTitle.Visibility(mux::Visibility::Collapsed);
         stylePreviewCard.root.Visibility(mux::Visibility::Collapsed);
         scriptSettingsTitle.Visibility(mux::Visibility::Collapsed);
         resetCard.root.Visibility(mux::Visibility::Collapsed);
@@ -1788,6 +1781,7 @@ struct WidgetSettingsPresenter::Impl
         }
         const bool oldUpdating = updatingControls;
         updatingControls = true;
+        const bool nameChanged = newIdentity || widgetName != snapshot.widgetName;
         widgetId = snapshot.widgetId;
         widgetName = snapshot.widgetName;
         generation = snapshot.generation;
@@ -1796,11 +1790,9 @@ struct WidgetSettingsPresenter::Impl
         if (rebuild) RebuildFields(snapshot, !newIdentity);
         PatchAppearance(snapshot);
         PatchFields(snapshot);
-        widgetHeading.Text(ToText(widgetName));
-        muxa::AutomationProperties::SetName(
-            widgetHeading, ToText(widgetName));
         updatingControls = oldUpdating;
         if (rebuild) ReportDiagnostics();
+        if (nameChanged && callbacks.nameChanged) callbacks.nameChanged();
         return true;
     }
 
@@ -1835,6 +1827,7 @@ struct WidgetSettingsPresenter::Impl
         appearanceCard.root.Visibility(snapshot.customStyle
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
+        appearanceTitle.Visibility(appearanceCard.root.Visibility());
         stylePreviewCard.root.Visibility(
             !snapshot.customStyle && !cachedPresets.empty()
                 ? mux::Visibility::Visible
@@ -3353,6 +3346,11 @@ std::wstring_view WidgetSettingsPresenter::WidgetId() const noexcept
 {
     return impl_ ? std::wstring_view(impl_->widgetId)
                  : std::wstring_view{};
+}
+
+std::string_view WidgetSettingsPresenter::WidgetName() const noexcept
+{
+    return impl_ ? std::string_view(impl_->widgetName) : std::string_view{};
 }
 
 std::uint64_t WidgetSettingsPresenter::Generation() const noexcept

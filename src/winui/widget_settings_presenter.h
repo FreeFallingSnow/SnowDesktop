@@ -19,6 +19,7 @@ namespace snowdesktop::winui
  */
 struct WidgetSettingsPresenterCallbacks
 {
+    std::function<void()> nameChanged;
     std::function<void(
         std::string settingKey,
         widget_runtime::WidgetSettingMutationResult result)>
@@ -104,6 +105,7 @@ public:
         FocusTarget(std::string_view settingKey) const noexcept;
 
     [[nodiscard]] std::wstring_view WidgetId() const noexcept;
+    [[nodiscard]] std::string_view WidgetName() const noexcept;
     [[nodiscard]] std::uint64_t Generation() const noexcept;
     [[nodiscard]] std::uint64_t Revision() const noexcept;
 

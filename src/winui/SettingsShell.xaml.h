@@ -226,6 +226,7 @@ private:
     void RenderNavigationSelection();
     void ApplyNavigationIcons();
     void RenderPageHeaderIcon();
+    void RenderPageHeading();
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
@@ -240,6 +241,8 @@ private:
     void RequestRoute(const snowdesktop::SettingsRoute& route);
     [[nodiscard]] std::wstring Localize(std::string_view key) const;
     [[nodiscard]] std::wstring PageTitleText(
+        snowdesktop::SettingsPage page) const;
+    [[nodiscard]] std::wstring PageSubjectName(
         snowdesktop::SettingsPage page) const;
     [[nodiscard]] std::wstring PageDescriptionText(
         snowdesktop::SettingsPage page) const;

@@ -20,11 +20,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     std::function<std::wstring(std::string_view)> localize;
     x::Style style{nullptr};
     LargeIconSettingsAction action;
+    std::function<void()> nameChanged;
     LargeIconSettingsSnapshot snapshot;
     LargeIconConfig draft;
     c::StackPanel root, editors;
     c::ContentControl editorHost;
-    c::TextBlock status, name;
+    c::TextBlock status;
     x::DispatcherTimer timer;
     presenter_controls::CoalescedPreviewTimer<LargeIconConfig> previews;
     std::shared_ptr<PanelGradientEditor> gradient;
@@ -62,7 +63,6 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Sync()
     {
         syncing = true;
-        name.Text(snapshot.name);
         status.Text(L(snapshot.error));
         status.Visibility(snapshot.error.empty() ? x::Visibility::Collapsed : x::Visibility::Visible);
         editorHost.IsEnabled(snapshot.available && snapshot.editable && snapshot.error != "largeIcon.stale");
@@ -98,6 +98,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto oldRevision = snapshot.revision;
         const auto oldError = snapshot.error;
         const auto oldSteam = snapshot.steam;
+        const auto oldName = snapshot.name;
         const bool wasDirty = dirty;
         try { snapshot = action({snapshot.key, snapshot.session, snapshot.revision, operation, EncodeLargeIconConfig(draft), {}}); }
         catch (...) { snapshot.succeeded = false; snapshot.error = "largeIcon.unavailable"; }
@@ -114,6 +115,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         if (oldSteam != snapshot.steam) Build();
         else Sync();
+        if (snapshot.name != oldName && nameChanged) nameChanged();
         return snapshot.succeeded;
     }
     void Cancel()
@@ -375,8 +377,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         root.Spacing(16); editors.Spacing(20);
         root.HorizontalAlignment(x::HorizontalAlignment::Stretch); editors.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         editorHost.HorizontalAlignment(x::HorizontalAlignment::Stretch); editorHost.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
-        name.TextWrapping(x::TextWrapping::Wrap); name.FontSize(16); status.TextWrapping(x::TextWrapping::Wrap);
-        root.Children().Append(name); root.Children().Append(status); editorHost.Content(editors); root.Children().Append(editorHost);
+        status.TextWrapping(x::TextWrapping::Wrap);
+        root.Children().Append(status); editorHost.Content(editors); root.Children().Append(editorHost);
         auto bg = Group("largeIcon.backgroundSection");
         Choice(bg, "largeIcon.backgroundStyle", &LargeIconConfig::backgroundStyle,
             {{-5,"largeIcon.default"},{-4,"largeIcon.platePreset"},{-2,"largeIcon.fill"},{-1,"largeIcon.follow"},
@@ -461,9 +463,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
 };
 LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::string_view)> localize,
-    x::Style style, LargeIconSettingsAction action) : impl_(std::make_shared<Impl>())
+    x::Style style, LargeIconSettingsAction action, std::function<void()> nameChanged) : impl_(std::make_shared<Impl>())
 {
     impl_->localize = std::move(localize); impl_->style = style; impl_->action = std::move(action);
+    impl_->nameChanged = std::move(nameChanged);
     std::weak_ptr<Impl> weak = impl_;
     impl_->previews.Initialize([weak](const LargeIconConfig&) {
         if (auto self = weak.lock(); self && self->active && self->snapshot.editable) self->Send("preview");
@@ -477,6 +480,8 @@ LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::s
 }
 LargeIconPagePresenter::~LargeIconPagePresenter() { Deactivate(); impl_->previews.Close(); }
 c::StackPanel LargeIconPagePresenter::Content() const { return impl_->root; }
+std::wstring_view LargeIconPagePresenter::NameForKey(std::wstring_view key) const
+{ return impl_->active && impl_->snapshot.key == key ? std::wstring_view(impl_->snapshot.name) : std::wstring_view{}; }
 void LargeIconPagePresenter::Activate(std::wstring key)
 {
     if (impl_->active && impl_->snapshot.key == key) return;
