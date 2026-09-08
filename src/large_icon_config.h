@@ -24,7 +24,7 @@ struct LargeIconConfig
     double radius = 12;
     double radiusPercent = -1; // -1 preserves the legacy/component CU radius; 100 is half the short edge.
     int content = 0; // 0 original, 1 imported static image, 2 Steam
-    int fit = 0; // 0 contain, 1 cover
+    int fit = 1; // Fill layer only: 0 contain, 1 cover. Foreground always contains.
     double focusX = .5, focusY = .5;
     std::string image;
     std::string cachedCover;
@@ -150,6 +150,7 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
 {
     if (!value.IsObject() || !value.Find("version")) return false;
     LargeIconConfig c;
+    if (value.Find("version")->IsNumber() && value.Find("version")->number == 1) c.fit = 0;
     bool valid = true;
     VisitLargeIconFields(c, [&](const char* name, auto& field) {
         const auto* v = value.Find(name);

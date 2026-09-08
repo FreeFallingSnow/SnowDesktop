@@ -1,5 +1,5 @@
 #include "large_icon_renderer.h"
-#include "large_icon_render_rules.h"
+#include "panel_gradient_renderer.h"
 #include <d2d1helper.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -10,148 +10,85 @@ namespace snowdesktop::large_icon_renderer
 using Microsoft::WRL::ComPtr;
 namespace
 {
-D2D1_COLOR_F Color(unsigned rgb, double opacity) { return D2D1::ColorF(rgb, static_cast<float>(opacity)); }
-D2D1_RECT_F Rect(RECT rect) { return D2D1::RectF(static_cast<float>(rect.left), static_cast<float>(rect.top), static_cast<float>(rect.right), static_cast<float>(rect.bottom)); }
-void Rounded(ID2D1RenderTarget* target, D2D1_RECT_F rect, float radius, D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float width = 1)
-{
-    const auto shape = D2D1::RoundedRect(rect, radius, radius);
-    ComPtr<ID2D1SolidColorBrush> brush;
-    if (fill.a > 0 && SUCCEEDED(target->CreateSolidColorBrush(fill, &brush))) target->FillRoundedRectangle(shape, brush.Get());
-    brush.Reset();
-    if (stroke.a > 0 && width > 0 && SUCCEEDED(target->CreateSolidColorBrush(stroke, &brush))) target->DrawRoundedRectangle(shape, brush.Get(), width);
+D2D1_RECT_F Rect(RECT r)
+{ return D2D1::RectF(static_cast<float>(r.left), static_cast<float>(r.top), static_cast<float>(r.right), static_cast<float>(r.bottom)); }
 }
-ComPtr<IDWriteTextFormat> Format(IDWriteFactory* fonts, const LargeIconConfig& config, float scale, bool reveal = false)
-{
-    ComPtr<IDWriteTextFormat> format;
-    if (!fonts) return format;
-    const float size = static_cast<float>(reveal ? config.revealTitleSize : config.titleSize) * scale;
-    fonts->CreateTextFormat(L"Segoe UI", nullptr, reveal ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
-    if (format)
-    {
-        format->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
-        format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            size * 1.3f, size);
-    }
-    return format;
-}
-large_icon_render_rules::ContentGeometry Content(const LargeIconConfig& config, const View& view)
-{
-    const auto size = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
-    return large_icon_render_rules::ResolveContent(config, view.frame.right - view.frame.left, view.frame.bottom - view.frame.top,
-        size.width, size.height, view.scale, view.original, view.animations, view.hover, view.pressed, view.launchWave);
-}
-}
-
-void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& config, const View& view)
+void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& view)
 {
     if (!target || view.frame.right <= view.frame.left || view.frame.bottom <= view.frame.top) return;
     const auto frame = Rect(view.frame);
-    const float scale = view.scale, hover = view.hover;
-    const float radius = static_cast<float>(large_icon_render_rules::Radius(config,
-        frame.right - frame.left, frame.bottom - frame.top, scale));
-    const auto geometry = Content(config, view);
-    if (config.shadow || (config.hoverFrame == 3 && hover > 0))
-        for (int spread = 5; spread >= 1; --spread)
+    const float radius = static_cast<float>(large_icon_render_rules::Radius(c,
+        frame.right - frame.left, frame.bottom - frame.top, view.scale));
+    const bool fill = IsLargeIconFill(c);
+    auto background = view.backgroundResolved ? view.background :
+        large_icon_render_rules::DefaultBackground(c, view.accent, view.hasEdgeColor, view.edgeColor);
+    if (!fill)
+    {
+        if (view.drawBackground) view.drawBackground(target, view.frame, radius, view.opacity);
+        else if (!DrawPanelGradient(target, frame, radius, background.gradient, view.opacity))
         {
-            const float extent = spread * scale;
-            const auto shadow = D2D1::RectF(frame.left - extent, frame.top - extent + 2 * scale,
-                frame.right + extent, frame.bottom + extent + 2 * scale);
-            Rounded(target, shadow, radius + extent, Color(0, view.opacity *
-                (config.shadowStrength * (config.shadow ? .06 : 0) + (config.hoverFrame == 3 ? hover * .035 * config.amplitude : 0))), Color(0, 0));
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(background.color,
+                    static_cast<float>(background.opacity) * view.opacity), &brush)))
+                target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
         }
-    Rounded(target, frame, radius, Color(large_icon_render_rules::Background(config, view.neutral, view.accent),
-        view.opacity * (config.opacity + (config.hoverFrame == 1 ? (config.hoverOpacity - config.opacity) * hover : 0))), Color(0, 0));
+    }
 
     ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
     ComPtr<ID2D1RoundedRectangleGeometry> clip;
     if (factory) factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame, radius, radius), &clip);
     if (clip) target->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), clip.Get()), nullptr);
+    else target->PushAxisAlignedClip(frame, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const auto size = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
+    const auto geometry = large_icon_render_rules::ResolveContent(c, frame.right - frame.left, frame.bottom - frame.top,
+        size.width, size.height, view.scale, view.original, view.hover);
     const auto image = D2D1::RectF(frame.left + static_cast<float>(geometry.x), frame.top + static_cast<float>(geometry.y),
         frame.left + static_cast<float>(geometry.x + geometry.width), frame.top + static_cast<float>(geometry.y + geometry.height));
-    if (view.bitmap) target->DrawBitmap(view.bitmap, image, view.opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    else if (view.placeholder)
+    const auto source = D2D1::RectF(static_cast<float>(geometry.sourceX), static_cast<float>(geometry.sourceY),
+        static_cast<float>(geometry.sourceX + geometry.sourceWidth), static_cast<float>(geometry.sourceY + geometry.sourceHeight));
+    // Crop before translating the fill layer: source overscan must not refill
+    // the transparent area revealed for an inner title.
+    if (view.bitmap) target->DrawBitmap(view.bitmap, image, view.opacity,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, geometry.cropped ? &source : nullptr);
+    else if (view.placeholder && !fill)
         view.placeholder({static_cast<LONG>(std::lround(image.left)), static_cast<LONG>(std::lround(image.top)),
             static_cast<LONG>(std::lround(image.right)), static_cast<LONG>(std::lround(image.bottom))}, view.opacity);
 
-    if ((geometry.leftReveal || (!view.original && config.coverHover == 2)) && hover > 0)
+    if (fonts && (geometry.leftReveal || geometry.upReveal) && view.hover > 0)
     {
-        const float lineHeight = static_cast<float>(geometry.leftReveal ? config.revealTitleSize : config.titleSize) * scale * 1.3f;
-        // A fractional rectangle can lose a few ulps after adding its origin;
-        // DirectWrite then fits only one line into an apparent two-line box.
-        const float titleHeight = geometry.leftReveal ? static_cast<float>(geometry.titleHeight) : std::ceil(lineHeight * 2);
-        const float top = geometry.leftReveal ? (frame.top + frame.bottom) / 2 - titleHeight / 2 : frame.bottom - titleHeight - 6 * scale;
-        const auto title = D2D1::RectF(frame.left + static_cast<float>(geometry.leftReveal ? geometry.titleLeft : 6 * scale),
-            top, frame.right - 12 * scale, top + titleHeight);
-        const unsigned textColor = large_icon_render_rules::TextColor(config,
-            large_icon_render_rules::Background(config, view.neutral, view.accent), geometry.leftReveal);
-        if (!geometry.leftReveal)
-            Rounded(target, title, 4 * scale, Color(large_icon_render_rules::TitleBackdrop(textColor), .88 * hover), Color(0, 0));
-        auto format = Format(fonts, config, scale, geometry.leftReveal);
+        const float size = static_cast<float>(c.revealTitleSize) * view.scale;
+        ComPtr<IDWriteTextFormat> format;
+        fonts->CreateTextFormat(L"Segoe UI", nullptr, static_cast<DWRITE_FONT_WEIGHT>(c.titleWeight),
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        const unsigned textColor = large_icon_render_rules::TextColor(c,
+            fill ? view.neutral : background.color, view.componentForeground);
         ComPtr<ID2D1SolidColorBrush> brush;
-        target->CreateSolidColorBrush(Color(textColor, hover), &brush);
-        if (format && brush && title.right > title.left + 12 * scale)
+        target->CreateSolidColorBrush(D2D1::ColorF(textColor, view.hover * view.opacity), &brush);
+        if (format && brush)
         {
+            format->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
+            format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 1.3f, size);
             format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            if (geometry.leftReveal) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-            ComPtr<IDWriteInlineObject> ellipsis; fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
+            format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            ComPtr<IDWriteInlineObject> ellipsis;
+            fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
+            const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
             format->SetTrimming(&trimming, ellipsis.Get());
-            auto text = title;
-            text.left += (geometry.leftReveal ? (1 - hover) * 6 : 6) * scale;
-            if (!geometry.leftReveal) text.right -= 6 * scale;
-            target->DrawText(view.name.data(), static_cast<UINT32>(view.name.size()), format.Get(), text, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            const float slide = view.animations ? (1 - view.hover) * 6 * view.scale : 0;
+            const float x = frame.left + static_cast<float>(geometry.titleLeft) + (geometry.leftReveal ? slide : 0);
+            const float y = frame.top + static_cast<float>(geometry.titleTop) + (geometry.upReveal ? slide : 0);
+            target->DrawText(view.name.data(), static_cast<UINT32>(view.name.size()), format.Get(),
+                D2D1::RectF(x, y, x + static_cast<float>(geometry.titleWidth),
+                    y + static_cast<float>(geometry.titleHeight)), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
     if (clip) target->PopLayer();
-    if (config.border || (config.hoverFrame == 2 && hover > 0))
-        Rounded(target, frame, radius, Color(0, 0), Color(config.borderColor,
-            view.opacity * std::min(1., (config.border ? config.borderOpacity : 0) + (config.hoverFrame == 2 ? hover * .4 * config.amplitude : 0))),
-            static_cast<float>(config.borderWidth) * scale);
-    if (view.animations && config.launch == 2 && view.launchWave > 0)
-        Rounded(target, frame, radius, Color(0, 0), Color(0xffffff, std::min(1., view.launchWave * .65 * config.amplitude)), 2 * scale);
+    else target->PopAxisAlignedClip();
     if (view.selected)
-        Rounded(target, frame, radius, Color(0, 0), Color(0x75baff, .95), scale);
-}
-
-void DrawFloatingTitle(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& config, const View& view, RECT workArea)
-{
-    if (!target || view.hover <= .01f || workArea.right <= workArea.left || workArea.bottom <= workArea.top) return;
-    const auto geometry = Content(config, view);
-    auto format = Format(fonts, config, view.scale);
-    if (!format) return;
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    const float padding = 6 * view.scale;
-    if (geometry.leftReveal)
     {
-        ComPtr<IDWriteTextLayout> inner;
-        DWRITE_TEXT_METRICS metrics{};
-        auto innerFormat = Format(fonts, config, view.scale, true);
-        const float width = static_cast<float>(geometry.titleWidth);
-        if (innerFormat && width > 0 && SUCCEEDED(fonts->CreateTextLayout(view.name.data(), static_cast<UINT32>(view.name.size()), innerFormat.Get(), width, 100000.f, &inner)) &&
-            SUCCEEDED(inner->GetMetrics(&metrics)) && metrics.height <= geometry.titleHeight + .1) return;
-    }
-    const int width = std::min<LONG>(workArea.right - workArea.left, std::max(160, static_cast<int>(260 * view.scale)));
-    ComPtr<IDWriteTextLayout> text;
-    if (FAILED(fonts->CreateTextLayout(view.name.data(), static_cast<UINT32>(view.name.size()), format.Get(),
-        std::max(1.f, width - padding * 2), 100000.f, &text))) return;
-    DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(text->GetMetrics(&metrics))) return;
-    const int height = std::min<LONG>(workArea.bottom - workArea.top, static_cast<int>(std::ceil(metrics.height + padding * 2)));
-    const LONG left = std::clamp((view.frame.left + view.frame.right - width) / 2, workArea.left, workArea.right - width);
-    LONG top = view.frame.bottom + static_cast<LONG>(5 * view.scale);
-    if (top + height > workArea.bottom) top = view.frame.top - height - static_cast<LONG>(5 * view.scale);
-    top = std::clamp(top, workArea.top, workArea.bottom - height);
-    const auto title = Rect({left, top, left + width, top + height});
-    const unsigned textColor = config.autoTitleColor ? 0xffffff : config.titleColor;
-    Rounded(target, title, 6 * view.scale, Color(large_icon_render_rules::TitleBackdrop(textColor), .96 * view.hover), Color(0xffffff, .18 * view.hover), view.scale);
-    ComPtr<ID2D1SolidColorBrush> brush;
-    target->CreateSolidColorBrush(Color(textColor, view.hover), &brush);
-    if (brush)
-    {
-        target->PushAxisAlignedClip(title, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        target->DrawTextLayout(D2D1::Point2F(title.left + padding, title.top + padding), text.Get(), brush.Get());
-        target->PopAxisAlignedClip();
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0x75baff, .95f), &brush)))
+            target->DrawRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get(), view.scale);
     }
 }
 }

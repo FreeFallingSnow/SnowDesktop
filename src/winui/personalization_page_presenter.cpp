@@ -2,6 +2,7 @@
 
 #include "personalization_page_presenter.h"
 #include "settings_presenter_controls.h"
+#include "panel_gradient_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -146,6 +147,8 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
+    std::shared_ptr<PanelGradientEditor> panelGradientEditor;
+    bool panelGradientEnabled = false;
 
     muxc::ComboBox presetCombo{nullptr};
     muxc::ComboBox quickNavigationThemeCombo{nullptr};
@@ -347,6 +350,14 @@ struct PersonalizationPagePresenter::Impl
         widgetAppearanceCard.content.Children().Append(
             edgeHighlightStrength.row.root);
 
+        panelGradientEditor = PanelGradientEditor::Create(
+            [this](std::string_view key) { return L(key, L""); },
+            [this](const PanelGradient& gradient, bool commit) {
+                Emit(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [gradient](PersonalizationSettings& settings) { settings.panelGradient = gradient; });
+                panelGradientEnabled = gradient.enabled; UpdateDependentStates();
+            });
+        widgetAppearanceCard.content.Children().Append(panelGradientEditor->Content());
         gradientToggle = muxc::ToggleSwitch{};
         gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         gradientToggleRow.Initialize(gradientToggle);
@@ -795,6 +806,8 @@ struct PersonalizationPagePresenter::Impl
         PatchColor(borderColor, settings);
         for (ContinuousControl* control : continuousControls)
             PatchContinuous(*control, settings);
+        panelGradientEnabled = settings.panelGradient.enabled;
+        panelGradientEditor->SetValue(settings.panelGradient);
         gradientToggle.IsOn(settings.gradientEndA > 0.001f);
         glassToggle.IsOn(settings.glassEnabled);
         acrylicToggle.IsOn(settings.acrylicEnabled);
@@ -826,6 +839,9 @@ struct PersonalizationPagePresenter::Impl
         widgetAppearanceCard.root.Visibility(custom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
+        backgroundColor.editor.row.root.Visibility(panelGradientEnabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        widgetAlpha.row.root.Visibility(panelGradientEnabled && !gradientToggle.IsOn() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        widgetAlpha.row.SetText(L(panelGradientEnabled ? "panelGradient.barStartOpacity" : "app.settings.bg_opacity", L"Background opacity"));
         backgroundColor.editor.SetEnabled(custom);
         borderColor.editor.SetEnabled(custom);
         widgetAlpha.row.SetEnabled(custom);
@@ -898,6 +914,7 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        if (panelGradientEditor) panelGradientEditor->RefreshLocalizedText();
         if (closed)
             return;
         const bool previousUpdating = updatingControls;
@@ -1159,6 +1176,7 @@ struct PersonalizationPagePresenter::Impl
     {
         try
         {
+            if (panelGradientEditor) panelGradientEditor->Flush();
             for (ContinuousControl* control : continuousControls)
                 Commit(*control);
         }
@@ -1197,6 +1215,7 @@ struct PersonalizationPagePresenter::Impl
             UnhookContinuousControl(*control);
         for (ColorControl* control : colorControls)
             UnhookColorControl(*control);
+        if (panelGradientEditor) panelGradientEditor->Close();
         actions = {};
         localize = {};
     }

@@ -322,6 +322,9 @@ private:
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;
+    double largeIconParentOffset_ = 0;
+    bool restoreLargeIconParent_ = false;
+    winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;

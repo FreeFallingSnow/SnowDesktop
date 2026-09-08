@@ -166,6 +166,7 @@ void DesktopApp::UpdateLargeIconHover()
         const auto index = FindItemIndexByKey(it->first);
         if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index]))
         {
+            desktopBackdropCompositor_.RemovePanel(it->second.backdropFrame);
             if (largeIconAssets_) largeIconAssets_->Cancel(it->first);
             if (it->second.asset) EraseD2DIconCacheForBitmap(it->second.asset->bitmap);
             it = largeIconRuntime_.erase(it); continue;
@@ -198,14 +199,4 @@ void DesktopApp::UpdateLargeIconHover()
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return false;
             });
-}
-
-void DesktopApp::TriggerLargeIconLaunch(size_t index)
-{
-    if (index >= items_.size() || !items_[index].largeIcon || items_[index].largeIcon->launch == 0 ||
-        !snowdesktop::animation::RuntimeAnimationsEnabled()) return;
-    largeIconRuntime_[items_[index].layoutKey].motion.Launch(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
-        true, *items_[index].largeIcon);
-    UpdateLargeIconHover();
-    InvalidateRect(hwnd_, nullptr, FALSE);
 }

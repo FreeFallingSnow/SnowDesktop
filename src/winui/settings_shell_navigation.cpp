@@ -109,8 +109,10 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
 
     if (newGeneration)
     {
-        history_.assign(1, canonicalRoute);
+        history_.assign(1, canonicalRoute.page == SettingsPage::LargeIcon
+            ? SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons) : canonicalRoute);
         historyIndex_ = 0;
+        if (canonicalRoute.page == SettingsPage::LargeIcon) Push(canonicalRoute);
     }
     else if (Route() != canonicalRoute)
     {
@@ -195,6 +197,18 @@ void SettingsShellNavigationState::Push(const SettingsRoute& route)
         history_.erase(
             history_.begin() + static_cast<std::ptrdiff_t>(historyIndex_ + 1),
             history_.end());
+    }
+    if (route.page == SettingsPage::LargeIcon)
+    {
+        // A different item replaces this detail page; Back always returns to
+        // icon settings, including when opened directly by the host process.
+        if (Route().page == SettingsPage::LargeIcon)
+        {
+            history_[historyIndex_] = route;
+            return;
+        }
+        if (Route().page != SettingsPage::AppearanceDesktopIcons)
+            Push(SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons));
     }
     history_.push_back(route);
     historyIndex_ = history_.size() - 1;

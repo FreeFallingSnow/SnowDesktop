@@ -5,41 +5,40 @@ namespace snowdesktop::large_icon_settings_rules
 {
 enum class Field
 {
-    Always, Original, Image, Imported, Crop, Steam, ManualBackground, AutomaticBackground,
-    HoverBackground, ManualHoverOpacity, BorderAppearance, BorderOpacity, ShadowStrength,
-    ManualTitle, FloatingTitle, RevealTitle, OriginalMotion, CoverMotion, AnimationStrength
+    Always, Default, Smart, ThemeOptions, ThemeGradient, Fill, FillImage, Crop, Steam,
+    Custom, Solid, Blur, Border, Edge, Foreground, ForegroundImage, ForegroundPosition,
+    Title, ManualTitle, Tilt
 };
-inline bool Visible(Field field, const LargeIconConfig& c)
+inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
 {
+    const bool fill = IsLargeIconFill(c), custom = c.backgroundStyle == 9, automatic = c.backgroundStyle == -3;
     switch (field)
     {
-    case Field::Original: return c.content == 0;
-    case Field::Image: return c.content != 0;
-    case Field::Imported: return c.content == 1;
-    case Field::Crop: return c.content != 0 && c.fit == 1;
-    case Field::Steam: return c.content == 2;
-    case Field::ManualBackground: return !c.autoColor;
-    case Field::AutomaticBackground: return c.autoColor;
-    case Field::HoverBackground: return c.hoverFrame == 1;
-    case Field::ManualHoverOpacity: return c.hoverFrame == 1 && !c.hoverOpacityLinked;
-    case Field::BorderAppearance: return c.border || c.hoverFrame == 2;
-    case Field::BorderOpacity: return c.border;
-    case Field::ShadowStrength: return c.shadow;
-    case Field::ManualTitle: return !c.autoTitleColor;
-    case Field::FloatingTitle: return c.content != 0 || c.titleMode != 1;
-    case Field::RevealTitle: return c.content == 0 && c.titleMode == 1;
-    case Field::OriginalMotion: return c.content == 0 && c.titleMode != 1;
-    case Field::CoverMotion: return c.content != 0;
-    case Field::AnimationStrength: return c.launch != 0 || c.hoverFrame == 2 || c.hoverFrame == 3 ||
-        (c.content == 0 ? c.hoverContent >= 2 && c.titleMode == 0 : c.coverHover == 1);
+    case Field::Default: return automatic;
+    case Field::Smart: return automatic && hasEdge;
+    case Field::ThemeOptions: return automatic && c.themeColor;
+    case Field::ThemeGradient: return automatic && c.themeColor && c.themeGradient;
+    case Field::Fill: return fill;
+    case Field::FillImage: return fill && c.content == 1;
+    case Field::Crop: return fill && c.fit == 1;
+    case Field::Steam: return fill && c.content == 2;
+    case Field::Custom: return custom;
+    case Field::Solid: return custom && !c.gradient.enabled;
+    case Field::Blur: return custom && c.material != 0;
+    case Field::Border: return custom && c.border;
+    case Field::Edge: return custom && c.edgeHighlight;
+    case Field::Foreground: case Field::ForegroundPosition: return !fill;
+    case Field::ForegroundImage: return !fill && c.foregroundContent == 1;
+    case Field::Title: return c.effect == 2;
+    case Field::ManualTitle: return c.effect == 2 && !c.autoTitleColor;
+    case Field::Tilt: return c.effect == 1;
     default: return true;
     }
 }
-inline bool CanSelectLeftTitle(const LargeIconConfig& c, double width, double height,
-    double sourceWidth, double sourceHeight, double scale, bool animations)
+inline bool Enabled(Field field, const LargeIconConfig& c, bool hasEdge, bool hasTheme)
 {
-    auto candidate = c; candidate.titleMode = 1;
-    return large_icon_render_rules::ResolveContent(candidate, width, height,
-        sourceWidth, sourceHeight, scale, c.content == 0, animations, 0, false, 0).leftReveal;
+    if (field == Field::ThemeOptions || field == Field::ThemeGradient) return hasTheme && !(hasEdge && c.smartFill);
+    if (field == Field::ForegroundPosition) return c.effect != 2;
+    return true;
 }
 }

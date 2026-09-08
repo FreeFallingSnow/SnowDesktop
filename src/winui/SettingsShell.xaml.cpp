@@ -1795,6 +1795,15 @@ void SettingsShell::RenderRoute(
     RenderNavigationSelection();
     RenderBreadcrumb();
     const auto route = navigation_.Route();
+    if (renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceDesktopIcons && route.page == SettingsPage::LargeIcon)
+    {
+        largeIconParentOffset_ = PageScrollViewer().VerticalOffset();
+        largeIconParentFocus_ = {};
+        if (const auto focus = muxi::FocusManager::GetFocusedElement(ShellRoot().XamlRoot()).try_as<mux::FrameworkElement>())
+            largeIconParentFocus_ = winrt::make_weak(focus);
+    }
+    restoreLargeIconParent_ = renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::LargeIcon &&
+        route.page == SettingsPage::AppearanceDesktopIcons;
     std::wstring title = PageTitleText(route.page);
     if (route.page == SettingsPage::WidgetSettings &&
         !route.widgetInstanceId.empty())
@@ -1817,6 +1826,8 @@ void SettingsShell::RenderNavigationSelection()
     SettingsPage selectedPage = navigation_.Route().page;
     if (selectedPage == SettingsPage::WidgetSettings)
         selectedPage = SettingsPage::Widgets;
+    if (selectedPage == SettingsPage::LargeIcon)
+        selectedPage = SettingsPage::AppearanceDesktopIcons;
     if (selectedPage == SettingsPage::Personalization)
         selectedPage = SettingsPage::AppearanceTheme;
     if (selectedPage == SettingsPage::AppearanceTheme ||
@@ -1959,7 +1970,16 @@ void SettingsShell::RenderBreadcrumb()
         breadcrumbRoutes_.push_back(route);
         items.Append(winrt::box_value(PageTitleText(SettingsPage::WidgetSettings)));
     }
-    PageBreadcrumb().Visibility(route.page == SettingsPage::WidgetSettings
+    if (route.page == SettingsPage::LargeIcon)
+    {
+        const auto parent = navigation_.PeekBack();
+        breadcrumbRoutes_.push_back(parent && parent->page == SettingsPage::AppearanceDesktopIcons
+            ? *parent : SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons));
+        items.Append(winrt::box_value(PageTitleText(SettingsPage::AppearanceDesktopIcons)));
+        breadcrumbRoutes_.push_back(route);
+        items.Append(winrt::box_value(PageTitleText(SettingsPage::LargeIcon)));
+    }
+    PageBreadcrumb().Visibility(!breadcrumbRoutes_.empty()
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
     PageBreadcrumb().ItemsSource(items);
@@ -2507,6 +2527,14 @@ void SettingsShell::ScheduleFocus()
 
 void SettingsShell::FocusPendingTarget()
 {
+    if (restoreLargeIconParent_)
+    {
+        restoreLargeIconParent_ = false;
+        if (auto target = largeIconParentFocus_.get()) (void)target.Focus(mux::FocusState::Keyboard);
+        else (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
+        PageScrollViewer().ChangeView(nullptr, largeIconParentOffset_, nullptr, true);
+        return;
+    }
     const auto& focusId = navigation_.Route().focusId;
     if (!focusId.empty() &&
         navigation_.Route().page == SettingsPage::WidgetSettings &&

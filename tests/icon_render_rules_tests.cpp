@@ -29,103 +29,87 @@ int main(int argc, char** argv)
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
     failures += RunLargeIconAssetTests();
     using namespace snowdesktop::large_icon_render_rules;
-    Check(CanRevealTitle(400, 180, 108, 12, 1), "wide large icons can reveal names without resizing content");
-    Check(!CanRevealTitle(100, 400, 60, 12, 1), "portrait frames keep floating titles");
-    Check(!CanRevealTitle(180, 100, 100, 18, 1), "insufficient text room keeps floating titles");
-    Check(TitleBackdrop(0) != TitleBackdrop(0xffffff), "manual dark titles receive a readable light backdrop");
     snowdesktop::LargeIconConfig config;
     snowdesktop::LargeIconMotion motion;
-    Check(motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0, "hover starts with the configured delay");
+    Check(!motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0,
+        "no-effect mode never schedules hover animation");
+    config.effect = 2;
+    Check(motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0, "title honors initial delay");
     motion.Advance(1119, true, true, true, 1, config);
-    Check(motion.hover == 0, "hover delay does not reveal the title early");
+    Check(motion.hover == 0, "title never appears before its delay");
     motion.Advance(1220, true, true, true, 1, config);
-    Check(std::abs(motion.hover - .5f) < .0001, "hover reaches the midpoint after half the entry duration");
+    Check(std::abs(motion.hover - .5f) < .0001, "title reaches transition midpoint");
     motion.Advance(1220, false, true, true, 1, config);
-    Check(std::abs(motion.hover - .5f) < .0001, "rapid exit reverses from the current pose without jumping");
+    Check(std::abs(motion.hover - .5f) < .0001, "rapid exit preserves current pose");
     motion.Advance(1300, false, true, true, 1, config);
-    Check(std::abs(motion.hover - .25f) < .0001, "exit uses its independent duration");
+    Check(std::abs(motion.hover - .25f) < .0001, "exit uses independent duration");
     motion.Advance(1300, true, true, true, 1, config);
-    Check(std::abs(motion.hover - .25f) < .0001, "reentry continues without repeating the initial delay");
-    Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled hover requests no animation frames");
-    Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately stop and clear effects");
-    Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced animation reveals the name without a transition");
-    config.enterMs = 0; motion = {};
-    motion.Advance(2000, true, true, true, 1, config);
-    Check(motion.hover == 0, "zero-duration transitions still honor the hover delay");
-    Check(!motion.Advance(2120, true, true, true, 1, config) && motion.hover == 1, "zero-duration transition completes once after the delay");
-    config.launch = 1; motion.Launch(3000, true, config);
-    Check(std::abs(motion.LaunchWave(3450, 2) - 1) < .0001, "launch feedback follows the global duration scale");
-    Check(!motion.Advance(3900, true, true, true, 2, config) && motion.launchStart == 0 && motion.LaunchWave(3901, 2) == 0,
-        "launch feedback finishes once and does not leave a recurring refresh");
-    motion.Launch(4000, true, config);
-    motion.Advance(4001, true, true, false, 1, config);
-    Check(motion.launchStart == 0, "disabling animations cancels in-flight launch feedback");
-
+    Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled title stops animation frames");
+    Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately reset");
+    Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced motion shows inner title instantly");
+    config.effect = 1;
+    Check(!motion.Advance(1503, true, true, false, 1, config) && motion.hover == 0, "reduced motion disables 3D");
     config = {};
-    auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 0, false, 0);
-    Check(geometry.width == 32 && geometry.x == 184 && geometry.y == 74, "small original pixels remain unscaled and exactly centered");
-    config.hoverContent = 2;
-    auto zoomed = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 1, false, 0);
-    Check(std::abs(zoomed.width - 32 * 1.06) < .0001 && !zoomed.leftReveal, "hover enlargement also affects small original icons");
-    config.titleMode = 1; config.hoverContent = 1;
-    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 1, false, 0);
+    auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    Check(geometry.width == 32 && geometry.x == 184 && geometry.y == 74, "small original stays centered without upscaling");
+    config.iconX = 0; config.iconY = 1;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    Check(geometry.x == 0 && geometry.y == 148, "foreground positions use the available travel on each axis");
+    config.effect = 2;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    Check(geometry.x == 184 && geometry.y == 74, "dynamic title overrides saved foreground position at rest");
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 1);
     Check(geometry.leftReveal && geometry.x == 64 && geometry.width == 32 && geometry.titleLeft == 172 && geometry.titleWidth == 216,
-        "left reveal centers the unchanged original in the left column and reserves the right for large text");
-    geometry = ResolveContent(config, 180, 400, 256, 256, 1, true, true, 1, false, 0);
-    Check(!geometry.leftReveal && geometry.x == 36 && geometry.width == 108, "portrait fallback does not shrink the icon to fit text");
-    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, false, 1, false, 0);
-    Check(!geometry.leftReveal && geometry.x == 184, "reduced motion keeps the original centered with a floating title");
-    config.content = 1; config.fit = 1;
-    geometry = ResolveContent(config, 200, 100, 400, 200, 1, false, true, 0, true, 0);
-    Check(!geometry.leftReveal && geometry.width == 192 && geometry.height == 96 && geometry.x == 4 && geometry.y == 2,
-        "pressing an exact-aspect cover visibly shrinks it inside the fixed frame");
-    config.focusX = 1;
-    geometry = ResolveContent(config, 100, 200, 400, 200, 1, false, true, 0, false, 0);
-    Check(geometry.x == -300 && geometry.width == 400 && geometry.height == 200, "fill focus crops without stretching the source");
+        "left reveal keeps original size and centers text in the remaining right column");
+    Check(!CanSelectTitleDirection(config, 0, 180, 400, 64, 64, 1) && CanSelectTitleDirection(config, 1, 180, 400, 64, 64, 1),
+        "portrait frame disables left direction independently from up direction");
+    Check(!CanSelectTitleDirection(config, 0, 60, 60, 64, 64, 1) && !CanSelectTitleDirection(config, 1, 60, 60, 64, 64, 1),
+        "insufficient frames cannot enable either direction by shrinking content");
+    config.titleDirection = 1;
+    geometry = ResolveContent(config, 180, 400, 64, 64, 1, true, 1);
+    Check(geometry.upReveal && geometry.y == 48 && geometry.width == 64 && geometry.titleTop > 160,
+        "up direction reserves a lower text area without resizing the icon");
+    config.backgroundStyle = -2; config.titleDirection = 0; config.focusX = 1;
+    geometry = ResolveContent(config, 400, 180, 800, 200, 1, true, 1);
+    Check(geometry.leftReveal && geometry.cropped && geometry.width == 400 && geometry.x == -180 &&
+        geometry.sourceX > 0 && geometry.sourceWidth < 800,
+        "fill crops the source before movement so overscan cannot refill title space");
+    config.effect = 0; config.fit = 0;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    Check(geometry.width == 180 && geometry.x == 110, "fill original is enlarged independently of foreground limits");
     config = {};
-    Check(Radius(config, 200, 100, 2) == 24 && RadiusPercent(config, 200, 100, 2) == 48,
-        "legacy component radius keeps its CU geometry and displays a normalized percentage");
+    Check(Radius(config, 200, 100, 2) == 24 && RadiusPercent(config, 200, 100, 2) == 48, "legacy radius preserves CU geometry");
     config.radiusPercent = 100;
-    Check(Radius(config, 200, 100, 1) == 50 && Radius(config, 400, 200, 2) == 100,
-        "maximum relative radius follows half the short edge through resize and DPI changes");
-    config.radiusPercent = 50;
-    Check(Radius(config, 300, 100, 1) == 25, "relative rounding uses the short edge, not frame width");
-    config.radiusPercent = 0;
-    Check(Radius(config, 200, 100, 2) == 0, "zero relative radius overrides the retained legacy fallback");
+    Check(Radius(config, 200, 100, 1) == 50 && Radius(config, 400, 200, 2) == 100, "100 percent radius follows half short edge at each DPI");
     using snowdesktop::large_icon_settings_rules::Field;
     using snowdesktop::large_icon_settings_rules::Visible;
-    using snowdesktop::large_icon_settings_rules::CanSelectLeftTitle;
+    using snowdesktop::large_icon_settings_rules::Enabled;
     config = {};
-    Check(!Visible(Field::Image, config) && !Visible(Field::Crop, config) && !Visible(Field::Imported, config) &&
-        !Visible(Field::Steam, config) && !Visible(Field::ManualBackground, config) && !Visible(Field::ManualTitle, config),
-        "original and automatic modes hide unsupported media and manual color editors");
-    config.content = 1;
-    Check(Visible(Field::Imported, config) && Visible(Field::Image, config) && !Visible(Field::Original, config) && !Visible(Field::Crop, config),
-        "contain images expose import and fit but hide crop focus and original scaling");
-    config.fit = 1; config.content = 2; config.autoColor = false; config.autoTitleColor = false;
-    Check(Visible(Field::Crop, config) && Visible(Field::Steam, config) && !Visible(Field::Imported, config) &&
-        Visible(Field::ManualBackground, config) && !Visible(Field::AutomaticBackground, config) && Visible(Field::ManualTitle, config),
-        "Steam fill and manual modes reveal only their applicable child settings");
-    config.border = false; config.shadow = false; config.hoverFrame = 0;
-    Check(!Visible(Field::BorderAppearance, config) && !Visible(Field::BorderOpacity, config) && !Visible(Field::ShadowStrength, config) &&
-        !Visible(Field::HoverBackground, config), "disabled frame effects hide unused appearance settings");
-    config.hoverFrame = 2;
-    Check(Visible(Field::BorderAppearance, config) && !Visible(Field::BorderOpacity, config),
-        "hover-only border exposes its color and width without claiming a normal border opacity");
-    config = {}; config.titleMode = 1;
-    Check(Visible(Field::RevealTitle, config) && !Visible(Field::OriginalMotion, config) &&
-        CanSelectLeftTitle(config, 400, 180, 64, 64, 1, true) &&
-        !CanSelectLeftTitle(config, 180, 400, 64, 64, 1, true) &&
-        !CanSelectLeftTitle(config, 400, 180, 64, 64, 1, false),
-        "left-title editor follows production space and animation eligibility without a second movement selector");
-    config.content = 2;
-    Check(!CanSelectLeftTitle(config, 400, 180, 64, 64, 1, true), "covers cannot select the original-icon left title effect");
+    Check(Visible(Field::Default, config) && !Visible(Field::Smart, config) && Visible(Field::Smart, config, true) &&
+        !Visible(Field::Fill, config) && !Visible(Field::Solid, config), "default exposes contour only when detected and never manual color or crop");
+    Check(!Enabled(Field::ThemeOptions, config, true, true) && Enabled(Field::ThemeOptions, config, false, true),
+        "theme fallback parameters disable while opaque contour takes precedence");
+    config.backgroundStyle = -2; config.content = 2;
+    Check(Visible(Field::Steam, config) && Visible(Field::Crop, config) && !Visible(Field::Foreground, config) && !Visible(Field::Custom, config),
+        "Steam fill has its own settings and no foreground or component material");
+    config.content = 1; config.fit = 0;
+    Check(Visible(Field::FillImage, config) && !Visible(Field::Steam, config) && !Visible(Field::Crop, config), "local contain hides Steam and crop settings");
+    config.backgroundStyle = 9; config.gradient.enabled = true; config.effect = 2; config.autoTitleColor = false;
+    Check(Visible(Field::Custom, config) && !Visible(Field::Solid, config) && Visible(Field::ManualTitle, config) &&
+        !Enabled(Field::ForegroundPosition, config, false, true), "custom gradient suppresses duplicate solid parameters and dynamic title owns position");
     config = {};
-    Check(Background(config, 0x414751, 0x414751) == 0x414751, "missing color data immediately uses the neutral background");
-    Check(Background(config, 0xc9ced6, 0) == 0xc9ced6 && Background(config, 0x414751, 0) == 0x414751,
-        "fully transparent sources follow both light and dark theme neutral colors");
-    config.autoColor = false; config.manualColor = 0x123456;
-    Check(Background(config, 0, 0xffffff) == 0x123456, "manual colors remain independent from automatic extraction");
+    auto background = DefaultBackground(config, 0, false, 0);
+    Check(background.color == 0xe8ecf4 && background.opacity == 1, "first frame and failed extraction have the opaque default-beautify base");
+    background = DefaultBackground(config, 0x008800, true, 0x0112ff);
+    Check(background.color == 0x0112ff && background.opacity == 1 && !background.gradient.enabled, "reliable contour is preserved exactly and filled opaquely");
+    config.smartFill = false; config.themeGradient = true; config.themeOpacity = .4; config.themeAngle = 45;
+    background = DefaultBackground(config, 0x008800, true, 0x0112ff);
+    Check(background.color == 0x008800 && background.opacity == .4 && background.gradient.enabled && background.gradient.angle == 45,
+        "theme fallback supports opacity and automatic gradient direction without manual colors");
+    config.backgroundStyle = 7;
+    Check(TextColor(config, 0x111111, 0x161616) == 0x161616, "component title color uses theme foreground even when luminance disagrees");
+    config.autoTitleColor = false; config.titleColor = 0x123456;
+    Check(TextColor(config, 0xffffff, 0xffffff) == 0x123456, "manual title color overrides theme and luminance");
     Check(rules::SourcePixelsForTarget(32) == 64,
         "small icons use the baseline source bucket");
     Check(rules::SourcePixelsForTarget(65) == 96,

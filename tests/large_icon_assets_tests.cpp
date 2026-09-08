@@ -134,6 +134,8 @@ int RunLargeIconAssetTests()
             "display decodes at the requested size with aspect ratio intact");
         if (result[0].asset)
         {
+            Check(result[0].asset->hasEdgeColor && result[0].asset->edgeColor == 0x22aa77 && result[0].asset->accent != 0,
+                "reliable edge RGB is separate from the bounded theme palette and keeps its exact source color");
             const auto reference = result[0].asset->reference;
             std::string retainedBytes; atomic_file::ReadAll(directory / reference, retainedBytes);
             Check(retainedBytes == sourceBytes, "import preserves full source bytes for later resizing and backup");
@@ -235,7 +237,7 @@ int RunLargeIconAssetTests()
             noColor.itemKey = transparentPath.wstring(); noColor.importPath = transparentPath; noColor.generation = 1;
             queue.assets.Request(noColor);
             auto transparent = queue.Wait(1);
-            Check(!transparent.empty() && transparent[0].asset && transparent[0].asset->accent == 0,
+            Check(!transparent.empty() && transparent[0].asset && transparent[0].asset->accent == 0 && !transparent[0].asset->hasEdgeColor,
                 "fully transparent and negligible-alpha pixels leave color selection to the current host theme");
         }
         const auto tooManyPixels = root / L"over-pixel-limit.png";

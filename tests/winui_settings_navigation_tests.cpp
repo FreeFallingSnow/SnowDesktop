@@ -142,6 +142,27 @@ void TestControllerCommittedBackNavigation()
         "a validated controller back commit moves within existing history");
 }
 
+void TestLargeIconParentNavigation()
+{
+    SettingsRoute first = SettingsRoute::ForPage(SettingsPage::LargeIcon); first.itemKey = L"first";
+    SettingsRoute second = first; second.itemKey = L"second";
+    SettingsShellNavigationState direct;
+    Check(direct.ApplyControllerUpdate(first, 1, 1) && direct.CanGoBack() &&
+        direct.PeekBack()->page == SettingsPage::AppearanceDesktopIcons,
+        "a directly opened large-icon editor always has the Icons parent");
+    Check(direct.ApplyControllerUpdate(second, 2, 1) && direct.HistorySize() == 2 &&
+        direct.PeekBack()->page == SettingsPage::AppearanceDesktopIcons,
+        "switching the edited item replaces the detail entry, not its parent");
+    const auto parent = SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons, "desktop.iconSize");
+    SettingsShellNavigationState existing;
+    Check(existing.Navigate(parent) && existing.Navigate(first) && existing.PeekBack() == parent,
+        "entering a detail preserves its existing parent focus route");
+    Check(existing.Navigate(second) && existing.GoBack() == parent,
+        "Back skips the previous item editor and restores the parent focus target");
+    Check(direct.ApplyControllerUpdate(second, 1, 2) && direct.HistorySize() == 2,
+        "reopening a settings generation seeds a fresh Icons parent");
+}
+
 void TestInvalidRoutes()
 {
     SettingsShellNavigationState state;
@@ -990,6 +1011,7 @@ int main(int argc, char** argv)
     TestControllerGenerationGate();
     TestControllerCommittedBackNavigation();
     TestInvalidRoutes();
+    TestLargeIconParentNavigation();
     Check(argc == 2,
         "source root is supplied for WinUI settings source contracts");
     if (argc == 2)

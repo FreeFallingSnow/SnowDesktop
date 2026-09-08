@@ -4,82 +4,115 @@
 
 namespace snowdesktop::large_icon_render_rules
 {
-inline bool CanRevealTitle(float width, float height, float iconExtent, float titleSize, float scale)
-{
-    const float iconColumn = std::max(width * .4f, iconExtent + 24 * scale);
-    return width >= height * 1.2f &&
-        width - iconColumn - 24 * scale >= std::max(100.f * scale, titleSize * 4) &&
-        height >= titleSize * 1.3f + 12 * scale;
-}
-inline double Radius(const LargeIconConfig& config, double width, double height, double scale)
+inline double Radius(const LargeIconConfig& c, double width, double height, double scale)
 {
     const double maximum = std::max(0., std::min(width, height) / 2);
-    return config.radiusPercent >= 0 ? maximum * config.radiusPercent / 100 : std::min(maximum, config.radius * scale);
+    return c.radiusPercent >= 0 ? maximum * c.radiusPercent / 100 : std::min(maximum, c.radius * scale);
 }
-inline double RadiusPercent(const LargeIconConfig& config, double width, double height, double scale)
+inline double RadiusPercent(const LargeIconConfig& c, double width, double height, double scale)
 {
-    return config.radiusPercent >= 0 ? config.radiusPercent :
-        std::min(width, height) > 0 ? Radius(config, width, height, scale) * 200 / std::min(width, height) : 0;
+    return c.radiusPercent >= 0 ? c.radiusPercent : std::min(width, height) > 0 ?
+        Radius(c, width, height, scale) * 200 / std::min(width, height) : 0;
 }
-inline unsigned TitleBackdrop(unsigned textColor)
+inline unsigned Mix(unsigned a, unsigned b, double amount)
 {
-    const auto luma = ((textColor >> 16) & 255) * .2126 + ((textColor >> 8) & 255) * .7152 + (textColor & 255) * .0722;
-    return luma < 140 ? 0xf2f4f7u : 0x20242bu;
-}
-
-inline unsigned Background(const LargeIconConfig& config, unsigned neutral, unsigned accent)
-{
-    if (!config.autoColor) return config.manualColor;
-    // Extracted channels are bounded away from zero; zero denotes that there
-    // were no usable visible pixels, so the active theme supplies the fallback.
-    if (!accent) accent = neutral;
     const auto channel = [&](int shift) { return static_cast<unsigned>(
-        ((neutral >> shift) & 255) * (1 - config.colorMix) + ((accent >> shift) & 255) * config.colorMix); };
-    return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+        ((a >> shift) & 255) * (1 - amount) + ((b >> shift) & 255) * amount + .5); };
+    return channel(16) << 16 | channel(8) << 8 | channel(0);
 }
-inline unsigned TextColor(const LargeIconConfig& config, unsigned background, bool reveal)
+struct BackgroundStyle
 {
-    if (!config.autoTitleColor) return config.titleColor;
-    if (!reveal) return 0xffffff;
-    const auto luma = ((background >> 16) & 255) * .2126 + ((background >> 8) & 255) * .7152 + (background & 255) * .0722;
-    return luma >= 150 ? 0x15191fu : 0xffffffu;
+    unsigned color = 0xe8ecf4; // DefaultBeautify base, available before any image arrives
+    double opacity = 1;
+    PanelGradient gradient;
+};
+inline BackgroundStyle DefaultBackground(const LargeIconConfig& c, unsigned accent, bool hasEdge, unsigned edge)
+{
+    BackgroundStyle result;
+    if (c.smartFill && hasEdge) result.color = edge;
+    else if (c.themeColor && accent)
+    {
+        result.color = accent; result.opacity = c.themeOpacity;
+        result.gradient.enabled = c.themeGradient;
+        result.gradient.angle = c.themeAngle;
+        result.gradient.stops = {{0, accent, c.themeOpacity}, {1, Mix(accent, 0xe8ecf4, .4), c.themeOpacity}};
+    }
+    return result;
 }
-
+inline unsigned ReadableText(unsigned background)
+{
+    const double luma = ((background >> 16) & 255) * .2126 + ((background >> 8) & 255) * .7152 + (background & 255) * .0722;
+    return luma >= 150 ? 0x161616u : 0xffffffu;
+}
+inline unsigned TextColor(const LargeIconConfig& c, unsigned background, unsigned componentForeground)
+{
+    return !c.autoTitleColor ? c.titleColor : c.backgroundStyle >= -1 ? componentForeground : ReadableText(background);
+}
 struct ContentGeometry
 {
     double x = 0, y = 0, width = 0, height = 0;
-    double titleLeft = 0, titleWidth = 0, titleHeight = 0;
-    bool leftReveal = false;
+    double sourceX = 0, sourceY = 0, sourceWidth = 0, sourceHeight = 0;
+    double titleLeft = 0, titleTop = 0, titleWidth = 0, titleHeight = 0;
+    bool leftReveal = false, upReveal = false, cropped = false;
 };
 
-inline ContentGeometry ResolveContent(const LargeIconConfig& config, double width, double height,
-    double sourceWidth, double sourceHeight, double scale, bool original, bool animations,
-    double hover, bool pressed, double launchWave)
+inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, double height,
+    double sourceWidth, double sourceHeight, double scale, bool original, double hover)
 {
-    const double edge = std::max(1., std::min(width, height) * config.contentScale);
+    ContentGeometry r;
+    if (width <= 0 || height <= 0 || scale <= 0) return r;
+    const bool fill = IsLargeIconFill(c);
+    const double edge = std::max(1., std::min(width, height) * c.contentScale);
     sourceWidth = sourceWidth > 0 ? sourceWidth : edge;
     sourceHeight = sourceHeight > 0 ? sourceHeight : edge;
-    const double factor = original ? std::min({1., edge / sourceWidth, edge / sourceHeight}) :
-        config.fit == 0 ? std::min(width / sourceWidth, height / sourceHeight) : std::max(width / sourceWidth, height / sourceHeight);
-    const double baseWidth = sourceWidth * factor;
-    const double iconColumn = std::max(width * .4, baseWidth + 24 * scale);
-    ContentGeometry result;
-    result.leftReveal = original && config.content == 0 && animations && (config.titleMode == 1 || config.hoverContent == 1) &&
-        CanRevealTitle(static_cast<float>(width), static_cast<float>(height), static_cast<float>(baseWidth),
-            static_cast<float>(config.revealTitleSize * scale), static_cast<float>(scale));
-    double zoom = 1;
-    if (animations && ((!original && config.coverHover == 1) || (original && !result.leftReveal && config.hoverContent == 2)))
-        zoom += .06 * hover * config.amplitude;
-    if (animations && pressed && config.press) zoom *= .96;
-    result.width = sourceWidth * factor * zoom; result.height = sourceHeight * factor * zoom;
-    result.x = (width - result.width) * (original || config.fit == 0 ? .5 : config.focusX);
-    result.y = (height - result.height) * (original || config.fit == 0 ? .5 : config.focusY);
-    if (result.leftReveal) result.x += ((iconColumn - baseWidth) / 2 - result.x) * hover;
-    else if (animations && original && config.hoverContent == 3) result.y -= 6 * scale * hover * config.amplitude;
-    if (animations && config.launch == 1) result.y -= 9 * scale * launchWave * config.amplitude;
-    result.titleLeft = iconColumn + 12 * scale;
-    result.titleWidth = std::max(0., width - result.titleLeft - 12 * scale);
-    result.titleHeight = std::max(0., std::min(height - 12 * scale, std::ceil(config.revealTitleSize * scale * 1.3 * 2)));
-    return result;
+    r.sourceWidth = sourceWidth; r.sourceHeight = sourceHeight;
+    if (fill && c.fit == 1)
+    {
+        const double factor = std::max(width / sourceWidth, height / sourceHeight);
+        r.width = width; r.height = height; r.cropped = true;
+        r.sourceWidth = width / factor; r.sourceHeight = height / factor;
+        r.sourceX = (sourceWidth - r.sourceWidth) * c.focusX;
+        r.sourceY = (sourceHeight - r.sourceHeight) * c.focusY;
+    }
+    else
+    {
+        const double factor = fill ? std::min(width / sourceWidth, height / sourceHeight) :
+            std::min({original ? 1. : 1.e12, edge / sourceWidth, edge / sourceHeight});
+        r.width = sourceWidth * factor; r.height = sourceHeight * factor;
+        r.x = (width - r.width) * (fill || c.effect == 2 ? .5 : c.iconX);
+        r.y = (height - r.height) * (fill || c.effect == 2 ? .5 : c.iconY);
+    }
+    if (c.effect != 2) return r;
+    hover = std::clamp(hover, 0., 1.);
+    const double size = c.revealTitleSize * scale, padding = 12 * scale;
+    const double lines = std::ceil(size * 1.3 * 2);
+    if (c.titleDirection == 0)
+    {
+        const double column = fill ? width * .55 : std::max(width * .4, r.width + 2 * padding);
+        r.titleLeft = column + padding; r.titleWidth = width - r.titleLeft - padding;
+        r.titleHeight = std::min(height - 2 * padding, lines);
+        r.titleTop = (height - r.titleHeight) / 2;
+        r.leftReveal = width >= height * 1.2 && r.titleWidth >= std::max(100 * scale, size * 4) && r.titleHeight >= size * 1.3;
+        if (r.leftReveal) r.x += (fill ? -(width - column) : (column - r.width) / 2 - r.x) * hover;
+    }
+    else
+    {
+        const double column = fill ? height * .55 : std::max(height * .4, r.height + 2 * padding);
+        const double available = height - column - 2 * padding;
+        r.titleLeft = padding; r.titleWidth = width - 2 * padding;
+        r.titleHeight = std::min(available, lines);
+        r.titleTop = column + padding + (available - r.titleHeight) / 2;
+        r.upReveal = r.titleWidth >= std::max(100 * scale, size * 4) && available >= size * 1.3;
+        if (r.upReveal) r.y += (fill ? -(height - column) : (column - r.height) / 2 - r.y) * hover;
+    }
+    return r;
+}
+inline bool CanSelectTitleDirection(const LargeIconConfig& c, int direction, double width, double height,
+    double sourceWidth, double sourceHeight, double scale)
+{
+    auto candidate = c; candidate.effect = 2; candidate.titleDirection = direction;
+    const auto r = ResolveContent(candidate, width, height, sourceWidth, sourceHeight, scale,
+        LargeIconActiveContent(c) == 0, 0);
+    return direction == 0 ? r.leftReveal : r.upReveal;
 }
 }

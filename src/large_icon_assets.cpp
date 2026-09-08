@@ -120,10 +120,8 @@ std::vector<std::filesystem::path> LocalCovers(const std::filesystem::path& conf
     return result;
 }
 
-std::uint32_t Accent(const std::vector<std::uint32_t>& pixels, int width, int height)
+std::uint32_t Accent(const std::vector<std::uint32_t>& pixels)
 {
-    if (const auto edge = icon_beautify::DetectEdgeFill(pixels, width, height))
-        return (std::clamp(edge->r, 40, 215) << 16) | (std::clamp(edge->g, 40, 215) << 8) | std::clamp(edge->b, 40, 215);
     std::array<std::uint64_t, 512> weights{};
     std::array<std::array<std::uint64_t, 3>, 512> sums{};
     for (const auto pixel : pixels)
@@ -137,7 +135,7 @@ std::uint32_t Accent(const std::vector<std::uint32_t>& pixels, int width, int he
         weights[index] += a; sums[index][0] += r * a; sums[index][1] += g * a; sums[index][2] += b * a;
     }
     const size_t i = std::max_element(weights.begin(), weights.end()) - weights.begin();
-    if (weights[i] == 0) return 0; // No visible samples; renderer uses its current theme neutral.
+    if (weights[i] == 0) return 0;
     // Mixing each channel toward neutral bounds saturation as well as luma.
     auto channel = [&](int n) { return std::clamp<int>(static_cast<int>(sums[i][n] / weights[i]) * 3 / 4 + 32, 40, 215); };
     return (channel(0) << 16) | (channel(1) << 8) | channel(2);
@@ -209,7 +207,12 @@ std::shared_ptr<LargeIconAsset> Decode(const std::filesystem::path& path, int ta
     asset->width = width; asset->height = height;
     asset->reference = std::move(reference); asset->source = std::move(source);
     asset->previewReference = preview;
-    asset->accent = Accent(pixels, width, height);
+    asset->accent = Accent(pixels);
+    if (const auto edge = icon_beautify::DetectEdgeFill(pixels, width, height))
+    {
+        asset->hasEdgeColor = true;
+        asset->edgeColor = (edge->r << 16) | (edge->g << 8) | edge->b;
+    }
     return asset;
 }
 

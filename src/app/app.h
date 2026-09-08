@@ -1615,13 +1615,11 @@ private:
     void OpenLargeIconSettings(size_t itemIndex);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
     void DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state);
-    void DrawLargeIconTitles(ID2D1RenderTarget* context);
     snowdesktop::LargeIconSettingsSnapshot EditLargeIcon(snowdesktop::LargeIconSettingsRequest request);
     const snowdesktop::LargeIconConfig& EffectiveLargeIconConfig(const DesktopItem& item) const;
     void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0);
     void ProcessLargeIconAssets();
     void UpdateLargeIconHover();
-    void TriggerLargeIconLaunch(size_t index);
     bool HandleLargeIconPointerDown(POINT point);
     bool HandleLargeIconPointerMove(POINT point);
     bool HandleLargeIconPointerUp();
@@ -3247,6 +3245,9 @@ private:
     std::unique_ptr<snowdesktop::LargeIconAssets> largeIconAssets_;
     struct LargeIconRuntime
     {
+        int sourceContent = -1;
+        std::string sourceReference;
+        RECT backdropFrame{};
         std::shared_ptr<snowdesktop::LargeIconAsset> asset;
         std::wstring signature;
         std::uint64_t generation = 0;

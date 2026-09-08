@@ -46,11 +46,10 @@ struct Canvas
             D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96), &image), "image fixture");
         return image;
     }
-    std::vector<unsigned> Draw(const snowdesktop::LargeIconConfig& config, const snowdesktop::large_icon_renderer::View& view, bool title = false)
+    std::vector<unsigned> Draw(const snowdesktop::LargeIconConfig& config, const snowdesktop::large_icon_renderer::View& view)
     {
         target->BeginDraw(); target->Clear(D2D1::ColorF(0, 0.f));
         snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
-        if (title) snowdesktop::large_icon_renderer::DrawFloatingTitle(target.Get(), fonts.Get(), config, view, {0, 0, width, height});
         Require(target->EndDraw(), "production draw");
         std::vector<unsigned> pixels(width * height);
         Require(surface->CopyPixels(nullptr, width * 4, width * height * 4, reinterpret_cast<BYTE*>(pixels.data())), "read rendered pixels");
@@ -107,79 +106,105 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Canvas canvas;
         snowdesktop::LargeIconConfig config;
         snowdesktop::large_icon_renderer::View view;
-        view.frame = {100, 60, 300, 260}; view.name = L"SnowDesktop 原始图标";
+        view.frame = {100, 60, 300, 260}; view.name = L"SnowDesktop";
         auto original = canvas.Image(64, 64); view.bitmap = original.Get();
         auto pixels = canvas.Draw(config, view);
         auto bounds = RedBounds(pixels);
         Check(bounds.left == 168 && bounds.top == 128 && bounds.right == 232 && bounds.bottom == 192,
-            "production renderer centers a low-resolution original without upscaling");
-        Check((Pixel(pixels, 115, 160) >> 24) >= 160 && (Pixel(pixels, 115, 160) >> 24) <= 170, "default frame has a background before color extraction");
-        Check(Visible(pixels, {0, 265, Canvas::width, Canvas::height}) == 0, "idle frame reserves no permanent title row");
+            "production renderer centers low-resolution originals without upscaling");
+        Check(Pixel(pixels, 115, 160) == 0xffe8ecf4, "first frame has an opaque default-beautify background before assets load");
+        view.hover = 1;
+        Check(canvas.Draw(config, view) == pixels, "no-effect hover leaves original and background unchanged");
+        Check(Visible(pixels, {0, 265, Canvas::width, Canvas::height}) == 0, "no external title layer is drawn");
         Save(outputDirectory, "01-original.png", pixels);
-        view.hover = 1; pixels = canvas.Draw(config, view, true); bounds = RedBounds(pixels);
-        Check(bounds.left == 168 && bounds.top == 128 && bounds.right == 232 && bounds.bottom == 192,
-            "default hover reveals text without moving the original pixels");
-        Check(Visible(pixels, {0, 265, Canvas::width, Canvas::height}) > 100, "floating title is rendered below the frame");
-        Save(outputDirectory, "02-floating-title.png", pixels);
-        view.frame = {100, 145, 300, 345}; pixels = canvas.Draw(config, view, true);
-        Check(Visible(pixels, {0, 0, Canvas::width, 139}) > 100 && Visible(pixels, {0, 350, Canvas::width, Canvas::height}) == 0,
-            "floating title moves above a frame at the bottom screen edge");
-        Save(outputDirectory, "03-edge-title.png", pixels);
-
-        view.frame = {40, 75, 440, 255}; config.titleMode = config.hoverContent = 1;
-        pixels = canvas.Draw(config, view, true); bounds = RedBounds(pixels);
-        Check(bounds.left == 88 && bounds.top == 133 && bounds.right == 152 && bounds.bottom == 197,
-            "left reveal preserves original pixel dimensions and centers the original in its left column");
-        Check(Visible(pixels, {0, 270, Canvas::width, Canvas::height}) == 0, "a short inner title does not create a duplicate floating label");
-        Save(outputDirectory, "04-left-title.png", pixels);
-        view.name = L"一个很长的游戏名称，用于检查两行省略后仍然能够查看完整名称以及保持原始图标尺寸和外框几何不变。继续加入额外的标题内容，确保这段名称确实超过两行宽度，覆盖完整名称提示的回归场景。";
-        pixels = canvas.Draw(config, view, true);
-        Check(TextBands(pixels, {212, 133, 428, 198}) == 2, "large inner text keeps two lines before ellipsis");
-        Check(Visible(pixels, {0, 270, Canvas::width, Canvas::height}) > 100, "truncated inner titles retain a full floating name");
-        Save(outputDirectory, "05-long-title.png", pixels);
-        const auto visibleConfig = config;
-        config.opacity = 0; config.border = false; config.hoverFrame = 0;
-        view.name = L"A"; pixels = canvas.Draw(config, view);
-        Check(Visible(pixels, {212, 133, 290, 198}) == 0 && Visible(pixels, {350, 133, 428, 198}) == 0 &&
-            Visible(pixels, {300, 145, 340, 188}) > 80,
-            "large reveal text is centered on the right without a title backdrop");
-        Save(outputDirectory, "10-left-title-no-backdrop.png", pixels);
-        config = visibleConfig;
-        view.animations = false; pixels = canvas.Draw(config, view, true); bounds = RedBounds(pixels);
-        Check(bounds.left == 208 && bounds.right == 272, "reduced-motion rendering keeps originals centered");
-
-        config = {}; config.content = 1; config.fit = 1; config.radius = 32; config.opacity = 0; config.border = false;
-        view = {}; view.frame = {100, 60, 300, 260}; view.original = false;
-        auto cover = canvas.Image(200, 200); view.bitmap = cover.Get();
+        view.hasEdgeColor = true; view.edgeColor = 0x0112ff; view.accent = 0x006622;
         pixels = canvas.Draw(config, view);
-        Check(Pixel(pixels, 100, 60) == 0 && Red(Pixel(pixels, 200, 60)), "cover and frame share rounded clipping");
-        Check(Visible(pixels, {0, 0, 100, Canvas::height}) == 0 && Visible(pixels, {300, 0, Canvas::width, Canvas::height}) == 0,
-            "filled content does not escape the fixed frame");
-        Save(outputDirectory, "06-cover.png", pixels);
-        config.radiusPercent = 100; pixels = canvas.Draw(config, view);
-        Check(Pixel(pixels, 110, 80) == 0 && Red(Pixel(pixels, 200, 160)),
-            "100 percent rounding clips cover content to half the short edge");
-        config.radiusPercent = -1;
-        view.pressed = true; pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
-        Check(bounds.left == 104 && bounds.top == 64 && bounds.right == 296 && bounds.bottom == 256,
-            "production press feedback shrinks an exact-aspect cover rather than recropping it unchanged");
-        Save(outputDirectory, "07-cover-pressed.png", pixels);
-        view.pressed = false; view.selected = true; pixels = canvas.Draw(config, view);
-        Check(Pixel(pixels, 109, 66) == 0, "selected rounded covers do not retain a top-left circle outside the frame");
-        Save(outputDirectory, "08-selected-transparent.png", pixels);
-        view.bitmap = nullptr; config.radius = 0; pixels = canvas.Draw(config, view);
-        Check(Visible(pixels, {105, 65, 114, 74}) == 0,
-            "transparent selected frames do not draw an extra top-left badge");
-        Check(Visible(pixels, {190, 59, 210, 62}) > 0 && Pixel(pixels, 200, 160) == 0,
-            "an independent selection outline remains visible without an image or background");
+        Check(Pixel(pixels, 115, 160) == 0xff0112ff, "contour background preserves extracted RGB and ignores transparency settings");
+        config.smartFill = false; config.themeOpacity = .4;
+        pixels = canvas.Draw(config, view);
+        Check((Pixel(pixels, 115, 160) >> 24) >= 100 && (Pixel(pixels, 115, 160) >> 24) <= 104,
+            "theme fallback uses its independent opacity");
+        config.themeGradient = true; config.themeAngle = 0;
+        pixels = canvas.Draw(config, view);
+        Check(Pixel(pixels, 115, 160) != Pixel(pixels, 285, 160), "automatic gradient changes color across the requested direction");
 
-        config = {}; config.shadow = true; config.shadowStrength = 1; config.radius = 14;
-        view = {}; view.frame = {120, 80, 360, 320}; view.scale = 2;
+        config = {}; config.effect = 2;
+        view = {}; view.frame = {40, 75, 440, 255}; view.bitmap = original.Get(); view.hover = 1;
+        view.name = L"A"; view.backgroundResolved = true; view.background.opacity = 0;
+        config.autoTitleColor = false; config.titleColor = 0xffffff;
+        pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
+        Check(bounds.left == 88 && bounds.top == 133 && bounds.right == 152 && bounds.bottom == 197,
+            "left reveal preserves original size and centers it in its left column");
+        Check(Visible(pixels, {212, 133, 290, 198}) == 0 && Visible(pixels, {350, 133, 428, 198}) == 0 &&
+            Visible(pixels, {300, 135, 340, 196}) > 50,
+            "large inner title is centered in the right column without a backdrop");
+        Save(outputDirectory, "02-left-title.png", pixels);
+        view.animations = false;
+        Check(canvas.Draw(config, view) == pixels, "reduced motion uses the same final inner-title pose without an external label");
+        view.name = L"A very long title with enough words to occupy several lines without escaping the fixed card frame. More title words follow.";
+        pixels = canvas.Draw(config, view);
+        Check(TextBands(pixels, {212, 133, 428, 198}) == 2, "long title renders at most two centered lines");
+        Check(Visible(pixels, {0, 260, Canvas::width, Canvas::height}) == 0, "long truncated title never creates a floating label");
+        Save(outputDirectory, "03-long-title.png", pixels);
+        view.name = L"Snow";
+        const auto titleArea = RECT{212, 133, 428, 198};
+        config.titleWeight = 100;
+        const auto light = canvas.Draw(config, view);
+        config.titleWeight = 900;
+        const auto heavy = canvas.Draw(config, view);
+        Check(Visible(heavy, titleArea) > Visible(light, titleArea), "title weight changes actual glyph coverage");
+        config.backgroundStyle = 7; config.autoTitleColor = true; view.componentForeground = 0x161616;
+        pixels = canvas.Draw(config, view);
+        auto darkest = std::count_if(pixels.begin(), pixels.end(), [](unsigned p) { return p == 0xff161616; });
+        Check(darkest > 10, "component background title uses the actual dark theme foreground");
+        config.autoTitleColor = false; config.titleColor = 0x00ff00;
+        pixels = canvas.Draw(config, view);
+        Check(std::count(pixels.begin(), pixels.end(), 0xff00ff00) > 10, "manual color reaches rendered title glyphs");
+        config.titleDirection = 1; config.titleWeight = 600;
+        view.frame = {140, 10, 320, 350}; view.name = L"Title";
+        pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
+        Check(bounds.top == 46 && bounds.bottom == 110, "up reveal moves unchanged original into the upper column");
+        Check(Visible(pixels, {152, 158, 308, 338}) > 50, "up reveal draws its title in the lower region");
+        Save(outputDirectory, "04-up-title.png", pixels);
+
+        config = {}; config.backgroundStyle = -2; config.radius = 32;
+        view = {}; view.frame = {100, 60, 300, 260};
+        auto cover = canvas.Image(800, 200); view.bitmap = cover.Get();
+        int backgroundCalls = 0;
+        view.drawBackground = [&](auto*, RECT, float, float) { ++backgroundCalls; };
+        pixels = canvas.Draw(config, view);
+        Check(backgroundCalls == 0, "fill mode never invokes component background or blur drawing");
+        Check(Pixel(pixels, 100, 60) == 0 && Red(Pixel(pixels, 200, 61)), "fill and frame share rounded clipping");
+        Check(Visible(pixels, {0, 0, 100, Canvas::height}) == 0 && Visible(pixels, {300, 0, Canvas::width, Canvas::height}) == 0,
+            "fill never escapes the frame");
+        config.radiusPercent = 100; pixels = canvas.Draw(config, view);
+        Check(Pixel(pixels, 110, 80) == 0 && Red(Pixel(pixels, 200, 160)), "100 percent rounding uses half short edge");
+        config.radiusPercent = 0; config.effect = 2;
+        view.frame = {40, 75, 440, 255}; view.hover = 1;
+        pixels = canvas.Draw(config, view);
+        Check(Visible(pixels, {275, 80, 435, 250}) == 0 && Red(Pixel(pixels, 120, 160)),
+            "an oversized fill source is cropped before left movement, leaving transparent title space");
+        Save(outputDirectory, "05-fill-reveal.png", pixels);
+        config.effect = 0; config.fit = 0; view.frame = {100, 60, 300, 260};
+        pixels = canvas.Draw(config, view);
+        Check(Visible(pixels, {105, 65, 295, 120}) == 0 && Red(Pixel(pixels, 200, 160)),
+            "contain fill leaves gaps transparent without an automatic base");
+        view.bitmap = nullptr; view.selected = true;
+        int placeholders = 0; view.placeholder = [&](RECT, float) { ++placeholders; };
+        pixels = canvas.Draw(config, view);
+        Check(Visible(pixels, {105, 65, 114, 74}) == 0 && Pixel(pixels, 200, 160) == 0 &&
+            Visible(pixels, {190, 59, 210, 62}) > 0,
+            "transparent selected frame keeps an independent outline without a top-left badge");
+        Check(placeholders == 0, "unavailable fill remains transparent instead of drawing a generic placeholder");
+        config.backgroundStyle = -1;
+        canvas.Draw(config, view);
+        Check(backgroundCalls == 1, "component-series background dispatches to the shared engine");
+
+        config = {}; view = {}; view.frame = {120, 80, 360, 320}; view.scale = 2;
         auto transparent = canvas.Image(128, 128, true); view.bitmap = transparent.Get();
         pixels = canvas.Draw(config, view);
-        Check((Pixel(pixels, 117, 210) >> 24) > 0, "production shadow spreads outside the frame at the active DPI");
-        Check((Pixel(pixels, 130, 210) >> 24) > 0, "transparent source pixels retain the default frame background");
-        Save(outputDirectory, "09-transparent-200dpi.png", pixels);
+        Check(Pixel(pixels, 130, 210) == 0xffe8ecf4, "transparent source pixels retain the default background at 200 percent DPI");
+        Save(outputDirectory, "06-transparent-200dpi.png", pixels);
     }
     catch (const std::exception& error) { Check(false, error.what()); }
     if (SUCCEEDED(apartment)) CoUninitialize();

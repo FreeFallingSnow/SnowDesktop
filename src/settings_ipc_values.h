@@ -67,7 +67,7 @@ SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, 
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
     v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,
     v.frameWidth, v.frameHeight, v.frameColumns, v.frameRows, v.frameLimit, v.unitScale, v.durationScale, v.frameWidths, v.frameHeights, v.animations, v.neutral,
-    v.defaultConfig, v.imageWidth, v.imageHeight);
+    v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading);
 SD_IPC_FIELDS(SettingsActionResult,
     v.status, v.completedDomains, v.failedDomains, v.message);
 SD_IPC_FIELDS(SettingsValues,

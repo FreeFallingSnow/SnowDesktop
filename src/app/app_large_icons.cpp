@@ -9,16 +9,19 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
 {
     if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index])) return;
     auto& item = items_[index];
-    const auto& config = *item.largeIcon;
+    const auto& config = EffectiveLargeIconConfig(item);
     snowdesktop::LargeIconAssetRequest request;
     request.itemKey = item.layoutKey; request.parsingName = item.parsingName;
     request.variant = variant;
-    request.content = config.content; request.reference = config.image; request.lastGood = config.cachedCover;
+    request.content = snowdesktop::LargeIconActiveContent(config);
+    request.reference = snowdesktop::LargeIconActiveImage(config); request.lastGood = config.cachedCover;
+    request.fillLayer = snowdesktop::IsLargeIconFill(config);
     request.refresh = refresh; request.localOnly = config.localOnly; request.importPath = std::move(importPath);
+    if (request.content == 1 && request.reference.empty() && request.importPath.empty()) request.content = 0;
     request.language = snowdesktop::large_icon_steam::Language(Locale::Instance().GetEffectiveLanguage());
     const auto frame = GetLargeIconFrameRect(item);
     const int width = std::max<LONG>(1, frame.right - frame.left), height = std::max<LONG>(1, frame.bottom - frame.top);
-    request.pixels = config.content == 0 ? snowdesktop::icon_render_rules::SourcePixelsForTarget(
+    request.pixels = !request.fillLayer && request.content == 0 ? snowdesktop::icon_render_rules::SourcePixelsForTarget(
         static_cast<int>(std::min(width, height) * config.contentScale)) : std::clamp(std::max(width, height), 256, 2048);
     request.portrait = config.steamOrientation == 2 || (config.steamOrientation == 0 && double(width) / height < 1.195);
     if (variant) { request.content = 2; request.pixels = 256; request.portrait = variant == 2; }
@@ -27,8 +30,8 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
         item.modifiedTime->dwLowDateTime : 0;
     request.sourceStamp = stamp;
     request.sourceIconIndex = item.sysIconIndex;
-    const std::wstring signature = item.parsingName + L":" + std::to_wstring(config.content) + L":" +
-        Utf8ToWide(config.image) + L":" + std::to_wstring(request.pixels) +
+    const std::wstring signature = item.parsingName + L":" + std::to_wstring(request.content) + L":" + std::to_wstring(request.fillLayer) + L":" +
+        Utf8ToWide(request.reference) + L":" + std::to_wstring(request.pixels) +
         L":" + std::to_wstring(request.portrait) + L":" + std::to_wstring(request.localOnly) + L":" + Utf8ToWide(request.language) +
         L":" + std::to_wstring(stamp) + L":" + std::to_wstring(item.sysIconIndex);
     auto& savedSignature = variant ? runtime.previewSignatures[variant - 1] : runtime.signature;
@@ -43,10 +46,15 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
         request.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
     }
-    if (!variant && request.importPath.empty() && config.content == 0 && runtime.asset && runtime.asset->source != "original")
+    if (!variant && request.importPath.empty() && runtime.asset &&
+        (runtime.sourceContent != request.content || runtime.sourceReference != request.reference))
     { EraseD2DIconCacheForBitmap(runtime.asset->bitmap); runtime.asset.reset(); }
     savedSignature = signature;
-    if (!variant) runtime.pending = true;
+    if (!variant)
+    {
+        runtime.pending = true; runtime.error.clear(); runtime.retryAt = 0;
+        runtime.sourceContent = request.content; runtime.sourceReference = request.reference;
+    }
     request.generation = ++largeIconAssetSerial_;
     (variant ? runtime.previewGenerations[variant - 1] : runtime.generation) = request.generation;
     if (!largeIconAssets_)
@@ -54,7 +62,7 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
             [window = hwnd_] { PostMessageW(window, kLargeIconAssetsReadyMessage, 0, 0); });
     std::vector<std::string> retained;
     for (const auto& current : items_) if (current.largeIcon)
-    { retained.push_back(current.largeIcon->image); retained.push_back(current.largeIcon->cachedCover); }
+    { retained.push_back(current.largeIcon->image); retained.push_back(current.largeIcon->foregroundImage); retained.push_back(current.largeIcon->cachedCover); }
     largeIconAssets_->RetainReferences(std::move(retained));
     largeIconAssets_->Request(std::move(request));
 }
@@ -83,14 +91,15 @@ void DesktopApp::ProcessLargeIconAssets()
         if (!result.asset) continue;
         if (!result.request.importPath.empty())
         {
-            if (!CanEditLargeIcons()) continue;
+            if (!CanEditLargeIcons() || snowdesktop::IsLargeIconFill(*items_[index].largeIcon) != result.request.fillLayer) continue;
             auto config = *items_[index].largeIcon;
-            config.content = 1; config.image = result.asset->reference; config.fit = 1;
+            if (result.request.fillLayer) { config.content = 1; config.image = result.asset->reference; }
+            else { config.foregroundContent = 1; config.foregroundImage = result.asset->reference; }
             if (!SetLargeIconConfig(index, config)) { state.error = "largeIcon.saveFailed"; continue; }
         }
         if (state.asset && state.asset != result.asset) EraseD2DIconCacheForBitmap(state.asset->bitmap);
         state.asset = std::move(result.asset);
-        if (items_[index].largeIcon->content == 2 && state.asset->reference.starts_with("steam-") &&
+        if (snowdesktop::IsLargeIconFill(*items_[index].largeIcon) && items_[index].largeIcon->content == 2 && state.asset->reference.starts_with("steam-") &&
             items_[index].largeIcon->cachedCover != state.asset->reference)
         {
             items_[index].largeIcon->cachedCover = state.asset->reference;
@@ -112,7 +121,7 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
     auto& item = items_[index];
     const bool desktop = !IsItemInAnyWidget(item) && item.gridCell.pageId != kDockPageId;
     if (!snowdesktop::large_icon_edit_rules::CanStore(config, CanEditLargeIcons(), desktop)) return false;
-    if (config && config->content == 2)
+    if (config && snowdesktop::IsLargeIconFill(*config) && config->content == 2)
     {
         wchar_t url[2048]{};
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
@@ -147,6 +156,7 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
     if (items_[index].largeIcon) RequestLargeIconAsset(index);
     else if (const auto runtime = largeIconRuntime_.find(items_[index].layoutKey); runtime != largeIconRuntime_.end())
     {
+        desktopBackdropCompositor_.RemovePanel(runtime->second.backdropFrame);
         if (largeIconAssets_) largeIconAssets_->Cancel(items_[index].layoutKey);
         if (runtime->second.asset) EraseD2DIconCacheForBitmap(runtime->second.asset->bitmap);
         largeIconRuntime_.erase(runtime);
@@ -161,6 +171,16 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
     const auto& style = CurrentPersonalization();
     config.radius = style.cornerRadius;
     config.titleSize = itemFontSizeCu_;
+    config.material = style.glassEnabled ? (style.acrylicEnabled ? 2 : 1) : 0;
+    config.componentTheme = style.contentTheme;
+    config.blurRadius = style.glassBlurRadius;
+    config.manualColor = (static_cast<UINT>(style.widgetBgR * 255) << 16) |
+        (static_cast<UINT>(style.widgetBgG * 255) << 8) | static_cast<UINT>(style.widgetBgB * 255);
+    config.opacity = style.widgetAlpha;
+    config.border = style.widgetBorderAlpha > 0;
+    config.edgeHighlight = style.widgetEdgeHighlightEnabled;
+    config.edgeWidth = style.widgetEdgeHighlightWidth; config.edgeStrength = style.widgetEdgeHighlightStrength;
+    config.gradient = style.panelGradient;
     config.borderWidth = style.widgetBorderWidth;
     config.borderOpacity = style.widgetBorderAlpha;
     config.borderColor = (static_cast<UINT>(style.widgetBorderR * 255) << 16) |
@@ -169,7 +189,7 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
     {
         wchar_t url[2048]{};
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), items_[index].parsingName.c_str());
-        if (snowdesktop::large_icon_steam::AppId(url)) { config.content = 2; config.fit = 1; }
+        if (snowdesktop::large_icon_steam::AppId(url)) { config.backgroundStyle = -2; config.content = 2; config.fit = 1; }
     }
     return config;
 }
@@ -220,7 +240,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.durationScale = snowdesktop::animation::RuntimeDurationScale();
     result.frameLimit = snowdesktop::animation::RuntimeFrameLimit();
     result.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
-    result.neutral = result.accent = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
+    result.neutral = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
     wchar_t steamUrl[2048]{};
     GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), item.parsingName.c_str());
     result.steam = snowdesktop::large_icon_steam::AppId(steamUrl).has_value();
@@ -265,9 +285,14 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     }
     else if (request.action == "refresh")
     {
-        RequestLargeIconAsset(index, true);
-        if (result.steam) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, true, {}, variant);
-        result.succeeded = true;
+        if (!snowdesktop::IsLargeIconFill(*item.largeIcon) || item.largeIcon->content != 2 || !result.steam)
+            result.error = "largeIcon.invalid";
+        else
+        {
+            RequestLargeIconAsset(index, true);
+            for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, true, {}, variant);
+            result.succeeded = true;
+        }
     }
     else if (request.action == "import")
     {
@@ -315,15 +340,18 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.revision = largeIconEdit_.revision;
     result.config = snowdesktop::EncodeLargeIconConfig(EffectiveLargeIconConfig(item));
     RequestLargeIconAsset(index);
-    if (result.editable && result.steam) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
+    if (result.editable && result.steam && snowdesktop::IsLargeIconFill(EffectiveLargeIconConfig(item)) &&
+        EffectiveLargeIconConfig(item).content == 2) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
     if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
+        result.loading = runtime->second.pending;
         if (runtime->second.asset)
         {
             const auto path = std::filesystem::path(GetDataSubdirectoryPath(L"large-icons")) / Utf8ToWide(runtime->second.asset->previewReference);
             result.imagePath = L"file:///" + path.generic_wstring();
             result.source = runtime->second.asset->source;
             result.accent = runtime->second.asset->accent;
+            result.hasEdgeColor = runtime->second.asset->hasEdgeColor;
             result.imageWidth = runtime->second.asset->width;
             result.imageHeight = runtime->second.asset->height;
         }
@@ -357,7 +385,12 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
 {
     // Match component resizing: only the grid placeholder is painted until
     // commit/cancel; do not request or redraw content from pointer updates.
-    if (largeIconGesture_ && largeIconGesture_->resizing && largeIconGesture_->key == item.layoutKey) return;
+    if (largeIconGesture_ && largeIconGesture_->resizing && largeIconGesture_->key == item.layoutKey)
+    {
+        if (const auto found = largeIconRuntime_.find(item.layoutKey); found != largeIconRuntime_.end())
+            desktopBackdropCompositor_.RemovePanel(found->second.backdropFrame);
+        return;
+    }
     RequestLargeIconAsset(FindItemIndexByKey(item.layoutKey));
     const auto& config = EffectiveLargeIconConfig(item);
     DesktopWidget geometry; geometry.bounds = bounds; geometry.gridCell = item.gridCell;
@@ -366,57 +399,86 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     view.scale = GetItemLayoutScale(bounds);
     view.opacity = (item.isCut ? .4f : 1.f) * (state == 3 ? .6f : 1.f);
     view.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
-    view.neutral = view.accent = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
+    view.neutral = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
     const bool demo = ShouldUseDemoIdentity(item);
     const auto name = demo ? GetDemoIdentityTitle(item.layoutKey) : item.name;
     view.name = name; view.selected = item.selected;
-    const auto* pressed = dynamic_cast<const DesktopIcon*>(mouseDownHit_);
-    view.pressed = mouseDown_ && pressed && pressed->GetDesktopItem() == &item &&
-        PtInRect(&view.frame, lastMousePoint_) && !dragSession_.IsActive();
     if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
         // The first cached ghost may be captured before the desktop's hover
         // reset. Always capture its idle pose so inner text never sticks there.
         view.hover = state == 3 ? 0 : runtime->second.motion.hover;
-        view.launchWave = state == 3 ? 0 : runtime->second.motion.LaunchWave(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
-            snowdesktop::animation::RuntimeDurationScale());
         if (const auto& asset = runtime->second.asset; asset && !demo)
         {
             view.bitmap = GetOrCreateD2DBitmap(context, asset->bitmap, false);
-            view.original = config.content == 0 || asset->reference.starts_with("raw-");
+            view.original = asset->source == "original" || asset->reference.starts_with("raw-");
             view.accent = asset->accent;
+            view.hasEdgeColor = asset->hasEdgeColor; view.edgeColor = asset->edgeColor;
         }
     }
     view.placeholder = [&](RECT rect, float opacity) {
         if (demo) DrawDemoIdentityIcon(context, item.layoutKey, rect, opacity);
         else DrawPlaceholderIcon(context, item.sysIconIndex, rect, opacity, false);
     };
-    snowdesktop::large_icon_renderer::DrawFrame(context, dwriteFactory_.Get(), config, view);
-}
-
-void DesktopApp::DrawLargeIconTitles(ID2D1RenderTarget* context)
-{
-    if (dragSession_.IsActive() || marqueeActive_ || widgetAction_ != WidgetAction::None || largeIconGesture_ || HasActiveContextMenuSession()) return;
-    for (const auto& item : items_)
+    auto appearance = CurrentPersonalization();
+    if (config.backgroundStyle >= 0 && config.backgroundStyle != kAppearancePresetCustom)
+        appearance = MakeAppearancePreset(config.backgroundStyle);
+    else if (config.backgroundStyle == kAppearancePresetCustom)
     {
-        if (!item.largeIcon || IsItemInAnyWidget(item) || IsRectEmptyRect(item.bounds)) continue;
-        const auto runtime = largeIconRuntime_.find(item.layoutKey);
-        if (runtime == largeIconRuntime_.end() || runtime->second.motion.hover <= .01f) continue;
-        const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
-        if (!page) continue;
-        const auto& config = EffectiveLargeIconConfig(item);
-        snowdesktop::large_icon_renderer::View view;
-        view.frame = GetLargeIconFrameRect(item); view.scale = GetItemLayoutScale(item.bounds);
-        view.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
-        view.hover = runtime->second.motion.hover;
-        const bool demo = ShouldUseDemoIdentity(item);
-        const auto name = demo ? GetDemoIdentityTitle(item.layoutKey) : item.name;
-        view.name = name;
-        if (const auto& asset = runtime->second.asset; asset && !demo)
-        {
-            view.bitmap = GetOrCreateD2DBitmap(context, asset->bitmap, false);
-            view.original = config.content == 0 || asset->reference.starts_with("raw-");
-        }
-        snowdesktop::large_icon_renderer::DrawFloatingTitle(context, dwriteFactory_.Get(), config, view, page->bounds);
+        appearance.widgetBgR = ((config.manualColor >> 16) & 255) / 255.f;
+        appearance.widgetBgG = ((config.manualColor >> 8) & 255) / 255.f;
+        appearance.widgetBgB = (config.manualColor & 255) / 255.f;
+        appearance.widgetAlpha = static_cast<float>(config.opacity);
+        appearance.widgetBorderR = ((config.borderColor >> 16) & 255) / 255.f;
+        appearance.widgetBorderG = ((config.borderColor >> 8) & 255) / 255.f;
+        appearance.widgetBorderB = (config.borderColor & 255) / 255.f;
+        appearance.widgetBorderAlpha = config.border ? static_cast<float>(config.borderOpacity) : 0;
+        appearance.widgetBorderWidth = static_cast<float>(config.borderWidth);
+        appearance.glassEnabled = config.material != 0; appearance.acrylicEnabled = config.material == 2;
+        appearance.glassBlurRadius = static_cast<float>(config.blurRadius);
+        appearance.contentTheme = config.componentTheme;
+        appearance.widgetEdgeHighlightEnabled = config.edgeHighlight;
+        appearance.widgetEdgeHighlightWidth = static_cast<float>(config.edgeWidth);
+        appearance.widgetEdgeHighlightStrength = static_cast<float>(config.edgeStrength);
+        appearance.panelGradient = config.gradient;
     }
+    else if (config.backgroundStyle == -3)
+    {
+        const auto automatic = snowdesktop::large_icon_render_rules::DefaultBackground(config, view.accent, view.hasEdgeColor, view.edgeColor);
+        appearance.widgetBgR = ((automatic.color >> 16) & 255) / 255.f;
+        appearance.widgetBgG = ((automatic.color >> 8) & 255) / 255.f;
+        appearance.widgetBgB = (automatic.color & 255) / 255.f;
+        appearance.widgetAlpha = static_cast<float>(automatic.opacity);
+        appearance.glassEnabled = appearance.acrylicEnabled = appearance.widgetEdgeHighlightEnabled = false;
+        appearance.widgetBorderAlpha = 0;
+        appearance.panelGradient = automatic.gradient;
+    }
+    const auto colorByte = [](float v) { return static_cast<unsigned>(std::clamp(v, 0.f, 1.f) * 255 + .5f); };
+    view.backgroundResolved = true;
+    view.background.color = colorByte(appearance.widgetBgR) << 16 | colorByte(appearance.widgetBgG) << 8 | colorByte(appearance.widgetBgB);
+    view.background.opacity = appearance.widgetAlpha; view.background.gradient = appearance.panelGradient;
+    view.componentForeground = appearance.contentTheme == 1 ? 0x161616 : 0xffffff;
+    const bool fill = snowdesktop::IsLargeIconFill(config);
+    auto& runtime = largeIconRuntime_[item.layoutKey];
+    if (state != 3)
+    {
+        if (fill || !appearance.glassEnabled)
+        { desktopBackdropCompositor_.RemovePanel(runtime.backdropFrame); runtime.backdropFrame = {}; }
+        else runtime.backdropFrame = view.frame;
+    }
+    ComPtr<ID2D1DeviceContext> device;
+    if (!fill && SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&device))))
+        view.drawBackground = [this, appearance, state, scale = view.scale, owner = &runtime](ID2D1RenderTarget* target, RECT rect, float radius, float opacity) mutable {
+            ComPtr<ID2D1DeviceContext> drawing;
+            if (FAILED(target->QueryInterface(IID_PPV_ARGS(&drawing)))) return;
+            auto style = appearance;
+            style.widgetAlpha *= opacity; style.widgetBorderAlpha *= opacity;
+            for (auto& stop : style.panelGradient.stops) stop.opacity *= opacity;
+            DrawWidgetPanelBackground(drawing.Get(), rect, radius,
+                D2D1::ColorF(style.widgetBgR, style.widgetBgG, style.widgetBgB, style.widgetAlpha),
+                D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha),
+                false, style.widgetBorderWidth * scale, &style, state != 3,
+                reinterpret_cast<std::uintptr_t>(owner), scale);
+        };
+    snowdesktop::large_icon_renderer::DrawFrame(context, dwriteFactory_.Get(), config, view);
 }

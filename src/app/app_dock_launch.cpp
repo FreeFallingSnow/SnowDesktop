@@ -254,7 +254,6 @@ bool DesktopApp::LaunchDesktopItem(
             item.absolutePidl.get());
     if (!launchAccepted)
         return false;
-    if (!animateDockLaunch) TriggerLargeIconLaunch(itemIndex);
     RecordDockItemUsage(itemIndex);
     if (animateDockLaunch && wasClosed)
         StartDockLaunchBounce(itemIndex);

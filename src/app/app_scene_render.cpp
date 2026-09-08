@@ -213,7 +213,6 @@ void DesktopApp::DrawDesktopForeground(
     }
 
     DrawDynamicOverlays(ctx, hiddenMode);
-    if (!hiddenMode) DrawLargeIconTitles(ctx);
     if (!hiddenMode) DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);

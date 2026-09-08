@@ -13,7 +13,9 @@ struct LargeIconAsset
 {
     HBITMAP bitmap = nullptr;
     int width = 0, height = 0;
-    std::uint32_t accent = 0x505866;
+    std::uint32_t accent = 0; // zero means no visible theme-color samples
+    std::uint32_t edgeColor = 0;
+    bool hasEdgeColor = false;
     std::string reference, previewReference, source;
     ~LargeIconAsset() { if (bitmap) DeleteObject(bitmap); }
 };
@@ -27,6 +29,7 @@ struct LargeIconAssetRequest
     int content = 0, pixels = 256;
     std::uint32_t appId = 0;
     bool portrait = false, localOnly = false, refresh = false;
+    bool fillLayer = false; // import destination and generation identity
     std::string language = "english", reference, lastGood;
     std::filesystem::path importPath;
 };
