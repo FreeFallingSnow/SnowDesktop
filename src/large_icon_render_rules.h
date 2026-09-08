@@ -30,6 +30,19 @@ struct BackgroundStyle
 inline BackgroundStyle DefaultBackground(const LargeIconConfig& c, unsigned accent, bool hasEdge, unsigned edge)
 {
     BackgroundStyle result;
+    if (c.backgroundStyle == -5) { result.opacity = .65; return result; }
+    if (c.backgroundStyle == -4)
+    {
+        if (hasEdge) result.color = edge;
+        else result.opacity = .65;
+        return result;
+    }
+    if (c.backgroundStyle == 9)
+    {
+        result.color = c.manualColor; result.opacity = c.opacity; result.gradient = c.gradient;
+        for (auto& stop : result.gradient.stops) stop.opacity *= c.gradientOpacity;
+        return result;
+    }
     if (c.defaultBackground == 1)
     {
         result.gradient = c.defaultGradient;

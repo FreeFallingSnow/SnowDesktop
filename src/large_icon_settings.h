@@ -19,6 +19,7 @@ struct LargeIconSettingsSnapshot
     std::wstring landscapePath, portraitPath;
     std::string source, landscapeSource, portraitSource;
     std::uint32_t accent = 0;
+    std::uint32_t edgeColor = 0;
     bool hasEdgeColor = false;
     bool steam = false;
     std::uint64_t session = 0, revision = 0;

@@ -4,19 +4,20 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "../panel_gradient.h"
 
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 5;
+inline constexpr std::uint32_t kSharedStateVersion = 6;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v5";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v6";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v5";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v6";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v5";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v6";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -48,6 +49,33 @@ inline constexpr LONG kStatusFailed = -1;
 inline constexpr LONG kStyleGlassBackdrop = 1 << 0;
 inline constexpr LONG kStyleAcrylicBackdrop = 1 << 1;
 
+// Fixed-size values only: this structure crosses the Explorer process boundary.
+struct Gradient
+{
+    std::uint32_t count = 0;
+    double angle = 90, start = 0, end = 1;
+    PanelGradientStop stops[5]{};
+    friend bool operator==(const Gradient&, const Gradient&) = default;
+};
+inline Gradient EncodeGradient(const PanelGradient& value)
+{
+    Gradient result;
+    if (!value.enabled || !ValidatePanelGradient(value)) return result;
+    result.count = static_cast<std::uint32_t>(value.stops.size());
+    result.angle = value.angle; result.start = value.start; result.end = value.end;
+    std::copy(value.stops.begin(), value.stops.end(), result.stops);
+    return result;
+}
+inline PanelGradient DecodeGradient(const Gradient& value)
+{
+    PanelGradient result;
+    if (value.count < 2 || value.count > 5) return result;
+    result.angle = value.angle; result.start = value.start; result.end = value.end;
+    result.stops.assign(value.stops, value.stops + value.count);
+    result.enabled = ValidatePanelGradient(result);
+    return result.enabled ? result : PanelGradient{};
+}
+
 struct TargetAppearance
 {
     std::uintptr_t taskbar = 0;
@@ -63,6 +91,7 @@ struct TargetAppearance
     float borderGreen = 1.0f;
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
+    Gradient gradient;
 };
 
 struct SharedState
@@ -89,6 +118,7 @@ struct SharedState
     float borderGreen = 1.0f;
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
+    Gradient gradient;
     volatile LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
     volatile LONG status = kStatusIdle;
@@ -130,6 +160,7 @@ struct Snapshot
     float borderGreen = 1.0f;
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
+    Gradient gradient;
     LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
 };

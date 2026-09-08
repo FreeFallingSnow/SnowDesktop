@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "Tipo de relleno",
     "largeIcon.gradientBackground": "Fondo degradado",
     "largeIcon.solidBackground": "Fondo de color sólido",
-    "largeIcon.resetThemeGradient": "Restaurar degradado del icono"
+    "largeIcon.resetThemeGradient": "Restaurar degradado del icono",
+    "largeIcon.platePreset": "Relleno del fondo del icono",
+    "largeIcon.useIconBackground": "Usar el color de fondo del icono",
+    "largeIcon.useIconTheme": "Usar el color temático del icono",
+    "largeIcon.colorAndFill": "Color y relleno",
+    "largeIcon.borderAndHighlight": "Borde y reflejos",
+    "largeIcon.imageDetails": "Detalles de imagen",
+    "largeIcon.gradientColors": "Colores inicial y final",
+    "largeIcon.gradientOpacity": "Opacidad general",
+    "largeIcon.hideDetails": "Contraer",
+    "largeIcon.showDetails": "Expandir"
 }

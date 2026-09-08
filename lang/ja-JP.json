@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "塗りつぶし方法",
     "largeIcon.gradientBackground": "グラデーション背景",
     "largeIcon.solidBackground": "単色背景",
-    "largeIcon.resetThemeGradient": "アイコンのテーマ色グラデーションに戻す"
+    "largeIcon.resetThemeGradient": "アイコンのテーマ色グラデーションに戻す",
+    "largeIcon.platePreset": "アイコン背景色で塗りつぶし",
+    "largeIcon.useIconBackground": "アイコンの背景色を使用",
+    "largeIcon.useIconTheme": "アイコンのテーマ色を使用",
+    "largeIcon.colorAndFill": "色と塗りつぶし",
+    "largeIcon.borderAndHighlight": "枠線とハイライト",
+    "largeIcon.imageDetails": "画像の詳細設定",
+    "largeIcon.gradientColors": "開始色と終了色",
+    "largeIcon.gradientOpacity": "全体の不透明度",
+    "largeIcon.hideDetails": "折りたたむ",
+    "largeIcon.showDetails": "展開"
 }

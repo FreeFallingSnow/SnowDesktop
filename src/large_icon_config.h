@@ -19,7 +19,7 @@ namespace snowdesktop
 struct LargeIconConfig
 {
     int version = 2;
-    int columns = 2, rows = 2;
+    int columns = 1, rows = 1;
     double contentScale = .60;
     double fillScale = 1; // Independent of the foreground; relative to contain/cover fit.
     double radius = 12;
@@ -56,7 +56,7 @@ struct LargeIconConfig
 
     // v2: background selector is flat; nonnegative values are component preset
     // IDs (including 9/custom). Foreground and fill sources are independent.
-    int backgroundStyle = -3; // -3 default, -2 image fill, -1 follow components
+    int backgroundStyle = -5; // -5 neutral, -4 icon plate, -3 legacy default, -2 image fill, -1 follow components
     // themeColor is the legacy storage name for the beautify-style background,
     // not an accent color. It is mutually exclusive with themeGradient.
     bool smartFill = true, themeColor = true, themeGradient = false;
@@ -74,6 +74,7 @@ struct LargeIconConfig
     bool edgeHighlight = false;
     double edgeWidth = 1, edgeStrength = .3;
     PanelGradient gradient;
+    double gradientOpacity = 1; // Independent multiplier; preserves individual stop opacity.
     int effect = 0; // none, 3D, dynamic title
     int titleDirection = 0; // left, up
     bool autoTitleDirection = true;
@@ -104,7 +105,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(defaultBackground); LI_FIELD(defaultSolidColor); LI_FIELD(defaultSolidOpacity); LI_FIELD(defaultGradient);
     LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage);
     LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
-    LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient);
+    LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient); LI_FIELD(gradientOpacity);
     LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(autoTitleDirection); LI_FIELD(titleWeight);
 #undef LI_FIELD
 }
@@ -124,7 +125,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
     auto range = [](double value, double min, double max) {
         return std::isfinite(value) && value >= min && value <= max;
     };
-    const bool style = c.backgroundStyle == -3 || c.backgroundStyle == -2 || c.backgroundStyle == -1 ||
+    const bool style = c.backgroundStyle == -5 || c.backgroundStyle == -4 || c.backgroundStyle == -3 || c.backgroundStyle == -2 || c.backgroundStyle == -1 ||
         c.backgroundStyle == 0 || c.backgroundStyle == 1 || c.backgroundStyle == 6 || c.backgroundStyle == 7 ||
         c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11;
     return (c.version == 1 || c.version == 2) && c.columns >= 1 && c.columns <= 1024 &&
@@ -147,7 +148,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.foregroundContent >= 0 && c.foregroundContent <= 1 && IsManagedLargeIconImage(c.foregroundImage) &&
         range(c.iconX, 0, 1) && range(c.iconY, 0, 1) && c.material >= 0 && c.material <= 2 &&
         c.componentTheme >= 0 && c.componentTheme <= 1 && range(c.blurRadius, 4, 48) &&
-        range(c.edgeWidth, .5, 4) && range(c.edgeStrength, 0, 1) && ValidatePanelGradient(c.gradient) &&
+        range(c.edgeWidth, .5, 4) && range(c.edgeStrength, 0, 1) && ValidatePanelGradient(c.gradient) && range(c.gradientOpacity, 0, 1) &&
         c.effect >= 0 && c.effect <= 2 && c.titleDirection >= 0 && c.titleDirection <= 1 &&
         c.titleWeight >= 100 && c.titleWeight <= 900 && c.titleWeight % 100 == 0;
 }
@@ -162,6 +163,9 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
 {
     if (!value.IsObject() || !value.Find("version")) return false;
     LargeIconConfig c;
+    // Missing fields retain the defaults of the old on-disk format, not new-creation defaults.
+    c.columns = c.rows = 2;
+    c.backgroundStyle = -3;
     if (value.Find("version")->IsNumber() && value.Find("version")->number == 1) c.fit = 0;
     bool valid = true;
     VisitLargeIconFields(c, [&](const char* name, auto& field) {

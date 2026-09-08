@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "Tipo de preenchimento",
     "largeIcon.gradientBackground": "Fundo em degradê",
     "largeIcon.solidBackground": "Fundo de cor sólida",
-    "largeIcon.resetThemeGradient": "Restaurar degradê do ícone"
+    "largeIcon.resetThemeGradient": "Restaurar degradê do ícone",
+    "largeIcon.platePreset": "Preenchimento do fundo do ícone",
+    "largeIcon.useIconBackground": "Usar a cor de fundo do ícone",
+    "largeIcon.useIconTheme": "Usar a cor temática do ícone",
+    "largeIcon.colorAndFill": "Cor e preenchimento",
+    "largeIcon.borderAndHighlight": "Borda e realces",
+    "largeIcon.imageDetails": "Detalhes da imagem",
+    "largeIcon.gradientColors": "Cores inicial e final",
+    "largeIcon.gradientOpacity": "Opacidade geral",
+    "largeIcon.hideDetails": "Recolher",
+    "largeIcon.showDetails": "Expandir"
 }

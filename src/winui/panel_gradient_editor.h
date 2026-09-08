@@ -17,10 +17,13 @@ class PanelGradientEditor : public std::enable_shared_from_this<PanelGradientEdi
 public:
     using Localize = std::function<std::wstring(std::string_view)>;
     using Change = std::function<void(const PanelGradient&, bool)>;
-    static std::shared_ptr<PanelGradientEditor> Create(Localize localize, Change change, bool required = false)
+    using PickerExtras = std::function<void(Panel, winrt::Microsoft::UI::Xaml::Controls::ColorPicker)>;
+    static std::shared_ptr<PanelGradientEditor> Create(Localize localize, Change change, bool required = false,
+        PickerExtras pickerExtras = {}, bool compact = false)
     {
         auto result = std::make_shared<PanelGradientEditor>();
         result->required_ = required;
+        result->pickerExtras_ = std::move(pickerExtras); result->compact_ = compact;
         result->localize_ = std::move(localize); result->change_ = std::move(change);
         std::weak_ptr<PanelGradientEditor> weak = result;
         result->preview_.Initialize([weak](const PanelGradient& value) {
@@ -62,8 +65,9 @@ private:
     PanelGradient value_, committed_;
     Localize localize_;
     Change change_;
+    PickerExtras pickerExtras_;
     std::vector<std::function<void()>> sync_;
-    bool syncing_ = false, dirty_ = false, expanded_ = false, required_ = false;
+    bool syncing_ = false, dirty_ = false, expanded_ = false, required_ = false, compact_ = false;
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
     void Sync()
     {
@@ -148,7 +152,7 @@ private:
             if (auto self = weak.lock()) self->Apply([&](auto& v) { write(v, defaultValue); }, true);
         }, level);
     }
-    void Color(const char* key, size_t index, unsigned defaultColor, int level = 1)
+    winrt::Microsoft::UI::Xaml::Controls::Button ColorButton(const char* key, size_t index)
     {
         namespace x = winrt::Microsoft::UI::Xaml;
         namespace c = x::Controls;
@@ -157,8 +161,15 @@ private:
         c::StackPanel content; content.Orientation(c::Orientation::Horizontal); content.Spacing(8);
         c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4});
         c::TextBlock text; content.Children().Append(swatch); content.Children().Append(text); button.Content(content);
-        c::Flyout flyout; c::ColorPicker picker; picker.IsAlphaEnabled(false); flyout.Content(picker); button.Flyout(flyout);
+        c::Flyout flyout; c::ColorPicker picker; picker.IsAlphaEnabled(false);
+        c::StackPanel body; body.Spacing(8); body.Children().Append(picker); flyout.Content(body); button.Flyout(flyout);
         std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
+        flyout.Opening([weak, body, picker](auto const&, auto const&) {
+            body.Children().Clear(); body.Children().Append(picker);
+            if (auto self = weak.lock(); self && self->pickerExtras_) self->pickerExtras_(body, picker);
+        });
+        x::Automation::AutomationProperties::SetName(button, L(key));
+        c::ToolTipService::SetToolTip(button, winrt::box_value(L(key)));
         picker.ColorChanged([weak, index](auto const&, auto const& args) {
             if (auto self = weak.lock()) self->Apply([&](auto& g) {
                 if (index < g.stops.size()) { const auto v = args.NewColor(); g.stops[index].color = v.R << 16 | v.G << 8 | v.B; }
@@ -176,7 +187,12 @@ private:
             picker.Color(color); swatch.Background(m::SolidColorBrush(color));
             wchar_t label[8]; swprintf_s(label, L"#%06X", rgb); text.Text(label);
         });
-        Row(key, button, [weak, index, defaultColor] {
+        return button;
+    }
+    void Color(const char* key, size_t index, unsigned defaultColor, int level = 1)
+    {
+        std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
+        Row(key, ColorButton(key, index), [weak, index, defaultColor] {
             if (auto self = weak.lock()) self->Apply([&](auto& v) { if (index < v.stops.size()) v.stops[index].color = defaultColor; }, true);
         }, level);
     }
@@ -226,8 +242,7 @@ private:
         }, 0);
         if (value_.enabled)
         {
-            Stop(0, true, false); Stop(value_.stops.size() - 1, false, true);
-            Numeric("panelGradient.angle", [](auto const& v) { return v.angle; }, [](auto& v, double n) { v.angle = n; }, 0, 360, 1, 90, L"°");
+            if (!compact_) { Stop(0, true, false); Stop(value_.stops.size() - 1, false, true); }
             c::Button swap; swap.Content(winrt::box_value(L"⇄")); swap.HorizontalAlignment(x::HorizontalAlignment::Right);
             swap.Click([weak](auto const&, auto const&) {
                 if (auto self = weak.lock()) self->Apply([](auto& v) {
@@ -235,15 +250,38 @@ private:
                     std::swap(v.stops.front().opacity, v.stops.back().opacity);
                 }, true);
             });
-            ActionRow("panelGradient.swap", swap);
-            c::ToggleSwitch more; more.MinWidth(0); more.IsOn(expanded_); more.HorizontalAlignment(x::HorizontalAlignment::Right);
-            more.Toggled([weak, more](auto const&, auto const&) {
+            if (compact_)
+            {
+                c::StackPanel colors; colors.Orientation(c::Orientation::Horizontal); colors.Spacing(6);
+                colors.HorizontalAlignment(x::HorizontalAlignment::Right);
+                colors.Children().Append(ColorButton("panelGradient.startColor", 0)); colors.Children().Append(swap);
+                colors.Children().Append(ColorButton("panelGradient.endColor", value_.stops.size() - 1));
+                x::Automation::AutomationProperties::SetName(swap, L("panelGradient.swap"));
+                c::ToolTipService::SetToolTip(swap, winrt::box_value(L("panelGradient.swap")));
+                Row("largeIcon.gradientColors", colors, [weak] {
+                    if (auto self = weak.lock()) self->Apply([](auto& v) {
+                        v.stops.front().color = 0xb6d6ef; v.stops.back().color = 0xd5c7ef;
+                    }, true);
+                }, 0);
+            }
+            Numeric("panelGradient.angle", [](auto const& v) { return v.angle; }, [](auto& v, double n) { v.angle = n; }, 0, 360, 1, 90, L"°", compact_ ? 0 : 1);
+            if (!compact_) ActionRow("panelGradient.swap", swap);
+            c::Button more; more.Content(winrt::box_value(L(expanded_ ? "largeIcon.hideDetails" : "largeIcon.showDetails")));
+            more.HorizontalAlignment(x::HorizontalAlignment::Right);
+            more.Click([weak](auto const&, auto const&) {
                 if (auto self = weak.lock(); self && !self->syncing_)
-                { self->expanded_ = more.IsOn(); self->Build(); }
+                { self->expanded_ = !self->expanded_; self->Build(); }
             });
             ActionRow("panelGradient.more", more);
             if (expanded_)
             {
+                if (compact_)
+                {
+                    Numeric("panelGradient.startOpacity", [](auto const& v) { return v.stops.front().opacity * 100; },
+                        [](auto& v, double n) { v.stops.front().opacity = n / 100; }, 0, 100, 1, 65);
+                    Numeric("panelGradient.endOpacity", [](auto const& v) { return v.stops.back().opacity * 100; },
+                        [](auto& v, double n) { v.stops.back().opacity = n / 100; }, 0, 100, 1, 65);
+                }
                 Numeric("panelGradient.startPosition", [](auto const& v) { return v.start * 100; },
                     [](auto& v, double n) { v.start = std::min(n / 100, v.end - .001); }, 0, 100, .1, 0, L"%", 2);
                 Numeric("panelGradient.endPosition", [](auto const& v) { return v.end * 100; },

@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "채우기 방식",
     "largeIcon.gradientBackground": "그라데이션 배경",
     "largeIcon.solidBackground": "단색 배경",
-    "largeIcon.resetThemeGradient": "아이콘 테마색 그라데이션 복원"
+    "largeIcon.resetThemeGradient": "아이콘 테마색 그라데이션 복원",
+    "largeIcon.platePreset": "아이콘 배경색 채우기",
+    "largeIcon.useIconBackground": "아이콘 배경색 사용",
+    "largeIcon.useIconTheme": "아이콘 테마 색상 사용",
+    "largeIcon.colorAndFill": "색상 및 채우기",
+    "largeIcon.borderAndHighlight": "테두리 및 하이라이트",
+    "largeIcon.imageDetails": "이미지 세부 설정",
+    "largeIcon.gradientColors": "시작 및 끝 색상",
+    "largeIcon.gradientOpacity": "전체 불투명도",
+    "largeIcon.hideDetails": "접기",
+    "largeIcon.showDetails": "펼치기"
 }

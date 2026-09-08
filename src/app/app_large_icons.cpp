@@ -341,6 +341,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
             result.source = runtime->second.asset->source;
             result.accent = runtime->second.asset->accent;
             result.hasEdgeColor = runtime->second.asset->hasEdgeColor;
+            result.edgeColor = runtime->second.asset->edgeColor;
             result.imageWidth = runtime->second.asset->width;
             result.imageHeight = runtime->second.asset->height;
         }
@@ -430,15 +431,16 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         appearance.widgetEdgeHighlightWidth = static_cast<float>(config.edgeWidth);
         appearance.widgetEdgeHighlightStrength = static_cast<float>(config.edgeStrength);
         appearance.panelGradient = config.gradient;
+        for (auto& stop : appearance.panelGradient.stops) stop.opacity *= config.gradientOpacity;
     }
-    if (config.backgroundStyle == -3)
+    if (config.backgroundStyle <= -3)
     {
         const auto automatic = snowdesktop::large_icon_render_rules::DefaultBackground(config, view.accent, view.hasEdgeColor, view.edgeColor);
         appearance.widgetBgR = ((automatic.color >> 16) & 255) / 255.f;
         appearance.widgetBgG = ((automatic.color >> 8) & 255) / 255.f;
         appearance.widgetBgB = (automatic.color & 255) / 255.f;
         appearance.widgetAlpha = static_cast<float>(automatic.opacity);
-        if (config.defaultBackground == 0)
+        if (config.backgroundStyle != -3 || config.defaultBackground == 0)
         {
             appearance.glassEnabled = appearance.acrylicEnabled = appearance.widgetEdgeHighlightEnabled = false;
             appearance.widgetBorderAlpha = 0;

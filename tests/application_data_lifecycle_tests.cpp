@@ -460,6 +460,7 @@ int main()
         large.defaultGradient.enabled = true; large.defaultGradient.angle = 260;
         large.defaultGradient.stops.insert(large.defaultGradient.stops.begin() + 1, {.2, 0x123456, .15});
         large.gradient.enabled = true; large.gradient.angle = 137;
+        large.gradientOpacity = .47;
         large.gradient.stops.insert(large.gradient.stops.begin() + 1, {.4, 0x00ff77, .25});
         const std::string encoded = snowdesktop::EncodeLargeIconConfig(large);
         snowdesktop::layout_storage::Document roundTrip;
@@ -473,7 +474,7 @@ int main()
                  R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
                  R"({"version":1,"revealTitleSize":73})", R"({"version":2,"titleWeight":650})",
                  R"({"version":2,"foregroundImage":"../outside.png"})", R"({"version":2,"backgroundStyle":12})",
-                 R"({"version":2,"iconX":1.1})", R"({"version":2,"fillScale":3.1})",
+                 R"({"version":2,"iconX":1.1})", R"({"version":2,"fillScale":3.1})", R"({"version":2,"gradientOpacity":1.1})",
                  R"({"version":2,"defaultBackground":3})", R"({"version":2,"defaultSolidOpacity":2})",
                  R"({"version":2,"defaultGradient":{"start":0.5,"end":0.5}})", R"({"version":2,"fillScale":0})", R"({"version":2,"gradient":{"start":0.5,"end":0.5}})"})
         {
@@ -483,6 +484,16 @@ int main()
                 "large icon codec rejects unsupported versions, unsafe asset references and invalid numeric boundaries");
         }
         JsonValue legacyValue; snowdesktop::LargeIconConfig legacy;
+        Expect(ParseJson(R"({"version":2})", legacyValue) && snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) &&
+            legacy.columns == 2 && legacy.rows == 2 && legacy.backgroundStyle == -3,
+            "omitted legacy span and style do not adopt new creation defaults");
+        for (const int preset : {-5, -4})
+        {
+            auto modern = snowdesktop::LargeIconConfig{}; modern.backgroundStyle = preset;
+            Expect(ParseJson(snowdesktop::EncodeLargeIconConfig(modern), legacyValue) &&
+                snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy == modern,
+                "neutral and plate presets survive restart with one-cell desired spans");
+        }
         Expect(ParseJson(R"({"version":2,"titleDirection":1,"themeColor":true,"themeGradient":true})", legacyValue) &&
             snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.fillScale == 1 && !legacy.autoTitleDirection &&
             legacy.titleDirection == 1 && legacy.themeGradient && !legacy.themeColor && legacy.defaultBackground == 1 && !legacy.defaultGradient.enabled,

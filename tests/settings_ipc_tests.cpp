@@ -106,7 +106,7 @@ void TestCodec()
     snowdesktop::LargeIconSettingsSnapshot large;
     large.key = L"图标 / 日本語"; large.session = UINT64_MAX; large.revision = 47;
     large.config = snowdesktop::EncodeLargeIconConfig({}); large.landscapePath = L"file:///C:/图片/preview.png";
-    large.hasEdgeColor = true; large.loading = true;
+    large.hasEdgeColor = true; large.edgeColor = 0x119955; large.loading = true;
     large.portraitSource = "steam-local"; large.accent = 0x445566; large.steam = true;
     large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
     large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;
@@ -116,7 +116,7 @@ void TestCodec()
     const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
-        largeCopy.hasEdgeColor && largeCopy.loading && largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent &&
+        largeCopy.hasEdgeColor && largeCopy.edgeColor == large.edgeColor && largeCopy.loading && largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent &&
         largeCopy.frameWidth == 436 && largeCopy.frameHeight == 213 && largeCopy.frameColumns == 4 && largeCopy.frameRows == 2 &&
         largeCopy.unitScale == 1.5 && largeCopy.durationScale == 2 && largeCopy.frameLimit == 30 && !largeCopy.animations && largeCopy.neutral == large.neutral &&
         largeCopy.frameWidths == large.frameWidths && largeCopy.frameHeights == large.frameHeights &&

@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "Füllart",
     "largeIcon.gradientBackground": "Farbverlauf",
     "largeIcon.solidBackground": "Einfarbiger Hintergrund",
-    "largeIcon.resetThemeGradient": "Symbolfarbverlauf wiederherstellen"
+    "largeIcon.resetThemeGradient": "Symbolfarbverlauf wiederherstellen",
+    "largeIcon.platePreset": "Symbolhintergrundfüllung",
+    "largeIcon.useIconBackground": "Symbolhintergrundfarbe verwenden",
+    "largeIcon.useIconTheme": "Symbolakzentfarbe verwenden",
+    "largeIcon.colorAndFill": "Farbe und Füllung",
+    "largeIcon.borderAndHighlight": "Rahmen und Glanzlichter",
+    "largeIcon.imageDetails": "Bilddetails",
+    "largeIcon.gradientColors": "Anfangs- und Endfarbe",
+    "largeIcon.gradientOpacity": "Gesamtdeckkraft",
+    "largeIcon.hideDetails": "Einklappen",
+    "largeIcon.showDetails": "Ausklappen"
 }

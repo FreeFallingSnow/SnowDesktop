@@ -506,6 +506,7 @@ public:
         state_->borderGreen = std::clamp(appearance.widgetBorderG, 0.0f, 1.0f);
         state_->borderBlue = std::clamp(appearance.widgetBorderB, 0.0f, 1.0f);
         state_->borderAlpha = std::clamp(appearance.widgetBorderAlpha, 0.0f, 1.0f);
+        state_->gradient = snowdesktop::taskbar_hook::EncodeGradient(appearance.panelGradient);
         const LONG targetCount = static_cast<LONG>(std::min<std::size_t>(
             targets.size(),
             snowdesktop::taskbar_hook::kMaximumTaskbarTargets));
@@ -546,6 +547,7 @@ public:
                 source.appearance.widgetBorderB, 0.0f, 1.0f);
             destination.borderAlpha = std::clamp(
                 source.appearance.widgetBorderAlpha, 0.0f, 1.0f);
+            destination.gradient = snowdesktop::taskbar_hook::EncodeGradient(source.appearance.panelGradient);
         }
         for (std::size_t index = static_cast<std::size_t>(targetCount);
              index < snowdesktop::taskbar_hook::kMaximumTaskbarTargets;

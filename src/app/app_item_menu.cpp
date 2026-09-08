@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../large_icon_steam.h"
+#include "../large_icon_preset_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
 #include "shell_item_action_rules.h"
@@ -226,6 +227,7 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
+    const auto largeIconKey = items_[itemIndex].layoutKey;
     const bool largeIconMenu = selectedCount == 1 && !dockFrequentItem && !dockApplicationItem &&
         !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
         !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
@@ -233,6 +235,32 @@ void DesktopApp::ShowItemContextMenu(
     {
         if (items_[itemIndex].largeIcon)
         {
+            namespace presets = snowdesktop::large_icon_preset_rules;
+            const auto& config = *items_[itemIndex].largeIcon;
+            const auto runtime = largeIconRuntime_.find(largeIconKey);
+            const bool hasEdge = runtime != largeIconRuntime_.end() && runtime->second.asset && runtime->second.asset->hasEdgeColor;
+            const bool editable = CanEditLargeIcons();
+            HMENU backgrounds = CreatePopupMenu(), effects = CreatePopupMenu();
+            for (size_t i = 0; i < presets::backgrounds.size(); ++i)
+            {
+                const auto option = presets::backgrounds[i];
+                if (!presets::BackgroundVisible(option.value, hasEdge, config)) continue;
+                const auto id = kContextLargeIconBackgroundFirst + static_cast<UINT>(i);
+                AppendMenuW(backgrounds, MF_STRING | (editable ? 0 : MF_GRAYED) |
+                    (presets::Background(config) == option.value ? MF_CHECKED : 0), id, _LW(option.label));
+            }
+            for (size_t i = 0; i < presets::effects.size(); ++i)
+            {
+                const auto option = presets::effects[i];
+                const bool enabled = editable && (option.value != 2 || !snowdesktop::IsLargeIconFill(config));
+                AppendMenuW(effects, MF_STRING | (enabled ? 0 : MF_GRAYED) |
+                    (presets::Effect(config) == option.value ? MF_CHECKED : 0),
+                    kContextLargeIconEffectFirst + static_cast<UINT>(i), _LW(option.label));
+            }
+            AppendMenuW(menu, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundStyle"));
+            AppendMenuW(menu, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(backgrounds), L"\uF53F");
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(effects), L"\uF0D0");
             AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
             AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
         }
@@ -455,6 +483,26 @@ void DesktopApp::ShowItemContextMenu(
         RefreshDockFolderPopupGeometry();
     };
 
+    namespace presets = snowdesktop::large_icon_preset_rules;
+    const bool backgroundCommand = command >= kContextLargeIconBackgroundFirst && command < kContextLargeIconBackgroundFirst + presets::backgrounds.size();
+    const bool effectCommand = command >= kContextLargeIconEffectFirst && command < kContextLargeIconEffectFirst + presets::effects.size();
+    if (largeIconMenu && (backgroundCommand || effectCommand))
+    {
+        // The menu runs a nested loop: resolve identity and entitlement again at commit time.
+        const auto index = FindItemIndexByKey(largeIconKey);
+        if (index < items_.size() && items_[index].largeIcon)
+        {
+            auto config = *items_[index].largeIcon;
+            const auto runtime = largeIconRuntime_.find(largeIconKey);
+            const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
+            const bool changed = backgroundCommand ? presets::ApplyBackground(config,
+                presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
+                asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0) :
+                presets::ApplyEffect(config, static_cast<int>(command - kContextLargeIconEffectFirst), CanEditLargeIcons());
+            if (changed && !SetLargeIconConfig(index, config))
+                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        }
+    }
     switch (command)
     {
     case kContextLargeIconCreate:

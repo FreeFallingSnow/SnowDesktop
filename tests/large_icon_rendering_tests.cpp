@@ -151,10 +151,11 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(canvas.Draw(config, view) == pixels, "no-effect hover leaves original and background unchanged");
         Check(Visible(pixels, {0, 265, Canvas::width, Canvas::height}) == 0, "no external title layer is drawn");
         Save(outputDirectory, "01-original.png", pixels);
+        config.backgroundStyle = -4;
         view.hasEdgeColor = true; view.edgeColor = 0x0112ff; view.accent = 0x006622;
         pixels = canvas.Draw(config, view);
         Check(Pixel(pixels, 115, 160) == 0xff0112ff, "contour background preserves extracted RGB and ignores transparency settings");
-        config.smartFill = false; config.themeOpacity = .4;
+        config.backgroundStyle = -3; config.smartFill = false; config.themeOpacity = .4;
         pixels = canvas.Draw(config, view);
         Check((Pixel(pixels, 115, 160) >> 24) >= 100 && (Pixel(pixels, 115, 160) >> 24) <= 104,
             "theme fallback uses its independent opacity");

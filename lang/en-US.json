@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "Fill style",
     "largeIcon.gradientBackground": "Gradient background",
     "largeIcon.solidBackground": "Solid background",
-    "largeIcon.resetThemeGradient": "Restore icon theme gradient"
+    "largeIcon.resetThemeGradient": "Restore icon theme gradient",
+    "largeIcon.platePreset": "Icon background fill",
+    "largeIcon.useIconBackground": "Use icon background color",
+    "largeIcon.useIconTheme": "Use icon theme color",
+    "largeIcon.colorAndFill": "Color and fill",
+    "largeIcon.borderAndHighlight": "Border and highlights",
+    "largeIcon.imageDetails": "Image details",
+    "largeIcon.gradientColors": "Start and end colors",
+    "largeIcon.gradientOpacity": "Overall opacity",
+    "largeIcon.hideDetails": "Collapse",
+    "largeIcon.showDetails": "Expand"
 }

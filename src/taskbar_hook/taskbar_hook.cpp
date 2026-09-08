@@ -22,6 +22,7 @@
 #pragma push_macro("GetCurrentTime")
 #undef GetCurrentTime
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.Graphics.Effects.h>
 #include <winrt/Windows.UI.Composition.h>
@@ -325,6 +326,7 @@ bool ReadSnapshot(Snapshot& snapshot)
         snapshot.borderGreen = g_sharedState->borderGreen;
         snapshot.borderBlue = g_sharedState->borderBlue;
         snapshot.borderAlpha = g_sharedState->borderAlpha;
+        snapshot.gradient = g_sharedState->gradient;
         snapshot.targetCount = std::clamp<LONG>(
             static_cast<LONG>(g_sharedState->targetCount), 0,
             static_cast<LONG>(kMaximumTaskbarTargets));
@@ -792,6 +794,7 @@ public:
                 effective.borderGreen = target.borderGreen;
                 effective.borderBlue = target.borderBlue;
                 effective.borderAlpha = target.borderAlpha;
+                effective.gradient = target.gradient;
                 break;
             }
             const bool enabled = controllerEnabled && targetEnabled;
@@ -843,7 +846,10 @@ public:
             }
             else
             {
-                ApplyBackdrop(info.background, effective);
+                auto material = effective;
+                if (DecodeGradient(effective.gradient).enabled) material.alpha = 0;
+                ApplyBackdrop(info.background, material);
+                ApplyGradient(info.background, effective.gradient);
                 ApplySolidFill(info.border, effective.borderRed,
                     effective.borderGreen, effective.borderBlue,
                     effective.borderAlpha);
@@ -875,6 +881,9 @@ private:
         float appliedBlue = -1.0f;
         float appliedAlpha = -1.0f;
         float appliedBlur = -1.0f;
+        Gradient appliedGradient;
+        wuc::Visual originalChildVisual{nullptr};
+        wuc::SpriteVisual gradientVisual{nullptr};
     };
 
     struct TaskbarInfo
@@ -964,6 +973,7 @@ private:
                 acrylic.BackgroundSource(
                     wux::Media::AcrylicBackgroundSource::Backdrop);
                 acrylic.TintColor(tint);
+                if (DecodeGradient(snapshot.gradient).enabled) acrylic.TintOpacity(0);
                 acrylic.FallbackColor(tint);
                 brush = std::move(acrylic);
             }
@@ -1037,9 +1047,65 @@ private:
         control.appliedBlur = 0.0f;
     }
 
+    static void ApplyGradient(ControlInfo& control, const Gradient& value)
+    {
+        if (!control.control) return;
+        const auto gradient = DecodeGradient(value);
+        if (!gradient.enabled)
+        {
+            if (control.gradientVisual)
+            {
+                if (wuxh::ElementCompositionPreview::GetElementChildVisual(control.control) == control.gradientVisual)
+                    wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, control.originalChildVisual);
+                control.gradientVisual.Close(); control.gradientVisual = nullptr;
+                control.originalChildVisual = nullptr; control.appliedGradient = {};
+            }
+            return;
+        }
+        const auto current = wuxh::ElementCompositionPreview::GetElementChildVisual(control.control);
+        if (control.gradientVisual && current == control.gradientVisual && control.appliedGradient == value) return;
+        if (!control.gradientVisual || current != control.gradientVisual) control.originalChildVisual = current;
+        auto host = wuxh::ElementCompositionPreview::GetElementVisual(control.control);
+        auto compositor = host.Compositor();
+        auto brush = compositor.CreateLinearGradientBrush();
+        brush.MappingMode(wuc::CompositionMappingMode::Absolute);
+        brush.ExtendMode(wuc::CompositionGradientExtendMode::Clamp);
+        for (const auto& stop : gradient.stops)
+        {
+            const winrt::Windows::UI::Color color{
+                static_cast<std::uint8_t>(stop.opacity * 255 + .5),
+                static_cast<std::uint8_t>(stop.color >> 16),
+                static_cast<std::uint8_t>(stop.color >> 8), static_cast<std::uint8_t>(stop.color)};
+            brush.ColorStops().Append(compositor.CreateColorGradientStop(static_cast<float>(stop.position), color));
+        }
+        // Match ResolvePanelGradientLine in physical aspect ratio. Expressions
+        // follow taskbar resizing without a UI timer or a continuous frame loop.
+        const auto angle = gradient.angle * 3.14159265358979323846 / 180;
+        const auto point = [&](const wchar_t* property, double offset) {
+            auto expression = compositor.CreateExpressionAnimation(
+                L"Vector2(host.Size.X * 0.5 + dx * (adx * host.Size.X + ady * host.Size.Y) * offset, "
+                L"host.Size.Y * 0.5 + dy * (adx * host.Size.X + ady * host.Size.Y) * offset)");
+            expression.SetReferenceParameter(L"host", host);
+            expression.SetScalarParameter(L"dx", static_cast<float>(std::cos(angle)));
+            expression.SetScalarParameter(L"dy", static_cast<float>(std::sin(angle)));
+            expression.SetScalarParameter(L"adx", static_cast<float>(std::abs(std::cos(angle))));
+            expression.SetScalarParameter(L"ady", static_cast<float>(std::abs(std::sin(angle))));
+            expression.SetScalarParameter(L"offset", static_cast<float>(offset));
+            brush.StartAnimation(property, expression);
+        };
+        point(L"StartPoint", gradient.start - .5); point(L"EndPoint", gradient.end - .5);
+        auto visual = compositor.CreateSpriteVisual(); visual.Brush(brush);
+        auto size = compositor.CreateExpressionAnimation(L"host.Size"); size.SetReferenceParameter(L"host", host);
+        visual.StartAnimation(L"Size", size);
+        wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, visual);
+        if (control.gradientVisual) control.gradientVisual.Close();
+        control.gradientVisual = visual; control.appliedGradient = value;
+    }
+
     static bool RestoreControl(ControlInfo& control)
     {
         const bool wasApplied = control.appliedFill != nullptr;
+        ApplyGradient(control, {});
         if (control.control && control.originalFill)
             control.control.Fill(control.originalFill);
         control.appliedFill = nullptr;

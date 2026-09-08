@@ -1558,5 +1558,15 @@
     "largeIcon.defaultBackground": "填充方式",
     "largeIcon.gradientBackground": "渐变背景",
     "largeIcon.solidBackground": "纯色背景",
-    "largeIcon.resetThemeGradient": "恢复图标主题色渐变"
+    "largeIcon.resetThemeGradient": "恢复图标主题色渐变",
+    "largeIcon.platePreset": "图标背景色填充",
+    "largeIcon.useIconBackground": "使用图标背景色",
+    "largeIcon.useIconTheme": "使用图标主题色",
+    "largeIcon.colorAndFill": "颜色与填充",
+    "largeIcon.borderAndHighlight": "边框与高光",
+    "largeIcon.imageDetails": "图片详细设置",
+    "largeIcon.gradientColors": "起止颜色",
+    "largeIcon.gradientOpacity": "整体不透明度",
+    "largeIcon.hideDetails": "收起",
+    "largeIcon.showDetails": "展开"
 }

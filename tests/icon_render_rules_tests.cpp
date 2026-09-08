@@ -1,3 +1,5 @@
+#include "../src/large_icon_preset_rules.h"
+#include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "icon_render_rules.h"
 #include "large_icon_render_rules.h"
 #include "large_icon_motion.h"
@@ -127,10 +129,8 @@ int main(int argc, char** argv)
     using snowdesktop::large_icon_settings_rules::Visible;
     using snowdesktop::large_icon_settings_rules::Enabled;
     config = {};
-    Check(Visible(Field::Default, config) && !Visible(Field::Smart, config) && Visible(Field::Smart, config, true) &&
-        !Visible(Field::Fill, config) && !Visible(Field::Solid, config), "default exposes contour only when detected and never manual color or crop");
-    Check(!Enabled(Field::ThemeOptions, config, true, true) && Enabled(Field::ThemeOptions, config, false, true),
-        "theme fallback parameters disable while opaque contour takes precedence");
+    Check(!Visible(Field::Custom, config) && !Visible(Field::Gradient, config) &&
+        !Visible(Field::Fill, config) && !Visible(Field::Solid, config), "neutral preset exposes no manual background controls");
     config.backgroundStyle = -2; config.content = 2;
     Check(Visible(Field::Steam, config) && Visible(Field::Crop, config) && !Visible(Field::Foreground, config) && !Visible(Field::Custom, config),
         "Steam fill has its own settings and no foreground or component material");
@@ -142,9 +142,10 @@ int main(int argc, char** argv)
     config = {};
     auto background = DefaultBackground(config, 0, false, 0);
     Check(background.color == 0xe8ecf4 && background.opacity == .65, "first frame and failed extraction have the opaque default-beautify base");
+    config.backgroundStyle = -4;
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0x0112ff && background.opacity == 1 && !background.gradient.enabled, "reliable contour is preserved exactly and filled opaquely");
-    config.smartFill = false;
+    config.backgroundStyle = -3; config.smartFill = false;
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0xe8ecf4 && background.opacity == .65 && !background.gradient.enabled,
         "plain icon background falls back to the beautify base, never an accent fill");
@@ -152,19 +153,50 @@ int main(int argc, char** argv)
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0x008800 && background.opacity == .4 && background.gradient.enabled && background.gradient.angle == 45,
         "theme fallback supports opacity and automatic gradient direction without manual colors");
-    Check(Visible(Field::ThemeGradient, config) && Visible(Field::EditableBackground, config) && Enabled(Field::ThemeGradient, config, false, false),
-        "default gradient keeps the complete editor available without image samples");
     config.defaultGradient.enabled = true; config.defaultGradient.angle = 213;
     config.defaultGradient.stops = {{0, 0x112233, .2}, {.3, 0x998877, .4}, {1, 0xabcdef, .8}};
     background = DefaultBackground(config, 0, false, 0);
     Check(background.gradient == config.defaultGradient, "manual default gradient retains every stop, opacity and direction without theme samples");
     config.defaultBackground = 2; config.defaultSolidColor = 0x1133ff; config.defaultSolidOpacity = .37;
     background = DefaultBackground(config, 0xff0000, true, 0x008800);
-    Check(background.color == 0x1133ff && background.opacity == .37 && !background.gradient.enabled &&
-        Visible(Field::DefaultSolid, config) && Visible(Field::EditableBackground, config),
-        "default solid exposes color and opacity and ignores automatic contour/gradient choices");
+    Check(background.color == 0x1133ff && background.opacity == .37 && !background.gradient.enabled,
+        "legacy solid retains its saved color and opacity");
     config.backgroundStyle = -2; config.effect = 2;
     Check(!Visible(Field::Title, config) && !Visible(Field::ManualTitle, config), "image fill hides unsupported title controls");
+    namespace presets = snowdesktop::large_icon_preset_rules;
+    config = {};
+    Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -5, "new large icons occupy one cell with neutral preset");
+    Check(DefaultBackground(config, 0x008800, true, 0x0112ff).color == 0xe8ecf4, "neutral default never auto-selects detected plate color");
+    config.columns = 4; config.rows = 3; config.radiusPercent = 78;
+    config.gradient.enabled = true; config.gradient.angle = 234; config.gradientOpacity = .4;
+    config.titleWeight = 800; config.titleColor = 0x123456; config.autoTitleDirection = false; config.titleDirection = 1;
+    const auto kept = config;
+    Check(!presets::ApplyBackground(config, -4, true, false) && config == kept, "missing plate sample cannot create plate preset");
+    for (const auto option : presets::backgrounds)
+    {
+        Check(!presets::ApplyBackground(config, option.value, false, true) && config == kept, "locked menu cannot change background");
+    }
+    Check(presets::ApplyBackground(config, -4, true, true) && presets::Background(config) == -4, "detected plate can be explicitly selected");
+    Check(presets::ApplyBackground(config, -2, true, true) && !presets::ApplyEffect(config, 2, true), "fill rejects dynamic title in common menu and settings rule");
+    Check(presets::ApplyBackground(config, 9, true, true) && presets::ApplyEffect(config, 2, true) &&
+        config.gradient == kept.gradient && config.gradientOpacity == kept.gradientOpacity && config.columns == 4 && config.rows == 3 &&
+        config.radiusPercent == 78 && config.titleWeight == 800 && config.titleColor == 0x123456 && !config.autoTitleDirection && config.titleDirection == 1,
+        "quick switching preserves custom values, span, radius and detailed title settings");
+    Check(DefaultBackground(config, 0, false, 0).gradient.stops.front().opacity == config.gradient.stops.front().opacity * .4,
+        "overall gradient opacity multiplies stop alpha without overwriting it");
+    config.backgroundStyle = -3; config.defaultBackground = 1; config.defaultGradient.enabled = true;
+    config.defaultGradient.angle = 135; config.defaultGradient.stops.insert(config.defaultGradient.stops.begin() + 1, {.4, 0x998877, .3});
+    const auto legacyBackground = DefaultBackground(config, 0x339988, false, 0);
+    presets::PrepareForEditing(config, 0x339988, false, 0);
+    Check(config.backgroundStyle == 9 && config.gradient == legacyBackground.gradient && config.gradientOpacity == 1,
+        "editing legacy defaults transfers complete gradient into custom without flattening");
+    auto wire = snowdesktop::taskbar_hook::EncodeGradient(config.gradient);
+    Check(snowdesktop::taskbar_hook::DecodeGradient(wire) == config.gradient,
+        "taskbar wire preserves multiple stops, alpha, angle and range");
+    wire.count = 6;
+    Check(!snowdesktop::taskbar_hook::DecodeGradient(wire).enabled, "taskbar rejects oversized gradient before reading stop array");
+    wire = snowdesktop::taskbar_hook::EncodeGradient(config.gradient); wire.stops[1].position = 2;
+    Check(!snowdesktop::taskbar_hook::DecodeGradient(wire).enabled, "taskbar rejects malformed gradient positions");
     std::vector<std::uint32_t> straight{0x8000c864, 0xff00c864, 0x0000ffff};
     snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(straight);
     Check(straight[0] == 0x80006432 && straight[1] == 0xff00c864 && straight[2] == 0,
