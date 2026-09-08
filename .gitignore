@@ -20,6 +20,7 @@ out/
 .tmp/
 artifacts/
 /luac.obj
+.remotion/
 
 # Steamworks partner-only materials must stay outside the repository. The
 # bridge may link an external SDK and copy Valve's redistributable DLL only to
