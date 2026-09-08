@@ -77,6 +77,14 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 - Font Awesome 6 Free（组件兼容图标）
 - WinHTTP（Lua HTTP 运行时）
 
+## 🤝 参与贡献
+
+**项目目前处于高频开发期，暂不接受外部 Pull Request 的代码合并。**
+欢迎通过 [Issues](https://github.com/FreeFallingSnow/SnowDesktop/issues)、
+[QQ 用户群 976422547](https://qm.qq.com/q/HyazkCIRig) 或参与
+[Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) 测试版交流与反馈。
+参与方式、开发规范及许可说明详见[中文贡献指南](./CONTRIBUTING.md)或 [English](./CONTRIBUTING.en.md)。
+
 ## 📄 许可证
 
 SnowDesktop 核心代码采用 GNU General Public License v3.0，详见 [LICENSE](./LICENSE)。

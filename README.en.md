@@ -80,6 +80,15 @@ normally first. To clear the lock automatically, use
 - Font Awesome 6 Free (backward-compatible widget icons)
 - WinHTTP (Lua HTTP runtime)
 
+## 🤝 Contributing
+
+**The project is under rapid development and is temporarily not accepting external pull requests for code integration.**
+Feedback is welcome through [Issues](https://github.com/FreeFallingSnow/SnowDesktop/issues),
+the [QQ user group 976422547](https://qm.qq.com/q/HyazkCIRig), or by participating in
+[Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) test builds.
+See the contribution guide in [English](./CONTRIBUTING.en.md) or [中文](./CONTRIBUTING.md)
+for participation options, development rules, and licensing information.
+
 ## 📄 License
 
 The SnowDesktop core is licensed under GNU General Public License v3.0; see

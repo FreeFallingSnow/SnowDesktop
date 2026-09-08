@@ -9,6 +9,7 @@
 
 ## 分支与 Pull Request
 
+- 项目现阶段处于高频开发期，暂不接受外部 Pull Request 的代码合并；引导参与者通过 Issues、QQ 群和 Steam 测试版反馈交流，入口见 `CONTRIBUTING.md`。下列分支与整合规则用于维护者开发，并供后续恢复接收外部代码贡献时使用。
 - `main` 是稳定发布分支，不直接承接功能、修复或外部贡献的 Pull Request。
 - `version.json` 是应用版本号的唯一来源，统一使用 `A.B.C.D` 四段整数格式。为兼容 Microsoft Store，`A` 必须为 `1` 至 `65535`，`B`、`C` 为 `0` 至 `65535`，`D` 固定为 `0`。
 - 版本开发分支统一命名为 `release/vA.B.C.D`，例如 `release/v1.0.0.0`。
